@@ -23,8 +23,8 @@ export default function Login() {
            style={{background:"radial-gradient(circle at 20% 20%, #00a9e0 0%, transparent 40%), radial-gradient(circle at 80% 80%, #8cc63f 0%, transparent 40%)"}} />
       <div className="relative bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-10 shadow-2xl animate-slide-in">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-black italic text-shGreen tracking-tight">SIT HAPPENS</h1>
-          <p className="text-[10px] uppercase font-black tracking-widest text-gray-400 mt-2">Pro CRM Portal</p>
+          <img src="/logo.png" alt="Sit Happens" className="h-32 mx-auto mb-3 drop-shadow-2xl" data-testid="login-logo" />
+          <p className="text-[10px] uppercase font-black tracking-[0.3em] text-gray-400 mt-2">Dog Training • Daycare • Boarding</p>
         </div>
         <div className="flex gap-2 mb-6 bg-bgBase rounded-lg p-1">
           <button onClick={() => setMode("login")} data-testid="tab-login"

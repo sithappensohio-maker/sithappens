@@ -76,10 +76,13 @@ export default function Portal() {
 
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
-      <header className="bg-bgHeader border-b border-bgHover h-20 flex items-center justify-between px-8">
-        <div>
-          <h1 className="text-2xl font-black italic text-shGreen uppercase tracking-tight">Sit Happens Portal</h1>
-          <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Welcome, {user.name}</p>
+      <header className="bg-bgHeader border-b border-bgHover h-24 flex items-center justify-between px-8">
+        <div className="flex items-center gap-4">
+          <img src="/logo.png" alt="Sit Happens" className="h-16" data-testid="portal-logo" />
+          <div>
+            <p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding</p>
+            <p className="text-xs text-shGreen font-black uppercase tracking-widest mt-1">Welcome, {user.name}</p>
+          </div>
         </div>
         <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
       </header>
@@ -159,24 +162,42 @@ export default function Portal() {
 
           <div>
             <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Bookings</h2>
-            <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
-              <table className="w-full text-left text-xs">
-                <thead className="text-[10px] text-gray-500 font-black uppercase">
-                  <tr><th className="px-4 py-3">Dog</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr>
-                </thead>
-                <tbody data-testid="portal-bookings">
-                  {bookings.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500 uppercase font-black">No bookings yet.</td></tr>}
-                  {bookings.map(b => (
-                    <tr key={b.id} className="border-t border-bgHover/40">
-                      <td className="px-4 py-3 text-white font-black uppercase">{b.dog_name}</td>
-                      <td className="px-4 py-3 text-gray-300">{b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</td>
-                      <td className="px-4 py-3 text-gray-300 uppercase font-black text-[10px]">{b.service_type}</td>
-                      <td className="px-4 py-3"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span></td>
-                      <td className="px-4 py-3 text-right">{(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[10px] font-black uppercase text-red-400 hover:underline">Cancel</button>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-3" data-testid="portal-bookings">
+              {bookings.length === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs">No bookings yet.</div>}
+              {bookings.map(b => (
+                <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between p-4">
+                    <div>
+                      <p className="text-sm font-black text-white uppercase tracking-tight">{b.dog_name}</p>
+                      <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mt-1">{b.service_type} · {b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className={`text-[10px] font-black uppercase px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
+                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[10px] font-black uppercase text-red-400 hover:underline tracking-widest">Cancel</button>}
+                    </div>
+                  </div>
+                  {b.report_card && (
+                    <div className="border-t border-bgHover/50 bg-gradient-to-br from-shGreen/5 to-shBlue/5 p-4" data-testid={`report-card-${b.id}`}>
+                      <p className="text-[10px] font-black text-shGreen uppercase tracking-widest mb-3"><i className="fas fa-paw mr-1"/> Pup Report Card</p>
+                      {b.report_card.photos?.length > 0 && (
+                        <div className="flex gap-2 mb-3">
+                          {b.report_card.photos.map((p, i) => (
+                            <img key={i} src={p} alt="" className="h-24 w-24 rounded object-cover border border-bgHover" />
+                          ))}
+                        </div>
+                      )}
+                      {b.report_card.mood_tags?.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-3">
+                          {b.report_card.mood_tags.map(m => (
+                            <span key={m} className="text-[9px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded-full">{m}</span>
+                          ))}
+                        </div>
+                      )}
+                      {b.report_card.note && <p className="text-xs text-gray-300 italic">"{b.report_card.note}"</p>}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>

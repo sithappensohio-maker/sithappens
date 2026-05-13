@@ -23,9 +23,9 @@ function AdminShell() {
   return (
     <div className="h-screen w-screen flex bg-bgBase">
       <aside className="bg-bgHeader w-64 border-r border-bgHover flex-col hidden md:flex">
-        <div className="p-6 border-b border-bgHover">
-          <h1 className="text-2xl font-black italic text-shGreen tracking-tight">SIT HAPPENS</h1>
-          <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest mt-1">Admin Console</p>
+        <div className="p-4 border-b border-bgHover text-center">
+          <img src="/logo.png" alt="Sit Happens" className="h-20 mx-auto" data-testid="sidebar-logo" />
+          <p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Daycare • Boarding</p>
         </div>
         <nav className="flex-grow p-4 space-y-1">
           {navItems.map(n => (

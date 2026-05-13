@@ -170,6 +170,12 @@ class BookingIn(BaseModel):
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
 
+class ReportCard(BaseModel):
+    photos: List[str] = []          # base64 data URIs
+    mood_tags: List[str] = []
+    note: Optional[str] = ""
+    created_at: Optional[str] = ""
+
 class BookingOut(BaseModel):
     id: str
     dog_id: str
@@ -182,6 +188,14 @@ class BookingOut(BaseModel):
     status: Literal["pending", "approved", "rejected", "completed", "cancelled"]
     notes: Optional[str] = ""
     created_at: str
+    checked_in_at: Optional[str] = None
+    checked_out_at: Optional[str] = None
+    report_card: Optional[ReportCard] = None
+
+class ReportCardIn(BaseModel):
+    photos: List[str] = []
+    mood_tags: List[str] = []
+    note: Optional[str] = ""
 
 
 # -------- Auth --------
@@ -495,6 +509,92 @@ async def portal_me(user: dict = Depends(get_current_user)):
     return {"client": client}
 
 
+@api.post("/bookings/{booking_id}/check-in", response_model=BookingOut)
+async def check_in(booking_id: str, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    ts = now_iso()
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"checked_in_at": ts}})
+    booking["checked_in_at"] = ts
+    return booking
+
+@api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
+async def check_out(booking_id: str, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    ts = now_iso()
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"checked_out_at": ts, "status": "completed"}})
+    booking["checked_out_at"] = ts
+    booking["status"] = "completed"
+    return booking
+
+@api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
+async def save_report_card(booking_id: str, body: ReportCardIn, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    rc = {"photos": body.photos, "mood_tags": body.mood_tags, "note": body.note or "", "created_at": now_iso()}
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"report_card": rc}})
+    booking["report_card"] = rc
+    return booking
+
+# -------- Vaccine Alerts --------
+@api.get("/vaccine-alerts")
+async def vaccine_alerts(_: dict = Depends(require_admin)):
+    today = date.today().isoformat()
+    in_thirty = (date.today() + timedelta(days=30)).isoformat()
+    now_dt = datetime.now(timezone.utc)
+    dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
+    dismiss_map = {}
+    for d in dismissals:
+        try:
+            until = datetime.fromisoformat(d["until"])
+        except Exception:
+            continue
+        if until > now_dt:
+            dismiss_map[d["dog_id"]] = d["until"]
+
+    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
+    clients = {c["id"]: c["name"] for c in await db.clients.find({}, {"_id": 0}).to_list(2000)}
+    alerts = []
+    for d in dogs:
+        if d["id"] in dismiss_map:
+            continue
+        r = (d.get("vaccines") or {}).get("rabies", "")
+        if not r:
+            status_label = "missing"
+        elif r < today:
+            status_label = "expired"
+        elif r <= in_thirty:
+            status_label = "expiring"
+        else:
+            continue
+        alerts.append({
+            "dog_id": d["id"],
+            "dog_name": d["name"],
+            "owner_id": d["owner_id"],
+            "owner_name": clients.get(d["owner_id"], "—"),
+            "rabies": r,
+            "status": status_label,
+        })
+    return alerts
+
+class DismissIn(BaseModel):
+    dog_id: str
+
+@api.post("/vaccine-alerts/{dog_id}/dismiss")
+async def dismiss_alert(dog_id: str, _: dict = Depends(require_admin)):
+    until = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    await db.vaccine_dismissals.update_one(
+        {"dog_id": dog_id},
+        {"$set": {"dog_id": dog_id, "until": until}},
+        upsert=True,
+    )
+    return {"ok": True, "until": until}
+
+
 # -------- Dashboard --------
 @api.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(require_admin)):
@@ -508,7 +608,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
             health_flags += 1
 
     today_bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending"]}}, {"_id": 0}
+        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
     ).to_list(2000)
     daycare_today = 0
     boarding_today = 0
