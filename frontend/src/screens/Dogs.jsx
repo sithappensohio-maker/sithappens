@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { Modal, Input } from "./Clients";
+import Lightbox from "../components/Lightbox";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -9,6 +10,7 @@ const empty = {
   notes: "", photo: "",
   feeding_schedule: [], medications: [], training_skills: [],
   vet_name: "", vet_phone: "",
+  photos: [],
 };
 
 const STANDARD_SKILLS = ["Sit", "Stay", "Down", "Place", "Recall", "Heel", "Leave It", "Wait", "Loose Leash", "Crate", "Watch Me", "Drop It"];
@@ -30,7 +32,7 @@ function vaccineStatus(d) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-export default function Dogs() {
+export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const [dogs, setDogs] = useState([]);
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
@@ -40,6 +42,8 @@ export default function Dogs() {
   const [err, setErr] = useState("");
   const [trainOpen, setTrainOpen] = useState(null);
   const [trainForm, setTrainForm] = useState({ date: todayISO(), note: "", tags: [] });
+  const [stats, setStats] = useState(null);
+  const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
 
   const load = async () => {
     const [d, c] = await Promise.all([api.get("/dogs"), api.get("/clients")]);
@@ -47,13 +51,20 @@ export default function Dogs() {
   };
   useEffect(() => { load(); }, []);
 
+  // Auto-open dog when navigated from global search
+  useEffect(() => {
+    if (!focusId || dogs.length === 0) return;
+    const dog = dogs.find(d => d.id === focusId);
+    if (dog) { openEdit(dog); onConsumed(); }
+  }, [focusId, dogs]);
+
   const openNew = () => {
     if (clients.length === 0) { alert("Add a client first."); return; }
     setEditing(null);
     setForm({ ...empty, owner_id: clients[0].id });
     setTab("basics"); setOpen(true); setErr("");
   };
-  const openEdit = (d) => {
+  const openEdit = async (d) => {
     setEditing(d);
     setForm({
       ...empty, ...d,
@@ -61,8 +72,11 @@ export default function Dogs() {
       feeding_schedule: d.feeding_schedule || [],
       medications: d.medications || [],
       training_skills: d.training_skills || [],
+      photos: d.photos || [],
     });
     setTab("basics"); setOpen(true); setErr("");
+    setStats(null);
+    try { const { data } = await api.get(`/dogs/${d.id}/stats`); setStats(data); } catch {}
   };
 
   const onFile = (e) => {
@@ -102,8 +116,19 @@ export default function Dogs() {
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "care", label: "Feeding & Meds", icon: "fa-bowl-food" },
     { id: "training", label: "Training", icon: "fa-graduation-cap" },
+    { id: "gallery", label: "Gallery", icon: "fa-images" },
     { id: "notes", label: "Notes & Vet", icon: "fa-clipboard" },
   ];
+
+  const onGalleryFiles = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach(f => {
+      const r = new FileReader();
+      r.onload = () => setForm((prev) => ({ ...prev, photos: [...(prev.photos || []), r.result] }));
+      r.readAsDataURL(f);
+    });
+    e.target.value = "";
+  };
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="dogs-screen">
@@ -166,6 +191,14 @@ export default function Dogs() {
       {open && (
         <Modal title={editing?`Edit · ${form.name||"Dog"}`:"New Dog"} onClose={()=>setOpen(false)}>
           <div className="max-h-[75vh] flex flex-col">
+            {editing && stats && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" data-testid="dog-stats">
+                <StatPill label="Daycare days" value={stats.daycare_days} color="text-shBlue" icon="fa-sun" />
+                <StatPill label="Boarding nights" value={stats.boarding_nights} color="text-shGreen" icon="fa-moon" />
+                <StatPill label="Training" value={stats.training_sessions} color="text-purple-400" icon="fa-graduation-cap" />
+                <StatPill label="Last visit" value={stats.last_visit || "—"} color="text-shOrange" icon="fa-clock-rotate-left" small />
+              </div>
+            )}
             <nav className="flex gap-1 mb-4 overflow-x-auto pb-2 border-b border-bgHover">
               {tabs.map(t => (
                 <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`dog-tab-${t.id}`}
@@ -310,6 +343,29 @@ export default function Dogs() {
                 </div>
               )}
 
+              {tab === "gallery" && (
+                <div data-testid="gallery-section">
+                  <div className="flex justify-between items-center mb-3">
+                    <h5 className="text-[11px] font-black text-shBlue uppercase tracking-widest"><i className="fas fa-images mr-2"/>Photo Gallery ({form.photos?.length || 0})</h5>
+                    <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[10px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="add-gallery-photo">
+                      <i className="fas fa-plus mr-1"/>Add Photos
+                      <input type="file" accept="image/*" multiple onChange={onGalleryFiles} className="hidden" />
+                    </label>
+                  </div>
+                  {(!form.photos || form.photos.length === 0) && <p className="text-[11px] text-gray-500 italic">No gallery photos yet. Add memories from playtime, training, or boarding stays.</p>}
+                  <div className="grid grid-cols-3 gap-2">
+                    {(form.photos || []).map((p, i) => (
+                      <div key={i} className="relative group" data-testid={`gallery-photo-${i}`}>
+                        <img src={p} alt="" className="aspect-square w-full object-cover rounded cursor-pointer border border-bgHover hover:border-shBlue"
+                             onClick={()=>setLightbox({ open: true, photos: form.photos, index: i })} />
+                        <button onClick={()=>setForm({...form, photos: form.photos.filter((_,j)=>j!==i)})}
+                                className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full w-6 h-6 text-xs opacity-0 group-hover:opacity-100 transition"><i className="fas fa-times"/></button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {tab === "notes" && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
@@ -356,6 +412,21 @@ export default function Dogs() {
           </div>
         </Modal>
       )}
+
+      {lightbox.open && (
+        <Lightbox photos={lightbox.photos} index={lightbox.index}
+                  onClose={()=>setLightbox({ open: false, photos: [], index: 0 })}
+                  onIndex={(i)=>setLightbox(l => ({ ...l, index: i }))} />
+      )}
+    </div>
+  );
+}
+
+function StatPill({ label, value, color, icon, small = false }) {
+  return (
+    <div className="bg-bgBase rounded p-3 border border-bgHover">
+      <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
+      <p className={`font-black mt-1 ${color} ${small ? "text-xs" : "text-xl"}`}>{value}</p>
     </div>
   );
 }

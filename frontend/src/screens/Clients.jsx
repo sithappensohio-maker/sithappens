@@ -3,7 +3,7 @@ import { api, formatErr } from "../lib/api";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
 
-export default function Clients() {
+export default function Clients({ focusId = null, onConsumed = () => {} }) {
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -20,6 +20,12 @@ export default function Clients() {
 
   const openNew = () => { setEditing(null); setForm(empty); setOpen(true); setErr(""); };
   const openEdit = (c) => { setEditing(c); setForm({...empty, ...c}); setOpen(true); setErr(""); };
+
+  useEffect(() => {
+    if (!focusId || clients.length === 0) return;
+    const c = clients.find(x => x.id === focusId);
+    if (c) { openEdit(c); onConsumed(); }
+  }, [focusId, clients]);
 
   const save = async () => {
     setErr("");

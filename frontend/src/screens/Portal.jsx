@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import WaiverModal from "../components/WaiverModal";
+import Lightbox from "../components/Lightbox";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -27,6 +28,7 @@ export default function Portal() {
   const [hwModal, setHwModal] = useState(null);
   const [hwNote, setHwNote] = useState("");
   const [hwPhoto, setHwPhoto] = useState("");
+  const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
 
   const loadAll = useCallback(async () => {
     try {
@@ -302,7 +304,9 @@ export default function Portal() {
                       {b.report_card.photos?.length > 0 && (
                         <div className="flex gap-2 mb-3">
                           {b.report_card.photos.map((p, i) => (
-                            <img key={i} src={p} alt="" className="h-24 w-24 rounded object-cover border border-bgHover" />
+                            <img key={i} src={p} alt="" data-testid={`report-photo-${b.id}-${i}`}
+                                 onClick={()=>setLightbox({ open: true, photos: b.report_card.photos, index: i })}
+                                 className="h-24 w-24 rounded object-cover border border-bgHover cursor-pointer hover:border-shGreen transition" />
                           ))}
                         </div>
                       )}
@@ -361,6 +365,11 @@ export default function Portal() {
             </div>
           </div>
         </div>
+      )}
+      {lightbox.open && (
+        <Lightbox photos={lightbox.photos} index={lightbox.index}
+                  onClose={()=>setLightbox({ open: false, photos: [], index: 0 })}
+                  onIndex={(i)=>setLightbox(l => ({ ...l, index: i }))} />
       )}
     </div>
   );

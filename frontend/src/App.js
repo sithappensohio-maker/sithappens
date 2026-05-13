@@ -12,11 +12,32 @@ import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
 import GlobalSearch from "./components/GlobalSearch";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function AdminShell() {
   const { user, logout } = useAuth();
   const [tab, setTab] = useState("dashboard");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchTarget, setSearchTarget] = useState(null);
+
+  // Cmd/Ctrl+K to open global search
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const navigateTo = (item) => {
+    setSearchOpen(false);
+    if (item.kind === "dog") { setSearchTarget({ kind: "dog", id: item.id }); setTab("dogs"); }
+    else if (item.kind === "client") { setSearchTarget({ kind: "client", id: item.id }); setTab("clients"); }
+  };
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
@@ -96,8 +117,8 @@ function AdminShell() {
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}
-          {tab === "clients" && <Clients />}
-          {tab === "dogs" && <Dogs />}
+          {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
+          {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "homework" && <Homework />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}
@@ -118,8 +139,10 @@ function Gate() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <Gate />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <Gate />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
