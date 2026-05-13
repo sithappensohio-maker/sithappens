@@ -44,7 +44,7 @@ export default function Bookings() {
               <tr key={b.id} className="border-t border-bgHover/40">
                 <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}</td>
                 <td className="px-6 py-4 text-gray-300 text-xs">{b.client_name}</td>
-                <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}</td>
+                <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</td>
                 <td className="px-6 py-4 text-xs text-gray-300">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</td>
                 <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">

@@ -15,6 +15,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [kennel, setKennel] = useState(existing?.kennel || "");
   const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "");
   const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "");
+  const [groomingType, setGroomingType] = useState(existing?.grooming_type || "bath");
   const [notes, setNotes] = useState(existing?.notes || "");
   const [checkInNow, setCheckInNow] = useState(defaultCheckIn);
   const [overrideVaccines, setOverrideVaccines] = useState(false);
@@ -80,6 +81,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           date,
           end_date: serviceType === "boarding" ? (endDate || date) : null,
           service_type: serviceType,
+          grooming_type: serviceType === "grooming" ? groomingType : null,
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
@@ -151,6 +153,23 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               ))}
             </div>
           </div>
+
+          {serviceType === "grooming" && !isEdit && (
+            <div data-testid="ab-grooming-types">
+              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {[
+                  { k: "bath", label: "Bath", icon: "fa-bath" },
+                  { k: "nail_trim", label: "Nail Trim", icon: "fa-scissors" },
+                ].map(g => (
+                  <button key={g.k} onClick={()=>setGroomingType(g.k)} data-testid={`ab-grooming-${g.k}`}
+                          className={`py-3 rounded text-[14px] font-black uppercase tracking-widest border flex items-center justify-center gap-2 ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
+                    <i className={`fas ${g.icon}`}/>{g.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3">
             <div>

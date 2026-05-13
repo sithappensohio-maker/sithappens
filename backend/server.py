@@ -197,6 +197,7 @@ class BookingIn(BaseModel):
     dog_id: str
     date: str  # YYYY-MM-DD
     service_type: Literal["daycare", "boarding", "training", "grooming"] = "daycare"
+    grooming_type: Optional[Literal["bath", "nail_trim"]] = None  # only relevant when service_type=grooming
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
     kennel: Optional[str] = ""
@@ -244,6 +245,7 @@ class BookingOut(BaseModel):
     dropoff_time: Optional[str] = ""
     pickup_time: Optional[str] = ""
     cost: Optional[int] = 0
+    grooming_type: Optional[str] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -536,6 +538,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "date": body.date,
         "end_date": body.end_date,
         "service_type": body.service_type,
+        "grooming_type": body.grooming_type if body.service_type == "grooming" else None,
         "status": status_val,
         "notes": body.notes or "",
         "kennel": body.kennel or "",
@@ -1459,9 +1462,14 @@ async def calendar_events(_: dict = Depends(require_admin)):
         color = _svc_colors.get(b["service_type"], "#64748b")
         if b["status"] == "pending":
             color = "#f26522"
+        # Add grooming sub-type to title so it shows on the calendar at a glance
+        svc_label = b["service_type"]
+        if b["service_type"] == "grooming" and b.get("grooming_type"):
+            gt = "bath" if b["grooming_type"] == "bath" else "nail trim"
+            svc_label = f"grooming · {gt}"
         events.append({
             "id": b["id"],
-            "title": f"{b['dog_name']} ({b['service_type']})",
+            "title": f"{b['dog_name']} ({svc_label})",
             "start": b["date"],
             "end": end_excl,
             "backgroundColor": color,
@@ -1470,6 +1478,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
                 "status": b["status"],
                 "client_name": b["client_name"],
                 "service_type": b["service_type"],
+                "grooming_type": b.get("grooming_type"),
             },
         })
     return events

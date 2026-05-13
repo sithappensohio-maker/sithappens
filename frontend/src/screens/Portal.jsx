@@ -17,6 +17,7 @@ export default function Portal() {
   const [bookDate, setBookDate] = useState(todayISO());
   const [bookEnd, setBookEnd] = useState("");
   const [bookType, setBookType] = useState("daycare");
+  const [groomingType, setGroomingType] = useState("bath");
   const [isRecurring, setIsRecurring] = useState(false);
   const [recEnd, setRecEnd] = useState("");
   const [recDays, setRecDays] = useState([]);
@@ -100,7 +101,7 @@ export default function Portal() {
         const s = data.skipped?.length || 0;
         setSuccess(`${c} bookings created${s?`, ${s} skipped`:""}.`);
       } else {
-        await api.post("/bookings", { dog_id: bookDogId, date: bookDate, end_date: bookType==="boarding"?bookEnd||bookDate:null, service_type: bookType });
+        await api.post("/bookings", { dog_id: bookDogId, date: bookDate, end_date: bookType==="boarding"?bookEnd||bookDate:null, service_type: bookType, grooming_type: bookType==="grooming" ? groomingType : null });
         setSuccess("Booking submitted! Awaiting admin approval.");
       }
       loadAll();
@@ -213,10 +214,27 @@ export default function Portal() {
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
             <div className="grid grid-cols-2 gap-2 mt-1 mb-3">
               {["daycare","boarding","training","grooming"].map(t => (
-                <button key={t} onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); }} data-testid={`book-service-${t}`}
+                <button key={t} onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); if(t==="grooming") setIsRecurring(false); }} data-testid={`book-service-${t}`}
                         className={`py-2 rounded text-[14px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
               ))}
             </div>
+
+            {bookType === "grooming" && (
+              <div className="mb-3" data-testid="book-grooming-types">
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {[
+                    { k: "bath", label: "Bath", icon: "fa-bath" },
+                    { k: "nail_trim", label: "Nail Trim", icon: "fa-scissors" },
+                  ].map(g => (
+                    <button key={g.k} onClick={()=>setGroomingType(g.k)} data-testid={`book-grooming-${g.k}`}
+                            className={`py-3 rounded text-[14px] font-black uppercase tracking-widest border flex items-center justify-center gap-2 ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
+                      <i className={`fas ${g.icon}`}/>{g.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {bookType !== "boarding" && (
               <label className="flex items-center gap-2 mb-3 cursor-pointer">

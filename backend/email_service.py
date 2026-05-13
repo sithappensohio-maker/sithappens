@@ -90,9 +90,13 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     """New booking arrived from the client portal — notify the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:
         return
+    svc_label = _service_label(booking.get("service_type", ""))
+    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
+        gt = "Bath" if booking["grooming_type"] == "bath" else "Nail Trim"
+        svc_label = f"{svc_label} · {gt}"
     rows = [
         ("Dog", booking.get("dog_name", "—")),
-        ("Service", _service_label(booking.get("service_type", ""))),
+        ("Service", svc_label),
         ("Dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
         ("Client", booking.get("client_name", "—")),
         ("Phone", client.get("phone", "—") or "—"),
@@ -112,7 +116,7 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
-        f"New booking · {booking.get('dog_name','')} · {_service_label(booking.get('service_type',''))} · {booking.get('date','')}",
+        f"New booking · {booking.get('dog_name','')} · {svc_label} · {booking.get('date','')}",
         html,
     )
 
@@ -122,9 +126,13 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
     to_email = client.get("email", "")
     if not to_email:
         return
+    svc_label = _service_label(booking.get("service_type", ""))
+    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
+        gt = "Bath" if booking["grooming_type"] == "bath" else "Nail Trim"
+        svc_label = f"{svc_label} · {gt}"
     rows = [
         ("Dog", booking.get("dog_name", "—")),
-        ("Service", _service_label(booking.get("service_type", ""))),
+        ("Service", svc_label),
         ("Dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
     ]
     if booking.get("dropoff_time"):
