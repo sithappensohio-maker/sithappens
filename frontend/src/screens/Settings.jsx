@@ -55,6 +55,7 @@ export default function Settings() {
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
+    { id: "backup", label: "Backup & Restore", icon: "fa-database" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
 
@@ -82,6 +83,7 @@ export default function Settings() {
           {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
+          {tab === "backup" && <BackupPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>
@@ -366,6 +368,148 @@ function SaveBar({ onSave, saving }) {
               className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
         {saving?"Saving…":"Save Changes"}
       </button>
+    </div>
+  );
+}
+
+
+function BackupPanel() {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreMode, setRestoreMode] = useState("merge");
+  const [restorePreview, setRestorePreview] = useState(null);
+
+  const download = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const { data } = await api.get("/backup/export");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url; a.download = `sit-happens-backup-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg("Backup downloaded ✓");
+    } catch { setMsg("Download failed"); }
+    setBusy(false);
+  };
+
+  const onPickFile = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setRestoreFile(f); setRestorePreview(null); setMsg("");
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(r.result);
+        if (!parsed.version || !parsed.collections) throw new Error("Not a valid Sit Happens backup");
+        const counts = {};
+        Object.entries(parsed.collections).forEach(([k, v]) => counts[k] = (v || []).length);
+        setRestorePreview({ version: parsed.version, exportedAt: parsed.exported_at, counts });
+      } catch (err) { setMsg(`Invalid file: ${err.message}`); setRestoreFile(null); }
+    };
+    r.readAsText(f);
+  };
+
+  const doRestore = async () => {
+    if (!restoreFile || !restorePreview) return;
+    const total = Object.values(restorePreview.counts).reduce((a,b)=>a+b, 0);
+    const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data";
+    if (!window.confirm(`Are you sure? This will ${verb} ${total} records from ${restoreFile.name}.\n\nThis cannot be undone — make sure you have a current backup downloaded first.`)) return;
+    setBusy(true); setMsg("");
+    try {
+      const r = new FileReader();
+      r.onload = async () => {
+        try {
+          const payload = JSON.parse(r.result);
+          payload.mode = restoreMode;
+          const { data } = await api.post("/backup/restore", payload);
+          const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted ?? v.upserted}`).join(" · ");
+          setMsg(`Restored ✓ ${summary}`);
+          setRestoreFile(null); setRestorePreview(null);
+        } catch (e) { setMsg(`Restore failed: ${e.response?.data?.detail || e.message}`); }
+        setBusy(false);
+      };
+      r.readAsText(restoreFile);
+    } catch { setBusy(false); setMsg("Restore failed"); }
+  };
+
+  return (
+    <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
+      <div>
+        <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-download mr-2"/>Download Backup</h4>
+        <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
+          Save a full snapshot of everything: clients, dogs, bookings, incidents, homework, waiver signatures, and settings.
+          We recommend downloading one every week or before any major change.
+        </p>
+        <button onClick={download} disabled={busy} data-testid="backup-download"
+                className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+          <i className="fas fa-download mr-2"/>{busy ? "Working…" : "Download Backup (.json)"}
+        </button>
+      </div>
+
+      <div className="border-t border-bgHover pt-6">
+        <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-2"><i className="fas fa-upload mr-2"/>Restore from Backup</h4>
+        <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
+          Upload a previously-downloaded backup file. <span className="text-shOrange font-black">Always download a fresh backup before restoring</span> in case you need to revert.
+        </p>
+
+        <div className="space-y-3">
+          <label className="block">
+            <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Backup file</span>
+            <input type="file" accept=".json,application/json" onChange={onPickFile} data-testid="backup-file"
+                   className="block mt-1 w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:bg-bgBase file:text-shBlue file:font-black file:uppercase file:text-[14px] file:tracking-widest hover:file:bg-bgHover cursor-pointer" />
+          </label>
+
+          {restorePreview && (
+            <div className="bg-bgBase border border-bgHover rounded p-3 space-y-2" data-testid="backup-preview">
+              <p className="text-[14px] font-black text-shBlue uppercase tracking-widest">Backup preview</p>
+              <p className="text-[14px] text-gray-400">Exported {restorePreview.exportedAt?.slice(0,19).replace("T", " ")}</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[14px]">
+                {Object.entries(restorePreview.counts).map(([k,v]) => (
+                  <div key={k} className="bg-bgPanel rounded px-2 py-1 flex justify-between">
+                    <span className="text-gray-400 uppercase font-black tracking-widest">{k}</span>
+                    <span className="text-white font-black">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Restore mode</span>
+            <div className="mt-1 grid grid-cols-1 md:grid-cols-2 gap-2">
+              <label className={`cursor-pointer rounded p-3 border ${restoreMode==="merge"?"bg-shBlue/10 border-shBlue/50":"bg-bgBase border-bgHover"}`}>
+                <input type="radio" name="mode" checked={restoreMode==="merge"} onChange={()=>setRestoreMode("merge")} className="mr-2 accent-shBlue" data-testid="mode-merge" />
+                <span className="text-sm font-black text-white uppercase tracking-tight">Merge (safer)</span>
+                <p className="text-[14px] text-gray-400 mt-1">Adds & updates by ID. Anything not in the backup stays untouched.</p>
+              </label>
+              <label className={`cursor-pointer rounded p-3 border ${restoreMode==="replace"?"bg-red-500/10 border-red-500/50":"bg-bgBase border-bgHover"}`}>
+                <input type="radio" name="mode" checked={restoreMode==="replace"} onChange={()=>setRestoreMode("replace")} className="mr-2 accent-red-500" data-testid="mode-replace" />
+                <span className="text-sm font-black text-white uppercase tracking-tight">Replace (wipes current)</span>
+                <p className="text-[14px] text-gray-400 mt-1">Deletes all current data and restores exactly what's in the backup.</p>
+              </label>
+            </div>
+          </div>
+
+          <button onClick={doRestore} disabled={busy || !restorePreview} data-testid="backup-restore"
+                  className={`px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 ${restoreMode==="replace"?"bg-red-500 text-white":"bg-shBlue text-white"}`}>
+            <i className="fas fa-upload mr-2"/>{busy ? "Restoring…" : `Restore (${restoreMode})`}
+          </button>
+        </div>
+      </div>
+
+      {msg && (
+        <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded ${msg.startsWith("Restored") || msg.includes("✓") ? "bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`} data-testid="backup-msg">
+          {msg}
+        </div>
+      )}
+
+      <div className="bg-bgBase border border-bgHover rounded p-4 text-[14px] text-gray-400 leading-relaxed">
+        <p className="text-shBlue font-black uppercase tracking-widest mb-2"><i className="fas fa-circle-info mr-2"/>What's in a backup?</p>
+        <p>Clients, dogs, bookings, incidents, homework, waiver signatures, and your settings. Admin login credentials are <span className="text-white font-black">not</span> included — your password stays in the database and is never exported. Backups are plain JSON and safe to email to yourself or store in cloud storage.</p>
+      </div>
     </div>
   );
 }

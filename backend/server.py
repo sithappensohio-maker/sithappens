@@ -1450,6 +1450,67 @@ async def calendar_events(_: dict = Depends(require_admin)):
     return events
 
 
+# -------- Backup & Restore --------
+BACKUP_COLLECTIONS = [
+    "clients", "dogs", "bookings", "incidents", "homework",
+    "waiver_signatures", "vaccine_dismissals", "settings",
+]
+BACKUP_VERSION = 1
+
+@api.get("/backup/export")
+async def backup_export(_: dict = Depends(require_admin)):
+    """Download a full JSON backup of every business collection. User accounts
+    are intentionally excluded — passwords are hashed and migration of users
+    should go through a separate restore flow."""
+    payload = {
+        "version": BACKUP_VERSION,
+        "exported_at": now_iso(),
+        "collections": {},
+    }
+    for c in BACKUP_COLLECTIONS:
+        docs = await db[c].find({}, {"_id": 0}).to_list(50000)
+        payload["collections"][c] = docs
+    return payload
+
+
+class BackupRestoreIn(BaseModel):
+    version: int
+    collections: dict
+    mode: Literal["replace", "merge"] = "replace"  # replace = wipe & restore; merge = upsert by id
+
+
+@api.post("/backup/restore")
+async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)):
+    """Restore from a backup JSON. Two modes:
+       - replace: drops each collection and bulk-inserts the backup contents
+       - merge:   upserts each document by `id` (existing docs with same id are overwritten; new ones added)
+    User accounts are never touched."""
+    if body.version != BACKUP_VERSION:
+        raise HTTPException(status_code=400, detail=f"Unsupported backup version {body.version}; expected {BACKUP_VERSION}")
+    summary = {}
+    for c, docs in (body.collections or {}).items():
+        if c not in BACKUP_COLLECTIONS:
+            continue
+        docs = [d for d in (docs or []) if isinstance(d, dict)]
+        if body.mode == "replace":
+            await db[c].delete_many({})
+            if docs:
+                await db[c].insert_many(docs)
+            summary[c] = {"mode": "replace", "inserted": len(docs)}
+        else:  # merge
+            upserts = 0
+            for doc in docs:
+                key = doc.get("id")
+                if not key:
+                    await db[c].insert_one(doc)
+                    upserts += 1
+                    continue
+                await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
+                upserts += 1
+            summary[c] = {"mode": "merge", "upserted": upserts}
+    return {"ok": True, "summary": summary, "restored_at": now_iso()}
+
+
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():

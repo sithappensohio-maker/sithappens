@@ -114,6 +114,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Portal credit card relabeled "Daycare Credits" with explainer copy ("For daycare days · Boarding & training pay-on-the-day").
 - ✅ Regression: 81/81 backend tests passing; `test_insufficient_credits` updated to assert new pay-on-the-day behavior.
 
+## Sprint 10 — Backup & Restore (2026-02)
+- ✅ **`GET /api/backup/export`** (admin only) — returns a full JSON snapshot of all business collections (clients, dogs, bookings, incidents, homework, waiver_signatures, vaccine_dismissals, settings). User accounts intentionally excluded.
+- ✅ **`POST /api/backup/restore`** with two modes:
+  - `merge` (safer) — upserts by `id`; leaves existing records untouched if not in backup
+  - `replace` — drops each collection and bulk-inserts the backup contents
+- ✅ **Settings → Backup & Restore tab** — one-click download with date-stamped filename, drag-drop file picker with preview (shows per-collection doc counts + export timestamp), mode selector with red warning on Replace, confirm dialog before restore.
+- ✅ Note for user: Emergent production deployments persist MongoDB across redeploys; backups are for accidental deletion / migration safety net.
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)
