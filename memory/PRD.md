@@ -74,6 +74,19 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Bug fix: stale auth + missing isRecurring state caused user-reported "uncaught runtime error" crash; fixed and verified.
 - ✅ 61/61 backend tests passing (Sprint 1+2+3+4 regression)
 
+## Sprint 5+7 — Daily Operations + Training Mode (2026-01)
+- ✅ **Dog Profile tabs** — Dog edit modal now has 5 tabs: Basics, Vaccines, Feeding & Meds, Training, Notes & Vet
+- ✅ **Feeding schedule** per dog (time, amount, food type, notes)
+- ✅ **Medication schedule** per dog (name, dosage, times, with-food flag, notes)
+- ✅ **Training skill tracker** — 12 default skills (Sit/Stay/Down/Place/Recall/Heel/Leave It/Wait/Loose Leash/Crate/Watch Me/Drop It) with 4 progression levels (Intro/Practicing/Reliable/Proofed). Per-skill notes.
+- ✅ **Vet contact** per dog (name + phone)
+- ✅ **Booking drop-off/pickup times** — Optional time fields on AdminBookingModal; persist on bookings
+- ✅ **Daily Run Sheet** — Print-friendly grouped roster (boarding/daycare/training) with feeding, meds, vet contact, kennel, dropoff/pickup, owner phone, emergency contact, notes. New admin nav item with date picker + Print button (CSS print styles).
+- ✅ **Dashboard check-in board** now shows feeding/medication count icons inline + kennel assignment.
+- ✅ **Training Homework** — Admin assigns tasks (title, instructions, optional YouTube link, due date) to a specific dog. Client portal shows assigned homework with "Mark Done" → completion note + proof photo. Filter by status (all/assigned/completed).
+- ✅ Bug fix: BookingIn was missing dropoff_time/pickup_time fields (Pydantic silently dropped them); patched and verified
+- ✅ 71/71 backend tests passing (Sprint 1+2+3+4+5+7 regression)
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)
