@@ -27,7 +27,7 @@ export default function WaiverModal({ waiverText, version, dogNames, onSigned, o
         <p key={idx} className="mb-4 text-sm text-gray-300 leading-relaxed">
           {parts.map((p, i) =>
             p.startsWith("**") && p.endsWith("**")
-              ? <strong key={i} className="text-shGreen block mt-1 mb-1 text-[13px] uppercase tracking-widest font-black">{p.slice(2,-2)}</strong>
+              ? <strong key={i} className="text-shGreen block mt-1 mb-1 text-[15px] uppercase tracking-widest font-black">{p.slice(2,-2)}</strong>
               : <span key={i}>{p}</span>
           )}
         </p>
@@ -41,7 +41,7 @@ export default function WaiverModal({ waiverText, version, dogNames, onSigned, o
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-2xl font-black text-white uppercase italic tracking-tight">Client Waiver</h3>
-            <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mt-1">Sit Happens Dog Training · Version {version}</p>
+            <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mt-1">Sit Happens Dog Training · Version {version}</p>
           </div>
           {allowClose && <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>}
         </div>
@@ -59,15 +59,15 @@ export default function WaiverModal({ waiverText, version, dogNames, onSigned, o
           </label>
 
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Type your full name to sign</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Type your full name to sign</label>
             <input value={typedName} onChange={(e)=>setTypedName(e.target.value)} placeholder="e.g., Sarah Mitchell" data-testid="waiver-signature"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-lg italic font-serif focus:border-shGreen outline-none" />
           </div>
 
-          {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+          {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
           <button onClick={sign} disabled={saving} data-testid="waiver-sign-button"
-                  className="w-full bg-shGreen text-bgHeader py-4 rounded font-black uppercase text-[13px] tracking-widest shadow-xl hover:bg-shGreen/90 disabled:opacity-50">
+                  className="w-full bg-shGreen text-bgHeader py-4 rounded font-black uppercase text-[15px] tracking-widest shadow-xl hover:bg-shGreen/90 disabled:opacity-50">
             {saving?"Signing…":"Sign & Submit Waiver"}
           </button>
         </div>

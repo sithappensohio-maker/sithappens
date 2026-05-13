@@ -25,7 +25,7 @@ export default function Lightbox({ photos, index, onClose, onIndex }) {
         <button onClick={(e)=>{e.stopPropagation(); onIndex(index+1);}}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white text-3xl" data-testid="lightbox-next"><i className="fas fa-chevron-right" /></button>
       )}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/60 text-[13px] font-black uppercase tracking-widest">{index+1} / {photos.length}</div>
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/60 text-[15px] font-black uppercase tracking-widest">{index+1} / {photos.length}</div>
     </div>
   );
 }

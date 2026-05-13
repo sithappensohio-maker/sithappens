@@ -79,17 +79,17 @@ export default function Incidents() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Incident Reports</h3>
-          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">Permanent legal record · all bite/injury/escape events</p>
+          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Permanent legal record · all bite/injury/escape events</p>
         </div>
         <button onClick={openNew} data-testid="add-incident-button"
-                className="bg-red-500 text-white px-5 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest shadow-lg hover:bg-red-500/90">+ Log Incident</button>
+                className="bg-red-500 text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-red-500/90">+ Log Incident</button>
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <button onClick={()=>setFilter("all")} className={`px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest ${filter==="all"?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>All · {incidents.length}</button>
+        <button onClick={()=>setFilter("all")} className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${filter==="all"?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>All · {incidents.length}</button>
         {TYPES.map(t => {
           const n = incidents.filter(i=>i.type===t.key).length;
-          return <button key={t.key} onClick={()=>setFilter(t.key)} className={`px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest ${filter===t.key?"bg-shBlue text-white":t.color}`}>{t.label} · {n}</button>;
+          return <button key={t.key} onClick={()=>setFilter(t.key)} className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${filter===t.key?"bg-shBlue text-white":t.color}`}>{t.label} · {n}</button>;
         })}
       </div>
 
@@ -100,16 +100,16 @@ export default function Incidents() {
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <span className={`text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest ${typeStyle(i.type)}`}>{TYPES.find(t=>t.key===i.type)?.label || i.type}</span>
-                  <span className={`text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest ${sevStyle(i.severity)}`}>{i.severity}</span>
-                  {i.vet_required && <span className="text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-400"><i className="fas fa-stethoscope mr-1"/>Vet</span>}
-                  {i.follow_up_required && <span className="text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shOrange/15 text-shOrange"><i className="fas fa-flag mr-1"/>Follow-up</span>}
+                  <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${typeStyle(i.type)}`}>{TYPES.find(t=>t.key===i.type)?.label || i.type}</span>
+                  <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${sevStyle(i.severity)}`}>{i.severity}</span>
+                  {i.vet_required && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-400"><i className="fas fa-stethoscope mr-1"/>Vet</span>}
+                  {i.follow_up_required && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shOrange/15 text-shOrange"><i className="fas fa-flag mr-1"/>Follow-up</span>}
                 </div>
                 <p className="text-sm text-white font-black uppercase tracking-tight">{i.dog_name} <span className="text-gray-400 font-normal"> · {i.client_name}</span></p>
-                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">{i.date}{i.time?` · ${i.time}`:""} · reported by {i.reported_by}</p>
+                <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">{i.date}{i.time?` · ${i.time}`:""} · reported by {i.reported_by}</p>
                 <p className="text-sm text-gray-300 mt-3 whitespace-pre-wrap">{i.description}</p>
-                {i.action_taken && <p className="text-xs text-gray-400 mt-2"><span className="text-shBlue font-black uppercase tracking-widest text-[12px]">Action: </span>{i.action_taken}</p>}
-                {i.witnesses && <p className="text-xs text-gray-400 mt-1"><span className="text-shBlue font-black uppercase tracking-widest text-[12px]">Witnesses: </span>{i.witnesses}</p>}
+                {i.action_taken && <p className="text-xs text-gray-400 mt-2"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Action: </span>{i.action_taken}</p>}
+                {i.witnesses && <p className="text-xs text-gray-400 mt-1"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Witnesses: </span>{i.witnesses}</p>}
                 {i.photos?.length > 0 && (
                   <div className="flex gap-2 mt-3 flex-wrap">
                     {i.photos.map((p,idx)=><img key={idx} src={p} alt="" className="h-20 w-20 rounded object-cover border border-bgHover" />)}
@@ -135,7 +135,7 @@ export default function Incidents() {
 
             <div className="space-y-4">
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
                 <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})} data-testid="incident-dog-select"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -144,21 +144,21 @@ export default function Incidents() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Date</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Date</label>
                   <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
                 </div>
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Time</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Time</label>
                   <input type="time" value={form.time} onChange={(e)=>setForm({...form, time:e.target.value})} className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
                 </div>
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Type</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Type</label>
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   {TYPES.map(t => (
                     <button key={t.key} onClick={()=>setForm({...form, type:t.key})} data-testid={`incident-type-${t.key}`}
-                            className={`py-2 px-2 rounded text-[12px] font-black uppercase tracking-widest border ${form.type===t.key?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>
+                            className={`py-2 px-2 rounded text-[14px] font-black uppercase tracking-widest border ${form.type===t.key?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>
                       {t.label}
                     </button>
                   ))}
@@ -166,11 +166,11 @@ export default function Incidents() {
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Severity</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Severity</label>
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   {SEVERITIES.map(s => (
                     <button key={s.key} onClick={()=>setForm({...form, severity:s.key})} data-testid={`incident-severity-${s.key}`}
-                            className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${form.severity===s.key?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>
+                            className={`py-2 rounded text-[14px] font-black uppercase tracking-widest border ${form.severity===s.key?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>
                       {s.label}
                     </button>
                   ))}
@@ -178,19 +178,19 @@ export default function Incidents() {
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">What happened? (required)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">What happened? (required)</label>
                 <textarea value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})} rows={4} placeholder="Detailed account of the incident…" data-testid="incident-description"
                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none" />
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Action Taken</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Action Taken</label>
                 <textarea value={form.action_taken} onChange={(e)=>setForm({...form, action_taken:e.target.value})} rows={2} placeholder="What did you do? Notified owner? Vet?"
                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Witnesses</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Witnesses</label>
                 <input value={form.witnesses} onChange={(e)=>setForm({...form, witnesses:e.target.value})} placeholder="Names of anyone who saw it"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
@@ -198,16 +198,16 @@ export default function Incidents() {
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!form.vet_required} onChange={(e)=>setForm({...form, vet_required:e.target.checked})} data-testid="incident-vet" className="accent-purple-500 w-4 h-4" />
-                  <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">Vet required</span>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Vet required</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!form.follow_up_required} onChange={(e)=>setForm({...form, follow_up_required:e.target.checked})} data-testid="incident-followup" className="accent-shOrange w-4 h-4" />
-                  <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">Needs follow-up</span>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Needs follow-up</span>
                 </label>
               </div>
 
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Photos (up to 4)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Photos (up to 4)</label>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {form.photos.map((p, i) => (
                     <div key={i} className="relative">
@@ -224,12 +224,12 @@ export default function Incidents() {
                 </div>
               </div>
 
-              {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+              {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
                 <button onClick={save} data-testid="save-incident-button"
-                        className="bg-red-500 text-white px-8 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">Save Incident Report</button>
+                        className="bg-red-500 text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">Save Incident Report</button>
               </div>
             </div>
           </div>

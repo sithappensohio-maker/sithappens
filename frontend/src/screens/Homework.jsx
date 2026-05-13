@@ -39,15 +39,15 @@ export default function Homework() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Training Homework</h3>
-          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">Assign exercises to clients between sessions</p>
+          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Assign exercises to clients between sessions</p>
         </div>
-        <button onClick={openNew} data-testid="add-homework-button" className="bg-shBlue text-white px-5 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">+ Assign Homework</button>
+        <button onClick={openNew} data-testid="add-homework-button" className="bg-shBlue text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">+ Assign Homework</button>
       </div>
 
       <div className="flex gap-2">
         {["all","assigned","completed"].map(k => (
           <button key={k} onClick={()=>setFilter(k)} data-testid={`hw-filter-${k}`}
-                  className={`px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest ${filter===k?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>
+                  className={`px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest ${filter===k?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>
             {k} · {counts[k]}
           </button>
         ))}
@@ -60,16 +60,16 @@ export default function Homework() {
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <span className={`text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                  {h.due_date && <span className="text-[12px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
+                  <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
+                  {h.due_date && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
                 </div>
                 <h4 className="text-lg font-black text-white uppercase tracking-tight">{h.title}</h4>
-                <p className="text-[13px] text-shBlue font-black uppercase tracking-widest mt-1">{h.dog_name} · {h.client_name}</p>
+                <p className="text-[15px] text-shBlue font-black uppercase tracking-widest mt-1">{h.dog_name} · {h.client_name}</p>
                 {h.instructions && <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{h.instructions}</p>}
-                {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[12px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-video mr-1"/>Watch demo video</a>}
+                {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-video mr-1"/>Watch demo video</a>}
                 {h.status === "completed" && (
                   <div className="mt-3 bg-shGreen/5 border border-shGreen/20 rounded p-3">
-                    <p className="text-[12px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-check mr-1"/>Marked done {(h.completed_at||"").slice(0,10)}</p>
+                    <p className="text-[14px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-check mr-1"/>Marked done {(h.completed_at||"").slice(0,10)}</p>
                     {h.completion_note && <p className="text-xs text-gray-300 italic">"{h.completion_note}"</p>}
                     {h.completion_photo && <img src={h.completion_photo} alt="" className="mt-2 h-32 rounded object-cover border border-bgHover" />}
                   </div>
@@ -87,36 +87,36 @@ export default function Homework() {
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">Assign Homework</h4>
             <div className="space-y-4">
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
                 <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id:e.target.value})} data-testid="hw-dog"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Title</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Title</label>
                 <input value={form.title} onChange={(e)=>setForm({...form, title:e.target.value})} placeholder="e.g., Practice place command 10 min/day" data-testid="hw-title"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Instructions</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Instructions</label>
                 <textarea value={form.instructions} onChange={(e)=>setForm({...form, instructions:e.target.value})} rows={4} data-testid="hw-instructions"
                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Video URL (YouTube link to a demo, optional)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Video URL (YouTube link to a demo, optional)</label>
                 <input value={form.video_url} onChange={(e)=>setForm({...form, video_url:e.target.value})} placeholder="https://youtu.be/..." data-testid="hw-video"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Due Date (optional)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Due Date (optional)</label>
                 <input type="date" min={todayISO()} value={form.due_date} onChange={(e)=>setForm({...form, due_date:e.target.value})} data-testid="hw-due"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
               </div>
-              {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+              {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
               <div className="flex justify-end gap-3">
-                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
-                <button onClick={save} data-testid="save-homework" className="bg-shBlue text-white px-8 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">Assign</button>
+                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
+                <button onClick={save} data-testid="save-homework" className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">Assign</button>
               </div>
             </div>
           </div>

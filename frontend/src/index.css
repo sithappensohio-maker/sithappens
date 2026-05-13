@@ -14,7 +14,7 @@
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-html { font-size: 17px; } /* nudges all rem-based Tailwind sizes (xs/sm/base/lg…) ~6% larger for readability */
+html { font-size: 18.5px; } /* nudges all rem-based Tailwind sizes (xs/sm/base/lg…) ~16% larger for readability */
 body {
   background: var(--bg-base);
   color: #e2e8f0;
