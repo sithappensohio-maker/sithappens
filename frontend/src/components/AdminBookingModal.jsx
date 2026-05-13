@@ -38,7 +38,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     })();
   }, [existing]);
 
-  // Auto-detect conflicts when dog/date change
+  // Auto-detect conflicts when dog/date/client change. Keyed on clientId so
+  // when the user switches clients (which auto-resets dogId via clientDogs),
+  // the effect reliably re-fires once dogId stabilises.
   useEffect(() => {
     if (!dogId || !date) { setConflicts([]); return; }
     const t = setTimeout(async () => {
@@ -46,9 +48,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         const { data } = await api.get("/bookings/conflicts", { params: { dog_id: dogId, date_str: date } });
         setConflicts((data.conflicts || []).filter(c => c.id !== existing?.id));
       } catch { setConflicts([]); }
-    }, 200);
+    }, 250);
     return () => clearTimeout(t);
-  }, [dogId, date, existing]);
+  }, [clientId, dogId, date, existing]);
 
   const clientDogs = useMemo(() => dogs.filter(d => d.owner_id === clientId), [dogs, clientId]);
   useEffect(() => {
@@ -131,7 +133,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          {!isEdit && conflicts.length > 0 && (
+          {conflicts.length > 0 && (
             <div className="text-[10px] font-black uppercase tracking-widest rounded p-3 bg-shOrange/15 text-shOrange border border-shOrange/40" data-testid="booking-conflicts">
               <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
               <ul className="mt-2 ml-5 list-disc space-y-1">
@@ -216,7 +218,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
             <button onClick={submit} disabled={saving || !dogId} data-testid="ab-submit"
                     className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
-              {saving ? "Saving…" : (checkInNow ? "Book & Check In" : "Create Booking")}
+              {saving ? "Saving…" : (isEdit ? "Save Changes" : (checkInNow ? "Book & Check In" : "Create Booking"))}
             </button>
           </div>
         </div>
