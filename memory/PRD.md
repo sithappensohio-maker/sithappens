@@ -49,6 +49,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Pup Report Cards** — admin uploads up to 3 photos, taps mood tags, adds note; client sees it in portal under each booking
 - ✅ 30/30 backend tests passing (Sprint 1 regression + Sprint 2 new endpoints)
 
+## Sprint 3 — Settings + Scheduling Power-ups (2026-01)
+- ✅ Updated to higher-res transparent-bg logo
+- ✅ **Settings panel** with 6 tabs (admin sidebar nav)
+  - Hours: per-day open/close per service (business, daycare, training; boarding 24/7)
+  - Capacity & Kennels: daycare cap, boarding cap, editable kennel/room list
+  - Booking Rules: max advance days, cancellation cutoff hours, auto-approve toggle, credit cost per service
+  - Vaccines: toggle which vaccines are required (rabies/bordetella/dhpp/lepto/flu/heartworm) + alert threshold days
+  - Mood Tags: edit pill list for report cards
+  - Account: change admin password
+- ✅ **Recurring bookings** — clients pick start date + repeat-until + weekdays (M-S grid)
+- ✅ **Drag-and-drop calendar** — admin can drag bookings to new dates (auto-rescheduled)
+- ✅ **Training as a service** alongside daycare/boarding (purple chip on calendar)
+- ✅ All booking logic now reads from settings (multi-vaccine, costs, capacities, auto-approve, cutoffs)
+- ✅ 48/48 backend tests passing (Sprint 1+2+3 regression)
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)
