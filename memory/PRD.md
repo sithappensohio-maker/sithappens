@@ -41,6 +41,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Client Portal with booking flow + credit display
 - ✅ 100% backend tests passing (20/20), frontend smoke tested
 
+## Sprint 2 — Brand Kit + Day-of Toolkit (2026-01)
+- ✅ Husky logo branding on login, admin sidebar, and client portal
+- ✅ Tagline "Dog Training • Daycare • Boarding" + new browser title + favicon
+- ✅ **Vaccine Alerts Banner** on dashboard (expired/missing/expiring rabies) with 30-day dismiss
+- ✅ **Check-in / Check-out Board** replaces dashboard roster — auto-timestamps, status dot indicator
+- ✅ **Pup Report Cards** — admin uploads up to 3 photos, taps mood tags, adds note; client sees it in portal under each booking
+- ✅ 30/30 backend tests passing (Sprint 1 regression + Sprint 2 new endpoints)
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)
