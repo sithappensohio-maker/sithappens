@@ -3,6 +3,8 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import WaiverModal from "../components/WaiverModal";
 import Lightbox from "../components/Lightbox";
+import PortalDogModal from "../components/PortalDogModal";
+import PortalProfileModal from "../components/PortalProfileModal";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -29,6 +31,8 @@ export default function Portal() {
   const [hwNote, setHwNote] = useState("");
   const [hwPhoto, setHwPhoto] = useState("");
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
+  const [dogModal, setDogModal] = useState({ open: false, dog: null });
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -45,8 +49,10 @@ export default function Portal() {
       setPubSettings(sRes.data);
       setHomework(hRes.data);
       if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
+      // Only auto-open the waiver modal AFTER the user has added at least one dog
+      // (otherwise the onboarding banner takes them through profile → dog → waiver in order).
       const needsSign = !wRes.data?.signed || wRes.data?.needs_resign;
-      if (needsSign && sRes.data?.waiver_required_for_booking) setShowWaiver(true);
+      if (needsSign && sRes.data?.waiver_required_for_booking && dRes.data.length > 0) setShowWaiver(true);
       await reloadUser();
     } catch {}
   }, [bookDogId, reloadUser]);
@@ -125,6 +131,13 @@ export default function Portal() {
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
   const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
 
+  // Onboarding checklist — show until all complete
+  const profileComplete = !!(client?.phone && client?.address);
+  const hasDog = dogs.length > 0;
+  const waiverDone = waiver?.signed && !waiver?.needs_resign;
+  const onboardingDone = profileComplete && hasDog && waiverDone;
+  const onboardingStep = !profileComplete ? 1 : !hasDog ? 2 : !waiverDone ? 3 : 4;
+
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
       <header className="bg-bgHeader border-b border-bgHover h-24 flex items-center justify-between px-8">
@@ -138,12 +151,34 @@ export default function Portal() {
         <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full grid grid-cols-1 md:grid-cols-3 gap-8">
+      <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full">
+        {!onboardingDone && (
+          <div className="mb-6 bg-gradient-to-br from-shGreen/15 via-bgPanel to-shBlue/15 border border-shGreen/40 rounded-xl p-6 shadow-2xl" data-testid="onboarding-banner">
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h3 className="text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
+                <p className="text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
+              </div>
+              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[13px] font-black uppercase tracking-widest px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <OnboardStep n={1} done={profileComplete} active={onboardingStep===1} title="Complete your profile" desc="Add your phone, address and emergency contact." cta="Edit Profile" onClick={()=>setProfileOpen(true)} testId="onb-profile" />
+              <OnboardStep n={2} done={hasDog} active={onboardingStep===2} title="Add your dog(s)" desc="Tell us about your pup — breed, age, and vaccinations (rabies expiration is required)." cta="Add a Dog" onClick={()=>setDogModal({open:true, dog:null})} testId="onb-adddog" disabled={onboardingStep<2} />
+              <OnboardStep n={3} done={waiverDone} active={onboardingStep===3} title="Sign the waiver" desc="A quick e-signature so we're all set legally." cta="Sign Waiver" onClick={()=>setShowWaiver(true)} testId="onb-waiver" disabled={onboardingStep<3} />
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
           <div className="bg-bgPanel p-6 rounded-xl border border-bgHover text-center shadow-2xl" data-testid="credits-card">
             <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Available Credits</p>
             <p className="text-5xl font-black text-shGreen mt-2">{credits}</p>
             <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-2">Each day = 1 credit</p>
+            <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
+                    className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
+              <i className="fas fa-user-pen mr-2"/>My Profile
+            </button>
           </div>
 
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
@@ -233,20 +268,36 @@ export default function Portal() {
 
         <div className="col-span-2 space-y-6">
           <div>
-            <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Dogs</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Dogs</h2>
+              <button onClick={()=>setDogModal({open:true, dog:null})} data-testid="portal-add-dog"
+                      className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow hover:bg-shGreen/90">
+                <i className="fas fa-plus mr-1"/>Add a Dog
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="portal-dogs">
-              {dogs.length === 0 && <div className="text-gray-500 text-xs font-black uppercase">No dogs on file. Contact us to add one.</div>}
+              {dogs.length === 0 && (
+                <div className="md:col-span-2 bg-bgPanel border border-dashed border-bgHover rounded-xl p-8 text-center">
+                  <i className="fas fa-paw text-shGreen text-3xl mb-3"/>
+                  <p className="text-sm font-black text-white uppercase tracking-tight">No dogs added yet</p>
+                  <p className="text-[14px] text-gray-400 mt-1">Click "Add a Dog" above to tell us about your pup.</p>
+                </div>
+              )}
               {dogs.map(d => (
-                <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg">
+                <button key={d.id} onClick={()=>setDogModal({open:true, dog:d})} data-testid={`portal-dog-${d.id}`}
+                        className="text-left bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg hover:border-shGreen transition group">
                   {d.photo
                     ? <img src={d.photo} alt={d.name} className="h-32 w-full object-cover" />
                     : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
                   <div className="p-4">
-                    <h4 className="text-lg font-black text-white uppercase">{d.name}</h4>
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-lg font-black text-white uppercase truncate">{d.name}</h4>
+                      <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px]"/>
+                    </div>
                     <p className="text-[14px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown"}</p>
                     <p className="text-[14px] text-gray-400 mt-2">Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=todayISO()?"text-shGreen":"text-red-400"}>{d.vaccines?.rabies||"Missing"}</span></p>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -325,6 +376,7 @@ export default function Portal() {
             </div>
           </div>
         </div>
+        </div>
       </div>
 
       {showWaiver && pubSettings?.waiver_text && (
@@ -371,6 +423,34 @@ export default function Portal() {
                   onClose={()=>setLightbox({ open: false, photos: [], index: 0 })}
                   onIndex={(i)=>setLightbox(l => ({ ...l, index: i }))} />
       )}
+      {dogModal.open && (
+        <PortalDogModal dog={dogModal.dog}
+                        onClose={()=>setDogModal({open:false, dog:null})}
+                        onSaved={loadAll} />
+      )}
+      {profileOpen && client && (
+        <PortalProfileModal client={client}
+                            onClose={()=>setProfileOpen(false)}
+                            onSaved={loadAll} />
+      )}
+    </div>
+  );
+}
+
+function OnboardStep({ n, done, active, title, desc, cta, onClick, testId, disabled = false }) {
+  return (
+    <div className={`rounded-lg p-4 border ${done ? "bg-shGreen/10 border-shGreen/40" : active ? "bg-shBlue/10 border-shBlue/50" : "bg-bgBase/40 border-bgHover"}`}>
+      <div className="flex items-center gap-3 mb-2">
+        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[14px] font-black ${done ? "bg-shGreen text-bgHeader" : active ? "bg-shBlue text-white" : "bg-bgHover text-gray-400"}`}>
+          {done ? <i className="fas fa-check"/> : n}
+        </div>
+        <p className="text-sm font-black text-white uppercase tracking-tight">{title}</p>
+      </div>
+      <p className="text-[14px] text-gray-300 leading-snug mb-3">{desc}</p>
+      <button onClick={onClick} disabled={disabled || done} data-testid={testId}
+              className={`w-full py-2 rounded font-black text-[13px] uppercase tracking-widest transition ${done ? "bg-shGreen/20 text-shGreen cursor-default" : disabled ? "bg-bgBase text-gray-600 cursor-not-allowed border border-bgHover" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
+        {done ? "Complete" : cta}
+      </button>
     </div>
   );
 }

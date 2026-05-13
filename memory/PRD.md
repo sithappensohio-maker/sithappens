@@ -98,6 +98,15 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **ErrorBoundary** — Wraps `<App />` with a crash boundary that offers "Clear session & reload" (removes `sh_token` + reloads) — protects against stale state crashes during deploys.
 - ✅ 81/81 backend tests passing (Sprint 1-7 regression incl. 10 new Sprint 6 tests)
 
+## Sprint 8 — Client Self-Signup + Onboarding (2026-02)
+- ✅ **Auto-link client record on `/auth/register`** — registering through the portal now creates BOTH a `users` row and a linked `clients` record (email/name pre-filled), so new prospects can self-serve immediately
+- ✅ **Onboarding banner** with 3-step checklist (Profile → Add Dog → Sign Waiver) — friendly tone, step indicator, gated CTAs until prior step done
+- ✅ **`PortalProfileModal`** — client edits own name/address/phone/emergency contact via `PUT /api/portal/me` (keeps user.name in sync)
+- ✅ **`PortalDogModal`** — client adds/edits own dog: name, breed, age, birthday, sex, fixed, vaccines (rabies/bordetella/dhpp), photo, vet, notes. Backed by new `POST /api/portal/dogs` + `PUT /api/portal/dogs/{id}` that enforce owner scope. Admin-only fields (training_skills, feeding_schedule, medications) excluded from client-editable model.
+- ✅ Dog cards in portal are now clickable → reopen edit modal. "Add a Dog" prominent button.
+- ✅ Waiver auto-popup deferred until client has added at least one dog (so onboarding banner controls the natural order)
+- ✅ **`/app/backend/reset_db.py`** — one-shot reset script for going to production (wipes all business data, keeps admin)
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)

@@ -256,13 +256,27 @@ async def register(body: RegisterIn):
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    # Auto-create a linked client record so they can self-manage profile + dogs
+    client_id = str(uuid.uuid4())
+    client_doc = {
+        "id": client_id,
+        "name": body.name,
+        "address": "",
+        "phone": "",
+        "email": email,
+        "emerg": "",
+        "credits": 0,
+        "waiver": False,
+        "created_at": now_iso(),
+    }
+    await db.clients.insert_one(client_doc)
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
         "password_hash": hash_password(body.password),
         "name": body.name,
         "role": "client",
-        "client_id": None,
+        "client_id": client_id,
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
@@ -687,6 +701,79 @@ async def portal_me(user: dict = Depends(get_current_user)):
         # client without linked record - return zero
         return {"client": {"id": "", "name": user.get("name"), "credits": 0}}
     return {"client": client}
+
+
+# -------- Portal self-service: profile + dogs --------
+class PortalProfileIn(BaseModel):
+    name: str = Field(min_length=1)
+    address: Optional[str] = ""
+    phone: Optional[str] = ""
+    emerg: Optional[str] = ""
+
+class PortalDogIn(BaseModel):
+    """Fields a client is allowed to set on their own dog. Excludes training_skills, feeding_schedule, medications which stay admin-only."""
+    name: str = Field(min_length=1)
+    breed: Optional[str] = ""
+    age_y: int = 0
+    age_m: int = 0
+    birthday: Optional[str] = ""
+    sex: Literal["Male", "Female"] = "Male"
+    fixed: Literal["Yes", "No"] = "No"
+    vaccines: Vaccines = Field(default_factory=Vaccines)
+    notes: Optional[str] = ""
+    photo: Optional[str] = ""
+    vet_name: Optional[str] = ""
+    vet_phone: Optional[str] = ""
+
+async def _require_client_with_record(user: dict) -> str:
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client record linked. Contact your trainer.")
+    return cid
+
+@api.put("/portal/me")
+async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    update = body.model_dump()
+    await db.clients.update_one({"id": cid}, {"$set": update})
+    # also keep user.name in sync
+    await db.users.update_one({"id": user["id"]}, {"$set": {"name": body.name}})
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    return {"client": client}
+
+@api.post("/portal/dogs", response_model=DogOut)
+async def portal_create_dog(body: PortalDogIn, user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "owner_id": cid,
+        "feeding_schedule": [],
+        "medications": [],
+        "training_skills": [],
+        "photos": [],
+        "training_logs": [],
+        "created_at": now_iso(),
+    })
+    await db.dogs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.put("/portal/dogs/{dog_id}", response_model=DogOut)
+async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if existing.get("owner_id") != cid:
+        raise HTTPException(status_code=403, detail="Not your dog")
+    update = body.model_dump()
+    await db.dogs.update_one({"id": dog_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
 
 
 @api.post("/bookings/{booking_id}/check-in", response_model=BookingOut)
