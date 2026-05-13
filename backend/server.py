@@ -140,6 +140,28 @@ class TrainingLog(BaseModel):
     note: str
     tags: List[str] = []
 
+class FeedingItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    time: str = ""           # HH:MM
+    amount: str = ""         # "2 cups"
+    food_type: str = ""      # "Kibble - Purina Pro Plan"
+    notes: str = ""
+
+class MedicationItem(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str = ""
+    dosage: str = ""
+    times: List[str] = []    # ["08:00","20:00"]
+    with_food: bool = False
+    notes: str = ""
+
+class TrainingSkill(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    level: Literal["intro", "practicing", "reliable", "proofed"] = "intro"
+    notes: str = ""
+    updated_at: Optional[str] = ""
+
 class DogIn(BaseModel):
     owner_id: str
     name: str
@@ -151,7 +173,12 @@ class DogIn(BaseModel):
     fixed: Literal["Yes", "No"] = "No"
     vaccines: Vaccines = Field(default_factory=Vaccines)
     notes: Optional[str] = ""
-    photo: Optional[str] = ""  # base64 data URI
+    photo: Optional[str] = ""
+    feeding_schedule: List[FeedingItem] = []
+    medications: List[MedicationItem] = []
+    training_skills: List[TrainingSkill] = []
+    vet_name: Optional[str] = ""
+    vet_phone: Optional[str] = ""
 
 class DogOut(DogIn):
     id: str
@@ -209,6 +236,8 @@ class BookingOut(BaseModel):
     checked_out_at: Optional[str] = None
     report_card: Optional[ReportCard] = None
     kennel: Optional[str] = ""
+    dropoff_time: Optional[str] = ""
+    pickup_time: Optional[str] = ""
     cost: Optional[int] = 0
 
 class ReportCardIn(BaseModel):
@@ -1006,6 +1035,104 @@ async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# -------- Homework Assignments --------
+class HomeworkIn(BaseModel):
+    dog_id: str
+    title: str = Field(min_length=2)
+    instructions: str = ""
+    video_url: Optional[str] = ""
+    due_date: Optional[str] = ""
+
+class HomeworkCompleteIn(BaseModel):
+    note: Optional[str] = ""
+    photo: Optional[str] = ""
+
+@api.get("/homework")
+async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional[str] = None):
+    q = {}
+    if user.get("role") != "admin":
+        q["client_id"] = user.get("client_id")
+    if dog_id:
+        q["dog_id"] = dog_id
+    items = await db.homework.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return items
+
+@api.post("/homework")
+async def create_homework(body: HomeworkIn, user: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "status": "assigned",
+        "created_at": now_iso(),
+        "assigned_by": user.get("name", "Admin"),
+        "completed_at": None,
+        "completion_note": "",
+        "completion_photo": "",
+    })
+    await db.homework.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.delete("/homework/{homework_id}")
+async def delete_homework(homework_id: str, _: dict = Depends(require_admin)):
+    await db.homework.delete_one({"id": homework_id})
+    return {"ok": True}
+
+@api.post("/homework/{homework_id}/complete")
+async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: dict = Depends(get_current_user)):
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    update = {
+        "status": "completed",
+        "completed_at": now_iso(),
+        "completion_note": body.note or "",
+        "completion_photo": body.photo or "",
+    }
+    await db.homework.update_one({"id": homework_id}, {"$set": update})
+    hw.update(update)
+    return hw
+
+
+# -------- Run Sheet --------
+@api.get("/run-sheet")
+async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = None):
+    target = date_str or date.today().isoformat()
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
+    ).to_list(2000)
+    relevant = []
+    for b in bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if target in days:
+            relevant.append(b)
+
+    # Enrich with dog care data + client
+    out = []
+    for b in relevant:
+        dog = await db.dogs.find_one({"id": b["dog_id"]}, {"_id": 0})
+        client = await db.clients.find_one({"id": b["client_id"]}, {"_id": 0})
+        out.append({
+            **b,
+            "dog": dog,
+            "client_phone": (client or {}).get("phone", ""),
+            "client_emerg": (client or {}).get("emerg", ""),
+        })
+    # Sort: boarding first, then daycare, then training; secondary by dropoff_time
+    order = {"boarding": 0, "daycare": 1, "training": 2}
+    out.sort(key=lambda x: (order.get(x["service_type"], 9), x.get("dropoff_time") or "z"))
+    return {"date": target, "bookings": out}
+
+
 # -------- Dashboard --------
 @api.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(require_admin)):
@@ -1031,6 +1158,8 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     today_bookings = await db.bookings.find(
         {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
     ).to_list(2000)
+    # Build dog map for enrichment
+    dog_map = {d["id"]: d for d in dogs}
     daycare_today = 0
     boarding_today = 0
     training_today = 0
@@ -1044,7 +1173,9 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
                 boarding_today += 1
             elif b["service_type"] == "training":
                 training_today += 1
-            roster.append(b)
+            enriched = dict(b)
+            enriched["dog"] = dog_map.get(b["dog_id"], {})
+            roster.append(enriched)
     return {
         "daycare_occupancy": daycare_today,
         "daycare_capacity": daycare_cap,

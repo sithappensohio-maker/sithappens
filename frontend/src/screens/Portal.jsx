@@ -23,19 +23,25 @@ export default function Portal() {
   const [waiver, setWaiver] = useState(null); // {signed, current_version, signature, needs_resign}
   const [pubSettings, setPubSettings] = useState(null);
   const [showWaiver, setShowWaiver] = useState(false);
+  const [homework, setHomework] = useState([]);
+  const [hwModal, setHwModal] = useState(null);
+  const [hwNote, setHwNote] = useState("");
+  const [hwPhoto, setHwPhoto] = useState("");
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, bRes, wRes, sRes] = await Promise.all([
+      const [dRes, bRes, wRes, sRes, hRes] = await Promise.all([
         api.get("/dogs"),
         api.get("/bookings"),
         api.get("/waivers/me"),
         api.get("/settings/public"),
+        api.get("/homework"),
       ]);
       setDogs(dRes.data);
       setBookings(bRes.data);
       setWaiver(wRes.data);
       setPubSettings(sRes.data);
+      setHomework(hRes.data);
       if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
       const needsSign = !wRes.data?.signed || wRes.data?.needs_resign;
       if (needsSign && sRes.data?.waiver_required_for_booking) setShowWaiver(true);
@@ -98,6 +104,20 @@ export default function Portal() {
   const cancel = async (id) => {
     if (!window.confirm("Cancel this booking?")) return;
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
+  };
+
+  const completeHw = async () => {
+    try {
+      await api.post(`/homework/${hwModal.id}/complete`, { note: hwNote, photo: hwPhoto });
+      setHwModal(null); setHwNote(""); setHwPhoto(""); loadAll();
+    } catch (e) { alert(formatErr(e.response?.data?.detail)); }
+  };
+
+  const onHwFile = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setHwPhoto(r.result);
+    r.readAsDataURL(f);
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
@@ -229,6 +249,37 @@ export default function Portal() {
             </div>
           </div>
 
+          {homework.length > 0 && (
+            <div data-testid="portal-homework">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
+              <div className="space-y-3">
+                {homework.map(h => (
+                  <div key={h.id} className={`bg-bgPanel border rounded-xl p-4 ${h.status==="completed"?"border-shGreen/40":"border-shOrange/40"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
+                          <span className="text-[10px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
+                          {h.due_date && <span className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
+                        </div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
+                        {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
+                        {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[10px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
+                      </div>
+                      {h.status !== "completed" && (
+                        <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
+                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[10px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
+                      )}
+                    </div>
+                    {h.status === "completed" && h.completion_note && (
+                      <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Bookings</h2>
             <div className="space-y-3" data-testid="portal-bookings">
@@ -281,6 +332,35 @@ export default function Portal() {
           onClose={()=>setShowWaiver(false)}
           allowClose={waiver?.signed && !waiver?.needs_resign}
         />
+      )}
+
+      {hwModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-8 shadow-2xl animate-slide-in">
+            <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-1">Mark Done</h4>
+            <p className="text-[10px] text-shBlue font-black uppercase tracking-widest mb-4">{hwModal.title}</p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">How did it go? (optional)</label>
+                <textarea value={hwNote} onChange={(e)=>setHwNote(e.target.value)} rows={3} placeholder="Feedback for your trainer" data-testid="hw-complete-note"
+                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Proof Photo (optional)</label>
+                <div className="mt-2 flex items-center gap-3">
+                  {hwPhoto && <img src={hwPhoto} alt="" className="h-20 w-20 rounded object-cover border border-bgHover" />}
+                  <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
+                    Upload <input type="file" accept="image/*" onChange={onHwFile} className="hidden" />
+                  </label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3">
+                <button onClick={()=>setHwModal(null)} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
+                <button onClick={completeHw} data-testid="hw-complete-button" className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl">Mark Complete</button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

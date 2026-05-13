@@ -86,13 +86,20 @@ export default function Dashboard() {
           {(stats.today_roster || []).map(b => {
             const onPremises = b.checked_in_at && !b.checked_out_at;
             const done = !!b.checked_out_at;
+            const d = b.dog || {};
+            const careIcons = [];
+            if (d.feeding_schedule?.length) careIcons.push({i:"fa-bowl-food",c:"text-shGreen",n:d.feeding_schedule.length});
+            if (d.medications?.length) careIcons.push({i:"fa-pills",c:"text-purple-400",n:d.medications.length});
             return (
               <div key={b.id} className="px-6 py-4 flex items-center justify-between hover:bg-bgBase/30 transition" data-testid={`roster-${b.id}`}>
                 <div className="flex items-center gap-4">
                   <div className={`w-3 h-3 rounded-full ${done?"bg-gray-500":onPremises?"bg-shGreen animate-pulse":"bg-shOrange"}`}/>
                   <div>
-                    <p className="text-sm font-black text-white uppercase tracking-tight">{b.dog_name}</p>
-                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}</p>
+                    <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
+                      {b.dog_name}
+                      {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[10px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}{b.kennel?` · ${b.kennel}`:""}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">

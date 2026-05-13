@@ -9,6 +9,8 @@ import Bookings from "./screens/Bookings";
 import Portal from "./screens/Portal";
 import Settings from "./screens/Settings";
 import Incidents from "./screens/Incidents";
+import RunSheet from "./screens/RunSheet";
+import Homework from "./screens/Homework";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -18,9 +20,11 @@ function AdminShell() {
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
-    { id: "bookings", label: "Bookings", icon: "fa-clipboard-list" },
+    { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
+    { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
     { id: "clients", label: "Clients", icon: "fa-users" },
     { id: "dogs", label: "Dogs", icon: "fa-paw" },
+    { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
   ];
@@ -82,9 +86,11 @@ function AdminShell() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           {tab === "dashboard" && <Dashboard />}
           {tab === "schedule" && <Schedule />}
+          {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}
           {tab === "clients" && <Clients />}
           {tab === "dogs" && <Dogs />}
+          {tab === "homework" && <Homework />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}
         </div>

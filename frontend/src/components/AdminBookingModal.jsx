@@ -13,6 +13,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [date, setDate] = useState(defaultDate || todayISO());
   const [endDate, setEndDate] = useState("");
   const [kennel, setKennel] = useState("");
+  const [dropoffTime, setDropoffTime] = useState("");
+  const [pickupTime, setPickupTime] = useState("");
   const [notes, setNotes] = useState("");
   const [checkInNow, setCheckInNow] = useState(defaultCheckIn);
   const [overrideVaccines, setOverrideVaccines] = useState(false);
@@ -55,6 +57,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         end_date: serviceType === "boarding" ? (endDate || date) : null,
         service_type: serviceType,
         kennel: serviceType === "boarding" ? kennel : "",
+        dropoff_time: dropoffTime || "",
+        pickup_time: pickupTime || "",
         notes,
         override_vaccines: overrideVaccines,
         override_capacity: overrideCapacity,
@@ -139,6 +143,19 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               </select>
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
+              <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+            </div>
+            <div>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
+              <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+            </div>
+          </div>
 
           <div>
             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
