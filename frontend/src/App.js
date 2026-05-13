@@ -57,21 +57,21 @@ function AdminShell() {
     <>
       <div className="p-4 border-b border-bgHover text-center">
         <img src="/logo.png" alt="Sit Happens" className="h-20 mx-auto" data-testid={`${prefix}sidebar-logo`} />
-        <p className="text-[9px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Daycare • Boarding</p>
+        <p className="text-[13px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Daycare • Boarding</p>
       </div>
       <nav className="flex-grow p-4 space-y-1 overflow-y-auto">
         {navItems.map(n => (
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
-                  className={`w-full text-left py-3 px-4 rounded-lg text-[11px] font-black uppercase tracking-widest transition ${tab===n.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
+                  className={`w-full text-left py-3 px-4 rounded-lg text-[13px] font-black uppercase tracking-widest transition ${tab===n.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
             <i className={`fas ${n.icon} mr-3 w-4`} /> {n.label}
           </button>
         ))}
       </nav>
       <div className="p-4 border-t border-bgHover">
         <div className="bg-bgPanel rounded-lg p-3">
-          <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest">Signed in</p>
+          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Signed in</p>
           <p className="text-xs text-white font-black truncate">{user.name}</p>
-          <button onClick={logout} data-testid={`${prefix}admin-logout`} className="mt-2 w-full text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">Logout</button>
+          <button onClick={logout} data-testid={`${prefix}admin-logout`} className="mt-2 w-full text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">Logout</button>
         </div>
       </div>
     </>
@@ -106,9 +106,9 @@ function AdminShell() {
           </div>
           <button onClick={()=>setSearchOpen(true)} data-testid="open-search"
                   className="hidden md:flex items-center gap-2 bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-xs text-gray-400 hover:border-shBlue">
-            <i className="fas fa-search text-[10px]" />
+            <i className="fas fa-search text-[12px]" />
             <span>Search…</span>
-            <kbd className="text-[9px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
+            <kbd className="text-[13px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
           </button>
           <button onClick={()=>setSearchOpen(true)} className="md:hidden text-gray-300 p-2"><i className="fas fa-search" /></button>
         </header>

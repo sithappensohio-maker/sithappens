@@ -135,7 +135,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Dog Records</h3>
         <button onClick={openNew} data-testid="add-dog-button"
-                className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ Add Dog</button>
+                className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ Add Dog</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="dog-grid">
@@ -154,29 +154,29 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   <button onClick={()=>remove(d.id)} className="bg-black/60 text-red-400 p-2 rounded"><i className="fas fa-trash text-xs" /></button>
                 </div>
                 <h4 className="text-lg font-black text-white uppercase tracking-tight">{d.name}</h4>
-                <p className="text-[9px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
-                <p className="text-[11px] text-gray-400 mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
-                <div className="mt-3 flex items-center justify-between text-[10px] uppercase font-black tracking-widest">
+                <p className="text-[13px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
+                <p className="text-[13px] text-gray-400 mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
+                <div className="mt-3 flex items-center justify-between text-[12px] uppercase font-black tracking-widest">
                   <span className="text-gray-500">{d.sex} • {d.fixed==="Yes"?"Fixed":"Intact"} • {d.age_y}y {d.age_m}m</span>
                 </div>
-                <div className={`mt-3 ${v.bg} ${v.color} rounded p-2 text-[10px] font-black uppercase tracking-widest flex items-center justify-between`}>
+                <div className={`mt-3 ${v.bg} ${v.color} rounded p-2 text-[12px] font-black uppercase tracking-widest flex items-center justify-between`}>
                   <span><i className="fas fa-shield-virus mr-2"/>Rabies: {v.label}</span>
                   <span>{d.vaccines?.rabies || "—"}</span>
                 </div>
-                <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] font-black uppercase tracking-widest">
+                <div className="mt-2 flex flex-wrap gap-1.5 text-[13px] font-black uppercase tracking-widest">
                   {(d.feeding_schedule?.length > 0) && <span className="bg-shGreen/10 text-shGreen px-2 py-1 rounded"><i className="fas fa-bowl-food mr-1"/>{d.feeding_schedule.length} feedings</span>}
                   {(d.medications?.length > 0) && <span className="bg-purple-500/15 text-purple-400 px-2 py-1 rounded"><i className="fas fa-pills mr-1"/>{d.medications.length} meds</span>}
                   {(d.training_skills?.length > 0) && <span className="bg-shBlue/15 text-shBlue px-2 py-1 rounded"><i className="fas fa-graduation-cap mr-1"/>{d.training_skills.length} skills</span>}
                   {careCount === 0 && (!d.training_skills?.length) && <span className="text-gray-500 italic">No care profile set</span>}
                 </div>
                 <button onClick={()=>openTrain(d)} data-testid={`add-training-${d.id}`}
-                        className="mt-4 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[10px] font-black uppercase tracking-widest hover:bg-shGreen/20">
+                        className="mt-4 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/20">
                   + Training Log ({d.training_logs?.length || 0})
                 </button>
                 {d.training_logs?.length > 0 && (
                   <div className="mt-3 space-y-1 max-h-24 overflow-y-auto">
                     {d.training_logs.slice(-3).reverse().map(l => (
-                      <div key={l.id} className="text-[11px] text-gray-300 bg-bgBase rounded p-2">
+                      <div key={l.id} className="text-[13px] text-gray-300 bg-bgBase rounded p-2">
                         <span className="text-shGreen font-black">{l.date}</span> · {l.note}
                       </div>
                     ))}
@@ -202,7 +202,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
             <nav className="flex gap-1 mb-4 overflow-x-auto pb-2 border-b border-bgHover">
               {tabs.map(t => (
                 <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`dog-tab-${t.id}`}
-                        className={`shrink-0 px-3 py-2 rounded text-[10px] font-black uppercase tracking-widest ${tab===t.id?"bg-shBlue text-white":"text-gray-400 hover:bg-bgHover"}`}>
+                        className={`shrink-0 px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest ${tab===t.id?"bg-shBlue text-white":"text-gray-400 hover:bg-bgHover"}`}>
                   <i className={`fas ${t.icon} mr-1.5`} />{t.label}
                 </button>
               ))}
@@ -211,7 +211,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               {tab === "basics" && (
                 <>
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Owner</label>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Owner</label>
                     <select value={form.owner_id} onChange={(e)=>setForm({...form, owner_id: e.target.value})} data-testid="dog-owner-select"
                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                       {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -226,20 +226,20 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
+                      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
                       <select value={form.sex} onChange={(e)=>setForm({...form, sex:e.target.value})} className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                         <option>Male</option><option>Female</option>
                       </select>
                     </div>
                     <div>
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Fixed</label>
+                      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Fixed</label>
                       <select value={form.fixed} onChange={(e)=>setForm({...form, fixed:e.target.value})} className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                         <option>Yes</option><option>No</option>
                       </select>
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Photo</label>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Photo</label>
                     <div className="mt-2 flex items-center gap-3">
                       {form.photo && <img src={form.photo} alt="" className="h-16 w-16 rounded object-cover border border-bgHover" />}
                       <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
@@ -264,11 +264,11 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                 <>
                   <div data-testid="feeding-section">
                     <div className="flex justify-between items-center mb-2">
-                      <h5 className="text-[11px] font-black text-shGreen uppercase tracking-widest"><i className="fas fa-bowl-food mr-2"/>Feeding Schedule</h5>
+                      <h5 className="text-[13px] font-black text-shGreen uppercase tracking-widest"><i className="fas fa-bowl-food mr-2"/>Feeding Schedule</h5>
                       <button onClick={()=>setForm({...form, feeding_schedule:[...form.feeding_schedule, {id:uid(), time:"08:00", amount:"", food_type:"", notes:""}]})}
-                              data-testid="add-feeding" className="text-[10px] font-black uppercase text-shGreen hover:underline tracking-widest">+ Add Feeding</button>
+                              data-testid="add-feeding" className="text-[12px] font-black uppercase text-shGreen hover:underline tracking-widest">+ Add Feeding</button>
                     </div>
-                    {form.feeding_schedule.length === 0 && <p className="text-[11px] text-gray-500 italic">No feedings configured. Adds up on the daily run sheet & check-in board.</p>}
+                    {form.feeding_schedule.length === 0 && <p className="text-[13px] text-gray-500 italic">No feedings configured. Adds up on the daily run sheet & check-in board.</p>}
                     <div className="space-y-2">
                       {form.feeding_schedule.map((f, i) => (
                         <div key={f.id} className="bg-bgBase rounded p-3 grid grid-cols-12 gap-2 items-center" data-testid={`feeding-${i}`}>
@@ -284,11 +284,11 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 
                   <div data-testid="meds-section" className="border-t border-bgHover pt-4 mt-4">
                     <div className="flex justify-between items-center mb-2">
-                      <h5 className="text-[11px] font-black text-purple-400 uppercase tracking-widest"><i className="fas fa-pills mr-2"/>Medications</h5>
+                      <h5 className="text-[13px] font-black text-purple-400 uppercase tracking-widest"><i className="fas fa-pills mr-2"/>Medications</h5>
                       <button onClick={()=>setForm({...form, medications:[...form.medications, {id:uid(), name:"", dosage:"", times:["08:00"], with_food:false, notes:""}]})}
-                              data-testid="add-med" className="text-[10px] font-black uppercase text-purple-400 hover:underline tracking-widest">+ Add Medication</button>
+                              data-testid="add-med" className="text-[12px] font-black uppercase text-purple-400 hover:underline tracking-widest">+ Add Medication</button>
                     </div>
-                    {form.medications.length === 0 && <p className="text-[11px] text-gray-500 italic">No medications. Pills, drops, supplements — surface on the run sheet.</p>}
+                    {form.medications.length === 0 && <p className="text-[13px] text-gray-500 italic">No medications. Pills, drops, supplements — surface on the run sheet.</p>}
                     <div className="space-y-2">
                       {form.medications.map((m, i) => (
                         <div key={m.id} className="bg-bgBase rounded p-3 space-y-2" data-testid={`med-${i}`}>
@@ -301,7 +301,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                           <div className="flex items-center gap-4">
                             <label className="flex items-center gap-2 cursor-pointer">
                               <input type="checkbox" checked={!!m.with_food} onChange={(e)=>{const c=[...form.medications]; c[i]={...m, with_food:e.target.checked}; setForm({...form, medications:c});}} className="accent-shGreen w-4 h-4" />
-                              <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">With food</span>
+                              <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">With food</span>
                             </label>
                             <input placeholder="Notes (refrigerate, etc.)" value={m.notes} onChange={(e)=>{const c=[...form.medications]; c[i]={...m, notes:e.target.value}; setForm({...form, medications:c});}} className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-xs text-white" />
                           </div>
@@ -317,12 +317,12 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   <div className="flex flex-wrap gap-2 mb-3">
                     {STANDARD_SKILLS.filter(s => !form.training_skills.find(x => x.name.toLowerCase() === s.toLowerCase())).map(s => (
                       <button key={s} onClick={()=>setForm({...form, training_skills:[...form.training_skills, {id:uid(), name:s, level:"intro", notes:"", updated_at: new Date().toISOString()}]})}
-                              className="px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-bgBase border border-bgHover text-gray-400 hover:border-shGreen hover:text-shGreen">
+                              className="px-3 py-1.5 rounded-full text-[12px] font-black uppercase tracking-widest bg-bgBase border border-bgHover text-gray-400 hover:border-shGreen hover:text-shGreen">
                         + {s}
                       </button>
                     ))}
                   </div>
-                  {form.training_skills.length === 0 && <p className="text-[11px] text-gray-500 italic">Tap a skill above to start tracking progression.</p>}
+                  {form.training_skills.length === 0 && <p className="text-[13px] text-gray-500 italic">Tap a skill above to start tracking progression.</p>}
                   <div className="space-y-2">
                     {form.training_skills.map((sk, i) => (
                       <div key={sk.id} className="bg-bgBase rounded p-3" data-testid={`skill-${i}`}>
@@ -333,7 +333,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                         <div className="flex flex-wrap gap-1">
                           {LEVELS.map(l => (
                             <button key={l.key} onClick={()=>{const c=[...form.training_skills]; c[i]={...sk, level:l.key, updated_at:new Date().toISOString()}; setForm({...form, training_skills:c});}}
-                                    className={`px-3 py-1 rounded text-[10px] font-black uppercase tracking-widest ${sk.level===l.key?l.color:"bg-bgPanel text-gray-500 border border-bgHover"}`}>{l.label}</button>
+                                    className={`px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest ${sk.level===l.key?l.color:"bg-bgPanel text-gray-500 border border-bgHover"}`}>{l.label}</button>
                           ))}
                         </div>
                         <input placeholder="Notes / tips" value={sk.notes} onChange={(e)=>{const c=[...form.training_skills]; c[i]={...sk, notes:e.target.value}; setForm({...form, training_skills:c});}} className="w-full mt-2 bg-bgPanel border border-bgHover rounded p-2 text-xs text-white" />
@@ -346,13 +346,13 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               {tab === "gallery" && (
                 <div data-testid="gallery-section">
                   <div className="flex justify-between items-center mb-3">
-                    <h5 className="text-[11px] font-black text-shBlue uppercase tracking-widest"><i className="fas fa-images mr-2"/>Photo Gallery ({form.photos?.length || 0})</h5>
-                    <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[10px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="add-gallery-photo">
+                    <h5 className="text-[13px] font-black text-shBlue uppercase tracking-widest"><i className="fas fa-images mr-2"/>Photo Gallery ({form.photos?.length || 0})</h5>
+                    <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="add-gallery-photo">
                       <i className="fas fa-plus mr-1"/>Add Photos
                       <input type="file" accept="image/*" multiple onChange={onGalleryFiles} className="hidden" />
                     </label>
                   </div>
-                  {(!form.photos || form.photos.length === 0) && <p className="text-[11px] text-gray-500 italic">No gallery photos yet. Add memories from playtime, training, or boarding stays.</p>}
+                  {(!form.photos || form.photos.length === 0) && <p className="text-[13px] text-gray-500 italic">No gallery photos yet. Add memories from playtime, training, or boarding stays.</p>}
                   <div className="grid grid-cols-3 gap-2">
                     {(form.photos || []).map((p, i) => (
                       <div key={i} className="relative group" data-testid={`gallery-photo-${i}`}>
@@ -373,7 +373,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                     <Input label="Vet Phone" value={form.vet_phone} onChange={(v)=>setForm({...form, vet_phone:v})} />
                   </div>
                   <div>
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Notes — allergies, behaviors, fears, key codes</label>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes — allergies, behaviors, fears, key codes</label>
                     <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={6}
                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
                   </div>
@@ -381,10 +381,10 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               )}
             </div>
 
-            {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black mt-3">{err}</div>}
+            {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black mt-3">{err}</div>}
             <div className="flex justify-end gap-3 pt-3 border-t border-bgHover mt-3">
-              <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button onClick={save} data-testid="save-dog-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[10px] uppercase tracking-widest shadow-lg">Save Dog</button>
+              <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+              <button onClick={save} data-testid="save-dog-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-lg">Save Dog</button>
             </div>
           </div>
         </Modal>
@@ -395,19 +395,19 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
           <div className="space-y-4">
             <Input label="Date" type="date" value={trainForm.date} onChange={(v)=>setTrainForm({...trainForm, date:v})} />
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Note</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note</label>
               <textarea value={trainForm.note} onChange={(e)=>setTrainForm({...trainForm, note:e.target.value})} rows={3} data-testid="training-note-input"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
             </div>
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Tags (comma separated)</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Tags (comma separated)</label>
               <input value={trainForm.tags.join(", ")} onChange={(e)=>setTrainForm({...trainForm, tags: e.target.value.split(",").map(s=>s.trim()).filter(Boolean)})}
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
             </div>
-            {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+            {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={()=>setTrainOpen(null)} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button onClick={saveTrain} data-testid="save-training-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[10px] uppercase tracking-widest shadow-lg">Save Log</button>
+              <button onClick={()=>setTrainOpen(null)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+              <button onClick={saveTrain} data-testid="save-training-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-lg">Save Log</button>
             </div>
           </div>
         </Modal>
@@ -425,7 +425,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 function StatPill({ label, value, color, icon, small = false }) {
   return (
     <div className="bg-bgBase rounded p-3 border border-bgHover">
-      <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
+      <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
       <p className={`font-black mt-1 ${color} ${small ? "text-xs" : "text-xl"}`}>{value}</p>
     </div>
   );

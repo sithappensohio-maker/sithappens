@@ -35,8 +35,8 @@ export default function Schedule() {
   return (
     <div className="h-full flex flex-col gap-3 animate-slide-in" data-testid="schedule-calendar">
       <div className="flex items-center justify-between">
-        <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-arrows-up-down-left-right mr-2 text-shBlue"/>Drag any event to reschedule it</p>
-        {msg && <span className="text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-3 py-1 rounded">{msg}</span>}
+        <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-arrows-up-down-left-right mr-2 text-shBlue"/>Drag any event to reschedule it</p>
+        {msg && <span className="text-[12px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-3 py-1 rounded">{msg}</span>}
       </div>
       <div className="flex-1 bg-bgPanel p-4 rounded-xl border border-bgHover overflow-hidden">
         <FullCalendar

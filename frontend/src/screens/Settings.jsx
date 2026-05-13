@@ -62,14 +62,14 @@ export default function Settings() {
     <div className="animate-slide-in" data-testid="settings-screen">
       <div className="flex justify-between items-center mb-6">
         <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Settings</h3>
-        {msg && <span className={`text-[10px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
+        {msg && <span className={`text-[12px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
       </div>
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-6">
         <nav className="w-full md:w-56 md:shrink-0 flex md:block overflow-x-auto md:overflow-visible gap-1 md:space-y-1 md:gap-0 pb-2 md:pb-0">
           {tabs.map(t => (
             <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`settings-tab-${t.id}`}
-                    className={`shrink-0 md:w-full text-left py-3 px-4 rounded-lg text-[11px] font-black uppercase tracking-widest transition whitespace-nowrap ${tab===t.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
+                    className={`shrink-0 md:w-full text-left py-3 px-4 rounded-lg text-[13px] font-black uppercase tracking-widest transition whitespace-nowrap ${tab===t.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
               <i className={`fas ${t.icon} mr-3 w-4`} /> {t.label}
             </button>
           ))}
@@ -85,7 +85,7 @@ export default function Settings() {
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>
-                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Signed in as</p>
+                <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Signed in as</p>
                 <p className="text-sm text-white font-black mt-1">{user.name} · {user.email}</p>
               </div>
               <div className="border-t border-bgHover pt-5 space-y-3">
@@ -93,8 +93,8 @@ export default function Settings() {
                 <Field label="Current Password" type="password" value={pw.current} onChange={(v)=>setPw({...pw,current:v})} testId="current-pw" />
                 <Field label="New Password" type="password" value={pw.next} onChange={(v)=>setPw({...pw,next:v})} testId="new-pw" />
                 <Field label="Confirm New Password" type="password" value={pw.confirm} onChange={(v)=>setPw({...pw,confirm:v})} testId="confirm-pw" />
-                {pwMsg && <div className={`text-[10px] font-black uppercase tracking-widest p-2 rounded ${pwMsg==="Password updated"?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>{pwMsg}</div>}
-                <button onClick={changePw} data-testid="save-password" className="bg-shBlue text-white px-6 py-2 rounded font-black text-[10px] uppercase tracking-widest shadow">Update Password</button>
+                {pwMsg && <div className={`text-[12px] font-black uppercase tracking-widest p-2 rounded ${pwMsg==="Password updated"?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>{pwMsg}</div>}
+                <button onClick={changePw} data-testid="save-password" className="bg-shBlue text-white px-6 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow">Update Password</button>
               </div>
             </div>
           )}
@@ -107,7 +107,7 @@ export default function Settings() {
 function Field({ label, value, onChange, type="text", testId }) {
   return (
     <div>
-      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{label}</label>
+      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">{label}</label>
       <input type={type} value={value} onChange={(e)=>onChange(e.target.value)} data-testid={testId}
              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
     </div>
@@ -139,7 +139,7 @@ function HoursPanel({ s, save, saving }) {
       ))}
 
       <Section title="Boarding" subtitle="Boarding is treated as 24/7 by default. Capacity is enforced per night.">
-        <div className="text-[10px] font-black text-shGreen uppercase tracking-widest bg-shGreen/10 rounded p-3">24/7 — overnight stays allowed</div>
+        <div className="text-[12px] font-black text-shGreen uppercase tracking-widest bg-shGreen/10 rounded p-3">24/7 — overnight stays allowed</div>
       </Section>
 
       <SaveBar onSave={()=>save({ business_hours: biz, service_hours: svc })} saving={saving} />
@@ -150,7 +150,7 @@ function HoursPanel({ s, save, saving }) {
 function DayRow({ day, val, onChange, testPrefix }) {
   return (
     <div className="grid grid-cols-12 items-center gap-3 py-2 border-b border-bgHover/30">
-      <div className="col-span-3 text-[11px] font-black uppercase tracking-widest text-gray-300">{day}</div>
+      <div className="col-span-3 text-[13px] font-black uppercase tracking-widest text-gray-300">{day}</div>
       <div className="col-span-3">
         <input type="time" value={val.open||""} disabled={val.closed} onChange={(e)=>onChange("open", e.target.value)} data-testid={`${testPrefix}-open`}
                className="w-full bg-bgBase border border-bgHover rounded p-2 text-xs text-white disabled:opacity-40" style={{colorScheme:"dark"}} />
@@ -159,7 +159,7 @@ function DayRow({ day, val, onChange, testPrefix }) {
         <input type="time" value={val.close||""} disabled={val.closed} onChange={(e)=>onChange("close", e.target.value)} data-testid={`${testPrefix}-close`}
                className="w-full bg-bgBase border border-bgHover rounded p-2 text-xs text-white disabled:opacity-40" style={{colorScheme:"dark"}} />
       </div>
-      <label className="col-span-3 flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-gray-400 cursor-pointer">
+      <label className="col-span-3 flex items-center gap-2 text-[12px] font-black uppercase tracking-widest text-gray-400 cursor-pointer">
         <input type="checkbox" checked={!!val.closed} onChange={(e)=>onChange("closed", e.target.checked)} data-testid={`${testPrefix}-closed`} className="accent-shOrange" />
         Closed
       </label>
@@ -193,7 +193,7 @@ function CapacityPanel({ s, save, saving }) {
             <input value={newK} onChange={(e)=>setNewK(e.target.value)} placeholder="New kennel/room name"
                    className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-sm text-white" data-testid="new-kennel-input" />
             <button onClick={()=>{ if(newK.trim()){ setKennels([...kennels, newK.trim()]); setNewK(""); } }} data-testid="add-kennel"
-                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[10px] uppercase tracking-widest">+ Add</button>
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest">+ Add</button>
           </div>
         </div>
       </Section>
@@ -216,7 +216,7 @@ function RulesPanel({ s, save, saving }) {
         </div>
         <label className="flex items-center gap-3 mt-4 cursor-pointer">
           <input type="checkbox" checked={!!r.auto_approve} onChange={(e)=>set("auto_approve", e.target.checked)} data-testid="auto-approve" className="accent-shGreen w-4 h-4" />
-          <span className="text-[11px] font-black uppercase tracking-widest text-gray-300">Auto-approve client bookings (skip pending step)</span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-300">Auto-approve client bookings (skip pending step)</span>
         </label>
       </Section>
 
@@ -243,7 +243,7 @@ function VaccinesPanel({ s, save, saving }) {
         <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
           {VAX_OPTIONS.map(v => (
             <button key={v.key} onClick={()=>toggle(v.key)} data-testid={`vax-${v.key}`}
-                    className={`py-3 px-4 rounded border text-[11px] font-black uppercase tracking-widest transition ${req.includes(v.key)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
+                    className={`py-3 px-4 rounded border text-[13px] font-black uppercase tracking-widest transition ${req.includes(v.key)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
               {v.label}
             </button>
           ))}
@@ -267,7 +267,7 @@ function TagsPanel({ s, save, saving }) {
           {tags.map((t,i)=>(
             <div key={i} className="flex items-center gap-2 bg-shGreen/15 text-shGreen border border-shGreen/40 rounded-full pl-3 pr-1 py-1">
               <input value={t} onChange={(e)=>{const c=[...tags]; c[i]=e.target.value; setTags(c);}}
-                     className="bg-transparent text-[11px] font-black uppercase tracking-widest outline-none w-32" data-testid={`tag-${i}`} />
+                     className="bg-transparent text-[13px] font-black uppercase tracking-widest outline-none w-32" data-testid={`tag-${i}`} />
               <button onClick={()=>setTags(tags.filter((_,j)=>j!==i))} className="text-shGreen/70 hover:text-red-400 px-1">×</button>
             </div>
           ))}
@@ -276,7 +276,7 @@ function TagsPanel({ s, save, saving }) {
           <input value={newT} onChange={(e)=>setNewT(e.target.value)} placeholder="Add a tag (e.g. Loves the Hose)"
                  className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-sm text-white" data-testid="new-tag-input" />
           <button onClick={()=>{ if(newT.trim()){ setTags([...tags, newT.trim()]); setNewT(""); } }} data-testid="add-tag"
-                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[10px] uppercase tracking-widest">+ Add Tag</button>
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest">+ Add Tag</button>
         </div>
       </Section>
       <SaveBar onSave={()=>save({ mood_tags: tags })} saving={saving} />
@@ -309,14 +309,14 @@ function WaiverPanel({ s, save, saving }) {
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={required} onChange={(e)=>setRequired(e.target.checked)} data-testid="waiver-required" className="accent-shGreen w-4 h-4" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Require waiver before client can book</span>
+            <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">Require waiver before client can book</span>
           </label>
-          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Current version: v{version}</span>
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-500">Current version: v{version}</span>
         </div>
       </Section>
 
       <Section title="Signed Waivers" subtitle="Bump version after material changes to require all clients to re-sign.">
-        <button onClick={()=>setShowSigs(!showSigs)} className="mb-3 text-[10px] font-black uppercase tracking-widest text-shBlue hover:underline">
+        <button onClick={()=>setShowSigs(!showSigs)} className="mb-3 text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">
           {showSigs?"Hide":"Show"} {signatures.length} signature{signatures.length===1?"":"s"}
         </button>
         {showSigs && (
@@ -326,9 +326,9 @@ function WaiverPanel({ s, save, saving }) {
               <div key={sig.id} className="bg-bgBase rounded p-3 text-xs flex flex-col md:flex-row md:items-center justify-between gap-2" data-testid={`sig-${sig.id}`}>
                 <div>
                   <p className="text-white font-black">{sig.typed_name} <span className="text-gray-500 font-normal">· {sig.client_name}</span></p>
-                  <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest mt-1">Signed {(sig.signed_at||"").slice(0,19).replace("T"," ")} · v{sig.waiver_version}</p>
+                  <p className="text-[12px] text-gray-500 uppercase font-black tracking-widest mt-1">Signed {(sig.signed_at||"").slice(0,19).replace("T"," ")} · v{sig.waiver_version}</p>
                 </div>
-                <span className="text-[10px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded">Valid</span>
+                <span className="text-[12px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded">Valid</span>
               </div>
             ))}
           </div>
@@ -337,11 +337,11 @@ function WaiverPanel({ s, save, saving }) {
 
       <div className="flex flex-col md:flex-row justify-end gap-3 pt-4 border-t border-bgHover">
         <button onClick={()=>saveAndMaybeBump(false)} disabled={saving} data-testid="save-waiver-noversion"
-                className="bg-shBlue text-white px-6 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+                className="bg-shBlue text-white px-6 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save Without Bumping
         </button>
         <button onClick={()=>{ if(window.confirm("Bumping the version will require every client to re-sign before their next booking. Continue?")) saveAndMaybeBump(true); }} disabled={saving} data-testid="save-waiver-bump"
-                className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+                className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save & Bump Version (re-sign required)
         </button>
       </div>
@@ -353,7 +353,7 @@ function Section({ title, subtitle, children }) {
   return (
     <div>
       <h4 className="text-xs font-black text-shBlue uppercase tracking-widest">{title}</h4>
-      {subtitle && <p className="text-[11px] text-gray-500 mt-1">{subtitle}</p>}
+      {subtitle && <p className="text-[13px] text-gray-500 mt-1">{subtitle}</p>}
       <div className="mt-3">{children}</div>
     </div>
   );
@@ -363,7 +363,7 @@ function SaveBar({ onSave, saving }) {
   return (
     <div className="flex justify-end pt-4 border-t border-bgHover">
       <button onClick={onSave} disabled={saving} data-testid="save-settings"
-              className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+              className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-50">
         {saving?"Saving…":"Save Changes"}
       </button>
     </div>

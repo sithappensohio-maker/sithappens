@@ -60,7 +60,7 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Client Hub</h3>
         <button onClick={openNew} data-testid="add-client-button"
-                className="bg-shBlue text-white px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">+ Add Client</button>
+                className="bg-shBlue text-white px-5 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">+ Add Client</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="client-grid">
@@ -79,16 +79,16 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
             </div>
             <div className="mt-4 flex items-center justify-between border-t border-bgHover pt-3">
               <div>
-                <p className="text-[9px] uppercase font-black text-gray-500 tracking-widest">Credits</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Credits</p>
                 <p className="text-2xl font-black text-shGreen">{c.credits}</p>
               </div>
               <div className="text-right">
-                <p className="text-[9px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
-                <p className="text-[10px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
+                <p className="text-[12px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
               </div>
             </div>
             <button onClick={()=>openPortal(c)} data-testid={`portal-credentials-${c.id}`}
-                    className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[10px] font-black uppercase tracking-widest hover:bg-shBlue/20">
+                    className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/20">
               {c.portal_email ? "Update Portal Login" : "Create Portal Login"}
             </button>
           </div>
@@ -106,10 +106,10 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
             </div>
             <Input label="Email" type="email" value={form.email} onChange={(v)=>setForm({...form, email:v})} />
             <Input label="Emergency Contact" color="text-red-400" value={form.emerg} onChange={(v)=>setForm({...form, emerg:v})} />
-            {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+            {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button onClick={save} data-testid="save-client-button" className="bg-shBlue text-white px-8 py-2 rounded font-black text-[10px] uppercase tracking-widest shadow-lg">Save</button>
+              <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+              <button onClick={save} data-testid="save-client-button" className="bg-shBlue text-white px-8 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-lg">Save</button>
             </div>
           </div>
         </Modal>
@@ -117,14 +117,14 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
 
       {portalOpen && (
         <Modal title="Portal Login" onClose={()=>setPortalOpen(null)}>
-          <p className="text-[11px] text-gray-400 mb-4">Set the email and password the client will use to access the portal.</p>
+          <p className="text-[13px] text-gray-400 mb-4">Set the email and password the client will use to access the portal.</p>
           <div className="space-y-4">
             <Input label="Login Email" type="email" value={portalForm.email} onChange={(v)=>setPortalForm({...portalForm, email:v})} testId="portal-email-input" />
             <Input label="Password (min 6 chars)" type="password" value={portalForm.password} onChange={(v)=>setPortalForm({...portalForm, password:v})} testId="portal-password-input" />
-            {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+            {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={()=>setPortalOpen(null)} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
-              <button onClick={savePortal} data-testid="save-portal-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[10px] uppercase tracking-widest shadow-lg">Save Login</button>
+              <button onClick={()=>setPortalOpen(null)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+              <button onClick={savePortal} data-testid="save-portal-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-lg">Save Login</button>
             </div>
           </div>
         </Modal>
@@ -150,7 +150,7 @@ function Modal({ title, children, onClose }) {
 export function Input({ label, value, onChange, type="text", color="text-gray-500", testId }) {
   return (
     <div>
-      <label className={`text-[10px] font-black uppercase tracking-widest ${color}`}>{label}</label>
+      <label className={`text-[12px] font-black uppercase tracking-widest ${color}`}>{label}</label>
       <input type={type} value={value ?? ""} onChange={(e)=>onChange(e.target.value)} data-testid={testId}
              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
     </div>

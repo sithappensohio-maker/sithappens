@@ -50,14 +50,14 @@ export default function GlobalSearch({ open, onClose, onNavigate }) {
           <input ref={inputRef} value={q} onChange={(e)=>setQ(e.target.value)} onKeyDown={handleKey} placeholder="Search dogs and clients…"
                  data-testid="search-input"
                  className="flex-1 bg-transparent text-white text-sm outline-none" />
-          <kbd className="text-[9px] font-black uppercase tracking-widest text-gray-500 bg-bgBase border border-bgHover rounded px-2 py-1">ESC</kbd>
+          <kbd className="text-[13px] font-black uppercase tracking-widest text-gray-500 bg-bgBase border border-bgHover rounded px-2 py-1">ESC</kbd>
         </div>
         <div className="max-h-96 overflow-y-auto" data-testid="search-results">
           {!q && <p className="px-6 py-10 text-center text-xs text-gray-500 uppercase font-black tracking-widest">Start typing to search.</p>}
           {q && flat.length === 0 && <p className="px-6 py-10 text-center text-xs text-gray-500 uppercase font-black tracking-widest">No matches for "{q}"</p>}
           {results.dogs.length > 0 && (
             <div>
-              <p className="px-4 pt-3 pb-1 text-[9px] font-black uppercase tracking-widest text-shGreen">Dogs · {results.dogs.length}</p>
+              <p className="px-4 pt-3 pb-1 text-[13px] font-black uppercase tracking-widest text-shGreen">Dogs · {results.dogs.length}</p>
               {results.dogs.map((d, i) => {
                 const idx = i;
                 return (
@@ -68,7 +68,7 @@ export default function GlobalSearch({ open, onClose, onNavigate }) {
                       <i className="fas fa-paw text-shGreen w-5" />
                       <div>
                         <p className="text-sm font-black text-white uppercase">{d.name}</p>
-                        <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">{d.breed || "Unknown"} · {d.owner_name}</p>
+                        <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{d.breed || "Unknown"} · {d.owner_name}</p>
                       </div>
                     </div>
                     <i className="fas fa-arrow-right text-gray-600" />
@@ -79,7 +79,7 @@ export default function GlobalSearch({ open, onClose, onNavigate }) {
           )}
           {results.clients.length > 0 && (
             <div>
-              <p className="px-4 pt-3 pb-1 text-[9px] font-black uppercase tracking-widest text-shBlue">Clients · {results.clients.length}</p>
+              <p className="px-4 pt-3 pb-1 text-[13px] font-black uppercase tracking-widest text-shBlue">Clients · {results.clients.length}</p>
               {results.clients.map((c, i) => {
                 const idx = results.dogs.length + i;
                 return (
@@ -90,7 +90,7 @@ export default function GlobalSearch({ open, onClose, onNavigate }) {
                       <i className="fas fa-user text-shBlue w-5" />
                       <div>
                         <p className="text-sm font-black text-white uppercase">{c.name}</p>
-                        <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">{c.email || c.phone || "—"}</p>
+                        <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{c.email || c.phone || "—"}</p>
                       </div>
                     </div>
                     <i className="fas fa-arrow-right text-gray-600" />
@@ -100,7 +100,7 @@ export default function GlobalSearch({ open, onClose, onNavigate }) {
             </div>
           )}
         </div>
-        <div className="px-4 py-2 border-t border-bgHover flex items-center justify-between text-[9px] font-black uppercase tracking-widest text-gray-500">
+        <div className="px-4 py-2 border-t border-bgHover flex items-center justify-between text-[13px] font-black uppercase tracking-widest text-gray-500">
           <span><kbd className="bg-bgBase border border-bgHover rounded px-1.5 py-0.5">↑</kbd> <kbd className="bg-bgBase border border-bgHover rounded px-1.5 py-0.5">↓</kbd> Navigate</span>
           <span><kbd className="bg-bgBase border border-bgHover rounded px-1.5 py-0.5">↵</kbd> Open</span>
         </div>

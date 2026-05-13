@@ -102,7 +102,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         <div className="flex items-center justify-between mb-5">
           <div>
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-1">{isEdit ? "Update notes, kennel & times" : (defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client")}</p>
+            <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mt-1">{isEdit ? "Update notes, kennel & times" : (defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client")}</p>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>
         </div>
@@ -110,14 +110,14 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Client</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Client</label>
               <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
               <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 {clientDogs.length === 0 && <option value="">No dogs on file</option>}
@@ -127,14 +127,14 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           </div>
 
           {selectedDog && (
-            <div className={`text-[10px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shGreen/10 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
+            <div className={`text-[12px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shGreen/10 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
               <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-2`} />
               Rabies: {rabiesOk ? `Valid through ${rabies}` : (rabies ? `Expired ${rabies}` : "Missing")}
             </div>
           )}
 
           {conflicts.length > 0 && (
-            <div className="text-[10px] font-black uppercase tracking-widest rounded p-3 bg-shOrange/15 text-shOrange border border-shOrange/40" data-testid="booking-conflicts">
+            <div className="text-[12px] font-black uppercase tracking-widest rounded p-3 bg-shOrange/15 text-shOrange border border-shOrange/40" data-testid="booking-conflicts">
               <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
               <ul className="mt-2 ml-5 list-disc space-y-1">
                 {conflicts.map(c => <li key={c.id}>{c.service_type} ({c.status}) — {c.date}{c.end_date && c.end_date!==c.date?` → ${c.end_date}`:""}</li>)}
@@ -143,24 +143,24 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Service</label>
             <div className="grid grid-cols-3 gap-2 mt-1">
               {["daycare","boarding","training"].map(t => (
                 <button key={t} onClick={()=>setServiceType(t)} data-testid={`ab-service-${t}`}
-                        className={`py-2 rounded text-[10px] font-black uppercase tracking-widest border ${serviceType===t?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>{t}</button>
+                        className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${serviceType===t?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>{t}</button>
               ))}
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
               <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
             </div>
             {serviceType==="boarding" && (
               <div>
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pickup Date</label>
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pickup Date</label>
                 <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
               </div>
@@ -169,7 +169,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           {serviceType==="boarding" && kennels.length > 0 && (
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Kennel / Room (optional)</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Kennel / Room (optional)</label>
               <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 <option value="">— Unassigned —</option>
@@ -180,19 +180,19 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
               <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
             </div>
             <div>
-              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
+              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
               <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
             </div>
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
             <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} placeholder="Special instructions, food, meds…"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
           </div>
@@ -200,24 +200,24 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           <div className="border-t border-bgHover pt-4 space-y-3">
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shGreen w-4 h-4" />
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-clock-rotate-left mr-2 text-shGreen"/>Check in immediately (stamps arrival time)</span>
+              <span className="text-[13px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-clock-rotate-left mr-2 text-shGreen"/>Check in immediately (stamps arrival time)</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shOrange w-4 h-4" />
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-shield-virus mr-2 text-shOrange"/>Override vaccine requirements (admin override)</span>
+              <span className="text-[13px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-shield-virus mr-2 text-shOrange"/>Override vaccine requirements (admin override)</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={overrideCapacity} onChange={(e)=>setOverrideCapacity(e.target.checked)} data-testid="ab-override-cap" className="accent-shOrange w-4 h-4" />
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-warehouse mr-2 text-shOrange"/>Override capacity limit</span>
+              <span className="text-[13px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-warehouse mr-2 text-shOrange"/>Override capacity limit</span>
             </label>
           </div>
 
-          {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+          {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
             <button onClick={submit} disabled={saving || !dogId} data-testid="ab-submit"
-                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-50">
               {saving ? "Saving…" : (isEdit ? "Save Changes" : (checkInNow ? "Book & Check In" : "Create Booking"))}
             </button>
           </div>

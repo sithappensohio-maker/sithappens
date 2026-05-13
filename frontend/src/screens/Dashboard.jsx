@@ -52,11 +52,11 @@ export default function Dashboard() {
                 <div className="text-xs">
                   <span className="font-black text-white uppercase">{a.dog_name}</span>
                   <span className="text-gray-400"> · {a.owner_name}</span>
-                  <span className={`ml-3 text-[10px] font-black uppercase px-2 py-0.5 rounded ${a.status==='expired'||a.status==='missing'?'bg-red-500/20 text-red-400':'bg-shOrange/20 text-shOrange'}`}>
+                  <span className={`ml-3 text-[12px] font-black uppercase px-2 py-0.5 rounded ${a.status==='expired'||a.status==='missing'?'bg-red-500/20 text-red-400':'bg-shOrange/20 text-shOrange'}`}>
                     Rabies {a.status}{a.rabies?` · ${a.rabies}`:''}
                   </span>
                 </div>
-                <button onClick={()=>dismiss(a.dog_id)} data-testid={`dismiss-${a.dog_id}`} className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white">Dismiss 30d</button>
+                <button onClick={()=>dismiss(a.dog_id)} data-testid={`dismiss-${a.dog_id}`} className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">Dismiss 30d</button>
               </div>
             ))}
           </div>
@@ -89,9 +89,9 @@ export default function Dashboard() {
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between gap-3">
           <h3 className="text-xs font-black text-white uppercase tracking-widest"><i className="fas fa-clipboard-check mr-2 text-shGreen"/>Today's Check-in Board</h3>
           <div className="flex items-center gap-3">
-            <span className="text-[10px] font-black text-gray-500 uppercase hidden sm:inline">{stats.today_roster?.length || 0} dogs</span>
+            <span className="text-[12px] font-black text-gray-500 uppercase hidden sm:inline">{stats.today_roster?.length || 0} dogs</span>
             <button onClick={()=>setShowQuick(true)} data-testid="quick-checkin-button"
-                    className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[10px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
               <i className="fas fa-plus mr-1"/>Quick Check-in
             </button>
           </div>
@@ -112,31 +112,31 @@ export default function Dashboard() {
                   <div>
                     <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
                       {b.dog_name}
-                      {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[10px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
+                      {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[12px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
                     </p>
-                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}{b.kennel?` · ${b.kennel}`:""}</p>
+                    <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}{b.kennel?` · ${b.kennel}`:""}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4">
                   <div className="text-right hidden md:block">
-                    <p className="text-[9px] text-gray-500 font-black uppercase tracking-widest">In · Out</p>
+                    <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">In · Out</p>
                     <p className="text-xs text-gray-300 font-mono">{fmtTime(b.checked_in_at)} · {fmtTime(b.checked_out_at)}</p>
                   </div>
                   {!b.checked_in_at && (
                     <button onClick={()=>checkIn(b.id)} data-testid={`checkin-${b.id}`}
-                            className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[10px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
+                            className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[12px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
                   )}
                   {onPremises && (
                     <button onClick={()=>checkOut(b.id)} data-testid={`checkout-${b.id}`}
-                            className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[10px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
+                            className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[12px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
                   )}
                   {done && !b.report_card && (
                     <button onClick={()=>setReportFor(b)} data-testid={`report-${b.id}`}
-                            className="bg-shOrange/15 text-shOrange border border-shOrange/40 px-5 py-2 rounded font-black uppercase text-[10px] tracking-widest hover:bg-shOrange/25">+ Report Card</button>
+                            className="bg-shOrange/15 text-shOrange border border-shOrange/40 px-5 py-2 rounded font-black uppercase text-[12px] tracking-widest hover:bg-shOrange/25">+ Report Card</button>
                   )}
                   {done && b.report_card && (
                     <button onClick={()=>setReportFor(b)} data-testid={`view-report-${b.id}`}
-                            className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-5 py-2 rounded font-black uppercase text-[10px] tracking-widest hover:bg-shGreen/25">View Card</button>
+                            className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-5 py-2 rounded font-black uppercase text-[12px] tracking-widest hover:bg-shGreen/25">View Card</button>
                   )}
                 </div>
               </div>
@@ -154,7 +154,7 @@ export default function Dashboard() {
 function StatCard({ label, value, accent, textColor, testId }) {
   return (
     <div className={`bg-bgPanel p-6 rounded-xl border-t-4 ${accent} shadow-lg`} data-testid={testId}>
-      <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">{label}</p>
+      <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest">{label}</p>
       <p className={`text-3xl font-black mt-2 ${textColor}`}>{value}</p>
     </div>
   );
@@ -194,11 +194,11 @@ function ReportCardModal({ booking, moodTags, onClose }) {
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Pup Report Card</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
-        <p className="text-[11px] text-shGreen font-black uppercase tracking-widest mb-6">{booking.dog_name} · {booking.client_name} · {booking.date}</p>
+        <p className="text-[13px] text-shGreen font-black uppercase tracking-widest mb-6">{booking.dog_name} · {booking.client_name} · {booking.date}</p>
 
         <div className="space-y-5">
           <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Photos (up to 3)</label>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Photos (up to 3)</label>
             <div className="mt-2 flex gap-2 flex-wrap">
               {photos.map((p, i) => (
                 <div key={i} className="relative">
@@ -216,11 +216,11 @@ function ReportCardModal({ booking, moodTags, onClose }) {
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Mood / Highlights</label>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Mood / Highlights</label>
             <div className="mt-2 flex flex-wrap gap-2">
               {(moodTags || []).map(m => (
                 <button key={m} onClick={()=>toggleMood(m)} data-testid={`mood-${m.replace(/\s/g,'-')}`}
-                        className={`px-3 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition ${moods.includes(m)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
+                        className={`px-3 py-2 rounded-full text-[12px] font-black uppercase tracking-widest border transition ${moods.includes(m)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
                   {m}
                 </button>
               ))}
@@ -228,16 +228,16 @@ function ReportCardModal({ booking, moodTags, onClose }) {
           </div>
 
           <div>
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Note from the trainer</label>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note from the trainer</label>
             <textarea value={note} onChange={(e)=>setNote(e.target.value)} rows={3} placeholder="e.g., Biscuit absolutely crushed recall today!"
                       data-testid="report-note-input"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shGreen outline-none" />
           </div>
 
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[10px] tracking-widest">Close</button>
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Close</button>
             <button onClick={save} disabled={saving} data-testid="save-report-button"
-                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-50">
               {saving?"Saving…":"Save Report Card"}
             </button>
           </div>
