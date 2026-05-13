@@ -454,11 +454,10 @@ async def list_bookings(user: dict = Depends(get_current_user), status_filter: O
     return items
 
 def _service_cost(rules: dict, service_type: str, days: int) -> int:
-    if service_type == "boarding":
-        return int(rules.get("boarding_cost_per_night", 1)) * max(days, 1)
-    if service_type == "training":
-        return int(rules.get("training_cost", 1)) * max(days, 1)
-    return int(rules.get("daycare_cost", 1)) * max(days, 1)
+    # Credits only apply to daycare. Boarding and training are pay-on-the-day.
+    if service_type == "daycare":
+        return int(rules.get("daycare_cost", 1)) * max(days, 1)
+    return 0
 
 
 async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
@@ -516,12 +515,12 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
                 raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
 
-    # Credit cost
+    # Credit cost — daycare only; boarding/training are pay-on-the-day.
+    # Clients can book even with 0 credits (they'll settle on arrival); credits
+    # are deducted on approval IF they have any (otherwise the booking is approved
+    # with a balance owed at drop-off — admin tracks it manually).
     days = _dates_in_range(body.date, body.end_date)
     cost = _service_cost(rules, body.service_type, len(days))
-    if user.get("role") != "admin":
-        if (client.get("credits") or 0) < cost:
-            raise HTTPException(status_code=400, detail=f"Insufficient credits ({client.get('credits',0)}/{cost})")
 
     auto_approve = bool(rules.get("auto_approve", False))
     status_val = "approved" if (is_admin or auto_approve) else "pending"
@@ -545,9 +544,15 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     }
     if is_admin and body.check_in_now:
         doc["checked_in_at"] = now_iso()
+    # Deduct daycare credits up to available balance — no hard block.
+    deducted = 0
+    if status_val == "approved" and cost > 0:
+        available = int(client.get("credits") or 0)
+        deducted = min(cost, available)
+        if deducted > 0:
+            await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -deducted}})
+    doc["credits_deducted"] = deducted
     await db.bookings.insert_one(doc)
-    if status_val == "approved":
-        await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -cost}})
     doc.pop("_id", None)
     return doc
 
@@ -620,13 +625,18 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Booking not found")
     if booking["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Booking is {booking['status']}")
-    cost = booking.get("cost") or len(_dates_in_range(booking["date"], booking.get("end_date")))
-    client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
-    if (client.get("credits") or 0) < cost:
-        raise HTTPException(status_code=400, detail="Client has insufficient credits")
-    await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": -cost}})
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "approved"}})
+    # Credits only apply to daycare. Deduct up to available; don't block approval if short.
+    cost = booking.get("cost") or 0
+    deducted = 0
+    if booking.get("service_type") == "daycare" and cost > 0:
+        client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        available = int((client or {}).get("credits") or 0)
+        deducted = min(cost, available)
+        if deducted > 0:
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": -deducted}})
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "approved", "credits_deducted": deducted}})
     booking["status"] = "approved"
+    booking["credits_deducted"] = deducted
     return booking
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
@@ -655,10 +665,11 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
                 raise HTTPException(status_code=400, detail=f"Cancellations must be at least {cutoff_hours}h in advance")
         except ValueError:
             pass
-    # refund credits if previously approved
+    # Refund daycare credits if previously approved (only what we actually charged)
     if booking["status"] == "approved":
-        cost = booking.get("cost") or len(_dates_in_range(booking["date"], booking.get("end_date")))
-        await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": cost}})
+        refund = int(booking.get("credits_deducted") or 0)
+        if refund > 0:
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": refund}})
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
     return {"ok": True}
 

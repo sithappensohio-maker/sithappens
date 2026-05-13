@@ -151,14 +151,24 @@ class TestBookings:
         assert "Rabies" in r.json()["detail"]
 
     def test_insufficient_credits(self, admin_h, created_client, created_dog, client_h):
-        # set credits to 0
+        # Per 2026-02 update: credits are pay-on-the-day for daycare; clients can book with 0 credits.
+        # Set credits to 0 and assert the booking still succeeds.
         requests.put(f"{BASE_URL}/api/clients/{created_client['id']}",
                      json={"name": created_client["name"], "credits": 0, "email": "tc@x.com"}, headers=admin_h, timeout=15)
         r = requests.post(f"{BASE_URL}/api/bookings",
                           json={"dog_id": created_dog["id"], "date": (date.today() + timedelta(days=3)).isoformat(),
                                 "service_type": "daycare"}, headers=client_h, timeout=15)
-        assert r.status_code == 400
-        assert "Insufficient" in r.json()["detail"]
+        assert r.status_code == 200, r.text
+        b = r.json()
+        assert b["status"] == "pending"
+        assert b["cost"] == 1  # daycare still has a cost (charged on day)
+        # Boarding & training should be cost 0 (pay-on-the-day, not credit-based)
+        rb = requests.post(f"{BASE_URL}/api/bookings",
+                           json={"dog_id": created_dog["id"], "date": (date.today() + timedelta(days=15)).isoformat(),
+                                 "end_date": (date.today() + timedelta(days=17)).isoformat(),
+                                 "service_type": "boarding"}, headers=client_h, timeout=15)
+        assert rb.status_code == 200, rb.text
+        assert rb.json()["cost"] == 0
 
     def test_client_create_and_admin_approve(self, admin_h, created_client, created_dog, client_h):
         # set credits=3
