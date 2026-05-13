@@ -64,17 +64,17 @@ export default function Settings() {
         {msg && <span className={`text-[10px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
       </div>
 
-      <div className="flex gap-6">
-        <nav className="w-56 shrink-0 space-y-1">
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6">
+        <nav className="w-full md:w-56 md:shrink-0 flex md:block overflow-x-auto md:overflow-visible gap-1 md:space-y-1 md:gap-0 pb-2 md:pb-0">
           {tabs.map(t => (
             <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`settings-tab-${t.id}`}
-                    className={`w-full text-left py-3 px-4 rounded-lg text-[11px] font-black uppercase tracking-widest transition ${tab===t.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
+                    className={`shrink-0 md:w-full text-left py-3 px-4 rounded-lg text-[11px] font-black uppercase tracking-widest transition whitespace-nowrap ${tab===t.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
               <i className={`fas ${t.icon} mr-3 w-4`} /> {t.label}
             </button>
           ))}
         </nav>
 
-        <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-6 shadow-2xl">
+        <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
           {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
           {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
           {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
