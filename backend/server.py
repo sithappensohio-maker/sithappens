@@ -17,6 +17,8 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
+from email_service import notify_admin_new_booking, notify_client_booking_approved
+
 # -------- Config --------
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
@@ -554,6 +556,13 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     doc["credits_deducted"] = deducted
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
+    # Best-effort notification: tell admin when a client books from the portal.
+    # Admin-created bookings (via Quick Check-in etc.) don't trigger an alert to themselves.
+    if not is_admin:
+        try:
+            await notify_admin_new_booking(doc, client)
+        except Exception:
+            pass
     return doc
 
 
@@ -637,6 +646,13 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "approved", "credits_deducted": deducted}})
     booking["status"] = "approved"
     booking["credits_deducted"] = deducted
+    # Best-effort confirmation email to the client
+    try:
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        if client_doc:
+            await notify_client_booking_approved(booking, client_doc)
+    except Exception:
+        pass
     return booking
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
