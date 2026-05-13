@@ -197,6 +197,8 @@ class BookingIn(BaseModel):
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
     kennel: Optional[str] = ""
+    dropoff_time: Optional[str] = ""
+    pickup_time: Optional[str] = ""
     # Admin-only overrides
     override_vaccines: bool = False
     override_capacity: bool = False
@@ -521,6 +523,8 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "status": status_val,
         "notes": body.notes or "",
         "kennel": body.kennel or "",
+        "dropoff_time": body.dropoff_time or "",
+        "pickup_time": body.pickup_time or "",
         "created_at": now_iso(),
         "cost": cost,
     }

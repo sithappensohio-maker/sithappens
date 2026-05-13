@@ -1,0 +1,28 @@
+{
+  "summary": "Sprint 5+7 retest after BookingIn dropoff_time/pickup_time patch. Full regression suite passes: 71/71 tests green (test_sprint5_7 10/10, test_sithappens 20/20, test_sprint2 10/10, test_sprint3 18/18, test_sprint4 13/13). The previously failing TestBookingTimes::test_booking_persists_dropoff_pickup now passes — POST /api/bookings correctly persists both fields and BookingOut surfaces them. Run-sheet secondary sort by dropoff_time is therefore exercisable and TestRunSheet::test_run_sheet_structure_and_sort still passes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sprint5_7.py",
+    "/app/test_reports/pytest/iteration6_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1274 lines — consider splitting routes (bookings, dogs, homework, settings, waivers, incidents) into separate modules.",
+    "create_booking() still builds the doc field-by-field; future BookingIn additions risk the same silent-drop bug. Consider `doc = {**body.model_dump(exclude={'override_vaccines','override_capacity','check_in_now'}), ...overrides}` to auto-include all input fields.",
+    "_resolve_client_scope is `async` but does no await — could be a sync helper.",
+    "PUT /api/bookings/{id}/reschedule / RescheduleIn does not accept dropoff_time/pickup_time updates; if AdminBookingModal supports editing those after creation, an admin patch endpoint will be needed.",
+    "No dedicated PATCH/PUT for booking notes/kennel/times — only reschedule (dates) and check-in/out exist. Confirm with product whether admin needs to edit times post-creation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (71/71)", "frontend": "not tested"},
+  "test_credentials": "admin@sithappens.com / admin123 — verified working from /app/memory/test_credentials.md",
+  "seed_data_creation": "Sprint 5+7 tests create TEST_S57_-prefixed clients/dogs/bookings/homework per module and clean them up via fixture teardown. Settings temporarily set to require all 3 vaccines during the module and restored to legacy single-vaccine mode after.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug from iteration_5 is fully resolved. Full backend regression is green at 71/71. Suggested next steps: split server.py into route modules; add an admin PATCH for booking times/notes/kennel if the AdminBookingModal needs edit support post-creation.",
+  "rca of the issue": "Already fixed. Original bug: BookingIn lacked dropoff_time/pickup_time so FastAPI stripped them before create_booking() ran; create_booking also didn't reference them. Fix landed at server.py:200-201 (BookingIn fields) and 526-527 (doc keys). Verification: TestBookingTimes::test_booking_persists_dropoff_pickup now PASSED and run-sheet sort test continues to pass."
+}
