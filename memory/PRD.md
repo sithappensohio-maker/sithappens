@@ -63,6 +63,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Training as a service** alongside daycare/boarding (purple chip on calendar)
 - ✅ All booking logic now reads from settings (multi-vaccine, costs, capacities, auto-approve, cutoffs)
 - ✅ 48/48 backend tests passing (Sprint 1+2+3 regression)
+- ✅ **Mobile responsive drawer** with hamburger toggle, slide-in nav, distinct testids
+
+## Sprint 4 — Waiver e-sign + Incident Reports + Admin Booking (2026-01)
+- ✅ **Digital Waiver e-sign** — Full Sit Happens waiver text rendered with markdown-style headings; client must type their name + check accept on first portal login. Stores typed name, IP, user agent, version, full text snapshot per signature.
+- ✅ **Waiver gating** — Clients cannot book until waiver is signed. Admin can bump waiver version in Settings → requires all clients to re-sign.
+- ✅ **Settings → Waiver tab** to edit text, toggle required-for-booking, view all signatures.
+- ✅ **Incident Report Log** — Permanent legal record with 7 types (bite/injury/escape/illness/property/behavior/other) × 3 severities, photos up to 4, witnesses, action taken, vet+follow-up flags. Filterable by type. New "Incidents" admin nav item.
+- ✅ **Admin Booking Modal** — "+ New Booking" on Bookings page + "+ Quick Check-in" on Dashboard. Pick client → auto-loads their dogs → service/date/kennel/notes. Toggles for: check-in immediately, override vaccines, override capacity. All admin-only.
+- ✅ Bug fix: stale auth + missing isRecurring state caused user-reported "uncaught runtime error" crash; fixed and verified.
+- ✅ 61/61 backend tests passing (Sprint 1+2+3+4 regression)
 
 ## Backlog / Next Iterations (Prioritized)
 **P1**
