@@ -7,6 +7,7 @@ import Clients from "./screens/Clients";
 import Dogs from "./screens/Dogs";
 import Bookings from "./screens/Bookings";
 import Portal from "./screens/Portal";
+import Settings from "./screens/Settings";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -18,6 +19,7 @@ function AdminShell() {
     { id: "bookings", label: "Bookings", icon: "fa-clipboard-list", color: "shOrange" },
     { id: "clients", label: "Clients", icon: "fa-users", color: "shBlue" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", color: "shGreen" },
+    { id: "settings", label: "Settings", icon: "fa-cog", color: "shBlue" },
   ];
 
   return (
@@ -54,6 +56,7 @@ function AdminShell() {
           {tab === "bookings" && <Bookings />}
           {tab === "clients" && <Clients />}
           {tab === "dogs" && <Dogs />}
+          {tab === "settings" && <Settings />}
         </div>
       </main>
     </div>

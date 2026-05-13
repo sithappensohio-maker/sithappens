@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
-const MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
+const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -14,13 +14,19 @@ function fmtTime(iso) {
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState([]);
+  const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
 
   const load = async () => {
     try {
-      const [s, a] = await Promise.all([api.get("/dashboard/stats"), api.get("/vaccine-alerts")]);
+      const [s, a, st] = await Promise.all([
+        api.get("/dashboard/stats"),
+        api.get("/vaccine-alerts"),
+        api.get("/settings"),
+      ]);
       setStats(s.data);
       setAlerts(a.data);
+      if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
     } catch {}
   };
   useEffect(() => { load(); }, []);
@@ -109,7 +115,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {reportFor && <ReportCardModal booking={reportFor} onClose={()=>{ setReportFor(null); load(); }} />}
+      {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
     </div>
   );
 }
@@ -123,7 +129,7 @@ function StatCard({ label, value, accent, textColor, testId }) {
   );
 }
 
-function ReportCardModal({ booking, onClose }) {
+function ReportCardModal({ booking, moodTags, onClose }) {
   const existing = booking.report_card || { photos: [], mood_tags: [], note: "" };
   const [photos, setPhotos] = useState(existing.photos || []);
   const [moods, setMoods] = useState(existing.mood_tags || []);
@@ -181,7 +187,7 @@ function ReportCardModal({ booking, onClose }) {
           <div>
             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Mood / Highlights</label>
             <div className="mt-2 flex flex-wrap gap-2">
-              {MOOD_TAGS.map(m => (
+              {(moodTags || []).map(m => (
                 <button key={m} onClick={()=>toggleMood(m)} data-testid={`mood-${m.replace(/\s/g,'-')}`}
                         className={`px-3 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition ${moods.includes(m)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
                   {m}

@@ -166,9 +166,22 @@ class TrainingLogIn(BaseModel):
 class BookingIn(BaseModel):
     dog_id: str
     date: str  # YYYY-MM-DD
-    service_type: Literal["daycare", "boarding"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training"] = "daycare"
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
+    kennel: Optional[str] = ""
+
+class RecurringBookingIn(BaseModel):
+    dog_id: str
+    start_date: str
+    end_date: str  # inclusive end of recurrence window
+    service_type: Literal["daycare", "training"] = "daycare"
+    weekdays: List[int]  # 0=Mon ... 6=Sun
+    notes: Optional[str] = ""
+
+class RescheduleIn(BaseModel):
+    date: str
+    end_date: Optional[str] = None
 
 class ReportCard(BaseModel):
     photos: List[str] = []          # base64 data URIs
@@ -191,6 +204,8 @@ class BookingOut(BaseModel):
     checked_in_at: Optional[str] = None
     checked_out_at: Optional[str] = None
     report_card: Optional[ReportCard] = None
+    kennel: Optional[str] = ""
+    cost: Optional[int] = 0
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -388,6 +403,23 @@ async def list_bookings(user: dict = Depends(get_current_user), status_filter: O
     items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(2000)
     return items
 
+def _service_cost(rules: dict, service_type: str, days: int) -> int:
+    if service_type == "boarding":
+        return int(rules.get("boarding_cost_per_night", 1)) * max(days, 1)
+    if service_type == "training":
+        return int(rules.get("training_cost", 1)) * max(days, 1)
+    return int(rules.get("daycare_cost", 1)) * max(days, 1)
+
+
+async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
+    today = date.today().isoformat()
+    vaccines = dog.get("vaccines") or {}
+    for v in required:
+        d = vaccines.get(v, "")
+        if not d or d < today:
+            raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -399,23 +431,41 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # Vaccine check
-    rabies = (dog.get("vaccines") or {}).get("rabies", "")
-    today = date.today().isoformat()
-    if not rabies or rabies < today:
-        raise HTTPException(status_code=400, detail="Rabies vaccine missing or expired")
+    settings = await get_settings()
+    rules = settings.get("booking_rules", {})
+    required = settings.get("required_vaccines", ["rabies"])
+    daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
+    boarding_cap = int(settings.get("boarding_capacity", 10))
 
-    # Capacity check (daycare only)
+    # Vaccine check (multi-vaccine via settings)
+    await _validate_dog_vaccines(dog, required)
+
+    # Advance-booking limit (clients only)
+    if user.get("role") != "admin":
+        max_adv = int(rules.get("max_advance_days", 60))
+        if max_adv > 0:
+            limit_date = (date.today() + timedelta(days=max_adv)).isoformat()
+            if body.date > limit_date:
+                raise HTTPException(status_code=400, detail=f"Bookings allowed up to {max_adv} days in advance")
+
+    # Capacity check
     if body.service_type == "daycare":
-        if await _booking_days_count(body.date) >= DAYCARE_CAPACITY:
+        if await _booking_days_count_filtered(body.date, "daycare") >= daycare_cap:
             raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
+    elif body.service_type == "boarding":
+        if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
+            raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
 
-    # Credit check for clients
+    # Credit cost
     days = _dates_in_range(body.date, body.end_date)
-    cost = len(days)
+    cost = _service_cost(rules, body.service_type, len(days))
     if user.get("role") != "admin":
         if (client.get("credits") or 0) < cost:
             raise HTTPException(status_code=400, detail=f"Insufficient credits ({client.get('credits',0)}/{cost})")
+
+    auto_approve = bool(rules.get("auto_approve", False))
+    is_admin = user.get("role") == "admin"
+    status_val = "approved" if (is_admin or auto_approve) else "pending"
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -426,17 +476,79 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "date": body.date,
         "end_date": body.end_date,
         "service_type": body.service_type,
-        "status": "pending" if user.get("role") != "admin" else "approved",
+        "status": status_val,
         "notes": body.notes or "",
+        "kennel": body.kennel or "",
         "created_at": now_iso(),
         "cost": cost,
     }
     await db.bookings.insert_one(doc)
-    # if approved directly by admin, deduct credits immediately
-    if doc["status"] == "approved":
+    if status_val == "approved":
         await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -cost}})
     doc.pop("_id", None)
     return doc
+
+
+async def _booking_days_count_filtered(target_date: str, service_type: str) -> int:
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "pending", "completed"]}, "service_type": service_type}, {"_id": 0}
+    ).to_list(2000)
+    count = 0
+    for b in bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if target_date in days:
+            count += 1
+    return count
+
+
+@api.post("/bookings/recurring")
+async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_current_user)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+    settings = await get_settings()
+    required = settings.get("required_vaccines", ["rabies"])
+    await _validate_dog_vaccines(dog, required)
+
+    start = datetime.fromisoformat(body.start_date).date()
+    end = datetime.fromisoformat(body.end_date).date()
+    if end < start:
+        raise HTTPException(status_code=400, detail="End date before start date")
+    weekdays = set(int(w) for w in body.weekdays)
+    if not weekdays:
+        raise HTTPException(status_code=400, detail="Select at least one weekday")
+
+    created = []
+    skipped = []
+    cur = start
+    while cur <= end:
+        if cur.weekday() in weekdays:
+            try:
+                bk = await create_booking(
+                    BookingIn(dog_id=body.dog_id, date=cur.isoformat(), service_type=body.service_type, notes=body.notes or ""),
+                    user,
+                )
+                created.append(bk)
+            except HTTPException as e:
+                skipped.append({"date": cur.isoformat(), "reason": e.detail})
+        cur += timedelta(days=1)
+    return {"created": created, "skipped": skipped}
+
+
+@api.put("/bookings/{booking_id}/reschedule", response_model=BookingOut)
+async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    update = {"date": body.date, "end_date": body.end_date}
+    await db.bookings.update_one({"id": booking_id}, {"$set": update})
+    booking.update(update)
+    return booking
+
+
+
 
 @api.post("/bookings/{booking_id}/approve", response_model=BookingOut)
 async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
@@ -470,6 +582,16 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
         raise HTTPException(status_code=404, detail="Booking not found")
     if user.get("role") != "admin" and booking["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    # Cancellation cutoff for clients
+    if user.get("role") != "admin":
+        settings = await get_settings()
+        cutoff_hours = int(settings.get("booking_rules", {}).get("cancellation_cutoff_hours", 24))
+        try:
+            start_dt = datetime.fromisoformat(booking["date"]).replace(tzinfo=timezone.utc)
+            if start_dt - datetime.now(timezone.utc) < timedelta(hours=cutoff_hours):
+                raise HTTPException(status_code=400, detail=f"Cancellations must be at least {cutoff_hours}h in advance")
+        except ValueError:
+            pass
     # refund credits if previously approved
     if booking["status"] == "approved":
         cost = booking.get("cost") or len(_dates_in_range(booking["date"], booking.get("end_date")))
@@ -482,18 +604,27 @@ async def availability(date_str: str, dog_id: str, user: dict = Depends(get_curr
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
-    rabies = (dog.get("vaccines") or {}).get("rabies", "")
+    settings = await get_settings()
+    required = settings.get("required_vaccines", ["rabies"])
     today = date.today().isoformat()
-    vac_ok = bool(rabies) and rabies >= today
-    booked = await _booking_days_count(date_str)
-    open_slots = max(DAYCARE_CAPACITY - booked, 0)
+    vac_ok = True
+    missing = []
+    for v in required:
+        d = (dog.get("vaccines") or {}).get(v, "")
+        if not d or d < today:
+            vac_ok = False
+            missing.append(v)
+    daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
+    booked = await _booking_days_count_filtered(date_str, "daycare")
+    open_slots = max(daycare_cap - booked, 0)
     return {
         "date": date_str,
-        "capacity": DAYCARE_CAPACITY,
+        "capacity": daycare_cap,
         "booked": booked,
         "open_slots": open_slots,
         "vaccine_ok": vac_ok,
-        "rabies_expiration": rabies,
+        "missing_vaccines": missing,
+        "rabies_expiration": (dog.get("vaccines") or {}).get("rabies", ""),
     }
 
 
@@ -543,8 +674,11 @@ async def save_report_card(booking_id: str, body: ReportCardIn, _: dict = Depend
 # -------- Vaccine Alerts --------
 @api.get("/vaccine-alerts")
 async def vaccine_alerts(_: dict = Depends(require_admin)):
+    settings = await get_settings()
+    required = settings.get("required_vaccines", ["rabies"])
+    warn_days = int(settings.get("vaccine_warning_days", 30))
     today = date.today().isoformat()
-    in_thirty = (date.today() + timedelta(days=30)).isoformat()
+    in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
     now_dt = datetime.now(timezone.utc)
     dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
     dismiss_map = {}
@@ -562,23 +696,31 @@ async def vaccine_alerts(_: dict = Depends(require_admin)):
     for d in dogs:
         if d["id"] in dismiss_map:
             continue
-        r = (d.get("vaccines") or {}).get("rabies", "")
-        if not r:
-            status_label = "missing"
-        elif r < today:
-            status_label = "expired"
-        elif r <= in_thirty:
-            status_label = "expiring"
-        else:
-            continue
-        alerts.append({
-            "dog_id": d["id"],
-            "dog_name": d["name"],
-            "owner_id": d["owner_id"],
-            "owner_name": clients.get(d["owner_id"], "—"),
-            "rabies": r,
-            "status": status_label,
-        })
+        vaccines = d.get("vaccines") or {}
+        flagged_vax = None
+        flagged_status = None
+        flagged_date = ""
+        for v in required:
+            r = vaccines.get(v, "")
+            if not r:
+                if flagged_status != "expired":
+                    flagged_vax, flagged_status, flagged_date = v, "missing", ""
+            elif r < today:
+                flagged_vax, flagged_status, flagged_date = v, "expired", r
+                break
+            elif r <= in_warn:
+                if flagged_status not in ("expired", "missing"):
+                    flagged_vax, flagged_status, flagged_date = v, "expiring", r
+        if flagged_vax:
+            alerts.append({
+                "dog_id": d["id"],
+                "dog_name": d["name"],
+                "owner_id": d["owner_id"],
+                "owner_name": clients.get(d["owner_id"], "—"),
+                "vaccine": flagged_vax,
+                "rabies": flagged_date,  # back-compat with frontend label
+                "status": flagged_status,
+            })
     return alerts
 
 class DismissIn(BaseModel):
@@ -595,16 +737,126 @@ async def dismiss_alert(dog_id: str, _: dict = Depends(require_admin)):
     return {"ok": True, "until": until}
 
 
+# -------- Settings --------
+DEFAULT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+DEFAULT_VACCINES = ["rabies", "bordetella", "dhpp"]
+DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"]
+
+def _default_hours_grid(open_t="07:00", close_t="19:00"):
+    return {d: {"open": open_t, "close": close_t, "closed": d == "sunday"} for d in DEFAULT_DAYS}
+
+def _default_settings() -> dict:
+    return {
+        "id": "global",
+        "business_hours": _default_hours_grid("07:00", "19:00"),
+        "service_hours": {
+            "daycare": _default_hours_grid("07:00", "19:00"),
+            "boarding": {"mode": "24_7"},
+            "training": _default_hours_grid("09:00", "17:00"),
+        },
+        "daycare_capacity": DAYCARE_CAPACITY,
+        "boarding_capacity": 10,
+        "kennels": ["Kennel A", "Kennel B", "Kennel C", "Kennel D", "Suite 1", "Suite 2"],
+        "booking_rules": {
+            "max_advance_days": 60,
+            "cancellation_cutoff_hours": 24,
+            "auto_approve": False,
+            "daycare_cost": 1,
+            "boarding_cost_per_night": 1,
+            "training_cost": 1,
+        },
+        "required_vaccines": DEFAULT_VACCINES,
+        "vaccine_warning_days": 30,
+        "mood_tags": DEFAULT_MOOD_TAGS,
+    }
+
+async def get_settings() -> dict:
+    s = await db.settings.find_one({"id": "global"}, {"_id": 0})
+    if not s:
+        s = _default_settings()
+        await db.settings.insert_one(s.copy())
+    # backfill any missing top-level keys (forward compat)
+    defaults = _default_settings()
+    changed = False
+    for k, v in defaults.items():
+        if k not in s:
+            s[k] = v
+            changed = True
+    if changed:
+        await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
+    return s
+
+class SettingsIn(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    business_hours: Optional[dict] = None
+    service_hours: Optional[dict] = None
+    daycare_capacity: Optional[int] = None
+    boarding_capacity: Optional[int] = None
+    kennels: Optional[List[str]] = None
+    booking_rules: Optional[dict] = None
+    required_vaccines: Optional[List[str]] = None
+    vaccine_warning_days: Optional[int] = None
+    mood_tags: Optional[List[str]] = None
+
+@api.get("/settings")
+async def fetch_settings(_: dict = Depends(require_admin)):
+    return await get_settings()
+
+@api.get("/settings/public")
+async def fetch_public_settings(user: dict = Depends(get_current_user)):
+    """Limited settings exposed to clients for booking validation."""
+    s = await get_settings()
+    return {
+        "service_hours": s.get("service_hours"),
+        "kennels": s.get("kennels"),
+        "booking_rules": s.get("booking_rules"),
+        "mood_tags": s.get("mood_tags"),
+        "required_vaccines": s.get("required_vaccines"),
+    }
+
+@api.put("/settings")
+async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not update:
+        return await get_settings()
+    await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
+    return await get_settings()
+
+
+# -------- Change Password --------
+class ChangePwIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6)
+
+@api.post("/auth/change-password")
+async def change_password(body: ChangePwIn, user: dict = Depends(get_current_user)):
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not verify_password(body.current_password, full["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True}
+
+
 # -------- Dashboard --------
 @api.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(require_admin)):
+    settings = await get_settings()
+    required = settings.get("required_vaccines", ["rabies"])
+    warn_days = int(settings.get("vaccine_warning_days", 30))
+    daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     today = date.today().isoformat()
-    in_thirty = (date.today() + timedelta(days=30)).isoformat()
+    in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
     dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
     health_flags = 0
     for d in dogs:
-        r = (d.get("vaccines") or {}).get("rabies", "")
-        if not r or r < today or r <= in_thirty:
+        vac = d.get("vaccines") or {}
+        flagged = False
+        for v in required:
+            r = vac.get(v, "")
+            if not r or r < today or r <= in_warn:
+                flagged = True
+                break
+        if flagged:
             health_flags += 1
 
     today_bookings = await db.bookings.find(
@@ -612,19 +864,23 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     ).to_list(2000)
     daycare_today = 0
     boarding_today = 0
+    training_today = 0
     roster = []
     for b in today_bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
         if today in days:
             if b["service_type"] == "daycare":
                 daycare_today += 1
-            else:
+            elif b["service_type"] == "boarding":
                 boarding_today += 1
+            elif b["service_type"] == "training":
+                training_today += 1
             roster.append(b)
     return {
         "daycare_occupancy": daycare_today,
-        "daycare_capacity": DAYCARE_CAPACITY,
+        "daycare_capacity": daycare_cap,
         "boarding_today": boarding_today,
+        "training_today": training_today,
         "health_flags": health_flags,
         "total_dogs": len(dogs),
         "today_roster": roster,
@@ -645,7 +901,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
             end_excl = (datetime.fromisoformat(end).date() + timedelta(days=1)).isoformat()
         except Exception:
             end_excl = end
-        color = "#8cc63f" if b["service_type"] == "daycare" else "#00a9e0"
+        color = "#8cc63f" if b["service_type"] == "daycare" else ("#00a9e0" if b["service_type"] == "boarding" else "#a855f7")
         if b["status"] == "pending":
             color = "#f26522"
         events.append({
@@ -689,6 +945,8 @@ async def startup():
     elif not verify_password(admin_pw, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
         logger.info("Updated admin password")
+    # Seed settings (idempotent)
+    await get_settings()
 
 
 @app.on_event("shutdown")

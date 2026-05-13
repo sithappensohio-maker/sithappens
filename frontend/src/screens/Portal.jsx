@@ -61,11 +61,25 @@ export default function Portal() {
   const book = async () => {
     setErr(""); setSuccess("");
     try {
-      await api.post("/bookings", { dog_id: bookDogId, date: bookDate, end_date: bookType==="boarding"?bookEnd||bookDate:null, service_type: bookType });
-      setSuccess("Booking submitted! Awaiting admin approval.");
+      if (isRecurring && bookType !== "boarding") {
+        if (recDays.length === 0) { setErr("Pick at least one weekday"); return; }
+        if (!recEnd) { setErr("Pick an end date for the recurrence"); return; }
+        const { data } = await api.post("/bookings/recurring", {
+          dog_id: bookDogId, start_date: bookDate, end_date: recEnd,
+          service_type: bookType, weekdays: recDays,
+        });
+        const c = data.created?.length || 0;
+        const s = data.skipped?.length || 0;
+        setSuccess(`${c} bookings created${s?`, ${s} skipped`:""}.`);
+      } else {
+        await api.post("/bookings", { dog_id: bookDogId, date: bookDate, end_date: bookType==="boarding"?bookEnd||bookDate:null, service_type: bookType });
+        setSuccess("Booking submitted! Awaiting admin approval.");
+      }
       loadAll();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
+
+  const toggleRecDay = (d) => setRecDays(recDays.includes(d) ? recDays.filter(x=>x!==d) : [...recDays, d]);
 
   const cancel = async (id) => {
     if (!window.confirm("Cancel this booking?")) return;
@@ -105,14 +119,21 @@ export default function Portal() {
             </select>
 
             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-            <div className="grid grid-cols-2 gap-2 mt-1 mb-3">
-              {["daycare","boarding"].map(t => (
-                <button key={t} onClick={()=>setBookType(t)} data-testid={`book-service-${t}`}
+            <div className="grid grid-cols-3 gap-2 mt-1 mb-3">
+              {["daycare","boarding","training"].map(t => (
+                <button key={t} onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); }} data-testid={`book-service-${t}`}
                         className={`py-2 rounded text-[10px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
               ))}
             </div>
 
-            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":"Date"}</label>
+            {bookType !== "boarding" && (
+              <label className="flex items-center gap-2 mb-3 cursor-pointer">
+                <input type="checkbox" checked={isRecurring} onChange={(e)=>setIsRecurring(e.target.checked)} data-testid="recurring-toggle" className="accent-shGreen" />
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Recurring booking</span>
+              </label>
+            )}
+
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":isRecurring?"Recurrence Start":"Date"}</label>
             <input type="date" value={bookDate} onChange={(e)=>setBookDate(e.target.value)} data-testid="portal-book-date"
                    className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
 
@@ -120,6 +141,19 @@ export default function Portal() {
               <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">End Date</label>
               <input type="date" value={bookEnd} onChange={(e)=>setBookEnd(e.target.value)} data-testid="portal-book-end"
                      className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+            </>}
+
+            {isRecurring && bookType!=="boarding" && <>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Repeat Until</label>
+              <input type="date" value={recEnd} onChange={(e)=>setRecEnd(e.target.value)} data-testid="rec-end"
+                     className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Repeat On</label>
+              <div className="grid grid-cols-7 gap-1 mt-1 mb-3">
+                {["M","T","W","T","F","S","S"].map((d,i)=>(
+                  <button key={i} onClick={()=>toggleRecDay(i)} data-testid={`rec-day-${i}`}
+                          className={`py-2 rounded text-[10px] font-black uppercase ${recDays.includes(i)?"bg-shGreen text-bgHeader":"bg-bgBase border border-bgHover text-gray-400"}`}>{d}</button>
+                ))}
+              </div>
             </>}
 
             {avail && (
