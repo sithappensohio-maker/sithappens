@@ -77,6 +77,9 @@ async def _send(to_email: str, subject: str, html: str) -> None:
         return
     try:
         params = {"from": SENDER_EMAIL, "to": [to_email], "subject": subject, "html": html}
+        # Replies land in the admin inbox instead of the unmonitored sender address
+        if ADMIN_NOTIFICATION_EMAIL:
+            params["reply_to"] = ADMIN_NOTIFICATION_EMAIL
         result = await asyncio.to_thread(resend.Emails.send, params)
         logger.info("Email sent to %s: %s", to_email, result.get("id") if isinstance(result, dict) else result)
     except Exception as e:
