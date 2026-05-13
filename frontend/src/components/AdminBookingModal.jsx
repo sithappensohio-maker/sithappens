@@ -3,24 +3,26 @@ import { api, formatErr } from "../lib/api";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
-export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, onClose, onCreated }) {
+export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, onClose, onCreated }) {
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [kennels, setKennels] = useState([]);
-  const [clientId, setClientId] = useState("");
-  const [dogId, setDogId] = useState("");
-  const [serviceType, setServiceType] = useState("daycare");
-  const [date, setDate] = useState(defaultDate || todayISO());
-  const [endDate, setEndDate] = useState("");
-  const [kennel, setKennel] = useState("");
-  const [dropoffTime, setDropoffTime] = useState("");
-  const [pickupTime, setPickupTime] = useState("");
-  const [notes, setNotes] = useState("");
+  const [clientId, setClientId] = useState(existing?.client_id || "");
+  const [dogId, setDogId] = useState(existing?.dog_id || "");
+  const [serviceType, setServiceType] = useState(existing?.service_type || "daycare");
+  const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
+  const [endDate, setEndDate] = useState(existing?.end_date || "");
+  const [kennel, setKennel] = useState(existing?.kennel || "");
+  const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "");
+  const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "");
+  const [notes, setNotes] = useState(existing?.notes || "");
   const [checkInNow, setCheckInNow] = useState(defaultCheckIn);
   const [overrideVaccines, setOverrideVaccines] = useState(false);
   const [overrideCapacity, setOverrideCapacity] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [conflicts, setConflicts] = useState([]);
+  const isEdit = !!existing;
 
   useEffect(() => {
     (async () => {
@@ -31,10 +33,22 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setClients(cRes.data);
         setDogs(dRes.data);
         setKennels(sRes.data.kennels || []);
-        if (cRes.data[0]) setClientId(cRes.data[0].id);
+        if (!existing && cRes.data[0]) setClientId(cRes.data[0].id);
       } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     })();
-  }, []);
+  }, [existing]);
+
+  // Auto-detect conflicts when dog/date change
+  useEffect(() => {
+    if (!dogId || !date) { setConflicts([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get("/bookings/conflicts", { params: { dog_id: dogId, date_str: date } });
+        setConflicts((data.conflicts || []).filter(c => c.id !== existing?.id));
+      } catch { setConflicts([]); }
+    }, 200);
+    return () => clearTimeout(t);
+  }, [dogId, date, existing]);
 
   const clientDogs = useMemo(() => dogs.filter(d => d.owner_id === clientId), [dogs, clientId]);
   useEffect(() => {
@@ -51,21 +65,30 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     if (serviceType === "boarding" && endDate && endDate < date) { setErr("End date must be after start date"); return; }
     setSaving(true);
     try {
-      const body = {
-        dog_id: dogId,
-        date,
-        end_date: serviceType === "boarding" ? (endDate || date) : null,
-        service_type: serviceType,
-        kennel: serviceType === "boarding" ? kennel : "",
-        dropoff_time: dropoffTime || "",
-        pickup_time: pickupTime || "",
-        notes,
-        override_vaccines: overrideVaccines,
-        override_capacity: overrideCapacity,
-        check_in_now: checkInNow,
-      };
-      const { data } = await api.post("/bookings", body);
-      onCreated?.(data);
+      if (isEdit) {
+        await api.patch(`/bookings/${existing.id}`, {
+          notes,
+          kennel: serviceType === "boarding" ? kennel : "",
+          dropoff_time: dropoffTime || "",
+          pickup_time: pickupTime || "",
+        });
+      } else {
+        const body = {
+          dog_id: dogId,
+          date,
+          end_date: serviceType === "boarding" ? (endDate || date) : null,
+          service_type: serviceType,
+          kennel: serviceType === "boarding" ? kennel : "",
+          dropoff_time: dropoffTime || "",
+          pickup_time: pickupTime || "",
+          notes,
+          override_vaccines: overrideVaccines,
+          override_capacity: overrideCapacity,
+          check_in_now: checkInNow,
+        };
+        await api.post("/bookings", body);
+      }
+      onCreated?.();
       onClose();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
     setSaving(false);
@@ -76,8 +99,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in">
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{defaultCheckIn ? "Quick Check-in" : "New Booking"}</h4>
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-1">{defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client"}</p>
+            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
+            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mt-1">{isEdit ? "Update notes, kennel & times" : (defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client")}</p>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>
         </div>
@@ -105,6 +128,15 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <div className={`text-[10px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shGreen/10 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
               <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-2`} />
               Rabies: {rabiesOk ? `Valid through ${rabies}` : (rabies ? `Expired ${rabies}` : "Missing")}
+            </div>
+          )}
+
+          {!isEdit && conflicts.length > 0 && (
+            <div className="text-[10px] font-black uppercase tracking-widest rounded p-3 bg-shOrange/15 text-shOrange border border-shOrange/40" data-testid="booking-conflicts">
+              <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
+              <ul className="mt-2 ml-5 list-disc space-y-1">
+                {conflicts.map(c => <li key={c.id}>{c.service_type} ({c.status}) — {c.date}{c.end_date && c.end_date!==c.date?` → ${c.end_date}`:""}</li>)}
+              </ul>
             </div>
           )}
 

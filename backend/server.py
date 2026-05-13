@@ -179,6 +179,7 @@ class DogIn(BaseModel):
     training_skills: List[TrainingSkill] = []
     vet_name: Optional[str] = ""
     vet_phone: Optional[str] = ""
+    photos: List[str] = []  # gallery photos (base64)
 
 class DogOut(DogIn):
     id: str
@@ -1039,6 +1040,85 @@ async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# -------- Booking Edit (Admin) --------
+class BookingPatchIn(BaseModel):
+    notes: Optional[str] = None
+    kennel: Optional[str] = None
+    dropoff_time: Optional[str] = None
+    pickup_time: Optional[str] = None
+
+@api.patch("/bookings/{booking_id}", response_model=BookingOut)
+async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if update:
+        await db.bookings.update_one({"id": booking_id}, {"$set": update})
+        booking.update(update)
+    return booking
+
+
+# -------- Dog Lifetime Stats --------
+@api.get("/dogs/{dog_id}/stats")
+async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    bookings = await db.bookings.find({"dog_id": dog_id}, {"_id": 0}).to_list(2000)
+    daycare_days = 0
+    boarding_nights = 0
+    training_sessions = 0
+    last_visit = None
+    today = date.today().isoformat()
+    for b in bookings:
+        if b["status"] in ("cancelled", "rejected"):
+            continue
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        past_days = [d for d in days if d <= today]
+        if b["service_type"] == "daycare":
+            daycare_days += len(past_days)
+        elif b["service_type"] == "boarding":
+            boarding_nights += len(past_days)
+        elif b["service_type"] == "training":
+            training_sessions += len(past_days)
+        if past_days:
+            last_visit = max(past_days) if not last_visit else max(last_visit, max(past_days))
+    incidents_count = await db.incidents.count_documents({"dog_id": dog_id})
+    homework_completed = await db.homework.count_documents({"dog_id": dog_id, "status": "completed"})
+    homework_assigned = await db.homework.count_documents({"dog_id": dog_id, "status": "assigned"})
+    return {
+        "dog_id": dog_id,
+        "daycare_days": daycare_days,
+        "boarding_nights": boarding_nights,
+        "training_sessions": training_sessions,
+        "last_visit": last_visit,
+        "incidents": incidents_count,
+        "homework_completed": homework_completed,
+        "homework_assigned": homework_assigned,
+    }
+
+
+# -------- Search --------
+@api.get("/search")
+async def search(q: str, _: dict = Depends(require_admin)):
+    q = q.strip().lower()
+    if len(q) < 1:
+        return {"clients": [], "dogs": []}
+    clients = await db.clients.find({}, {"_id": 0}).to_list(2000)
+    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
+    client_hits = []
+    for c in clients:
+        if q in (c.get("name") or "").lower() or q in (c.get("email") or "").lower() or q in (c.get("phone") or "").lower():
+            client_hits.append({"id": c["id"], "name": c["name"], "email": c.get("email"), "phone": c.get("phone")})
+    dog_hits = []
+    owner_name = {c["id"]: c["name"] for c in clients}
+    for d in dogs:
+        if q in (d.get("name") or "").lower() or q in (d.get("breed") or "").lower():
+            dog_hits.append({"id": d["id"], "name": d["name"], "breed": d.get("breed"), "owner_name": owner_name.get(d.get("owner_id"), ""), "owner_id": d.get("owner_id")})
+    return {"clients": client_hits[:10], "dogs": dog_hits[:10]}
+
+
 # -------- Homework Assignments --------
 class HomeworkIn(BaseModel):
     dog_id: str
@@ -1188,7 +1268,55 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "health_flags": health_flags,
         "total_dogs": len(dogs),
         "today_roster": roster,
+        "upcoming_birthdays": _upcoming_birthdays(dogs, days_ahead=14),
     }
+
+
+def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:
+    today = date.today()
+    out = []
+    for d in dogs:
+        bd = d.get("birthday") or ""
+        if not bd or len(bd) < 10:
+            continue
+        try:
+            m, day_n = int(bd[5:7]), int(bd[8:10])
+            this_year = date(today.year, m, day_n)
+            next_year = date(today.year + 1, m, day_n)
+            target = this_year if this_year >= today else next_year
+            delta = (target - today).days
+            if 0 <= delta <= days_ahead:
+                bday_year = int(bd[0:4])
+                age_then = target.year - bday_year
+                out.append({
+                    "dog_id": d["id"],
+                    "dog_name": d["name"],
+                    "birthday": bd,
+                    "next": target.isoformat(),
+                    "days": delta,
+                    "turning": age_then,
+                })
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["days"])
+    return out
+
+
+@api.get("/bookings/conflicts")
+async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_current_user)):
+    """Return any pending/approved/completed bookings for this dog on the given date."""
+    bookings = await db.bookings.find(
+        {"dog_id": dog_id, "status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
+    ).to_list(500)
+    conflicts = []
+    for b in bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if date_str in days:
+            conflicts.append({
+                "id": b["id"], "date": b["date"], "end_date": b.get("end_date"),
+                "service_type": b["service_type"], "status": b["status"],
+            })
+    return {"conflicts": conflicts}
 
 
 # -------- Calendar Events --------

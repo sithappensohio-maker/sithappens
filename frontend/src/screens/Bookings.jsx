@@ -6,6 +6,7 @@ export default function Bookings() {
   const [bookings, setBookings] = useState([]);
   const [err, setErr] = useState("");
   const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
 
   const load = async () => {
     try { const { data } = await api.get("/bookings"); setBookings(data); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -47,6 +48,7 @@ export default function Bookings() {
                 <td className="px-6 py-4 text-xs text-gray-300">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</td>
                 <td className="px-6 py-4"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
+                  <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}`} className="text-[10px] font-black uppercase text-shBlue hover:underline">Edit</button>
                   {b.status === "pending" && <>
                     <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}`} className="text-[10px] font-black uppercase text-shGreen hover:underline">Approve</button>
                     <button onClick={()=>reject(b.id)} className="text-[10px] font-black uppercase text-red-400 hover:underline">Reject</button>
@@ -58,6 +60,8 @@ export default function Bookings() {
           </tbody>
         </table>
       </div>
+      {showModal && <AdminBookingModal onClose={()=>setShowModal(false)} onCreated={load} />}
+      {editing && <AdminBookingModal existing={editing} onClose={()=>setEditing(null)} onCreated={load} />}
     </div>
   );
 }

@@ -63,6 +63,21 @@ export default function Dashboard() {
         </div>
       )}
 
+      {(stats.upcoming_birthdays || []).length > 0 && (
+        <div className="bg-gradient-to-r from-shGreen/20 to-shBlue/10 border border-shGreen/40 rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
+          <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2 mb-3"><i className="fas fa-cake-candles"/> Upcoming Birthdays · {stats.upcoming_birthdays.length}</h3>
+          <div className="flex flex-wrap gap-2">
+            {stats.upcoming_birthdays.map(b => (
+              <div key={b.dog_id} className="bg-bgBase/60 rounded-full px-4 py-2 flex items-center gap-3 text-xs">
+                <span className="font-black text-white uppercase">{b.dog_name}</span>
+                <span className="text-shGreen font-black">turns {b.turning}</span>
+                <span className="text-gray-400">{b.days===0?"today!":b.days===1?"tomorrow":`in ${b.days} days`}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" textColor="text-white" testId="stat-daycare" />
         <StatCard label="Boarding Today" value={stats.boarding_today} accent="border-t-shGreen" textColor="text-shGreen" testId="stat-boarding" />

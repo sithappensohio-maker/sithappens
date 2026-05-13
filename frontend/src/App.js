@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./lib/auth";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
@@ -11,6 +11,7 @@ import Settings from "./screens/Settings";
 import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
+import GlobalSearch from "./components/GlobalSearch";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -82,6 +83,13 @@ function AdminShell() {
             <img src="/logo.png" alt="Sit Happens" className="h-10 md:hidden" />
             <h2 className="text-xs font-black uppercase text-white tracking-widest truncate" data-testid="header-title">{tab}</h2>
           </div>
+          <button onClick={()=>setSearchOpen(true)} data-testid="open-search"
+                  className="hidden md:flex items-center gap-2 bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-xs text-gray-400 hover:border-shBlue">
+            <i className="fas fa-search text-[10px]" />
+            <span>Search…</span>
+            <kbd className="text-[9px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
+          </button>
+          <button onClick={()=>setSearchOpen(true)} className="md:hidden text-gray-300 p-2"><i className="fas fa-search" /></button>
         </header>
         <div className="flex-1 overflow-y-auto p-4 md:p-8">
           {tab === "dashboard" && <Dashboard />}
@@ -95,6 +103,7 @@ function AdminShell() {
           {tab === "settings" && <Settings />}
         </div>
       </main>
+      <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={navigateTo} />
     </div>
   );
 }
