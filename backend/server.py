@@ -196,7 +196,7 @@ class TrainingLogIn(BaseModel):
 class BookingIn(BaseModel):
     dog_id: str
     date: str  # YYYY-MM-DD
-    service_type: Literal["daycare", "boarding", "training"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training", "grooming"] = "daycare"
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
     kennel: Optional[str] = ""
@@ -934,6 +934,7 @@ def _default_settings() -> dict:
             "daycare": _default_hours_grid("07:00", "19:00"),
             "boarding": {"mode": "24_7"},
             "training": _default_hours_grid("09:00", "17:00"),
+            "grooming": _default_hours_grid("09:00", "17:00"),
         },
         "daycare_capacity": DAYCARE_CAPACITY,
         "boarding_capacity": 10,
@@ -966,6 +967,12 @@ async def get_settings() -> dict:
         if k not in s:
             s[k] = v
             changed = True
+    # Nested backfill for service_hours so new services (e.g. grooming) show up for existing installs
+    if isinstance(s.get("service_hours"), dict):
+        for svc_key, svc_default in (defaults.get("service_hours") or {}).items():
+            if svc_key not in s["service_hours"]:
+                s["service_hours"][svc_key] = svc_default
+                changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -1325,8 +1332,8 @@ async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = 
             "client_phone": (client or {}).get("phone", ""),
             "client_emerg": (client or {}).get("emerg", ""),
         })
-    # Sort: boarding first, then daycare, then training; secondary by dropoff_time
-    order = {"boarding": 0, "daycare": 1, "training": 2}
+    # Sort: boarding first, then daycare, then grooming, then training; secondary by dropoff_time
+    order = {"boarding": 0, "daycare": 1, "grooming": 2, "training": 3}
     out.sort(key=lambda x: (order.get(x["service_type"], 9), x.get("dropoff_time") or "z"))
     return {"date": target, "bookings": out}
 
@@ -1447,7 +1454,9 @@ async def calendar_events(_: dict = Depends(require_admin)):
             end_excl = (datetime.fromisoformat(end).date() + timedelta(days=1)).isoformat()
         except Exception:
             end_excl = end
-        color = "#8cc63f" if b["service_type"] == "daycare" else ("#00a9e0" if b["service_type"] == "boarding" else "#a855f7")
+        # daycare green, boarding blue, training purple, grooming pink
+        _svc_colors = {"daycare": "#8cc63f", "boarding": "#00a9e0", "training": "#a855f7", "grooming": "#ec4899"}
+        color = _svc_colors.get(b["service_type"], "#64748b")
         if b["status"] == "pending":
             color = "#f26522"
         events.append({

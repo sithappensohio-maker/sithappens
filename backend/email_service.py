@@ -59,7 +59,7 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
 
 
 def _service_label(svc: str) -> str:
-    return {"daycare": "Daycare", "boarding": "Boarding", "training": "Training"}.get(svc, svc.title())
+    return {"daycare": "Daycare", "boarding": "Boarding", "training": "Training", "grooming": "Grooming"}.get(svc, svc.title())
 
 
 def _date_range(start: str, end: str | None) -> str:

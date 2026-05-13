@@ -17,7 +17,7 @@ export default function RunSheet() {
 
   if (!data) return <div className="text-gray-400">Loading…</div>;
 
-  const groups = ["boarding", "daycare", "training"];
+  const groups = ["boarding", "daycare", "grooming", "training"];
   const bookings = data.bookings || [];
 
   return (

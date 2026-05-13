@@ -144,8 +144,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           <div>
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-            <div className="grid grid-cols-3 gap-2 mt-1">
-              {["daycare","boarding","training"].map(t => (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">
+              {["daycare","boarding","training","grooming"].map(t => (
                 <button key={t} onClick={()=>setServiceType(t)} data-testid={`ab-service-${t}`}
                         className={`py-2 rounded text-[14px] font-black uppercase tracking-widest border ${serviceType===t?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>{t}</button>
               ))}
