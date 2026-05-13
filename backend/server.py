@@ -1,0 +1,611 @@
+from dotenv import load_dotenv
+from pathlib import Path
+ROOT_DIR = Path(__file__).parent
+load_dotenv(ROOT_DIR / '.env')
+
+import os
+import uuid
+import logging
+import bcrypt
+import jwt
+from datetime import datetime, timezone, timedelta, date
+from typing import List, Optional, Literal
+
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from starlette.middleware.cors import CORSMiddleware
+from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel, Field, EmailStr, ConfigDict
+
+# -------- Config --------
+JWT_SECRET = os.environ["JWT_SECRET"]
+JWT_ALG = "HS256"
+ACCESS_TOKEN_EXPIRE_DAYS = 7
+DAYCARE_CAPACITY = int(os.environ.get("DAYCARE_CAPACITY", "30"))
+
+mongo_url = os.environ["MONGO_URL"]
+mongo_client = AsyncIOMotorClient(mongo_url)
+db = mongo_client[os.environ["DB_NAME"]]
+
+app = FastAPI(title="Sit Happens API")
+api = APIRouter(prefix="/api")
+security = HTTPBearer(auto_error=False)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("sithappens")
+
+
+# -------- Helpers --------
+def hash_password(pw: str) -> str:
+    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+
+def verify_password(plain: str, hashed: str) -> bool:
+    try:
+        return bcrypt.checkpw(plain.encode(), hashed.encode())
+    except Exception:
+        return False
+
+def create_access_token(user_id: str, email: str, role: str) -> str:
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
+        "type": "access",
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
+    token = None
+    if creds and creds.scheme.lower() == "bearer":
+        token = creds.credentials
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            token = auth[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return user
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+# -------- Models --------
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    name: str
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    email: str
+    name: str
+    role: str
+    client_id: Optional[str] = None
+
+class AuthOut(BaseModel):
+    token: str
+    user: UserOut
+
+class ClientIn(BaseModel):
+    name: str
+    address: Optional[str] = ""
+    phone: Optional[str] = ""
+    email: Optional[str] = ""
+    emerg: Optional[str] = ""
+    credits: int = 0
+
+class ClientOut(ClientIn):
+    id: str
+    waiver: bool = False
+    portal_email: Optional[str] = None  # the login email of linked user
+    created_at: str
+
+class PortalAccountIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+
+class Vaccines(BaseModel):
+    rabies: Optional[str] = ""  # ISO date
+    bordetella: Optional[str] = ""
+    dhpp: Optional[str] = ""
+
+class TrainingLog(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    date: str
+    note: str
+    tags: List[str] = []
+
+class DogIn(BaseModel):
+    owner_id: str
+    name: str
+    breed: Optional[str] = ""
+    age_y: int = 0
+    age_m: int = 0
+    birthday: Optional[str] = ""
+    sex: Literal["Male", "Female"] = "Male"
+    fixed: Literal["Yes", "No"] = "No"
+    vaccines: Vaccines = Field(default_factory=Vaccines)
+    notes: Optional[str] = ""
+    photo: Optional[str] = ""  # base64 data URI
+
+class DogOut(DogIn):
+    id: str
+    training_logs: List[TrainingLog] = []
+    created_at: str
+
+class TrainingLogIn(BaseModel):
+    date: str
+    note: str
+    tags: List[str] = []
+
+class BookingIn(BaseModel):
+    dog_id: str
+    date: str  # YYYY-MM-DD
+    service_type: Literal["daycare", "boarding"] = "daycare"
+    end_date: Optional[str] = None  # for boarding
+    notes: Optional[str] = ""
+
+class BookingOut(BaseModel):
+    id: str
+    dog_id: str
+    dog_name: str
+    client_id: str
+    client_name: str
+    date: str
+    end_date: Optional[str] = None
+    service_type: str
+    status: Literal["pending", "approved", "rejected", "completed", "cancelled"]
+    notes: Optional[str] = ""
+    created_at: str
+
+
+# -------- Auth --------
+@api.post("/auth/register", response_model=AuthOut)
+async def register(body: RegisterIn):
+    email = body.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "name": body.name,
+        "role": "client",
+        "client_id": None,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user)
+    token = create_access_token(user["id"], user["email"], user["role"])
+    return {"token": token, "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]}}
+
+
+@api.post("/auth/login", response_model=AuthOut)
+async def login(body: LoginIn):
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    token = create_access_token(user["id"], user["email"], user["role"])
+    return {
+        "token": token,
+        "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]},
+    }
+
+
+@api.get("/auth/me", response_model=UserOut)
+async def me(user: dict = Depends(get_current_user)):
+    return user
+
+
+# -------- Clients --------
+@api.get("/clients", response_model=List[ClientOut])
+async def list_clients(_: dict = Depends(require_admin)):
+    items = await db.clients.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    # attach portal email
+    for c in items:
+        u = await db.users.find_one({"client_id": c["id"]}, {"_id": 0, "email": 1})
+        c["portal_email"] = u["email"] if u else None
+    return items
+
+@api.post("/clients", response_model=ClientOut)
+async def create_client(body: ClientIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc.update({"id": str(uuid.uuid4()), "waiver": False, "created_at": now_iso()})
+    await db.clients.insert_one(doc)
+    doc.pop("_id", None)
+    doc["portal_email"] = None
+    return doc
+
+@api.put("/clients/{client_id}", response_model=ClientOut)
+async def update_client(client_id: str, body: ClientIn, _: dict = Depends(require_admin)):
+    existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Client not found")
+    update = body.model_dump()
+    await db.clients.update_one({"id": client_id}, {"$set": update})
+    existing.update(update)
+    u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
+    existing["portal_email"] = u["email"] if u else None
+    return existing
+
+@api.delete("/clients/{client_id}")
+async def delete_client(client_id: str, _: dict = Depends(require_admin)):
+    await db.clients.delete_one({"id": client_id})
+    await db.dogs.delete_many({"owner_id": client_id})
+    await db.users.delete_many({"client_id": client_id})
+    return {"ok": True}
+
+@api.post("/clients/{client_id}/portal-account", response_model=UserOut)
+async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    email = body.email.lower()
+    existing = await db.users.find_one({"email": email})
+    if existing and existing.get("client_id") != client_id:
+        raise HTTPException(status_code=400, detail="Email already used")
+    if existing:
+        await db.users.update_one({"id": existing["id"]}, {"$set": {"password_hash": hash_password(body.password)}})
+        u = await db.users.find_one({"id": existing["id"]}, {"_id": 0, "password_hash": 0})
+        return u
+    user = {
+        "id": str(uuid.uuid4()),
+        "email": email,
+        "password_hash": hash_password(body.password),
+        "name": client["name"],
+        "role": "client",
+        "client_id": client_id,
+        "created_at": now_iso(),
+    }
+    await db.users.insert_one(user)
+    user.pop("password_hash", None)
+    user.pop("_id", None)
+    return user
+
+
+# -------- Dogs --------
+async def _resolve_client_scope(user: dict) -> Optional[str]:
+    """Return client_id if user is a client (to filter), None if admin (no filter)."""
+    if user.get("role") == "admin":
+        return None
+    return user.get("client_id")
+
+@api.get("/dogs", response_model=List[DogOut])
+async def list_dogs(user: dict = Depends(get_current_user)):
+    scope = await _resolve_client_scope(user)
+    q = {} if scope is None else {"owner_id": scope}
+    items = await db.dogs.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+    return items
+
+@api.post("/dogs", response_model=DogOut)
+async def create_dog(body: DogIn, _: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": body.owner_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Owner not found")
+    doc = body.model_dump()
+    doc.update({"id": str(uuid.uuid4()), "training_logs": [], "created_at": now_iso()})
+    await db.dogs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.put("/dogs/{dog_id}", response_model=DogOut)
+async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin)):
+    existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    update = body.model_dump()
+    await db.dogs.update_one({"id": dog_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+@api.delete("/dogs/{dog_id}")
+async def delete_dog(dog_id: str, _: dict = Depends(require_admin)):
+    await db.dogs.delete_one({"id": dog_id})
+    return {"ok": True}
+
+@api.post("/dogs/{dog_id}/training-logs", response_model=DogOut)
+async def add_training_log(dog_id: str, body: TrainingLogIn, _: dict = Depends(require_admin)):
+    existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    log = TrainingLog(date=body.date, note=body.note, tags=body.tags).model_dump()
+    await db.dogs.update_one({"id": dog_id}, {"$push": {"training_logs": log}})
+    existing["training_logs"] = existing.get("training_logs", []) + [log]
+    return existing
+
+
+# -------- Bookings --------
+def _dates_in_range(start: str, end: Optional[str]) -> List[str]:
+    s = datetime.fromisoformat(start).date()
+    e = datetime.fromisoformat(end).date() if end else s
+    if e < s:
+        e = s
+    out = []
+    cur = s
+    while cur <= e:
+        out.append(cur.isoformat())
+        cur += timedelta(days=1)
+    return out
+
+async def _booking_days_count(target_date: str) -> int:
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "pending"]}}, {"_id": 0}
+    ).to_list(2000)
+    count = 0
+    for b in bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if target_date in days:
+            count += 1
+    return count
+
+@api.get("/bookings", response_model=List[BookingOut])
+async def list_bookings(user: dict = Depends(get_current_user), status_filter: Optional[str] = None):
+    q = {}
+    if status_filter:
+        q["status"] = status_filter
+    if user.get("role") != "admin":
+        q["client_id"] = user.get("client_id")
+    items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(2000)
+    return items
+
+@api.post("/bookings", response_model=BookingOut)
+async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Vaccine check
+    rabies = (dog.get("vaccines") or {}).get("rabies", "")
+    today = date.today().isoformat()
+    if not rabies or rabies < today:
+        raise HTTPException(status_code=400, detail="Rabies vaccine missing or expired")
+
+    # Capacity check (daycare only)
+    if body.service_type == "daycare":
+        if await _booking_days_count(body.date) >= DAYCARE_CAPACITY:
+            raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
+
+    # Credit check for clients
+    days = _dates_in_range(body.date, body.end_date)
+    cost = len(days)
+    if user.get("role") != "admin":
+        if (client.get("credits") or 0) < cost:
+            raise HTTPException(status_code=400, detail=f"Insufficient credits ({client.get('credits',0)}/{cost})")
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog["id"],
+        "dog_name": dog["name"],
+        "client_id": client["id"],
+        "client_name": client["name"],
+        "date": body.date,
+        "end_date": body.end_date,
+        "service_type": body.service_type,
+        "status": "pending" if user.get("role") != "admin" else "approved",
+        "notes": body.notes or "",
+        "created_at": now_iso(),
+        "cost": cost,
+    }
+    await db.bookings.insert_one(doc)
+    # if approved directly by admin, deduct credits immediately
+    if doc["status"] == "approved":
+        await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -cost}})
+    doc.pop("_id", None)
+    return doc
+
+@api.post("/bookings/{booking_id}/approve", response_model=BookingOut)
+async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Booking is {booking['status']}")
+    cost = booking.get("cost") or len(_dates_in_range(booking["date"], booking.get("end_date")))
+    client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+    if (client.get("credits") or 0) < cost:
+        raise HTTPException(status_code=400, detail="Client has insufficient credits")
+    await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": -cost}})
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "approved"}})
+    booking["status"] = "approved"
+    return booking
+
+@api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
+async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "rejected"}})
+    booking["status"] = "rejected"
+    return booking
+
+@api.delete("/bookings/{booking_id}")
+async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)):
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if user.get("role") != "admin" and booking["client_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    # refund credits if previously approved
+    if booking["status"] == "approved":
+        cost = booking.get("cost") or len(_dates_in_range(booking["date"], booking.get("end_date")))
+        await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": cost}})
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
+    return {"ok": True}
+
+@api.get("/bookings/availability")
+async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    rabies = (dog.get("vaccines") or {}).get("rabies", "")
+    today = date.today().isoformat()
+    vac_ok = bool(rabies) and rabies >= today
+    booked = await _booking_days_count(date_str)
+    open_slots = max(DAYCARE_CAPACITY - booked, 0)
+    return {
+        "date": date_str,
+        "capacity": DAYCARE_CAPACITY,
+        "booked": booked,
+        "open_slots": open_slots,
+        "vaccine_ok": vac_ok,
+        "rabies_expiration": rabies,
+    }
+
+
+@api.get("/portal/me")
+async def portal_me(user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    client = await db.clients.find_one({"id": cid}, {"_id": 0}) if cid else None
+    if not client:
+        # client without linked record - return zero
+        return {"client": {"id": "", "name": user.get("name"), "credits": 0}}
+    return {"client": client}
+
+
+# -------- Dashboard --------
+@api.get("/dashboard/stats")
+async def dashboard_stats(_: dict = Depends(require_admin)):
+    today = date.today().isoformat()
+    in_thirty = (date.today() + timedelta(days=30)).isoformat()
+    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
+    health_flags = 0
+    for d in dogs:
+        r = (d.get("vaccines") or {}).get("rabies", "")
+        if not r or r < today or r <= in_thirty:
+            health_flags += 1
+
+    today_bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "pending"]}}, {"_id": 0}
+    ).to_list(2000)
+    daycare_today = 0
+    boarding_today = 0
+    roster = []
+    for b in today_bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if today in days:
+            if b["service_type"] == "daycare":
+                daycare_today += 1
+            else:
+                boarding_today += 1
+            roster.append(b)
+    return {
+        "daycare_occupancy": daycare_today,
+        "daycare_capacity": DAYCARE_CAPACITY,
+        "boarding_today": boarding_today,
+        "health_flags": health_flags,
+        "total_dogs": len(dogs),
+        "today_roster": roster,
+    }
+
+
+# -------- Calendar Events --------
+@api.get("/events")
+async def calendar_events(_: dict = Depends(require_admin)):
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "pending"]}}, {"_id": 0}
+    ).to_list(2000)
+    events = []
+    for b in bookings:
+        end = b.get("end_date") or b["date"]
+        # FullCalendar treats end as exclusive
+        try:
+            end_excl = (datetime.fromisoformat(end).date() + timedelta(days=1)).isoformat()
+        except Exception:
+            end_excl = end
+        color = "#8cc63f" if b["service_type"] == "daycare" else "#00a9e0"
+        if b["status"] == "pending":
+            color = "#f26522"
+        events.append({
+            "id": b["id"],
+            "title": f"{b['dog_name']} ({b['service_type']})",
+            "start": b["date"],
+            "end": end_excl,
+            "backgroundColor": color,
+            "borderColor": color,
+            "extendedProps": {
+                "status": b["status"],
+                "client_name": b["client_name"],
+                "service_type": b["service_type"],
+            },
+        })
+    return events
+
+
+# -------- Startup --------
+@app.on_event("startup")
+async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.clients.create_index("id", unique=True)
+    await db.dogs.create_index("id", unique=True)
+    await db.bookings.create_index("id", unique=True)
+    # Seed admin
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
+    admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
+    existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        await db.users.insert_one({
+            "id": str(uuid.uuid4()),
+            "email": admin_email,
+            "password_hash": hash_password(admin_pw),
+            "name": os.environ.get("ADMIN_NAME", "Admin"),
+            "role": "admin",
+            "client_id": None,
+            "created_at": now_iso(),
+        })
+        logger.info("Seeded admin %s", admin_email)
+    elif not verify_password(admin_pw, existing["password_hash"]):
+        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
+        logger.info("Updated admin password")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    mongo_client.close()
+
+
+@api.get("/")
+async def root():
+    return {"service": "sit-happens", "status": "ok"}
+
+
+app.include_router(api)
+app.add_middleware(
+    CORSMiddleware,
+    allow_credentials=True,
+    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

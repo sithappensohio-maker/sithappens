@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --sh-green: #8cc63f;
+  --sh-blue: #00a9e0;
+  --sh-orange: #f26522;
+  --bg-base: #0f172a;
+  --bg-panel: #1e293b;
+  --bg-header: #020617;
+  --bg-hover: #334155;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg-base);
+  color: #e2e8f0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 4px; }
+
+/* FullCalendar dark theme overrides */
+.fc-theme-standard td, .fc-theme-standard th { border-color: #334155 !important; }
+.fc-theme-standard .fc-scrollgrid { border-color: #334155 !important; }
+.fc-day-today { background-color: rgba(0, 169, 224, 0.1) !important; }
+.fc .fc-toolbar-title { color: #fff; font-weight: 900; text-transform: uppercase; font-style: italic; font-size: 1.25rem; letter-spacing: 0.05em; }
+.fc .fc-button { background: #1e293b !important; border-color: #334155 !important; color: #cbd5e1 !important; text-transform: uppercase; font-size: 11px; font-weight: 900; letter-spacing: 0.08em; }
+.fc .fc-button-primary:not(:disabled).fc-button-active, .fc .fc-button-primary:not(:disabled):active { background: #00a9e0 !important; border-color: #00a9e0 !important; color: #fff !important; }
+.fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: #94a3b8; text-decoration: none; font-weight: 700; font-size: 11px; text-transform: uppercase; }
+.fc .fc-event { padding: 2px 6px; font-weight: 700; font-size: 11px; cursor: pointer; }
+
+input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-in { animation: slide-in 0.25s ease-out; }

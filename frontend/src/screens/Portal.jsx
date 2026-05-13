@@ -1,0 +1,186 @@
+import { useEffect, useState, useCallback } from "react";
+import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
+
+function todayISO() { return new Date().toISOString().split("T")[0]; }
+
+export default function Portal() {
+  const { user, logout, reloadUser } = useAuth();
+  const [dogs, setDogs] = useState([]);
+  const [client, setClient] = useState(null);
+  const [bookings, setBookings] = useState([]);
+  const [bookDogId, setBookDogId] = useState("");
+  const [bookDate, setBookDate] = useState(todayISO());
+  const [bookEnd, setBookEnd] = useState("");
+  const [bookType, setBookType] = useState("daycare");
+  const [avail, setAvail] = useState(null);
+  const [err, setErr] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [dRes, bRes] = await Promise.all([api.get("/dogs"), api.get("/bookings")]);
+      setDogs(dRes.data);
+      setBookings(bRes.data);
+      if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
+      // get client info via clients endpoint won't work for client role; use /auth/me has client_id, then derive credits from a dedicated endpoint
+      // simpler: include credits in user object — already loaded. We need to fetch fresh credits from server via /auth/me each time
+      await reloadUser();
+    } catch {}
+  }, [bookDogId, reloadUser]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Fetch credits separately via a small endpoint - we'll use the user from useAuth but credits live on client doc.
+  // Use a helper: fetch own client info via portal endpoint
+  const [credits, setCredits] = useState(0);
+  useEffect(() => {
+    (async () => {
+      try {
+        // we'll use list of bookings client_name + try to load client info via a workaround - call /clients/me? we don't have that.
+        // instead, fetch from auth/me extended: we'll add credits by computing - but simpler: fetch credits from server via /portal/me below.
+        const { data } = await api.get("/portal/me");
+        setClient(data.client); setCredits(data.client.credits);
+      } catch {}
+    })();
+  }, [bookings]);
+
+  const checkAvail = useCallback(async () => {
+    if (!bookDogId || !bookDate) return;
+    try {
+      const { data } = await api.get("/bookings/availability", { params: { date_str: bookDate, dog_id: bookDogId } });
+      setAvail(data);
+    } catch (e) {
+      setAvail(null);
+      setErr(formatErr(e.response?.data?.detail));
+    }
+  }, [bookDogId, bookDate]);
+
+  useEffect(() => { checkAvail(); }, [checkAvail]);
+
+  const book = async () => {
+    setErr(""); setSuccess("");
+    try {
+      await api.post("/bookings", { dog_id: bookDogId, date: bookDate, end_date: bookType==="boarding"?bookEnd||bookDate:null, service_type: bookType });
+      setSuccess("Booking submitted! Awaiting admin approval.");
+      loadAll();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
+  const cancel = async (id) => {
+    if (!window.confirm("Cancel this booking?")) return;
+    try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
+  };
+
+  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0;
+
+  return (
+    <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
+      <header className="bg-bgHeader border-b border-bgHover h-20 flex items-center justify-between px-8">
+        <div>
+          <h1 className="text-2xl font-black italic text-shGreen uppercase tracking-tight">Sit Happens Portal</h1>
+          <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Welcome, {user.name}</p>
+        </div>
+        <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
+      </header>
+
+      <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div className="col-span-1 space-y-6">
+          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover text-center shadow-2xl" data-testid="credits-card">
+            <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Available Credits</p>
+            <p className="text-5xl font-black text-shGreen mt-2">{credits}</p>
+            <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-2">Each day = 1 credit</p>
+          </div>
+
+          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
+            <h4 className="font-black text-shBlue mb-4 uppercase text-xs tracking-widest"><i className="fas fa-calendar-plus mr-2"/>Book Service</h4>
+
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+            <select value={bookDogId} onChange={(e)=>setBookDogId(e.target.value)} data-testid="portal-book-dog"
+                    className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+            <div className="grid grid-cols-2 gap-2 mt-1 mb-3">
+              {["daycare","boarding"].map(t => (
+                <button key={t} onClick={()=>setBookType(t)} data-testid={`book-service-${t}`}
+                        className={`py-2 rounded text-[10px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
+              ))}
+            </div>
+
+            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":"Date"}</label>
+            <input type="date" value={bookDate} onChange={(e)=>setBookDate(e.target.value)} data-testid="portal-book-date"
+                   className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+
+            {bookType==="boarding" && <>
+              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">End Date</label>
+              <input type="date" value={bookEnd} onChange={(e)=>setBookEnd(e.target.value)} data-testid="portal-book-end"
+                     className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+            </>}
+
+            {avail && (
+              <div className={`text-[10px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 ${!avail.vaccine_ok?"bg-red-500/20 text-red-400":avail.open_slots<=0?"bg-shOrange/20 text-shOrange":"bg-shGreen/10 text-shGreen"}`} data-testid="availability-message">
+                {!avail.vaccine_ok ? "Rabies vaccine missing/expired"
+                  : avail.open_slots <= 0 ? "Fully booked"
+                  : `${avail.open_slots} of ${avail.capacity} slots open`}
+              </div>
+            )}
+
+            {err && <div className="text-[10px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 bg-red-500/15 text-red-400">{err}</div>}
+            {success && <div className="text-[10px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 bg-shGreen/15 text-shGreen">{success}</div>}
+
+            <button onClick={book} disabled={!canBook} data-testid="portal-book-button"
+                    className={`w-full py-3 rounded font-black uppercase text-[10px] tracking-widest shadow-lg ${canBook?"bg-shBlue text-white hover:bg-shBlue/90":"bg-bgBase text-gray-500 cursor-not-allowed border border-bgHover"}`}>
+              Book Now
+            </button>
+          </div>
+        </div>
+
+        <div className="col-span-2 space-y-6">
+          <div>
+            <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Dogs</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="portal-dogs">
+              {dogs.length === 0 && <div className="text-gray-500 text-xs font-black uppercase">No dogs on file. Contact us to add one.</div>}
+              {dogs.map(d => (
+                <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg">
+                  {d.photo
+                    ? <img src={d.photo} alt={d.name} className="h-32 w-full object-cover" />
+                    : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
+                  <div className="p-4">
+                    <h4 className="text-lg font-black text-white uppercase">{d.name}</h4>
+                    <p className="text-[10px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown"}</p>
+                    <p className="text-[10px] text-gray-400 mt-2">Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=todayISO()?"text-shGreen":"text-red-400"}>{d.vaccines?.rabies||"Missing"}</span></p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Bookings</h2>
+            <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
+              <table className="w-full text-left text-xs">
+                <thead className="text-[10px] text-gray-500 font-black uppercase">
+                  <tr><th className="px-4 py-3">Dog</th><th className="px-4 py-3">Date</th><th className="px-4 py-3">Type</th><th className="px-4 py-3">Status</th><th className="px-4 py-3"></th></tr>
+                </thead>
+                <tbody data-testid="portal-bookings">
+                  {bookings.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-gray-500 uppercase font-black">No bookings yet.</td></tr>}
+                  {bookings.map(b => (
+                    <tr key={b.id} className="border-t border-bgHover/40">
+                      <td className="px-4 py-3 text-white font-black uppercase">{b.dog_name}</td>
+                      <td className="px-4 py-3 text-gray-300">{b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</td>
+                      <td className="px-4 py-3 text-gray-300 uppercase font-black text-[10px]">{b.service_type}</td>
+                      <td className="px-4 py-3"><span className={`text-[10px] font-black uppercase px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span></td>
+                      <td className="px-4 py-3 text-right">{(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[10px] font-black uppercase text-red-400 hover:underline">Cancel</button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
