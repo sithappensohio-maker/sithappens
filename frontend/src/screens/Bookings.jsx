@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import AdminBookingModal from "../components/AdminBookingModal";
 
 export default function Bookings() {
   const [bookings, setBookings] = useState([]);
   const [err, setErr] = useState("");
+  const [showModal, setShowModal] = useState(false);
 
   const load = async () => {
     try { const { data } = await api.get("/bookings"); setBookings(data); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -24,7 +26,11 @@ export default function Bookings() {
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
-      <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Bookings</h3>
+      <div className="flex justify-between items-center">
+        <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Bookings</h3>
+        <button onClick={()=>setShowModal(true)} data-testid="new-booking-button"
+                className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ New Booking</button>
+      </div>
       {err && <div className="text-[11px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
         <table className="w-full text-left text-sm">

@@ -54,6 +54,7 @@ export default function Settings() {
     { id: "rules", label: "Booking Rules", icon: "fa-clipboard-list" },
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
+    { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
 
@@ -80,6 +81,7 @@ export default function Settings() {
           {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
           {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
+          {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>
@@ -278,6 +280,71 @@ function TagsPanel({ s, save, saving }) {
         </div>
       </Section>
       <SaveBar onSave={()=>save({ mood_tags: tags })} saving={saving} />
+    </div>
+  );
+}
+
+function WaiverPanel({ s, save, saving }) {
+  const [text, setText] = useState(s.waiver_text || "");
+  const [required, setRequired] = useState(s.waiver_required_for_booking !== false);
+  const [version, setVersion] = useState(s.waiver_version || 1);
+  const [signatures, setSignatures] = useState([]);
+  const [showSigs, setShowSigs] = useState(false);
+
+  useEffect(() => {
+    api.get("/waivers").then(r => setSignatures(r.data)).catch(() => {});
+  }, []);
+
+  const saveAndMaybeBump = (bump) => {
+    const nextVersion = bump ? (version + 1) : version;
+    save({ waiver_text: text, waiver_required_for_booking: required, waiver_version: nextVersion });
+    if (bump) setVersion(nextVersion);
+  };
+
+  return (
+    <div className="space-y-6" data-testid="waiver-panel">
+      <Section title="Waiver Text" subtitle="Markdown bold (**Heading**) becomes a green section heading in the portal.">
+        <textarea value={text} onChange={(e)=>setText(e.target.value)} rows={14} data-testid="waiver-text-edit"
+                  className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-xs font-mono focus:border-shBlue outline-none" />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={required} onChange={(e)=>setRequired(e.target.checked)} data-testid="waiver-required" className="accent-shGreen w-4 h-4" />
+            <span className="text-[10px] font-black uppercase tracking-widest text-gray-300">Require waiver before client can book</span>
+          </label>
+          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Current version: v{version}</span>
+        </div>
+      </Section>
+
+      <Section title="Signed Waivers" subtitle="Bump version after material changes to require all clients to re-sign.">
+        <button onClick={()=>setShowSigs(!showSigs)} className="mb-3 text-[10px] font-black uppercase tracking-widest text-shBlue hover:underline">
+          {showSigs?"Hide":"Show"} {signatures.length} signature{signatures.length===1?"":"s"}
+        </button>
+        {showSigs && (
+          <div className="space-y-2 max-h-80 overflow-y-auto" data-testid="waiver-signatures-list">
+            {signatures.length === 0 && <p className="text-xs text-gray-500 uppercase font-black">No signatures yet.</p>}
+            {signatures.map(sig => (
+              <div key={sig.id} className="bg-bgBase rounded p-3 text-xs flex flex-col md:flex-row md:items-center justify-between gap-2" data-testid={`sig-${sig.id}`}>
+                <div>
+                  <p className="text-white font-black">{sig.typed_name} <span className="text-gray-500 font-normal">· {sig.client_name}</span></p>
+                  <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest mt-1">Signed {(sig.signed_at||"").slice(0,19).replace("T"," ")} · v{sig.waiver_version}</p>
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded">Valid</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Section>
+
+      <div className="flex flex-col md:flex-row justify-end gap-3 pt-4 border-t border-bgHover">
+        <button onClick={()=>saveAndMaybeBump(false)} disabled={saving} data-testid="save-waiver-noversion"
+                className="bg-shBlue text-white px-6 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+          Save Without Bumping
+        </button>
+        <button onClick={()=>{ if(window.confirm("Bumping the version will require every client to re-sign before their next booking. Continue?")) saveAndMaybeBump(true); }} disabled={saving} data-testid="save-waiver-bump"
+                className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[10px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+          Save & Bump Version (re-sign required)
+        </button>
+      </div>
     </div>
   );
 }

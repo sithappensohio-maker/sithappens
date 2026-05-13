@@ -27,12 +27,15 @@ def _legacy_settings_compat():
 
     orig = requests.get(f"{BASE_URL}/api/settings", headers=h, timeout=15).json()
 
-    # legacy-friendly settings: only rabies required, no auto-approve, generous cutoff
+    # legacy-friendly settings: only rabies required, no auto-approve, generous cutoff,
+    # waiver gating disabled so iter1/iter2/iter3 client-booking tests still pass.
     legacy = {
         "required_vaccines": ["rabies"],
         "vaccine_warning_days": 30,
         "daycare_capacity": 30,
         "boarding_capacity": 10,
+        "waiver_required_for_booking": False,
+        "waiver_version": 1,
         "booking_rules": {
             "max_advance_days": 60,
             "cancellation_cutoff_hours": 24,

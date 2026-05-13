@@ -1,0 +1,47 @@
+{
+  "summary": "Sprint 4 backend testing for Sit Happens CRM. 13 new tests cover waiver public exposure, /api/waivers/me, /api/waivers/sign (typed_name+accepted validation, IP/UA/version/text snapshot persistence), admin /api/waivers list & /api/clients/{id}/waiver, waiver gating of client bookings, waiver_version bump → needs_resign → block → resign → unblock, incident CRUD with dog_id filter, and admin booking overrides (override_vaccines, override_capacity, check_in_now, plus negative test that client-sent override flags are ignored). Full regression: 61/61 passing (test_sithappens.py 20 + test_sprint2.py 10 + test_sprint3.py 18 + test_sprint4.py 13).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sithappens.py",
+    "/app/backend/tests/test_sprint2.py",
+    "/app/backend/tests/test_sprint3.py",
+    "/app/backend/tests/test_sprint4.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/sprint4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has now grown to ~1140 lines (was ~970 at end of Sprint 3) — still well past the 700-line guideline. Strongly recommend splitting into routers (auth, clients, dogs, bookings, settings, waivers, incidents, dashboard) before Sprint 5; the file now contains 5 feature domains.",
+    "DEFAULT_WAIVER_TEXT is a 16-line module-level string literal that is good for portability, but means waiver text updates require a code deploy until an admin overrides it. This is consistent with the design (admin can PUT /api/settings waiver_text) — just flagging.",
+    "create_booking uses three distinct admin overrides (override_vaccines, override_capacity, check_in_now). The check `if not (is_admin and body.override_vaccines)` correctly silently ignores the flag for non-admins; consider explicitly stripping these flags from the BookingIn model when role!=admin (or 422'ing) so the API contract is clearer to clients. Today's behavior is silent ignore, which is the safest default.",
+    "Waiver IP capture uses `request.headers.get('x-forwarded-for', request.client.host)` — this takes the full XFF header (which can be a comma-separated chain) as-is. For audit purposes consider splitting on `,` and taking the first token (the original client) to avoid storing proxy chains.",
+    "list_incidents response_model=List[IncidentOut] requires every persisted incident to have dog_name/client_id/client_name/reported_by/created_at. If an incident was inserted directly via Mongo without those keys it would 500 — current POST path always sets them, so OK in practice.",
+    "Cancellation cutoff still treats YYYY-MM-DD as 00:00 UTC (pre-existing observation from iteration_3 review, unchanged in Sprint 4).",
+    "DismissIn model still defined and unused (carry-over from iteration_2 and iteration_3 reviews — not addressed in Sprint 4).",
+    "The waiver gate uses `int(sig.get('waiver_version', 1)) < current_version` — if an admin ever lowers the version (e.g., typo PUT waiver_version: 0), all existing signatures suddenly become 'newer than current' and the gate would not block anyone. Not a real concern but consider clamping waiver_version to >=1 in SettingsIn.",
+    "create_recurring still does not invoke the waiver check for clients explicitly — it delegates to create_booking() which does, so this works transitively, but worth a comment in the code so future refactors don't break the gate."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sprint4.py (new, 13 tests)",
+    "/app/backend/tests/conftest.py (added waiver_required_for_booking=False + waiver_version=1 to legacy compat block so iter1/iter2/iter3 client-booking tests continue to pass under the new gate)"
+  ],
+  "success_rate": {
+    "backend": "100% (61/61)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "test_credentials": "admin@sithappens.com / admin123. Portal users created per-test with unique emails (s4_*, s4portal_*, s4gate_*, s4ver_*, s4clio_*).",
+  "seed_data_creation": "All test data is created and torn down inside each test/module. Naming prefix TEST_S4_* (clients, dogs). conftest.py snapshots settings at session start and restores at session end, so the global settings document (waiver text/version/required-for-booking, capacities, required_vaccines) is left in its original state for the frontend after the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Four pytest files in /app/backend/tests/: test_sithappens.py (20 tests, iter1), test_sprint2.py (10 tests, iter2), test_sprint3.py (18 tests, iter3), test_sprint4.py (13 tests, iter4 sprint4). conftest.py now disables the waiver gate (waiver_required_for_booking=False) at session start so client-booking tests in earlier suites keep passing — Sprint 4 tests that need the gate flip it back ON explicitly via a per-test fixture and restore it after. One transient TLS-connect timeout was observed against the public preview URL during the first regression run (test_check_in_not_found); rerunning passed immediately. If you see sporadic ConnectTimeout, just re-run — it's preview-edge flakiness, not application bug. The test_override_capacity_allows_beyond_capacity test self-cleans any pre-existing daycare booking on its target date (today+50) before running since daycare_capacity is temporarily set to 1.",
+  "rca of the issue": "N/A — no production bugs. Two intermediate failures during development: (1) network-edge connect-timeout (transient, not a backend bug); (2) test_override_capacity used a near-future date that collided with bookings created by earlier sprint tests, hitting the cap=1 limit on the very first booking — fixed by using today+50 and pre-cleaning that date in the test."
+}

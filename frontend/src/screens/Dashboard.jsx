@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import AdminBookingModal from "../components/AdminBookingModal";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -16,6 +17,7 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
+  const [showQuick, setShowQuick] = useState(false);
 
   const load = async () => {
     try {
@@ -69,9 +71,15 @@ export default function Dashboard() {
       </div>
 
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
-        <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between gap-3">
           <h3 className="text-xs font-black text-white uppercase tracking-widest"><i className="fas fa-clipboard-check mr-2 text-shGreen"/>Today's Check-in Board</h3>
-          <span className="text-[10px] font-black text-gray-500 uppercase">{stats.today_roster?.length || 0} dogs</span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] font-black text-gray-500 uppercase hidden sm:inline">{stats.today_roster?.length || 0} dogs</span>
+            <button onClick={()=>setShowQuick(true)} data-testid="quick-checkin-button"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[10px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
+              <i className="fas fa-plus mr-1"/>Quick Check-in
+            </button>
+          </div>
         </div>
         <div className="divide-y divide-bgHover/40" data-testid="checkin-board">
           {(stats.today_roster || []).length === 0 && <div className="px-6 py-10 text-center text-xs text-gray-500 uppercase font-black">No dogs scheduled today.</div>}
@@ -116,6 +124,7 @@ export default function Dashboard() {
       </div>
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
+      {showQuick && <AdminBookingModal defaultCheckIn={true} onClose={()=>setShowQuick(false)} onCreated={load} />}
     </div>
   );
 }

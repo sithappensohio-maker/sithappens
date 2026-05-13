@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import WaiverModal from "../components/WaiverModal";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -13,18 +14,31 @@ export default function Portal() {
   const [bookDate, setBookDate] = useState(todayISO());
   const [bookEnd, setBookEnd] = useState("");
   const [bookType, setBookType] = useState("daycare");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recEnd, setRecEnd] = useState("");
+  const [recDays, setRecDays] = useState([]);
   const [avail, setAvail] = useState(null);
   const [err, setErr] = useState("");
   const [success, setSuccess] = useState("");
+  const [waiver, setWaiver] = useState(null); // {signed, current_version, signature, needs_resign}
+  const [pubSettings, setPubSettings] = useState(null);
+  const [showWaiver, setShowWaiver] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, bRes] = await Promise.all([api.get("/dogs"), api.get("/bookings")]);
+      const [dRes, bRes, wRes, sRes] = await Promise.all([
+        api.get("/dogs"),
+        api.get("/bookings"),
+        api.get("/waivers/me"),
+        api.get("/settings/public"),
+      ]);
       setDogs(dRes.data);
       setBookings(bRes.data);
+      setWaiver(wRes.data);
+      setPubSettings(sRes.data);
       if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
-      // get client info via clients endpoint won't work for client role; use /auth/me has client_id, then derive credits from a dedicated endpoint
-      // simpler: include credits in user object — already loaded. We need to fetch fresh credits from server via /auth/me each time
+      const needsSign = !wRes.data?.signed || wRes.data?.needs_resign;
+      if (needsSign && sRes.data?.waiver_required_for_booking) setShowWaiver(true);
       await reloadUser();
     } catch {}
   }, [bookDogId, reloadUser]);
@@ -86,7 +100,8 @@ export default function Portal() {
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
   };
 
-  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0;
+  const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
+  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
 
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
@@ -107,6 +122,26 @@ export default function Portal() {
             <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Available Credits</p>
             <p className="text-5xl font-black text-shGreen mt-2">{credits}</p>
             <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-2">Each day = 1 credit</p>
+          </div>
+
+          <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
+            <div className="flex items-center justify-between mb-2">
+              <p className={`text-[10px] font-black uppercase tracking-widest ${waiverNeeded?"text-red-400":"text-shGreen"}`}>
+                <i className={`fas ${waiverNeeded?"fa-exclamation-triangle":"fa-file-signature"} mr-2`} /> Client Waiver
+              </p>
+              {waiver?.signed && !waiver?.needs_resign && <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest">v{waiver.signature?.waiver_version}</span>}
+            </div>
+            {waiverNeeded ? (
+              <>
+                <p className="text-xs text-gray-300 mb-3">{waiver?.needs_resign?"Our waiver has been updated. Please re-sign to continue booking.":"You must sign the client waiver before booking services."}</p>
+                <button onClick={()=>setShowWaiver(true)} data-testid="open-waiver-button"
+                        className="w-full bg-red-500 text-white py-2 rounded font-black text-[10px] uppercase tracking-widest hover:bg-red-500/90">
+                  Sign Waiver Now
+                </button>
+              </>
+            ) : (
+              <p className="text-xs text-gray-400">Signed by <span className="text-white font-black">{waiver?.signature?.typed_name}</span> on {(waiver?.signature?.signed_at||"").slice(0,10)}</p>
+            )}
           </div>
 
           <div className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
@@ -236,6 +271,17 @@ export default function Portal() {
           </div>
         </div>
       </div>
+
+      {showWaiver && pubSettings?.waiver_text && (
+        <WaiverModal
+          waiverText={pubSettings.waiver_text}
+          version={pubSettings.waiver_version || 1}
+          dogNames={dogs.map(d=>d.name).join(", ")}
+          onSigned={async ()=>{ setShowWaiver(false); await loadAll(); }}
+          onClose={()=>setShowWaiver(false)}
+          allowClose={waiver?.signed && !waiver?.needs_resign}
+        />
+      )}
     </div>
   );
 }

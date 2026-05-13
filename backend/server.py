@@ -170,6 +170,10 @@ class BookingIn(BaseModel):
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
     kennel: Optional[str] = ""
+    # Admin-only overrides
+    override_vaccines: bool = False
+    override_capacity: bool = False
+    check_in_now: bool = False
 
 class RecurringBookingIn(BaseModel):
     dog_id: str
@@ -437,8 +441,17 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     boarding_cap = int(settings.get("boarding_capacity", 10))
 
+    # Waiver check for clients
+    if user.get("role") != "admin" and bool(settings.get("waiver_required_for_booking", True)):
+        sig = await db.waiver_signatures.find_one({"client_id": client["id"]}, sort=[("signed_at", -1)])
+        current_version = int(settings.get("waiver_version", 1))
+        if not sig or int(sig.get("waiver_version", 1)) < current_version:
+            raise HTTPException(status_code=400, detail="Waiver must be signed before booking")
+
     # Vaccine check (multi-vaccine via settings)
-    await _validate_dog_vaccines(dog, required)
+    is_admin = user.get("role") == "admin"
+    if not (is_admin and body.override_vaccines):
+        await _validate_dog_vaccines(dog, required)
 
     # Advance-booking limit (clients only)
     if user.get("role") != "admin":
@@ -449,12 +462,13 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
                 raise HTTPException(status_code=400, detail=f"Bookings allowed up to {max_adv} days in advance")
 
     # Capacity check
-    if body.service_type == "daycare":
-        if await _booking_days_count_filtered(body.date, "daycare") >= daycare_cap:
-            raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
-    elif body.service_type == "boarding":
-        if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
-            raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
+    if not (is_admin and body.override_capacity):
+        if body.service_type == "daycare":
+            if await _booking_days_count_filtered(body.date, "daycare") >= daycare_cap:
+                raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
+        elif body.service_type == "boarding":
+            if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
+                raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
 
     # Credit cost
     days = _dates_in_range(body.date, body.end_date)
@@ -464,7 +478,6 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             raise HTTPException(status_code=400, detail=f"Insufficient credits ({client.get('credits',0)}/{cost})")
 
     auto_approve = bool(rules.get("auto_approve", False))
-    is_admin = user.get("role") == "admin"
     status_val = "approved" if (is_admin or auto_approve) else "pending"
 
     doc = {
@@ -482,6 +495,8 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "created_at": now_iso(),
         "cost": cost,
     }
+    if is_admin and body.check_in_now:
+        doc["checked_in_at"] = now_iso()
     await db.bookings.insert_one(doc)
     if status_val == "approved":
         await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -cost}})
@@ -742,6 +757,24 @@ DEFAULT_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturda
 DEFAULT_VACCINES = ["rabies", "bordetella", "dhpp"]
 DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"]
 
+DEFAULT_WAIVER_TEXT = """**1. Assumption of Risk**
+I, the Client, acknowledge that dog training, daycare, and boarding involve inherent risks of injury, disease, or death to animals and humans. I recognize that dogs are unpredictable animals and I assume all risks associated with my dog's participation in any service provided by Sit Happens Dog Training.
+
+**2. Balanced Training Methods & Professional Tools**
+I acknowledge and agree that Sit Happens Dog Training utilizes Balanced Training Methods. This includes a combination of positive reinforcement (food, toys, praise) and fair, clear corrections using professional tools. I authorize the use of tools including, but not limited to, slip leads, prong collars, and electronic collars (e-collars) as deemed appropriate for my dog's behavior modification and safety.
+
+**3. Health & Vaccination Requirements**
+I certify that my dog is in good health and is current on the following vaccinations: Rabies, Bordetella, and DHPP/DA2PP. I understand that Sit Happens reserves the right to deny entry to any animal lacking verifiable records or exhibiting symptoms of illness.
+
+**4. Primitive Breed & Wolf-Dog Hybrid Clause**
+Clients owning primitive breeds, high-drive working dogs, or wolf-dog hybrids acknowledge that these animals require specialized management. The Client assumes full legal and financial responsibility for any unpredictable behavior inherent to these breeds.
+
+**5. Photography & Media Release**
+I grant Sit Happens Dog Training and Sit Happens Pet Photography permission to capture and use media (photos and videos) of my dog for training logs, marketing, social media, and educational purposes. I waive all rights to compensation for the use of such media.
+
+**6. Indemnification & Hold Harmless**
+I agree to indemnify, defend, and hold harmless Sit Happens Dog Training, Garrett Compston, and all associated staff from any and all claims, damages, or liabilities arising from my dog's behavior, including but not limited to, injury to other dogs, staff, or damage to property."""
+
 def _default_hours_grid(open_t="07:00", close_t="19:00"):
     return {d: {"open": open_t, "close": close_t, "closed": d == "sunday"} for d in DEFAULT_DAYS}
 
@@ -768,6 +801,9 @@ def _default_settings() -> dict:
         "required_vaccines": DEFAULT_VACCINES,
         "vaccine_warning_days": 30,
         "mood_tags": DEFAULT_MOOD_TAGS,
+        "waiver_text": DEFAULT_WAIVER_TEXT,
+        "waiver_required_for_booking": True,
+        "waiver_version": 1,
     }
 
 async def get_settings() -> dict:
@@ -797,6 +833,9 @@ class SettingsIn(BaseModel):
     required_vaccines: Optional[List[str]] = None
     vaccine_warning_days: Optional[int] = None
     mood_tags: Optional[List[str]] = None
+    waiver_text: Optional[str] = None
+    waiver_required_for_booking: Optional[bool] = None
+    waiver_version: Optional[int] = None
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -812,6 +851,9 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "booking_rules": s.get("booking_rules"),
         "mood_tags": s.get("mood_tags"),
         "required_vaccines": s.get("required_vaccines"),
+        "waiver_text": s.get("waiver_text"),
+        "waiver_version": s.get("waiver_version", 1),
+        "waiver_required_for_booking": s.get("waiver_required_for_booking", True),
     }
 
 @api.put("/settings")
@@ -834,6 +876,133 @@ async def change_password(body: ChangePwIn, user: dict = Depends(get_current_use
     if not full or not verify_password(body.current_password, full["password_hash"]):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
+    return {"ok": True}
+
+
+# -------- Waivers --------
+class WaiverSignIn(BaseModel):
+    typed_name: str = Field(min_length=2)
+    accepted: bool = True
+    dog_names: Optional[str] = ""  # free-text list of dogs covered
+
+@api.get("/waivers/me")
+async def my_waiver(user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        return {"signed": False}
+    settings = await get_settings()
+    current_version = int(settings.get("waiver_version", 1))
+    sig = await db.waiver_signatures.find_one(
+        {"client_id": cid}, {"_id": 0}, sort=[("signed_at", -1)]
+    )
+    if not sig:
+        return {"signed": False, "current_version": current_version}
+    return {
+        "signed": True,
+        "current_version": current_version,
+        "signature": sig,
+        "needs_resign": int(sig.get("waiver_version", 1)) < current_version,
+    }
+
+@api.post("/waivers/sign")
+async def sign_waiver(body: WaiverSignIn, request: Request, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client record linked to your account")
+    if not body.accepted:
+        raise HTTPException(status_code=400, detail="You must accept the terms to sign")
+    settings = await get_settings()
+    sig = {
+        "id": str(uuid.uuid4()),
+        "client_id": cid,
+        "client_name": user.get("name", ""),
+        "typed_name": body.typed_name.strip(),
+        "dog_names": body.dog_names or "",
+        "waiver_version": int(settings.get("waiver_version", 1)),
+        "waiver_text_snapshot": settings.get("waiver_text", ""),
+        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else ""),
+        "user_agent": request.headers.get("user-agent", ""),
+        "signed_at": now_iso(),
+    }
+    await db.waiver_signatures.insert_one(sig)
+    sig.pop("_id", None)
+    return sig
+
+@api.get("/waivers")
+async def list_waivers(_: dict = Depends(require_admin)):
+    items = await db.waiver_signatures.find({}, {"_id": 0}).sort("signed_at", -1).to_list(2000)
+    return items
+
+@api.get("/clients/{client_id}/waiver")
+async def client_waiver(client_id: str, _: dict = Depends(require_admin)):
+    sig = await db.waiver_signatures.find_one({"client_id": client_id}, {"_id": 0}, sort=[("signed_at", -1)])
+    return sig or {"signed": False}
+
+
+# -------- Incident Reports --------
+class IncidentIn(BaseModel):
+    dog_id: str
+    date: str           # YYYY-MM-DD
+    time: Optional[str] = ""  # HH:MM
+    type: Literal["bite", "injury", "escape", "illness", "property_damage", "behavior", "other"] = "other"
+    severity: Literal["minor", "moderate", "severe"] = "minor"
+    description: str = Field(min_length=3)
+    witnesses: Optional[str] = ""
+    action_taken: Optional[str] = ""
+    photos: List[str] = []
+    vet_required: bool = False
+    follow_up_required: bool = False
+
+class IncidentOut(IncidentIn):
+    id: str
+    dog_name: str
+    client_id: str
+    client_name: str
+    reported_by: str
+    created_at: str
+
+@api.get("/incidents", response_model=List[IncidentOut])
+async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None):
+    q = {"dog_id": dog_id} if dog_id else {}
+    items = await db.incidents.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+    return items
+
+@api.post("/incidents", response_model=IncidentOut)
+async def create_incident(body: IncidentIn, user: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "reported_by": user.get("name", "Admin"),
+        "created_at": now_iso(),
+    })
+    await db.incidents.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api.put("/incidents/{incident_id}", response_model=IncidentOut)
+async def update_incident(incident_id: str, body: IncidentIn, _: dict = Depends(require_admin)):
+    existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    update = body.model_dump()
+    await db.incidents.update_one({"id": incident_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+@api.delete("/incidents/{incident_id}")
+async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
+    await db.incidents.delete_one({"id": incident_id})
     return {"ok": True}
 
 
