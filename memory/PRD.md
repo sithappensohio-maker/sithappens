@@ -1,0 +1,70 @@
+# Sit Happens — Pro CRM
+
+## Original Problem Statement
+Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTML prototype. Replace localStorage with a real backend.
+
+## User Choices
+- **Scope:** Booking workflow + training logs + vaccine alerts + photo uploads (options b+c)
+- **Auth:** Simple JWT email/password (admin + client roles)
+- **Design:** Keep current dark theme exactly (slate base, shGreen #8cc63f, shBlue #00a9e0, shOrange #f26522)
+- **Photos:** Yes — stored as base64 in MongoDB
+
+## Architecture
+- **Backend:** FastAPI + Motor (async MongoDB), bcrypt password hashing, PyJWT Bearer tokens (7-day expiry)
+- **Frontend:** React 19 + Tailwind + FullCalendar (npm), axios with localStorage JWT
+- **DB:** MongoDB `sit_happens_db` — collections: `users`, `clients`, `dogs`, `bookings`
+
+## User Personas
+1. **Admin** — Manages clients, dogs, bookings, schedules. Seeded from env (`admin@sithappens.com / admin123`).
+2. **Client** — Books daycare/boarding via portal, sees dogs, manages own bookings. Account created by admin.
+
+## Core Requirements
+- Role-based auth (admin vs client)
+- Client/Dog CRUD with owner relationships
+- Vaccine tracking with expiry alerts (rabies required for booking)
+- Booking workflow: client requests → admin approves → credits deducted (1 per day)
+- Daycare capacity check (default 30/day)
+- Training logs per dog (admin only)
+- FullCalendar visualization of bookings
+- Dashboard with daycare occupancy, boarding count, health flags, total dogs
+
+## Implemented (2026-01)
+- ✅ JWT auth with bcrypt + admin seeding (idempotent)
+- ✅ Client CRUD + portal account creation
+- ✅ Dog CRUD with photo (base64), vaccines, training logs
+- ✅ Booking endpoints (create/approve/reject/cancel) with full validation
+- ✅ Availability endpoint (capacity + vaccine check)
+- ✅ Dashboard stats endpoint
+- ✅ Calendar events endpoint (FullCalendar JSON)
+- ✅ Portal `/api/portal/me` (client info + credits)
+- ✅ Login screen + admin shell (Dashboard, Schedule, Bookings, Clients, Dogs)
+- ✅ Client Portal with booking flow + credit display
+- ✅ 100% backend tests passing (20/20), frontend smoke tested
+
+## Backlog / Next Iterations (Prioritized)
+**P1**
+- Boarding capacity rule (currently only daycare enforces capacity)
+- Email/SMS notification when booking is approved/rejected
+- Vaccine expiry alerts banner on admin dashboard with click-to-dog
+- Waiver upload/sign flow per client
+
+**P2**
+- Photo gallery per dog (multiple photos)
+- Recurring bookings (e.g., every Tue/Thu for 4 weeks)
+- Stripe credit pack purchases via client portal
+- Tag-based training filter & progress chart
+- CSV export of bookings/clients
+- Mobile responsive polish (sidebar drawer)
+
+**P3**
+- Multi-staff accounts with audit log
+- Calendar drag-and-drop reschedule
+- Per-service pricing (vs flat credit cost)
+
+## Key Files
+- `/app/backend/server.py` — All endpoints + models
+- `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY
+- `/app/frontend/src/App.js` — Role-based gate
+- `/app/frontend/src/lib/{api,auth}.js` — Axios + AuthContext
+- `/app/frontend/src/screens/` — Login, Dashboard, Schedule, Bookings, Clients, Dogs, Portal
+- `/app/memory/test_credentials.md` — Login credentials
