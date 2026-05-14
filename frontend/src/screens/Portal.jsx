@@ -6,6 +6,7 @@ import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
+import InstallAppButton from "../components/InstallAppButton";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -150,7 +151,14 @@ export default function Portal() {
             <p className="text-xs text-shGreen font-black uppercase tracking-widest mt-1">Welcome, {user.name}</p>
           </div>
         </div>
-        <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
+        <div className="flex items-center gap-2">
+          <InstallAppButton
+            testid="portal-install-app"
+            label="Install"
+            className="text-xs bg-shGreen/10 text-shGreen px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
+          />
+          <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
+        </div>
       </header>
 
       <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full">

@@ -1,26 +1,16 @@
 import { useEffect, useState } from "react";
+import useInstallPrompt from "../lib/useInstallPrompt";
 
 /**
- * Renders a small "Install App" pill in the bottom-right when the browser
- * fires `beforeinstallprompt` (Chrome/Edge/Android). Also shows a one-time
- * iOS hint banner since Safari does not support programmatic install.
+ * Bottom-left install pill — shown automatically when the browser is
+ * ready to install (Chrome/Edge/Android) or on iOS Safari with a
+ * "Share → Add to Home Screen" hint.
  *
- * Dismissals are persisted in localStorage so the prompt is not annoying.
+ * Dismissals are persisted for 14 days. Manual install (sidebar button)
+ * uses the same `useInstallPrompt` hook so the state stays in sync.
  */
 const DISMISS_KEY = "sh_install_dismissed_at";
 const DISMISS_DAYS = 14;
-
-function isIOS() {
-  const ua = navigator.userAgent || "";
-  return /iPad|iPhone|iPod/.test(ua) && !window.MSStream;
-}
-
-function isStandalone() {
-  return (
-    window.matchMedia?.("(display-mode: standalone)").matches ||
-    window.navigator.standalone === true
-  );
-}
 
 function wasRecentlyDismissed() {
   const t = Number(localStorage.getItem(DISMISS_KEY) || 0);
@@ -29,48 +19,24 @@ function wasRecentlyDismissed() {
 }
 
 export default function InstallPrompt() {
-  const [deferred, setDeferred] = useState(null);
-  const [showIOSHint, setShowIOSHint] = useState(false);
+  const { canInstall, isIOS, installed, install } = useInstallPrompt();
+  const [dismissed, setDismissed] = useState(wasRecentlyDismissed);
 
+  // Re-check dismissed flag if the user clears localStorage in another tab.
   useEffect(() => {
-    if (isStandalone()) return;
-    if (wasRecentlyDismissed()) return;
-
-    const onBip = (e) => {
-      e.preventDefault();
-      setDeferred(e);
-    };
-    window.addEventListener("beforeinstallprompt", onBip);
-
-    const onInstalled = () => {
-      setDeferred(null);
-      setShowIOSHint(false);
-    };
-    window.addEventListener("appinstalled", onInstalled);
-
-    // iOS Safari does not fire beforeinstallprompt — show a passive hint instead.
-    if (isIOS()) setShowIOSHint(true);
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBip);
-      window.removeEventListener("appinstalled", onInstalled);
-    };
+    const onStorage = () => setDismissed(wasRecentlyDismissed());
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
+
+  if (installed || dismissed) return null;
 
   const dismiss = () => {
     localStorage.setItem(DISMISS_KEY, String(Date.now()));
-    setDeferred(null);
-    setShowIOSHint(false);
+    setDismissed(true);
   };
 
-  const install = async () => {
-    if (!deferred) return;
-    deferred.prompt();
-    try { await deferred.userChoice; } catch {}
-    setDeferred(null);
-  };
-
-  if (deferred) {
+  if (canInstall) {
     return (
       <div
         data-testid="install-app-prompt"
@@ -95,7 +61,7 @@ export default function InstallPrompt() {
     );
   }
 
-  if (showIOSHint) {
+  if (isIOS) {
     return (
       <div
         data-testid="install-ios-hint"

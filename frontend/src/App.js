@@ -15,6 +15,7 @@ import Pipeline from "./screens/Pipeline";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
+import InstallAppButton from "./components/InstallAppButton";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -70,7 +71,8 @@ function AdminShell() {
           </button>
         ))}
       </nav>
-      <div className="p-4 border-t border-bgHover">
+      <div className="p-4 border-t border-bgHover space-y-2">
+        <InstallAppButton testid={`${prefix}install-app-nav`} />
         <div className="bg-bgPanel rounded-lg p-3">
           <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">Signed in</p>
           <p className="text-xs text-white font-black truncate">{user.name}</p>
