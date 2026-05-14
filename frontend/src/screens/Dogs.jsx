@@ -84,7 +84,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     setForm({ ...empty, owner_id: clients[0].id });
     setTab("basics"); setOpen(true); setErr("");
   };
-  const openEdit = async (d) => {
+  const openEdit = async (d, initialTab = "basics") => {
     setEditing(d);
     setForm({
       ...empty, ...d,
@@ -94,7 +94,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       training_skills: d.training_skills || [],
       photos: d.photos || [],
     });
-    setTab("basics"); setOpen(true); setErr("");
+    setTab(initialTab); setOpen(true); setErr("");
     setStats(null);
     try { const { data } = await api.get(`/dogs/${d.id}/stats`); setStats(data); } catch {}
   };
@@ -202,7 +202,11 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                       const pname = (e.program_snapshot || {}).name || "Program";
                       const onHold = e.status === "on_hold";
                       return (
-                        <div key={e.id} className={`${c.bg} rounded p-2`} data-testid={`dog-program-${d.id}-${e.id}`}>
+                        <button key={e.id}
+                                onClick={(ev)=>{ ev.stopPropagation(); openEdit(d, "training"); }}
+                                className={`${c.bg} rounded p-2 w-full text-left hover:ring-1 hover:ring-white/20 transition`}
+                                data-testid={`dog-program-${d.id}-${e.id}`}
+                                title="Open Training tab">
                           <div className="flex items-center justify-between text-[13px] font-black uppercase tracking-widest">
                             <span className={`${c.text} truncate flex items-center gap-2`}>
                               <i className="fas fa-graduation-cap" />
@@ -222,7 +226,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                               </span>
                             )}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>
