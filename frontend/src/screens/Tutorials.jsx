@@ -405,9 +405,75 @@ export default function Tutorials({ role = "admin" }) {
         }))
         .filter((s) => s.cards.length > 0);
 
+  // Two print modes — current section or every section.
+  // `tutorials-print-all` body class toggles a CSS rule that forces all
+  // section cards visible during the printed page.
+  const printCurrent = () => {
+    document.body.classList.add("tutorials-printing");
+    setTimeout(() => {
+      window.print();
+      document.body.classList.remove("tutorials-printing");
+    }, 50);
+  };
+  const printAll = () => {
+    document.body.classList.add("tutorials-printing", "tutorials-print-all");
+    setTimeout(() => {
+      window.print();
+      document.body.classList.remove("tutorials-printing", "tutorials-print-all");
+    }, 50);
+  };
+
   return (
-    <div className="space-y-6 animate-slide-in" data-testid="tutorials-screen">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+    <div className="space-y-6 animate-slide-in tutorials-root" data-testid="tutorials-screen" data-role={role}>
+      <style>{`
+        @media print {
+          /* Hide everything except the tutorials when printing. */
+          body.tutorials-printing aside,
+          body.tutorials-printing header,
+          body.tutorials-printing [data-testid="portal-tutorials-overlay"] > header,
+          body.tutorials-printing .tutorials-no-print,
+          body.tutorials-printing #emergent-badge {
+            display: none !important;
+          }
+          body.tutorials-printing { background: #ffffff !important; }
+          body.tutorials-printing .tutorials-root,
+          body.tutorials-printing .tutorials-root * {
+            color: #111 !important;
+            background: #ffffff !important;
+            box-shadow: none !important;
+            border-color: #d4d4d4 !important;
+          }
+          body.tutorials-printing .tutorials-root h3,
+          body.tutorials-printing .tutorials-root h4,
+          body.tutorials-printing .tutorials-root h5 {
+            color: #000 !important;
+          }
+          body.tutorials-printing .tutorials-root .tip-box {
+            background: #fff8e8 !important;
+            border-color: #f0c000 !important;
+            color: #5a4500 !important;
+          }
+          body.tutorials-printing .tutorials-root .tip-box * { color: #5a4500 !important; }
+          body.tutorials-printing .tutorials-root .grid {
+            display: block !important;
+          }
+          body.tutorials-printing .tutorials-root .tutorial-card {
+            page-break-inside: avoid;
+            margin-bottom: 12px;
+            border: 1px solid #d4d4d4 !important;
+            padding: 14px !important;
+          }
+          body.tutorials-printing .tutorials-root .tutorial-section {
+            page-break-inside: avoid;
+            margin-bottom: 24px;
+          }
+          body.tutorials-printing.tutorials-print-all .tutorial-section.print-hidden {
+            display: block !important;
+          }
+        }
+      `}</style>
+
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 tutorials-no-print">
         <div>
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
             <i className="fas fa-circle-question text-shGreen mr-2" />
@@ -417,20 +483,36 @@ export default function Tutorials({ role = "admin" }) {
             {role === "client" ? "Everything you need to make the most of the portal" : "Operator playbook — bookmarks for the stuff you do every day"}
           </p>
         </div>
-        <div className="relative w-full md:w-72">
-          <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[13px]" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search tutorials…"
-            data-testid="tutorials-search"
-            className="w-full bg-bgPanel border border-bgHover rounded-lg pl-9 pr-3 py-2 text-white text-sm"
-          />
+        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+          <div className="relative w-full sm:w-64">
+            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[13px]" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search tutorials…"
+              data-testid="tutorials-search"
+              className="w-full bg-bgPanel border border-bgHover rounded-lg pl-9 pr-3 py-2 text-white text-sm"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={printCurrent} data-testid="tutorials-print-current"
+                    title="Print only the section you're looking at"
+                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/25 flex items-center gap-2">
+              <i className="fas fa-print" />
+              <span className="hidden sm:inline">Print Page</span>
+            </button>
+            <button onClick={printAll} data-testid="tutorials-print-all"
+                    title="Print the full guide (all sections)"
+                    className="bg-shGreen/15 text-shGreen px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/25 flex items-center gap-2">
+              <i className="fas fa-file-pdf" />
+              <span className="hidden sm:inline">Print All</span>
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Section chip nav */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 tutorials-no-print">
         {filtered.map((s) => (
           <button
             key={s.id}
@@ -448,11 +530,14 @@ export default function Tutorials({ role = "admin" }) {
         ))}
       </div>
 
-      {/* Cards for active section (or all when searching) */}
+      {/* Cards for active section (or all when searching / printing all) */}
       <div className="space-y-6">
-        {filtered.map((s) =>
-          (query.trim() || openId === s.id) ? (
-            <div key={s.id}>
+        {filtered.map((s) => {
+          const isActive = query.trim() || openId === s.id;
+          // print-hidden lets "Print All" override visibility via the body class
+          return (
+            <div key={s.id}
+                 className={`tutorial-section ${isActive ? "" : "hidden print-hidden"}`}>
               {(query.trim() || filtered.length > 1) && (
                 <h4 className={`text-[14px] font-black uppercase tracking-widest mb-3 ${s.color}`}>
                   <i className={`fas ${s.icon} mr-2`} />
@@ -461,7 +546,7 @@ export default function Tutorials({ role = "admin" }) {
               )}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid={`tutorial-section-${s.id}`}>
                 {s.cards.map((c, i) => (
-                  <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg" data-testid={`tutorial-card-${s.id}-${i}`}>
+                  <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
                     <h5 className="text-white font-black uppercase tracking-tight text-[15px] flex items-start gap-2">
                       <i className={`fas fa-circle-check ${s.color} mt-1 text-[12px]`} />
                       <span>{c.title}</span>
@@ -475,7 +560,7 @@ export default function Tutorials({ role = "admin" }) {
                       ))}
                     </ol>
                     {c.tip && (
-                      <p className="mt-3 text-[12px] text-shOrange bg-shOrange/5 border border-shOrange/20 rounded p-2.5 leading-snug">
+                      <p className="mt-3 text-[12px] text-shOrange bg-shOrange/5 border border-shOrange/20 rounded p-2.5 leading-snug tip-box">
                         <i className="fas fa-lightbulb mr-1" />
                         <strong className="uppercase tracking-widest">Tip · </strong>
                         {c.tip}
@@ -485,8 +570,8 @@ export default function Tutorials({ role = "admin" }) {
                 ))}
               </div>
             </div>
-          ) : null
-        )}
+          );
+        })}
         {filtered.length === 0 && (
           <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-gray-500 uppercase font-black tracking-widest text-xs">
             No tutorials match "{query}"
