@@ -11,7 +11,7 @@ const empty = {
   notes: "", photo: "",
   feeding_schedule: [], medications: [], training_skills: [],
   vet_name: "", vet_phone: "",
-  photos: [],
+  photos: [], tags: [],
 };
 
 const STANDARD_SKILLS = ["Sit", "Stay", "Down", "Place", "Recall", "Heel", "Leave It", "Wait", "Loose Leash", "Crate", "Watch Me", "Drop It"];
@@ -32,6 +32,47 @@ function vaccineStatus(d) {
   return { label: "Valid", color: "text-shGreen", bg: "bg-shGreen/15" };
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
+
+function TagEditor({ tags = [], onChange }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const t = draft.trim();
+    if (!t) return;
+    if (tags.includes(t)) { setDraft(""); return; }
+    onChange([...tags, t]);
+    setDraft("");
+  };
+  const remove = (t) => onChange(tags.filter((x) => x !== t));
+  return (
+    <div className="mt-1 bg-bgBase border border-bgHover rounded p-2" data-testid="tag-editor">
+      <div className="flex flex-wrap gap-2 mb-2">
+        {tags.length === 0 && <span className="text-[12px] text-gray-500 italic">No tags yet — type below and hit Enter.</span>}
+        {tags.map((t) => (
+          <span key={t} className="bg-shBlue/15 text-shBlue px-2 py-1 rounded text-[12px] font-black uppercase tracking-widest flex items-center gap-1.5">
+            {t}
+            <button type="button" onClick={() => remove(t)} className="hover:text-red-400" data-testid={`remove-tag-${t}`}>
+              <i className="fas fa-times text-[10px]" />
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder="Add a tag (Enter to save)"
+          data-testid="tag-editor-input"
+          className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none"
+        />
+        <button type="button" onClick={add} data-testid="tag-editor-add"
+                className="bg-shBlue/15 text-shBlue px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const PROGRAM_TYPE_COLORS = {
   private_lessons: { bg: "bg-shBlue/15", text: "text-shBlue", bar: "bg-shBlue" },
@@ -93,6 +134,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       medications: d.medications || [],
       training_skills: d.training_skills || [],
       photos: d.photos || [],
+      tags: d.tags || [],
     });
     setTab(initialTab); setOpen(true); setErr("");
     setStats(null);
