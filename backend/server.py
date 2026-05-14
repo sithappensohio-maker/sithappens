@@ -9,7 +9,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -1309,6 +1309,238 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
     await db.homework.update_one({"id": homework_id}, {"$set": update})
     hw.update(update)
     return hw
+
+
+# -------- Service-Dog Training Curriculum --------
+from training_data import (
+    CATEGORIES as TRAINING_CATEGORIES,
+    SEED_COMMANDS,
+    SCORE_SCALE,
+    compute_badges,
+    progress_summary,
+)
+
+
+class CommandIn(BaseModel):
+    name: str = Field(min_length=1)
+    category: Literal["engagement", "obedience", "public_access", "task"]
+    description: Optional[str] = ""
+    video_url: Optional[str] = ""
+    order: int = 100
+    active: bool = True
+
+
+class CommandOut(CommandIn):
+    id: str
+    is_default: bool = False
+
+
+async def _seed_commands_if_empty():
+    count = await db.commands.count_documents({})
+    if count == 0:
+        docs = []
+        for c in SEED_COMMANDS:
+            docs.append({
+                "id": str(uuid.uuid4()),
+                "name": c["name"],
+                "category": c["category"],
+                "description": c.get("description", ""),
+                "video_url": "",
+                "order": c.get("order", 100),
+                "active": True,
+                "is_default": True,
+                "created_at": now_iso(),
+            })
+        await db.commands.insert_many(docs)
+
+
+@api.get("/training/meta")
+async def training_meta(user: dict = Depends(get_current_user)):
+    """Public metadata: categories + score scale. Used by both admin and portal."""
+    return {"categories": TRAINING_CATEGORIES, "scale": SCORE_SCALE}
+
+
+@api.get("/commands")
+async def list_commands(user: dict = Depends(get_current_user)):
+    await _seed_commands_if_empty()
+    docs = await db.commands.find({"active": True}, {"_id": 0}).to_list(500)
+    docs.sort(key=lambda c: (c["category"], c.get("order", 100), c["name"]))
+    return docs
+
+
+@api.post("/commands", response_model=CommandOut)
+async def create_command(body: CommandIn, _: dict = Depends(require_admin)):
+    doc = {**body.model_dump(), "id": str(uuid.uuid4()), "is_default": False, "created_at": now_iso()}
+    await db.commands.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/commands/{command_id}", response_model=CommandOut)
+async def update_command(command_id: str, body: CommandIn, _: dict = Depends(require_admin)):
+    existing = await db.commands.find_one({"id": command_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Command not found")
+    update = body.model_dump()
+    await db.commands.update_one({"id": command_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+
+@api.delete("/commands/{command_id}")
+async def delete_command(command_id: str, _: dict = Depends(require_admin)):
+    # Soft-delete: mark inactive so historical references still resolve
+    await db.commands.update_one({"id": command_id}, {"$set": {"active": False}})
+    return {"ok": True}
+
+
+# ----- Per-dog curriculum -----
+class CurriculumEntryIn(BaseModel):
+    command_id: str
+    level: int = Field(ge=0, le=5)
+    notes: Optional[str] = ""
+    in_homework: bool = False
+
+
+async def _dog_or_403(dog_id: str, user: dict) -> dict:
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+    return dog
+
+
+async def _commands_by_id() -> Dict[str, dict]:
+    docs = await db.commands.find({"active": True}, {"_id": 0}).to_list(500)
+    return {c["id"]: c for c in docs}
+
+
+def _curriculum_map(dog: dict) -> Dict[str, dict]:
+    """Normalise dog.curriculum (stored as list of entries) into {command_id: entry}."""
+    return {e["command_id"]: e for e in (dog.get("curriculum") or [])}
+
+
+@api.get("/dogs/{dog_id}/training")
+async def get_dog_training(dog_id: str, user: dict = Depends(get_current_user)):
+    """Returns dog curriculum (commands + scores), progress summary, and earned badges."""
+    await _seed_commands_if_empty()
+    dog = await _dog_or_403(dog_id, user)
+    commands = await _commands_by_id()
+    curric = _curriculum_map(dog)
+    items = []
+    for cid, cmd in commands.items():
+        entry = curric.get(cid) or {}
+        items.append({
+            "command": cmd,
+            "level": int(entry.get("level") or 0),
+            "notes": entry.get("notes") or "",
+            "in_homework": bool(entry.get("in_homework")),
+            "last_session_at": entry.get("last_session_at"),
+        })
+    items.sort(key=lambda x: (x["command"]["category"], x["command"].get("order", 100), x["command"]["name"]))
+    cgc_pass = bool(dog.get("cgc_mock_passed_at"))
+    return {
+        "dog_id": dog_id,
+        "items": items,
+        "progress": progress_summary(curric, commands),
+        "badges": compute_badges(curric, commands, cgc_pass=cgc_pass),
+        "cgc_mock_passed_at": dog.get("cgc_mock_passed_at"),
+    }
+
+
+@api.put("/dogs/{dog_id}/training/{command_id}")
+async def update_curriculum_entry(dog_id: str, command_id: str, body: CurriculumEntryIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    curric = dog.get("curriculum") or []
+    found = False
+    for e in curric:
+        if e.get("command_id") == command_id:
+            e["level"] = body.level
+            e["notes"] = body.notes or ""
+            e["in_homework"] = body.in_homework
+            found = True
+            break
+    if not found:
+        curric.append({
+            "command_id": command_id,
+            "level": body.level,
+            "notes": body.notes or "",
+            "in_homework": body.in_homework,
+        })
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"curriculum": curric}})
+    return {"ok": True}
+
+
+# ----- Training Sessions -----
+class SessionScoreIn(BaseModel):
+    command_id: str
+    score: int = Field(ge=0, le=5)
+
+
+class TrainingSessionIn(BaseModel):
+    date: str  # YYYY-MM-DD
+    environment: Literal["home", "store", "park", "vet", "training_facility", "other"] = "home"
+    distraction: int = Field(ge=1, le=10, default=1)
+    notes: Optional[str] = ""
+    scores: List[SessionScoreIn] = []
+    cgc_mock_pass: bool = False
+
+
+@api.post("/dogs/{dog_id}/training-sessions")
+async def log_training_session(dog_id: str, body: TrainingSessionIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    session = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog_id,
+        "date": body.date,
+        "environment": body.environment,
+        "distraction": body.distraction,
+        "notes": body.notes or "",
+        "scores": [s.model_dump() for s in body.scores],
+        "cgc_mock_pass": bool(body.cgc_mock_pass),
+        "created_at": now_iso(),
+    }
+    await db.training_sessions.insert_one(session)
+
+    # Apply scores into the dog's curriculum (highest score wins per command)
+    curric = dog.get("curriculum") or []
+    by_id = {e.get("command_id"): e for e in curric}
+    for s in body.scores:
+        entry = by_id.get(s.command_id)
+        if entry:
+            if int(s.score) > int(entry.get("level") or 0):
+                entry["level"] = int(s.score)
+            entry["last_session_at"] = body.date
+        else:
+            new = {
+                "command_id": s.command_id,
+                "level": int(s.score),
+                "notes": "",
+                "in_homework": False,
+                "last_session_at": body.date,
+            }
+            curric.append(new)
+            by_id[s.command_id] = new
+
+    update_fields = {"curriculum": curric}
+    if body.cgc_mock_pass:
+        update_fields["cgc_mock_passed_at"] = body.date
+    await db.dogs.update_one({"id": dog_id}, {"$set": update_fields})
+    session.pop("_id", None)
+    return session
+
+
+@api.get("/dogs/{dog_id}/training-sessions")
+async def list_training_sessions(dog_id: str, user: dict = Depends(get_current_user)):
+    await _dog_or_403(dog_id, user)
+    docs = await db.training_sessions.find({"dog_id": dog_id}, {"_id": 0}).to_list(500)
+    docs.sort(key=lambda x: (x.get("date") or "", x.get("created_at") or ""), reverse=True)
+    return docs
 
 
 # -------- Run Sheet --------

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
+import TrainingProgram from "../components/TrainingProgram";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -313,34 +314,11 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               )}
 
               {tab === "training" && (
-                <div data-testid="training-section">
-                  <div className="flex flex-wrap gap-2 mb-3">
-                    {STANDARD_SKILLS.filter(s => !form.training_skills.find(x => x.name.toLowerCase() === s.toLowerCase())).map(s => (
-                      <button key={s} onClick={()=>setForm({...form, training_skills:[...form.training_skills, {id:uid(), name:s, level:"intro", notes:"", updated_at: new Date().toISOString()}]})}
-                              className="px-3 py-1.5 rounded-full text-[14px] font-black uppercase tracking-widest bg-bgBase border border-bgHover text-gray-400 hover:border-shGreen hover:text-shGreen">
-                        + {s}
-                      </button>
-                    ))}
-                  </div>
-                  {form.training_skills.length === 0 && <p className="text-[15px] text-gray-500 italic">Tap a skill above to start tracking progression.</p>}
-                  <div className="space-y-2">
-                    {form.training_skills.map((sk, i) => (
-                      <div key={sk.id} className="bg-bgBase rounded p-3" data-testid={`skill-${i}`}>
-                        <div className="flex items-center gap-2 mb-2">
-                          <input value={sk.name} onChange={(e)=>{const c=[...form.training_skills]; c[i]={...sk, name:e.target.value}; setForm({...form, training_skills:c});}} className="flex-1 bg-transparent text-sm font-black text-white outline-none uppercase tracking-tight" />
-                          <button onClick={()=>setForm({...form, training_skills: form.training_skills.filter((_,j)=>j!==i)})} className="text-red-400 hover:text-red-300"><i className="fas fa-trash text-xs"/></button>
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {LEVELS.map(l => (
-                            <button key={l.key} onClick={()=>{const c=[...form.training_skills]; c[i]={...sk, level:l.key, updated_at:new Date().toISOString()}; setForm({...form, training_skills:c});}}
-                                    className={`px-3 py-1 rounded text-[14px] font-black uppercase tracking-widest ${sk.level===l.key?l.color:"bg-bgPanel text-gray-500 border border-bgHover"}`}>{l.label}</button>
-                          ))}
-                        </div>
-                        <input placeholder="Notes / tips" value={sk.notes} onChange={(e)=>{const c=[...form.training_skills]; c[i]={...sk, notes:e.target.value}; setForm({...form, training_skills:c});}} className="w-full mt-2 bg-bgPanel border border-bgHover rounded p-2 text-xs text-white" />
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                editing ? (
+                  <TrainingProgram dogId={editing.id} dogName={form.name} />
+                ) : (
+                  <p className="text-[14px] text-gray-500 italic py-8 text-center">Save the dog first, then come back to log training sessions.</p>
+                )
               )}
 
               {tab === "gallery" && (

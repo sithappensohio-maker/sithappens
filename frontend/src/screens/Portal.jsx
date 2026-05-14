@@ -5,6 +5,7 @@ import WaiverModal from "../components/WaiverModal";
 import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
+import PortalTrainingCard from "../components/PortalTrainingCard";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -319,6 +320,15 @@ export default function Portal() {
               ))}
             </div>
           </div>
+
+          {dogs.length > 0 && (
+            <div data-testid="portal-training-section">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-medal text-shGreen mr-2"/>Training Progress</h2>
+              <div className="space-y-4">
+                {dogs.map(d => <PortalTrainingCard key={d.id} dog={d} />)}
+              </div>
+            </div>
+          )}
 
           {homework.length > 0 && (
             <div data-testid="portal-homework">

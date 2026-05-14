@@ -55,6 +55,7 @@ export default function Settings() {
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
+    { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
@@ -83,6 +84,7 @@ export default function Settings() {
           {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
+          {tab === "commands" && <CommandsPanel />}
           {tab === "backup" && <BackupPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
@@ -513,3 +515,112 @@ function BackupPanel() {
     </div>
   );
 }
+
+function CommandsPanel() {
+  const [commands, setCommands] = useState([]);
+  const [meta, setMeta] = useState(null);
+  const [edit, setEdit] = useState(null);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    try {
+      const [c, m] = await Promise.all([api.get("/commands"), api.get("/training/meta")]);
+      setCommands(c.data); setMeta(m.data);
+    } catch (e) { setErr(e.message); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const startNew = () => setEdit({ name: "", category: "obedience", description: "", video_url: "", order: 100, active: true });
+  const save = async () => {
+    try {
+      if (edit.id) await api.put(`/commands/${edit.id}`, edit);
+      else await api.post("/commands", edit);
+      setEdit(null); load();
+    } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+  };
+  const remove = async (id) => {
+    if (!window.confirm("Remove this command from the library? Existing dog progress is preserved.")) return;
+    try { await api.delete(`/commands/${id}`); load(); } catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
+  };
+
+  if (!meta) return <p className="text-gray-500 text-sm">Loading…</p>;
+  const grouped = meta.categories.map(c => ({...c, items: commands.filter(x => x.category === c.key)}));
+
+  return (
+    <div className="space-y-5 max-w-3xl" data-testid="commands-panel">
+      <div className="flex items-center justify-between">
+        <div>
+          <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-graduation-cap mr-2"/>Service-Dog Command Library</h4>
+          <p className="text-[14px] text-gray-300 mt-1">Curate the master list every dog's curriculum is built from. Seeded with TADSAW service-dog commands.</p>
+        </div>
+        <button onClick={startNew} data-testid="cmd-new"
+                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New</button>
+      </div>
+
+      {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+
+      {grouped.map(g => (
+        <div key={g.key} className="bg-bgBase/40 border border-bgHover rounded">
+          <div className="px-3 py-2 border-b border-bgHover" style={{background: g.color + "12"}}>
+            <p className="text-[13px] font-black uppercase tracking-widest" style={{color: g.color}}>{g.label} · {g.items.length}</p>
+          </div>
+          <div className="divide-y divide-bgHover">
+            {g.items.map(c => (
+              <div key={c.id} className="px-3 py-2 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-white truncate">{c.name} {c.is_default && <span className="text-[11px] text-gray-500 font-black tracking-widest ml-2">(default)</span>}</p>
+                  <p className="text-[13px] text-gray-400 truncate">{c.description}</p>
+                </div>
+                {c.video_url && <i className="fab fa-youtube text-red-500"/>}
+                <button onClick={()=>setEdit({...c})} data-testid={`cmd-edit-${c.id}`} className="text-shBlue hover:text-white text-sm"><i className="fas fa-pen"/></button>
+                <button onClick={()=>remove(c.id)} className="text-red-400 hover:text-red-300 text-sm"><i className="fas fa-trash"/></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      {edit && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="cmd-modal">
+          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-base font-black text-white uppercase italic">{edit.id?"Edit Command":"New Command"}</h4>
+              <button onClick={()=>setEdit(null)} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Name *</label>
+                <input value={edit.name} onChange={(e)=>setEdit({...edit, name:e.target.value})} data-testid="cmd-name"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Category</label>
+                <select value={edit.category} onChange={(e)=>setEdit({...edit, category:e.target.value})}
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  {meta.categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Description</label>
+                <textarea value={edit.description||""} onChange={(e)=>setEdit({...edit, description:e.target.value})} rows={2}
+                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+              </div>
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">YouTube video URL (optional)</label>
+                <input value={edit.video_url||""} onChange={(e)=>setEdit({...edit, video_url:e.target.value})} data-testid="cmd-video"
+                       placeholder="https://youtu.be/..."
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+                <button onClick={save} data-testid="cmd-save"
+                        className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
