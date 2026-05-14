@@ -33,9 +33,17 @@ function vaccineStatus(d) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
+const PROGRAM_TYPE_COLORS = {
+  private_lessons: { bg: "bg-shBlue/15", text: "text-shBlue", bar: "bg-shBlue" },
+  board_train: { bg: "bg-shGreen/15", text: "text-shGreen", bar: "bg-shGreen" },
+  service_dog: { bg: "bg-purple-500/15", text: "text-purple-400", bar: "bg-purple-400" },
+  custom: { bg: "bg-pink-500/15", text: "text-pink-400", bar: "bg-pink-400" },
+};
+
 export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const [dogs, setDogs] = useState([]);
   const [clients, setClients] = useState([]);
+  const [enrollmentsByDog, setEnrollmentsByDog] = useState({});
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
@@ -47,8 +55,19 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
 
   const load = async () => {
-    const [d, c] = await Promise.all([api.get("/dogs"), api.get("/clients")]);
+    const [d, c, p] = await Promise.all([
+      api.get("/dogs"),
+      api.get("/clients"),
+      api.get("/programs/pipeline").catch(() => ({ data: [] })),
+    ]);
     setDogs(d.data); setClients(c.data);
+    // Group enrollments by dog_id, keep only active + on_hold (skip completed/withdrawn on cards)
+    const map = {};
+    (p.data || []).forEach(e => {
+      if (e.status !== "active" && e.status !== "on_hold") return;
+      (map[e.dog_id] = map[e.dog_id] || []).push(e);
+    });
+    setEnrollmentsByDog(map);
   };
   useEffect(() => { load(); }, []);
 
@@ -174,6 +193,40 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                         className="mt-4 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
                   + Training Log ({d.training_logs?.length || 0})
                 </button>
+                {(enrollmentsByDog[d.id] || []).length > 0 && (
+                  <div className="mt-3 space-y-2" data-testid={`dog-programs-${d.id}`}>
+                    {enrollmentsByDog[d.id].map(e => {
+                      const ptype = (e.program_snapshot || {}).type || "custom";
+                      const c = PROGRAM_TYPE_COLORS[ptype] || PROGRAM_TYPE_COLORS.custom;
+                      const pct = e.mastered_pct || 0;
+                      const pname = (e.program_snapshot || {}).name || "Program";
+                      const onHold = e.status === "on_hold";
+                      return (
+                        <div key={e.id} className={`${c.bg} rounded p-2`} data-testid={`dog-program-${d.id}-${e.id}`}>
+                          <div className="flex items-center justify-between text-[13px] font-black uppercase tracking-widest">
+                            <span className={`${c.text} truncate flex items-center gap-2`}>
+                              <i className="fas fa-graduation-cap" />
+                              <span className="truncate">{pname}</span>
+                              {onHold && <span className="text-shOrange normal-case tracking-normal">· on hold</span>}
+                            </span>
+                            <span className={`${c.text} flex-shrink-0 ml-2`}>{pct}%</span>
+                          </div>
+                          <div className="mt-1.5 h-1.5 w-full bg-black/30 rounded overflow-hidden">
+                            <div className={`${c.bar} h-full transition-all`} style={{ width: `${pct}%` }} />
+                          </div>
+                          <div className="mt-1 text-[11px] text-gray-400 flex justify-between">
+                            <span>{e.mastered_goals}/{e.total_goals} goals</span>
+                            {e.days_to_target !== null && e.days_to_target !== undefined && (
+                              <span className={e.days_to_target < 0 ? "text-red-400" : "text-gray-400"}>
+                                {e.days_to_target < 0 ? `${Math.abs(e.days_to_target)}d overdue` : `${e.days_to_target}d left`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {d.training_logs?.length > 0 && (
                   <div className="mt-3 space-y-1 max-h-24 overflow-y-auto">
                     {d.training_logs.slice(-3).reverse().map(l => (
