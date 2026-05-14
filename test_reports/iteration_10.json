@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 10 — Pipeline + Multi-Enrollment + manual_only goals + Tag editor verification. Backend: 21/22 new tests pass in test_pipeline_multi_enroll.py covering pipeline filters (status/type/search/admin-only), seed idempotency, programs CRUD with mixed scored+manual_only goals, multi-enrollment (verified Rocky can hold 2 simultaneously-active enrollments — previous iteration auto-paused-prior behavior is REMOVED), target_completion_date round-trip on POST + PUT, status transitions (on_hold replaces former 'paused'), goal manual_only mastered via status field, scored auto-bump, active-summary, tags PUT persists to DB. Frontend: /Pipeline screen renders correctly via sidebar nav-pipeline — title 'TRAINING PIPELINE', KPI tiles (Active/On Hold/Completed), filter row (All Statuses/Active/On Hold/Completed/Withdrawn + program type dropdown + search), and 1 enrollment row (Buddy · Alex Owner · Private Lessons · Level 1 · 0% · 0/10 · 0d in · 35d left). No runtime errors on Pipeline screen. CRITICAL backend bug discovered: DogIn / DogOut Pydantic models do NOT declare a `tags` field — so although PUT /api/dogs/{id}/tags persists tags to MongoDB, GET /api/dogs strips the field via response_model=List[DogOut]. Frontend full-dog edit form (Dogs.jsx) also pushes form.tags via PUT /api/dogs/{id} but DogIn drops it, so saving the Edit modal never persists tag changes either — only the dedicated /tags endpoint works.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/dogs (and PUT /api/dogs/{id})", "issue": "DogIn / DogOut Pydantic models are missing `tags: List[str] = []` field. PUT /api/dogs/{id}/tags writes to DB but the value is silently stripped from every dog list/update response. Tag editor on Dogs page will appear empty after reload. Also, the full-dog Edit modal (Dogs.jsx line 94: api.put(`/dogs/${id}`, body)) drops body.tags entirely, so user-edited tags via the main modal NEVER persist.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/dogs/{id}/programs/custom", "issue": "Custom program slug uses int(datetime.now().timestamp()) — collision risk if two customs created in the same second. Cosmetic. (Carried from iter9.)"},
+      {"endpoint": "GET /api/programs/active-summary", "issue": "Recomputes _enrollment_summary for active[:20] on every call; fine at current scale."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Dogs page Tag editor", "issue": "Tags entered in the Dog edit modal hit PUT /api/dogs/{id} (no /tags suffix), where the backend Pydantic DogIn model has NO `tags` field — Pydantic drops the unknown key. Even if it were persisted, GET /api/dogs would strip it from the response (DogOut also missing the field). Net result: tag editor appears non-functional from the user's POV even though the dedicated /api/dogs/{id}/tags endpoint works in isolation.", "affected_selectors": ["TagEditor inside dog-edit modal"]},
+      {"flow": "Dogs page card UI", "issue": "Dog cards have no visible 'Edit' affordance in the screenshot (only '+ Training Log'). Card may need a click handler or explicit Edit button with data-testid for testability.", "affected_selectors": ["dog card"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pipeline_multi_enroll.py",
+    "/app/test_reports/pytest/iteration10_pipeline.xml"
+  ],
+  "action_items": [
+    "Add `tags: List[str] = []` to backend `DogIn` model (server.py ~line 184). DogOut inherits it automatically. This fixes BOTH the GET /api/dogs response AND the regular PUT /api/dogs/{id} save path. Alternative: change Dogs.jsx save() to separately call PUT /api/dogs/{id}/tags after the main save.",
+    "Verify the prior iteration_9 test_programs.py still works — it uses status='paused' which has been renamed to 'on_hold' in this iteration. Likely now broken; should be re-aligned or removed.",
+    "Add a clearly-visible 'Edit' affordance + data-testid to the dog cards on Dogs.jsx (currently only '+ Training Log' button is shown)."
+  ],
+  "critical_code_review_comments": [
+    "server.py:182-189 — DogIn/DogOut missing `tags` field while routes mutate it (line 2009-2016) and the frontend reads/writes it. This is an integration gap, not just a serialization quirk.",
+    "server.py:1820-1857 — EnrollmentUpdate.status Literal accepts 'on_hold'. iteration_9 test suite (test_programs.py) used 'paused' — that test suite will now fail. Confirm if the rename was intentional and update the older test file.",
+    "server.py:1765-1804 — enroll_dog NO LONGER auto-pauses prior active enrollments (multi-enrollment supported), but the function still sets dog.active_program_id only if NOT already set. With 2+ active enrollments, run-sheet active_program_name will always show the FIRST one enrolled, not the most recent. Consider whether the run-sheet should aggregate or pick the most recent active.",
+    "Frontend /Pipeline row click should trigger onJumpToDog — wired in App.js line 124 to set searchTarget and switch tab, but UI verification of the jump was not exercised due to limited interactive testing time.",
+    "DogTrainingTab.jsx end-to-end interactive verification (add enrollment, change target date, toggle manual_only checkbox) was NOT performed — only static code review + backend API coverage. Recommend main agent self-test or schedule a deeper UI iteration."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_pipeline_multi_enroll.py (NEW — 22 tests)"
+  ],
+  "success_rate": {"backend": "95% (21/22 — 1 failure surfaces a real product bug, not a test issue)", "frontend": "Partial — Pipeline screen verified visually; Dog Tag editor + Multi-enrollment UI not interactively exercised"},
+  "test_credentials": "Admin: admin@sithappens.com / admin123  ;  Client: testclient@sithappens.com / test1234",
+  "seed_data_creation": "Test enrollments created on Rocky (2 active simultaneously to prove multi-enrollment, then withdrawn in TestCleanup). One TEST_ program created/updated/soft-deleted. Daisy temporarily tagged ['TEST_friendly','TEST_VIP'] then cleared.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All Pipeline + multi-enrollment + manual_only goal + target_completion_date endpoints work. The single failing test (TestTags::test_tag_persists_on_dog) is documenting a REAL bug: DogIn/DogOut Pydantic models lack the `tags` field. Once main agent adds `tags: List[str] = []` to DogIn, the test will pass and the Dogs.jsx Tag editor will work end-to-end. Pipeline UI renders correctly (verified with screenshot). DogTrainingTab and the full Tag editor UI interactions need an interactive UI smoke test next round.",
+  "rca of the issue": "Root cause for Tag editor not persisting: in /app/backend/server.py the `DogIn` (line 167) and `DogOut(DogIn)` (line 186) Pydantic models never declare a `tags: List[str]` field. FastAPI's response_model=List[DogOut] therefore strips it during serialization, and Pydantic body parsing on PUT /api/dogs/{id} drops the incoming `tags` key. The dedicated PUT /api/dogs/{id}/tags route works (it writes directly to db.dogs.update_one with {'tags': cleaned}) but every subsequent GET wipes the value from the response. Reproduction: PUT /api/dogs/{daisy_id}/tags {tags:['x']} → 200, then GET /api/dogs → daisy.tags is missing. Mitigation: add `tags: List[str] = []` to DogIn (preferred, since DogOut inherits) — the line just below `photos: List[str] = []` at line 184."
+}
