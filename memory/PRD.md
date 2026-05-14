@@ -188,6 +188,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Client UI** (`Portal.jsx` + `HomeworkSectionLogger.jsx`): templated homework expands to show House Rules banner + per-section cards. "+ Log a session" reveals structured form. Counters refresh on save (verified 1→2 via screenshot). View-history accordion lists past entries.
 - ✅ **140/140 backend tests passing** (122 prior + 18 new homework-template tests).
 
+## Sprint 15 — Tutorials / How-to (2026-02)
+- ✅ **`Tutorials.jsx`** — single role-aware component (`role="admin" | "client"`) renders 6 admin sections (Getting Started, Clients & Dogs, Bookings & Schedule, Training Programs & Pipeline, Homework Forms, Operations & Data) and 5 client sections (Getting Started, Booking, Training Homework, Training Progress, Account & Profile). Each section has multiple cards with numbered steps and optional pro-tips in an orange-accent box.
+- ✅ **Live search** across all tutorial content (filters cards, hides empty sections).
+- ✅ **Admin access**: new "How to Use" sidebar item (with `fa-circle-question` icon) loads in-place like any other admin tab.
+- ✅ **Client access**: blue "How to Use" button in the portal header opens a full-screen overlay with a sticky close header — no navigation away from the portal.
+- ✅ Pure content, no backend calls. Lint clean.
+
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY

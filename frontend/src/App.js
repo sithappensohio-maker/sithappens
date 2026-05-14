@@ -12,6 +12,7 @@ import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
+import Tutorials from "./screens/Tutorials";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
@@ -53,6 +54,7 @@ function AdminShell() {
     { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
+    { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
   ];
 
   const handleNav = (id) => { setTab(id); setDrawerOpen(false); };
@@ -128,6 +130,7 @@ function AdminShell() {
           {tab === "homework" && <Homework />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}
+          {tab === "tutorials" && <Tutorials role="admin" />}
         </div>
       </main>
       <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={navigateTo} />

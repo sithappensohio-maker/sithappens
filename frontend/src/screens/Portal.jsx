@@ -8,6 +8,7 @@ import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import InstallAppButton from "../components/InstallAppButton";
+import Tutorials from "./Tutorials";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -37,6 +38,7 @@ export default function Portal() {
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
+  const [tutorialsOpen, setTutorialsOpen] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -153,6 +155,11 @@ export default function Portal() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
+                  className="text-xs bg-shBlue/10 text-shBlue px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
+            <i className="fas fa-circle-question"/>
+            <span className="hidden sm:inline">How to Use</span>
+          </button>
           <InstallAppButton
             testid="portal-install-app"
             label="Install"
@@ -478,6 +485,21 @@ export default function Portal() {
         <PortalProfileModal client={client}
                             onClose={()=>setProfileOpen(false)}
                             onSaved={loadAll} />
+      )}
+      {tutorialsOpen && (
+        <div className="fixed inset-0 z-[9999] bg-bgBase overflow-y-auto" data-testid="portal-tutorials-overlay">
+          <header className="sticky top-0 bg-bgHeader border-b border-bgHover h-16 flex items-center justify-between px-6 z-10">
+            <div className="flex items-center gap-3">
+              <i className="fas fa-circle-question text-shBlue text-lg"/>
+              <span className="text-white font-black uppercase tracking-widest text-[14px]">How to Use Sit Happens</span>
+            </div>
+            <button onClick={()=>setTutorialsOpen(false)} data-testid="portal-tutorials-close"
+                    className="text-gray-300 hover:text-white text-lg p-2"><i className="fas fa-times"/></button>
+          </header>
+          <div className="p-6 max-w-6xl mx-auto">
+            <Tutorials role="client" />
+          </div>
+        </div>
       )}
     </div>
   );
