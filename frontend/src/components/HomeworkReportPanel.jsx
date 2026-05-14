@@ -83,7 +83,7 @@ function FieldTile({ field }) {
   // Checkbox tile
   if (field.kind === "checkbox") {
     const yes = field.yes_count || 0;
-    const tot = field.total || 0;
+    const tot = field.entry_count || 0;
     return (
       <div className="bg-bgPanel/60 border border-bgHover rounded p-2.5">
         <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{field.label}</p>

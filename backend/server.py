@@ -1379,7 +1379,12 @@ async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _
     if not tpl:
         raise HTTPException(status_code=404, detail="Template not found")
     update = body.model_dump()
-    update.pop("slug", None)  # don't allow slug edit
+    update.pop("slug", None)  # don't allow slug edit via PUT
+    update.pop("is_default", None)  # never let the API flip system-vs-custom
+    update.pop("active", None)  # active is toggled only via DELETE (soft) / seed (restore)
+    # Mark system templates as customized so seed-standard skips overwriting them
+    if tpl.get("is_default"):
+        update["customized"] = True
     await db.homework_templates.update_one({"id": template_id}, {"$set": update})
     return {**tpl, **update}
 
@@ -1536,7 +1541,7 @@ async def homework_report(homework_id: str, user: dict = Depends(get_current_use
     numeric_kinds = {"reps", "sets", "duration_sec", "duration_min", "distance_ft", "success_rate", "rating_5"}
     text_kinds = {"text", "longtext"}
 
-    report = {"homework_id": homework_id, "sections": [], "total_logs": len(logs), "days_logged": len({log["date"] for log in logs})}
+    report = {"homework_id": homework_id, "sections": [], "total_logs": len(logs), "days_logged": len({log.get("date", "") for log in logs if log.get("date")})}
     for section in snap.get("sections", []):
         section_logs = [log for log in logs if log["section_id"] == section["id"]]
         section_logs.sort(key=lambda x: x.get("date", ""))
@@ -1553,7 +1558,12 @@ async def homework_report(homework_id: str, user: dict = Depends(get_current_use
             vals = [log["field_values"].get(fid) for log in section_logs if log["field_values"].get(fid) not in (None, "")]
             field_summary = {"field_id": fid, "label": field.get("label"), "kind": kind, "target": field.get("target"), "reverse": field.get("reverse", False)}
             if kind in numeric_kinds:
-                nums = [float(v) for v in vals if isinstance(v, (int, float)) or (isinstance(v, str) and v.replace(".", "", 1).lstrip("-").isdigit())]
+                nums = []
+                for v in vals:
+                    try:
+                        nums.append(float(v))
+                    except (TypeError, ValueError):
+                        continue
                 if nums:
                     field_summary.update({
                         "total": sum(nums),
@@ -1567,10 +1577,10 @@ async def homework_report(homework_id: str, user: dict = Depends(get_current_use
                     field_summary.update({"total": 0, "avg": 0, "max": 0, "min": 0, "count": 0, "trend": "flat"})
             elif kind in text_kinds:
                 field_summary["latest"] = vals[-1] if vals else ""
-                field_summary["entries"] = [{"date": log["date"], "value": log["field_values"].get(fid)} for log in section_logs if log["field_values"].get(fid)]
+                field_summary["entries"] = [{"date": log.get("date", ""), "value": log["field_values"].get(fid)} for log in section_logs if log["field_values"].get(fid)]
             elif kind == "checkbox":
                 yeses = sum(1 for v in vals if v is True or str(v).lower() == "true")
-                field_summary.update({"yes_count": yeses, "total": len(vals)})
+                field_summary.update({"yes_count": yeses, "entry_count": len(vals)})
             section_summary["fields"].append(field_summary)
         report["sections"].append(section_summary)
     return report
