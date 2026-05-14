@@ -119,8 +119,20 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **`POST /api/backup/restore`** with two modes:
   - `merge` (safer) — upserts by `id`; leaves existing records untouched if not in backup
   - `replace` — drops each collection and bulk-inserts the backup contents
-- ✅ **Settings → Backup & Restore tab** — one-click download with date-stamped filename, drag-drop file picker with preview (shows per-collection doc counts + export timestamp), mode selector with red warning on Replace, confirm dialog before restore.
-- ✅ Note for user: Emergent production deployments persist MongoDB across redeploys; backups are for accidental deletion / migration safety net.
+- ✅ **Settings → Backup & Restore tab** — one-click download with date-stamped filename, drag-drop file picker with preview, mode selector, confirm dialog.
+
+## Sprint 11 — Service-Dog Training Curriculum (2026-02)
+- ✅ **Command Library** — `commands` collection seeded with 36 TADSAW service-dog commands across 4 categories (Engagement, Basic Obedience, Public Access, Task-Specific). Admin-managed at Settings → Training Commands.
+- ✅ **5-point score scale** — 0=Not Started, 1=Introductory, 2=Learning, 3=Emerging, 4=Proficient, 5=Mastered (replaces the old 4-level training_skills tab).
+- ✅ **Per-dog curriculum** — `dog.curriculum` stores per-command level/notes/last_session_at/in_homework. Auto-created on first session log; admin can also edit any command's level directly via `PUT /api/dogs/{id}/training/{command_id}`.
+- ✅ **Training Sessions** — `POST /api/dogs/{id}/training-sessions` with date, environment (home/store/park/vet/training_facility/other), distraction (1-10), scores per command, and CGC mock-pass flag. Highest score wins per command.
+- ✅ **Progress summary** — overall + per-category mastery %.
+- ✅ **Auto-awarded badges** — Bronze (50% engagement+obedience), Silver (80% basics + CGC mock pass), Gold (95% overall + 90% task), plus per-category Master badges at 100%.
+- ✅ **Admin UI** — Dog edit modal Training tab: progress ring, per-category breakdown, grouped command tiles with level chips, edit-entry modal, Log Session modal (full multi-command scoring), Session History modal.
+- ✅ **Client portal** — "Training Progress" section per dog: progress ring + category %s + earned badges + flagged "Practice This Week" homework commands with YouTube demo links + Print Certificate (print-friendly landscape HTML cert for Bronze/Silver/Gold).
+- ✅ **YouTube video URL** per command (optional gold-standard demo, opens in new tab).
+- ✅ Settings → Training Commands tab: full CRUD for the library (admin can add/edit/delete commands).
+- ✅ 19/19 new backend tests pass, 80/81 legacy regression pass (1 pre-existing unrelated failure).
 
 ## Backlog / Next Iterations (Prioritized)
 **P1**
