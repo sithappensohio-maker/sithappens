@@ -182,6 +182,7 @@ class DogIn(BaseModel):
     vet_name: Optional[str] = ""
     vet_phone: Optional[str] = ""
     photos: List[str] = []  # gallery photos (base64)
+    tags: List[str] = []  # free-form labels (e.g., 'service_dog_candidate', 'puppy_class')
 
 class DogOut(DogIn):
     id: str

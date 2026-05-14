@@ -134,24 +134,33 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Settings → Training Commands tab: full CRUD for the library (admin can add/edit/delete commands).
 - ✅ 19/19 new backend tests pass, 80/81 legacy regression pass (1 pre-existing unrelated failure).
 
+## Sprint 12 — Training Pipeline + Multi-Enrollment + Tags (2026-02)
+- ✅ **Multi-tier Programs system** — `programs` collection holds reusable curriculums per type (`private_lessons`, `board_train`, `service_dog`, `custom`) with modules → goals. Goals can be **scored (1-5)** or **manual_only** (boolean done/not-done) checkbox. `completion_rule` per program. Seven seeded standard programs via `POST /api/programs/seed-standard` (idempotent).
+- ✅ **Per-dog enrollments** — `dog_programs` collection. A dog can hold **multiple simultaneously active enrollments** (multi-enrollment supported — no auto-pause of prior). Each enrollment has `target_completion_date`, `notes`, `goal_progress`, and a `program_snapshot` to keep the curriculum frozen at enrollment time.
+- ✅ **Status lifecycle** — `active → on_hold → withdrawn / completed` (`paused` retired in favor of `on_hold`). Goal status auto-bumps: score 5 ⇒ mastered, 1-4 ⇒ in_progress, 0 ⇒ not_started; manual_only goals toggle mastered via the `status` field directly.
+- ✅ **Global Training Pipeline screen** — new admin sidebar item. `GET /api/programs/pipeline` returns every enrollment with embedded dog/client/program details; UI shows KPI tiles (Active / On Hold / Completed), filter row (status + program type + free-text search), and per-row jump-to-dog wiring (`onJumpToDog`).
+- ✅ **Programs admin builder** (`Programs.jsx`) — full CRUD with goal kind selector (scored vs checkbox), completion_rule editor, default-program flag, soft delete (`active=false`).
+- ✅ **DogTrainingTab multi-enrollment UI** — enroll into any program, edit target date, score/check goals inline, withdraw/complete; existing service-dog command library tab still available.
+- ✅ **Dog tags** — free-form `tags: List[str]` on every dog (e.g., `service_dog_candidate`, `puppy_class`). Persisted via either `PUT /api/dogs/{id}` (full save) or the dedicated `PUT /api/dogs/{id}/tags` endpoint.
+- ✅ **Bug fix**: `DogIn`/`DogOut` Pydantic models were missing the `tags` field, causing the full-form dog save to silently drop tag edits and `GET /api/dogs` to strip the field from responses. Added `tags: List[str] = []` to `DogIn` → both routes now round-trip correctly. (RCA: iteration_10 test report.)
+- ✅ 122/122 backend tests passing (test_pipeline_multi_enroll.py: 22 new tests covering pipeline filters, seed idempotency, programs CRUD with mixed goal kinds, multi-enrollment proof, target_completion_date round-trip, status transitions, manual_only mastery, scored auto-bump, active-summary, tag persistence). Obsolete `test_programs.py` (iteration_9 single-enrollment schema) removed.
+
 ## Backlog / Next Iterations (Prioritized)
 **P1**
 - Boarding capacity rule (currently only daycare enforces capacity)
-- Email/SMS notification when booking is approved/rejected
+- DogTrainingTab interactive smoke test (add enrollment, change target date, toggle manual_only checkbox) — backend covered, UI interactions only static-reviewed
 - Vaccine expiry alerts banner on admin dashboard with click-to-dog
-- Waiver upload/sign flow per client
 
 **P2**
-- Photo gallery per dog (multiple photos)
-- Recurring bookings (e.g., every Tue/Thu for 4 weeks)
-- Stripe credit pack purchases via client portal
-- Tag-based training filter & progress chart
+- Custom `completion_rule` auto-trigger logic (UI exists; automation pending — programs.completion_rule should auto-mark enrollment `completed` when criteria hit)
+- Tag-based filters across Pipeline / Dogs / Run Sheet
 - CSV export of bookings/clients
-- Mobile responsive polish (sidebar drawer)
+- Run-sheet `active_program_name` picks the *first* enrollment; consider showing all or most-recent when a dog has multiple actives
+- Stripe credit pack purchases via client portal
 
 **P3**
+- `server.py` refactor (~2300 lines → split into `/app/backend/routes/`)
 - Multi-staff accounts with audit log
-- Calendar drag-and-drop reschedule
 - Per-service pricing (vs flat credit cost)
 
 ## Key Files
