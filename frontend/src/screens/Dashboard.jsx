@@ -18,17 +18,20 @@ export default function Dashboard() {
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
   const [showQuick, setShowQuick] = useState(false);
+  const [programs, setPrograms] = useState(null);
 
   const load = async () => {
     try {
-      const [s, a, st] = await Promise.all([
+      const [s, a, st, pg] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
+        api.get("/programs/active-summary").catch(()=>({data:null})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
+      setPrograms(pg.data);
     } catch {}
   };
   useEffect(() => { load(); }, []);
@@ -84,6 +87,27 @@ export default function Dashboard() {
         <StatCard label="Health Flags" value={stats.health_flags} accent="border-t-shOrange" textColor="text-shOrange" testId="stat-health" />
         <StatCard label="Total Dogs" value={stats.total_dogs} accent="border-t-bgHover" textColor="text-white" testId="stat-dogs" />
       </div>
+
+      {programs && programs.total > 0 && (
+        <div className="bg-bgPanel rounded-xl border border-bgHover p-4" data-testid="programs-tile">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-black text-white uppercase tracking-widest"><i className="fas fa-graduation-cap mr-2 text-shBlue"/>Dogs in Active Programs</p>
+            <span className="text-xs text-gray-500 font-black uppercase tracking-widest">{programs.total} active</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(programs.by_type).map(([type, count]) => {
+              const colors = {private_lessons:"#00a9e0", board_train:"#8cc63f", service_dog:"#a855f7", custom:"#ec4899"};
+              const labels = {private_lessons:"Private Lessons", board_train:"Board & Train", service_dog:"Service Dog", custom:"Custom"};
+              return (
+                <div key={type} className="px-3 py-1.5 rounded border" style={{borderColor:(colors[type]||"#475569")+"60", background:(colors[type]||"#475569")+"15"}}>
+                  <span className="text-[14px] font-black uppercase tracking-widest" style={{color: colors[type]||"#94a3b8"}}>{labels[type]||type}</span>
+                  <span className="text-white ml-2 font-black">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between gap-3">

@@ -76,6 +76,7 @@ export default function RunSheet() {
                       <Pill label="Pickup" value={fmtTime(b.pickup_time) + (b.checked_out_at?` · out ${fmtTs(b.checked_out_at)}`:"")} />
                       {b.kennel && <Pill label="Kennel" value={b.kennel} accent="shBlue" />}
                       <Pill label="Service" value={b.service_type==="grooming" && b.grooming_type ? `${b.service_type} · ${b.grooming_type==="bath"?"bath":"nail trim"}` : b.service_type} />
+                      {b.active_program_name && <Pill label="Program" value={b.active_program_name} />}
                     </div>
 
                     {(d.feeding_schedule?.length > 0) && (

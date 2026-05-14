@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
-import TrainingProgram from "../components/TrainingProgram";
+import DogTrainingTab from "../components/DogTrainingTab";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -315,9 +315,10 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 
               {tab === "training" && (
                 editing ? (
-                  <TrainingProgram dogId={editing.id} dogName={form.name} />
+                  <DogTrainingTab dogId={editing.id} dogName={form.name}
+                                  dogAgeMonths={(parseInt(form.age_y)||0)*12 + (parseInt(form.age_m)||0)} />
                 ) : (
-                  <p className="text-[14px] text-gray-500 italic py-8 text-center">Save the dog first, then come back to log training sessions.</p>
+                  <p className="text-[14px] text-gray-500 italic py-8 text-center">Save the dog first, then come back to enroll in a training program.</p>
                 )
               )}
 

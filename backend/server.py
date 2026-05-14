@@ -1543,6 +1543,372 @@ async def list_training_sessions(dog_id: str, user: dict = Depends(get_current_u
     return docs
 
 
+# -------- Training Programs --------
+from programs_data import SEED_PROGRAMS, PROGRAM_TYPES, GOAL_STATUS, ENROLLMENT_STATUS
+
+
+def _gid() -> str:
+    return str(uuid.uuid4())
+
+
+def _build_program_doc(seed: dict) -> dict:
+    """Stamp seed definition with UUIDs for every module/goal."""
+    modules = []
+    for m_i, m in enumerate(seed["modules"]):
+        goals = []
+        for g_i, g in enumerate(m.get("goals", [])):
+            goals.append({
+                "id": _gid(),
+                "name": g["name"],
+                "description": g.get("description", ""),
+                "order": g_i,
+                "command_id": g.get("command_id"),
+            })
+        modules.append({
+            "id": _gid(),
+            "name": m["name"],
+            "description": m.get("description", ""),
+            "order": m_i,
+            "goals": goals,
+        })
+    return {
+        "id": _gid(),
+        "slug": seed["slug"],
+        "name": seed["name"],
+        "type": seed["type"],
+        "description": seed.get("description", ""),
+        "focus": seed.get("focus", ""),
+        "format": seed.get("format", {"count": 1, "unit": "sessions"}),
+        "min_age_months": seed.get("min_age_months", 0),
+        "prereq_slugs": seed.get("prereq_slugs", []),
+        "modules": modules,
+        "active": True,
+        "is_default": True,
+        "owner_dog_id": None,
+        "created_at": now_iso(),
+    }
+
+
+async def _seed_programs_if_empty():
+    if await db.programs.count_documents({"is_default": True}) == 0:
+        docs = [_build_program_doc(s) for s in SEED_PROGRAMS]
+        await db.programs.insert_many(docs)
+
+
+class GoalIn(BaseModel):
+    id: Optional[str] = None
+    name: str = Field(min_length=1)
+    description: Optional[str] = ""
+    order: int = 0
+    command_id: Optional[str] = None
+
+
+class ModuleIn(BaseModel):
+    id: Optional[str] = None
+    name: str = Field(min_length=1)
+    description: Optional[str] = ""
+    order: int = 0
+    goals: List[GoalIn] = []
+
+
+class ProgramIn(BaseModel):
+    name: str = Field(min_length=1)
+    slug: Optional[str] = ""
+    type: Literal["private_lessons", "board_train", "service_dog", "custom"]
+    description: Optional[str] = ""
+    focus: Optional[str] = ""
+    format: Dict = Field(default_factory=lambda: {"count": 1, "unit": "sessions"})
+    min_age_months: int = 0
+    prereq_slugs: List[str] = []
+    modules: List[ModuleIn] = []
+    active: bool = True
+
+
+def _stamp_ids(modules: List[dict]) -> List[dict]:
+    out = []
+    for m_i, m in enumerate(modules):
+        mid = m.get("id") or _gid()
+        goals = []
+        for g_i, g in enumerate(m.get("goals") or []):
+            goals.append({
+                "id": g.get("id") or _gid(),
+                "name": g["name"],
+                "description": g.get("description", ""),
+                "order": g.get("order", g_i),
+                "command_id": g.get("command_id"),
+            })
+        out.append({
+            "id": mid,
+            "name": m["name"],
+            "description": m.get("description", ""),
+            "order": m.get("order", m_i),
+            "goals": goals,
+        })
+    return out
+
+
+@api.get("/programs/meta")
+async def programs_meta(user: dict = Depends(get_current_user)):
+    return {"types": PROGRAM_TYPES, "goal_status": GOAL_STATUS, "enrollment_status": ENROLLMENT_STATUS}
+
+
+@api.get("/programs")
+async def list_programs(user: dict = Depends(get_current_user), include_custom: bool = True):
+    await _seed_programs_if_empty()
+    query = {"active": True}
+    if user.get("role") != "admin":
+        # Clients don't browse programs directly
+        raise HTTPException(status_code=403, detail="Admin only")
+    progs = await db.programs.find(query, {"_id": 0}).to_list(500)
+    if not include_custom:
+        progs = [p for p in progs if p.get("type") != "custom"]
+    progs.sort(key=lambda p: (p.get("type", ""), p.get("name", "")))
+    return progs
+
+
+@api.post("/programs")
+async def create_program(body: ProgramIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = _gid()
+    doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
+    doc["modules"] = _stamp_ids(doc.get("modules") or [])
+    doc["is_default"] = False
+    doc["owner_dog_id"] = None
+    doc["created_at"] = now_iso()
+    await db.programs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/programs/{program_id}")
+async def update_program(program_id: str, body: ProgramIn, _: dict = Depends(require_admin)):
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    update = body.model_dump()
+    update["modules"] = _stamp_ids(update.get("modules") or [])
+    await db.programs.update_one({"id": program_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+
+@api.delete("/programs/{program_id}")
+async def delete_program(program_id: str, _: dict = Depends(require_admin)):
+    # Soft delete — existing enrollments are unaffected
+    await db.programs.update_one({"id": program_id}, {"$set": {"active": False}})
+    return {"ok": True}
+
+
+# ----- Enrollments -----
+class EnrollIn(BaseModel):
+    program_id: str
+    started_at: Optional[str] = None
+    trainer_notes: Optional[str] = ""
+
+
+def _empty_progress(modules: List[dict]) -> Dict[str, dict]:
+    out: Dict[str, dict] = {}
+    for m in modules:
+        for g in (m.get("goals") or []):
+            out[g["id"]] = {"status": "not_started", "score": 0, "notes": "", "last_session_at": None}
+    return out
+
+
+def _enrollment_summary(enrollment: dict) -> dict:
+    """Augment with totals + mastered counts derived from program_snapshot.modules."""
+    total = 0
+    mastered = 0
+    in_progress = 0
+    for m in (enrollment.get("program_snapshot", {}).get("modules") or []):
+        for g in (m.get("goals") or []):
+            total += 1
+            p = (enrollment.get("goal_progress") or {}).get(g["id"]) or {}
+            if p.get("status") == "mastered" or int(p.get("score") or 0) >= 4:
+                mastered += 1
+            elif p.get("status") == "in_progress" or int(p.get("score") or 0) >= 1:
+                in_progress += 1
+    pct = int(round(100 * mastered / total)) if total else 0
+    return {**enrollment, "total_goals": total, "mastered_goals": mastered,
+            "in_progress_goals": in_progress, "mastered_pct": pct}
+
+
+@api.post("/dogs/{dog_id}/programs")
+async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Program not found")
+    # Auto-pause any currently active enrollment (only one active at a time)
+    await db.dog_programs.update_many(
+        {"dog_id": dog_id, "status": "active"},
+        {"$set": {"status": "paused", "paused_at": now_iso()}},
+    )
+    enrollment = {
+        "id": _gid(),
+        "dog_id": dog_id,
+        "program_id": body.program_id,
+        "program_snapshot": {
+            "name": program["name"],
+            "type": program["type"],
+            "slug": program.get("slug"),
+            "description": program.get("description", ""),
+            "focus": program.get("focus", ""),
+            "format": program.get("format"),
+            "modules": program.get("modules") or [],
+        },
+        "status": "active",
+        "started_at": body.started_at or date.today().isoformat(),
+        "completed_at": None,
+        "paused_at": None,
+        "goal_progress": _empty_progress(program.get("modules") or []),
+        "sessions_count": 0,
+        "trainer_notes": body.trainer_notes or "",
+        "created_at": now_iso(),
+    }
+    await db.dog_programs.insert_one(enrollment)
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment["id"]}})
+    enrollment.pop("_id", None)
+    return _enrollment_summary(enrollment)
+
+
+@api.get("/dogs/{dog_id}/programs")
+async def list_dog_enrollments(dog_id: str, user: dict = Depends(get_current_user)):
+    await _dog_or_403(dog_id, user)
+    enrollments = await db.dog_programs.find({"dog_id": dog_id}, {"_id": 0}).to_list(200)
+    enrollments.sort(key=lambda e: (0 if e.get("status") == "active" else 1, e.get("created_at") or ""), reverse=False)
+    # Active first, then by created_at descending for the rest
+    active = [e for e in enrollments if e.get("status") == "active"]
+    other = sorted([e for e in enrollments if e.get("status") != "active"],
+                   key=lambda e: e.get("created_at") or "", reverse=True)
+    enrollments = active + other
+    return [_enrollment_summary(e) for e in enrollments]
+
+
+class EnrollmentUpdate(BaseModel):
+    status: Optional[Literal["active", "completed", "paused", "withdrawn"]] = None
+    trainer_notes: Optional[str] = None
+
+
+@api.put("/dogs/{dog_id}/programs/{enrollment_id}")
+async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpdate, _: dict = Depends(require_admin)):
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    update: Dict = {}
+    if body.status:
+        update["status"] = body.status
+        if body.status == "completed":
+            update["completed_at"] = now_iso()
+        if body.status == "paused":
+            update["paused_at"] = now_iso()
+        if body.status == "active":
+            # Pause any other active enrollment for this dog
+            await db.dog_programs.update_many(
+                {"dog_id": dog_id, "status": "active", "id": {"$ne": enrollment_id}},
+                {"$set": {"status": "paused", "paused_at": now_iso()}},
+            )
+            await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment_id}})
+        elif body.status in ("completed", "paused", "withdrawn"):
+            # If this was the active one, clear the pointer
+            dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+            if (dog or {}).get("active_program_id") == enrollment_id:
+                await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": None}})
+    if body.trainer_notes is not None:
+        update["trainer_notes"] = body.trainer_notes
+    if update:
+        await db.dog_programs.update_one({"id": enrollment_id}, {"$set": update})
+        enrollment.update(update)
+    return _enrollment_summary(enrollment)
+
+
+class GoalUpdate(BaseModel):
+    status: Optional[Literal["not_started", "in_progress", "mastered"]] = None
+    score: Optional[int] = Field(default=None, ge=0, le=5)
+    notes: Optional[str] = None
+
+
+@api.put("/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}")
+async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin)):
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    progress = enrollment.get("goal_progress") or {}
+    cur = progress.get(goal_id) or {"status": "not_started", "score": 0, "notes": "", "last_session_at": None}
+    if body.status is not None:
+        cur["status"] = body.status
+    if body.score is not None:
+        cur["score"] = body.score
+        # Auto-bump status: 0=not_started, 1-3=in_progress, 4-5=mastered
+        if body.score >= 4:
+            cur["status"] = "mastered"
+        elif body.score >= 1:
+            cur["status"] = "in_progress"
+        else:
+            cur["status"] = "not_started"
+    if body.notes is not None:
+        cur["notes"] = body.notes
+    progress[goal_id] = cur
+    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": {"goal_progress": progress}})
+    enrollment["goal_progress"] = progress
+    return _enrollment_summary(enrollment)
+
+
+class CustomProgramIn(BaseModel):
+    name: str = Field(min_length=1)
+    description: Optional[str] = ""
+    focus: Optional[str] = ""
+    format: Dict = Field(default_factory=lambda: {"count": 1, "unit": "sessions"})
+    modules: List[ModuleIn] = []
+
+
+@api.post("/dogs/{dog_id}/programs/custom")
+async def create_custom_and_enroll(dog_id: str, body: CustomProgramIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    program_doc = {
+        "id": _gid(),
+        "name": body.name,
+        "slug": f"custom_{dog_id[:8]}_{int(datetime.now().timestamp())}",
+        "type": "custom",
+        "description": body.description or "",
+        "focus": body.focus or "",
+        "format": body.format or {"count": 1, "unit": "sessions"},
+        "min_age_months": 0,
+        "prereq_slugs": [],
+        "modules": _stamp_ids([m.model_dump() for m in body.modules]),
+        "active": True,
+        "is_default": False,
+        "owner_dog_id": dog_id,
+        "created_at": now_iso(),
+    }
+    await db.programs.insert_one(program_doc)
+    # Auto-enroll
+    return await enroll_dog(dog_id, EnrollIn(program_id=program_doc["id"]), _=_)
+
+
+# Idempotent re-seed (admin can also wipe and re-import standards from settings if desired)
+@api.post("/programs/seed-standard")
+async def seed_standard(_: dict = Depends(require_admin)):
+    await _seed_programs_if_empty()
+    count = await db.programs.count_documents({"is_default": True})
+    return {"ok": True, "default_programs": count}
+
+
+# Run-sheet/dashboard helper: which dogs have which active programs
+@api.get("/programs/active-summary")
+async def active_summary(_: dict = Depends(require_admin)):
+    cursor = db.dog_programs.find({"status": "active"}, {"_id": 0}).sort("started_at", -1)
+    rows = await cursor.to_list(500)
+    by_type: Dict[str, int] = {}
+    for r in rows:
+        t = (r.get("program_snapshot") or {}).get("type", "unknown")
+        by_type[t] = by_type.get(t, 0) + 1
+    return {"total": len(rows), "by_type": by_type, "active": [_enrollment_summary(r) for r in rows[:20]]}
+
+
 # -------- Run Sheet --------
 @api.get("/run-sheet")
 async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = None):
@@ -1561,11 +1927,17 @@ async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = 
     for b in relevant:
         dog = await db.dogs.find_one({"id": b["dog_id"]}, {"_id": 0})
         client = await db.clients.find_one({"id": b["client_id"]}, {"_id": 0})
+        active_program_name = None
+        if dog and dog.get("active_program_id"):
+            enr = await db.dog_programs.find_one({"id": dog["active_program_id"]}, {"_id": 0})
+            if enr and enr.get("status") == "active":
+                active_program_name = (enr.get("program_snapshot") or {}).get("name")
         out.append({
             **b,
             "dog": dog,
             "client_phone": (client or {}).get("phone", ""),
             "client_emerg": (client or {}).get("emerg", ""),
+            "active_program_name": active_program_name,
         })
     # Sort: boarding first, then daycare, then grooming, then training; secondary by dropoff_time
     order = {"boarding": 0, "daycare": 1, "grooming": 2, "training": 3}
