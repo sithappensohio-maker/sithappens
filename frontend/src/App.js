@@ -14,6 +14,7 @@ import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
+import InstallPrompt from "./components/InstallPrompt";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -145,6 +146,7 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <Gate />
+        <InstallPrompt />
       </AuthProvider>
     </ErrorBoundary>
   );
