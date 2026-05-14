@@ -1312,6 +1312,282 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
     return hw
 
 
+# -------- Homework Templates Library --------
+from homework_templates_data import SEED_TEMPLATES
+
+TIERS = ["foundation", "intermediate", "advanced", "specialty", "master"]
+
+
+class HomeworkTemplateIn(BaseModel):
+    slug: Optional[str] = ""
+    name: str = Field(min_length=2)
+    tier: Literal["foundation", "intermediate", "advanced", "specialty", "master"] = "master"
+    description: Optional[str] = ""
+    default_duration_days: int = 7
+    cover_color: Optional[str] = ""
+    icon: Optional[str] = ""
+    global_rules_this_week: List[str] = []
+    sections: List[dict] = []
+    active: bool = True
+
+
+class HomeworkFromTemplateIn(BaseModel):
+    dog_id: str
+    template_id: str
+    title_override: Optional[str] = ""
+    instructions_override: Optional[str] = ""
+    due_date: Optional[str] = ""
+    video_url: Optional[str] = ""
+    custom_global_rules: Optional[List[str]] = None  # if provided, replaces template rules
+
+
+class SectionLogIn(BaseModel):
+    section_id: str
+    date: Optional[str] = ""  # YYYY-MM-DD, defaults today
+    field_values: Dict[str, object] = {}
+    note: Optional[str] = ""
+
+
+@api.get("/homework-templates")
+async def list_homework_templates(_: dict = Depends(get_current_user)):
+    tpls = await db.homework_templates.find({"active": True}, {"_id": 0}).to_list(500)
+    # Sort by tier (foundation → master) then name
+    order = {t: i for i, t in enumerate(TIERS)}
+    tpls.sort(key=lambda t: (order.get(t.get("tier"), 99), t.get("name", "")))
+    return tpls
+
+
+@api.post("/homework-templates")
+async def create_homework_template(body: HomeworkTemplateIn, user: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc.update({
+        "id": str(uuid.uuid4()),
+        "slug": doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40],
+        "is_default": False,
+        "active": True,
+        "created_at": now_iso(),
+        "created_by": user.get("name", "Admin"),
+    })
+    await db.homework_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/homework-templates/{template_id}")
+async def update_homework_template(template_id: str, body: HomeworkTemplateIn, _: dict = Depends(require_admin)):
+    tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    update = body.model_dump()
+    update.pop("slug", None)  # don't allow slug edit
+    await db.homework_templates.update_one({"id": template_id}, {"$set": update})
+    return {**tpl, **update}
+
+
+@api.delete("/homework-templates/{template_id}")
+async def delete_homework_template(template_id: str, _: dict = Depends(require_admin)):
+    tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    # System-seeded templates are soft-deleted (so reseed restores them).
+    if tpl.get("is_default"):
+        await db.homework_templates.update_one({"id": template_id}, {"$set": {"active": False}})
+    else:
+        await db.homework_templates.delete_one({"id": template_id})
+    return {"ok": True}
+
+
+@api.post("/homework-templates/seed-standard")
+async def seed_homework_templates(_: dict = Depends(require_admin)):
+    """Idempotent — upserts by slug. Re-running refreshes content for default
+    templates that haven't been customized."""
+    seeded = 0
+    for tpl in SEED_TEMPLATES:
+        existing = await db.homework_templates.find_one({"slug": tpl["slug"]}, {"_id": 0})
+        doc = {
+            **tpl,
+            "is_default": True,
+            "active": True,
+        }
+        if existing:
+            # Preserve user customizations: only overwrite if still untouched.
+            if existing.get("is_default") and not existing.get("customized"):
+                await db.homework_templates.update_one(
+                    {"id": existing["id"]},
+                    {"$set": {**doc, "updated_at": now_iso()}},
+                )
+        else:
+            doc["id"] = str(uuid.uuid4())
+            doc["created_at"] = now_iso()
+            await db.homework_templates.insert_one(doc)
+            seeded += 1
+    total = await db.homework_templates.count_documents({"active": True})
+    return {"seeded": seeded, "total_active": total}
+
+
+@api.post("/homework/from-template")
+async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    tpl = await db.homework_templates.find_one({"id": body.template_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+
+    # Compute due_date from default_duration_days if none provided.
+    due = body.due_date or ""
+    if not due and tpl.get("default_duration_days"):
+        due = (date.today() + timedelta(days=int(tpl["default_duration_days"]))).isoformat()
+
+    snapshot = {
+        "template_id": tpl["id"],
+        "slug": tpl.get("slug"),
+        "name": tpl.get("name"),
+        "tier": tpl.get("tier"),
+        "description": tpl.get("description"),
+        "cover_color": tpl.get("cover_color"),
+        "icon": tpl.get("icon"),
+        "global_rules_this_week": body.custom_global_rules if body.custom_global_rules is not None else tpl.get("global_rules_this_week", []),
+        "sections": tpl.get("sections", []),
+    }
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog["id"],
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "title": body.title_override or tpl["name"],
+        "instructions": body.instructions_override or tpl.get("description", ""),
+        "video_url": body.video_url or "",
+        "due_date": due,
+        "status": "assigned",
+        "created_at": now_iso(),
+        "assigned_by": user.get("name", "Admin"),
+        "completed_at": None,
+        "completion_note": "",
+        "completion_photo": "",
+        "template_snapshot": snapshot,
+        "section_logs": [],
+    }
+    await db.homework.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.post("/homework/{homework_id}/section-log")
+async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends(get_current_user)):
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("template_snapshot"):
+        raise HTTPException(status_code=400, detail="This homework has no template sections to log against")
+    # Validate section_id exists in snapshot
+    section_ids = {s["id"] for s in hw["template_snapshot"].get("sections", [])}
+    if body.section_id not in section_ids:
+        raise HTTPException(status_code=400, detail="Unknown section_id")
+
+    entry = {
+        "id": str(uuid.uuid4()),
+        "section_id": body.section_id,
+        "date": body.date or date.today().isoformat(),
+        "field_values": body.field_values or {},
+        "note": body.note or "",
+        "logged_by": user.get("name", ""),
+        "logged_at": now_iso(),
+    }
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$push": {"section_logs": entry}},
+    )
+    hw["section_logs"] = (hw.get("section_logs") or []) + [entry]
+    return hw
+
+
+@api.delete("/homework/{homework_id}/section-log/{log_id}")
+async def delete_section_log(homework_id: str, log_id: str, user: dict = Depends(get_current_user)):
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$pull": {"section_logs": {"id": log_id}}},
+    )
+    return {"ok": True}
+
+
+@api.get("/homework/{homework_id}/report")
+async def homework_report(homework_id: str, user: dict = Depends(get_current_user)):
+    """Aggregated stats per section. Numeric fields → total, avg, max, count;
+    text fields → most-recent value; rating_5 → avg + trend."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw["client_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    snap = hw.get("template_snapshot") or {}
+    logs = hw.get("section_logs") or []
+
+    numeric_kinds = {"reps", "sets", "duration_sec", "duration_min", "distance_ft", "success_rate", "rating_5"}
+    text_kinds = {"text", "longtext"}
+
+    report = {"homework_id": homework_id, "sections": [], "total_logs": len(logs), "days_logged": len({log["date"] for log in logs})}
+    for section in snap.get("sections", []):
+        section_logs = [log for log in logs if log["section_id"] == section["id"]]
+        section_logs.sort(key=lambda x: x.get("date", ""))
+        section_summary = {
+            "section_id": section["id"],
+            "title": section.get("title"),
+            "log_count": len(section_logs),
+            "last_logged": section_logs[-1]["date"] if section_logs else None,
+            "fields": [],
+        }
+        for field in section.get("fields", []):
+            fid = field["id"]
+            kind = field.get("kind")
+            vals = [log["field_values"].get(fid) for log in section_logs if log["field_values"].get(fid) not in (None, "")]
+            field_summary = {"field_id": fid, "label": field.get("label"), "kind": kind, "target": field.get("target"), "reverse": field.get("reverse", False)}
+            if kind in numeric_kinds:
+                nums = [float(v) for v in vals if isinstance(v, (int, float)) or (isinstance(v, str) and v.replace(".", "", 1).lstrip("-").isdigit())]
+                if nums:
+                    field_summary.update({
+                        "total": sum(nums),
+                        "avg": round(sum(nums) / len(nums), 1),
+                        "max": max(nums),
+                        "min": min(nums),
+                        "count": len(nums),
+                        "trend": _trend(nums),
+                    })
+                else:
+                    field_summary.update({"total": 0, "avg": 0, "max": 0, "min": 0, "count": 0, "trend": "flat"})
+            elif kind in text_kinds:
+                field_summary["latest"] = vals[-1] if vals else ""
+                field_summary["entries"] = [{"date": log["date"], "value": log["field_values"].get(fid)} for log in section_logs if log["field_values"].get(fid)]
+            elif kind == "checkbox":
+                yeses = sum(1 for v in vals if v is True or str(v).lower() == "true")
+                field_summary.update({"yes_count": yeses, "total": len(vals)})
+            section_summary["fields"].append(field_summary)
+        report["sections"].append(section_summary)
+    return report
+
+
+def _trend(nums: List[float]) -> str:
+    if len(nums) < 2:
+        return "flat"
+    first = sum(nums[: len(nums) // 2]) / max(1, len(nums) // 2)
+    last = sum(nums[len(nums) // 2:]) / max(1, len(nums) - len(nums) // 2)
+    if last > first * 1.10:
+        return "up"
+    if last < first * 0.90:
+        return "down"
+    return "flat"
+
+
 # -------- Service-Dog Training Curriculum --------
 from training_data import (
     CATEGORIES as TRAINING_CATEGORIES,

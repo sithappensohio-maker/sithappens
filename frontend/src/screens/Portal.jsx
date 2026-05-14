@@ -6,6 +6,7 @@ import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
+import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import InstallAppButton from "../components/InstallAppButton";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
@@ -342,7 +343,9 @@ export default function Portal() {
             <div data-testid="portal-homework">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
               <div className="space-y-3">
-                {homework.map(h => (
+                {homework.map(h => {
+                  const hasTemplate = !!h.template_snapshot;
+                  return (
                   <div key={h.id} className={`bg-bgPanel border rounded-xl p-4 ${h.status==="completed"?"border-shGreen/40":"border-shOrange/40"}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
@@ -350,6 +353,7 @@ export default function Portal() {
                           <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
                           <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
                           {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
+                          {hasTemplate && <span className="text-[12px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
                         </div>
                         <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
                         {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
@@ -360,11 +364,17 @@ export default function Portal() {
                                 className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
                       )}
                     </div>
+                    {hasTemplate && h.status !== "completed" && (
+                      <div className="mt-4 pt-4 border-t border-bgHover">
+                        <HomeworkSectionLogger homework={h} onLogged={loadAll} />
+                      </div>
+                    )}
                     {h.status === "completed" && h.completion_note && (
                       <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
