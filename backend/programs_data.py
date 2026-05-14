@@ -10,7 +10,18 @@ PROGRAM_TYPES = [
 ]
 
 GOAL_STATUS = ["not_started", "in_progress", "mastered"]
-ENROLLMENT_STATUS = ["active", "completed", "paused", "withdrawn"]
+ENROLLMENT_STATUS = ["active", "completed", "on_hold", "withdrawn"]
+
+
+def _default_completion_rule():
+    return {"type": "percent", "threshold": 80}  # 80% of goals mastered
+
+# Available completion rule types:
+#   percent       — % of goals at status=mastered ≥ threshold
+#   all_mastered  — every goal must be mastered
+#   manual        — admin marks the enrollment complete by hand
+#   sessions      — N training sessions logged for this enrollment
+COMPLETION_RULE_TYPES = ["percent", "all_mastered", "manual", "sessions"]
 
 
 def _g(name, description=""):

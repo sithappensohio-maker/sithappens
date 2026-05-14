@@ -139,6 +139,35 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
             </Field>
           )}
 
+          {/* Completion rule */}
+          <div className="bg-bgBase/40 border border-bgHover rounded p-3">
+            <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-2"><i className="fas fa-flag-checkered mr-2"/>Completion Rule</p>
+            <p className="text-[13px] text-gray-400 mb-2">When is a dog ready to graduate from this program?</p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {[
+                { k: "percent", label: "% mastered", icon: "fa-percent" },
+                { k: "all_mastered", label: "All goals", icon: "fa-list-check" },
+                { k: "manual", label: "Manual sign-off", icon: "fa-hand-pointer" },
+                { k: "sessions", label: "Session count", icon: "fa-calendar-check" },
+              ].map(rt => (
+                <button key={rt.k} type="button" onClick={()=>set({completion_rule:{...(program.completion_rule||{}), type: rt.k}})}
+                        data-testid={`rule-${rt.k}`}
+                        className={`py-2 rounded text-[13px] font-black uppercase tracking-widest border ${(program.completion_rule?.type||"percent")===rt.k?"bg-shBlue text-white border-shBlue":"bg-bgPanel border-bgHover text-gray-400"}`}>
+                  <i className={`fas ${rt.icon} mr-1`}/>{rt.label}
+                </button>
+              ))}
+            </div>
+            {((program.completion_rule?.type||"percent")==="percent" || program.completion_rule?.type==="sessions") && (
+              <div className="mt-2 flex items-center gap-2">
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{program.completion_rule?.type==="sessions"?"Required sessions":"Threshold %"}:</label>
+                <input type="number" min="1" max={program.completion_rule?.type==="sessions"?100:100}
+                       value={program.completion_rule?.threshold ?? (program.completion_rule?.type==="sessions"?5:80)}
+                       onChange={(e)=>set({completion_rule:{...(program.completion_rule||{type:"percent"}), threshold: parseInt(e.target.value)||0}})}
+                       className="w-24 bg-bgPanel border border-bgHover rounded p-1.5 text-white text-sm" />
+              </div>
+            )}
+          </div>
+
           {/* Module builder */}
           <div className="border-t border-bgHover pt-3">
             <div className="flex items-center justify-between mb-2">
@@ -160,14 +189,20 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                          className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-[13px] text-gray-300 mb-2" />
                   <div className="space-y-1">
                     {(m.goals||[]).map((g, gi) => (
-                      <div key={gi} className="flex gap-2 items-center bg-bgPanel rounded px-2 py-1">
-                        <i className="fas fa-circle-dot text-shGreen text-[10px]"/>
-                        <input value={g.name} onChange={(e)=>updateGoal(mi, gi, {name:e.target.value})}
-                               className="flex-1 bg-transparent text-[14px] text-white outline-none" />
-                        <input value={g.description||""} onChange={(e)=>updateGoal(mi, gi, {description:e.target.value})}
-                               placeholder="description"
-                               className="flex-[2] bg-transparent text-[13px] text-gray-400 outline-none" />
-                        <button onClick={()=>removeGoal(mi, gi)} className="text-red-400 hover:text-red-300 text-xs"><i className="fas fa-times"/></button>
+                      <div key={gi} className="bg-bgPanel rounded px-2 py-1.5">
+                        <div className="flex gap-2 items-center">
+                          <i className="fas fa-circle-dot text-shGreen text-[10px]"/>
+                          <input value={g.name} onChange={(e)=>updateGoal(mi, gi, {name:e.target.value})}
+                                 className="flex-1 bg-transparent text-[14px] text-white outline-none" />
+                          <input value={g.description||""} onChange={(e)=>updateGoal(mi, gi, {description:e.target.value})}
+                                 placeholder="description"
+                                 className="flex-[2] bg-transparent text-[13px] text-gray-400 outline-none" />
+                          <label className="flex items-center gap-1 text-[11px] text-pink-300 cursor-pointer" title="If on, this goal is a check-off (Done/Reset) instead of a 0-5 score">
+                            <input type="checkbox" checked={!!g.manual_only} onChange={(e)=>updateGoal(mi, gi, {manual_only:e.target.checked})} className="accent-pink-400"/>
+                            Manual
+                          </label>
+                          <button onClick={()=>removeGoal(mi, gi)} className="text-red-400 hover:text-red-300 text-xs"><i className="fas fa-times"/></button>
+                        </div>
                       </div>
                     ))}
                   </div>

@@ -1544,7 +1544,7 @@ async def list_training_sessions(dog_id: str, user: dict = Depends(get_current_u
 
 
 # -------- Training Programs --------
-from programs_data import SEED_PROGRAMS, PROGRAM_TYPES, GOAL_STATUS, ENROLLMENT_STATUS
+from programs_data import SEED_PROGRAMS, PROGRAM_TYPES, GOAL_STATUS, ENROLLMENT_STATUS, COMPLETION_RULE_TYPES, _default_completion_rule
 
 
 def _gid() -> str:
@@ -1563,6 +1563,7 @@ def _build_program_doc(seed: dict) -> dict:
                 "description": g.get("description", ""),
                 "order": g_i,
                 "command_id": g.get("command_id"),
+                "manual_only": False,
             })
         modules.append({
             "id": _gid(),
@@ -1582,6 +1583,7 @@ def _build_program_doc(seed: dict) -> dict:
         "min_age_months": seed.get("min_age_months", 0),
         "prereq_slugs": seed.get("prereq_slugs", []),
         "modules": modules,
+        "completion_rule": _default_completion_rule(),
         "active": True,
         "is_default": True,
         "owner_dog_id": None,
@@ -1601,6 +1603,7 @@ class GoalIn(BaseModel):
     description: Optional[str] = ""
     order: int = 0
     command_id: Optional[str] = None
+    manual_only: bool = False  # if true, goal is a checkbox not a 0-5 score
 
 
 class ModuleIn(BaseModel):
@@ -1621,6 +1624,7 @@ class ProgramIn(BaseModel):
     min_age_months: int = 0
     prereq_slugs: List[str] = []
     modules: List[ModuleIn] = []
+    completion_rule: Dict = Field(default_factory=_default_completion_rule)
     active: bool = True
 
 
@@ -1636,6 +1640,7 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
                 "description": g.get("description", ""),
                 "order": g.get("order", g_i),
                 "command_id": g.get("command_id"),
+                "manual_only": bool(g.get("manual_only")),
             })
         out.append({
             "id": mid,
@@ -1649,7 +1654,12 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
 
 @api.get("/programs/meta")
 async def programs_meta(user: dict = Depends(get_current_user)):
-    return {"types": PROGRAM_TYPES, "goal_status": GOAL_STATUS, "enrollment_status": ENROLLMENT_STATUS}
+    return {
+        "types": PROGRAM_TYPES,
+        "goal_status": GOAL_STATUS,
+        "enrollment_status": ENROLLMENT_STATUS,
+        "completion_rule_types": COMPLETION_RULE_TYPES,
+    }
 
 
 @api.get("/programs")
@@ -1703,6 +1713,7 @@ async def delete_program(program_id: str, _: dict = Depends(require_admin)):
 class EnrollIn(BaseModel):
     program_id: str
     started_at: Optional[str] = None
+    target_completion_date: Optional[str] = None
     trainer_notes: Optional[str] = ""
 
 
@@ -1732,6 +1743,25 @@ def _enrollment_summary(enrollment: dict) -> dict:
             "in_progress_goals": in_progress, "mastered_pct": pct}
 
 
+def _suggest_target_date(started: str, fmt: dict) -> Optional[str]:
+    """Estimate completion date from program format."""
+    try:
+        d0 = date.fromisoformat(started)
+    except Exception:
+        return None
+    count = int((fmt or {}).get("count") or 1)
+    unit = (fmt or {}).get("unit") or "sessions"
+    if unit == "weeks":
+        delta_days = count * 7
+    elif unit == "days":
+        delta_days = count
+    elif unit == "months":
+        delta_days = count * 30
+    else:  # sessions — assume ~1 per week
+        delta_days = count * 7
+    return (d0 + timedelta(days=delta_days)).isoformat()
+
+
 @api.post("/dogs/{dog_id}/programs")
 async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admin)):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
@@ -1740,11 +1770,8 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
-    # Auto-pause any currently active enrollment (only one active at a time)
-    await db.dog_programs.update_many(
-        {"dog_id": dog_id, "status": "active"},
-        {"$set": {"status": "paused", "paused_at": now_iso()}},
-    )
+    started = body.started_at or date.today().isoformat()
+    target = body.target_completion_date or _suggest_target_date(started, program.get("format") or {})
     enrollment = {
         "id": _gid(),
         "dog_id": dog_id,
@@ -1757,18 +1784,22 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
             "focus": program.get("focus", ""),
             "format": program.get("format"),
             "modules": program.get("modules") or [],
+            "completion_rule": program.get("completion_rule") or _default_completion_rule(),
         },
         "status": "active",
-        "started_at": body.started_at or date.today().isoformat(),
+        "started_at": started,
+        "target_completion_date": target,
         "completed_at": None,
-        "paused_at": None,
+        "on_hold_at": None,
         "goal_progress": _empty_progress(program.get("modules") or []),
         "sessions_count": 0,
         "trainer_notes": body.trainer_notes or "",
         "created_at": now_iso(),
     }
     await db.dog_programs.insert_one(enrollment)
-    await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment["id"]}})
+    # If the dog has no active_program_id yet, point at this one (used for run-sheet display).
+    if not dog.get("active_program_id"):
+        await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment["id"]}})
     enrollment.pop("_id", None)
     return _enrollment_summary(enrollment)
 
@@ -1787,8 +1818,9 @@ async def list_dog_enrollments(dog_id: str, user: dict = Depends(get_current_use
 
 
 class EnrollmentUpdate(BaseModel):
-    status: Optional[Literal["active", "completed", "paused", "withdrawn"]] = None
+    status: Optional[Literal["active", "completed", "on_hold", "withdrawn"]] = None
     trainer_notes: Optional[str] = None
+    target_completion_date: Optional[str] = None
 
 
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}")
@@ -1801,22 +1833,24 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
         update["status"] = body.status
         if body.status == "completed":
             update["completed_at"] = now_iso()
-        if body.status == "paused":
-            update["paused_at"] = now_iso()
+        if body.status == "on_hold":
+            update["on_hold_at"] = now_iso()
         if body.status == "active":
-            # Pause any other active enrollment for this dog
-            await db.dog_programs.update_many(
-                {"dog_id": dog_id, "status": "active", "id": {"$ne": enrollment_id}},
-                {"$set": {"status": "paused", "paused_at": now_iso()}},
-            )
             await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment_id}})
-        elif body.status in ("completed", "paused", "withdrawn"):
-            # If this was the active one, clear the pointer
+        elif body.status in ("completed", "on_hold", "withdrawn"):
+            # If this was the dog's active pointer, clear it so the run-sheet stops showing it
             dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
             if (dog or {}).get("active_program_id") == enrollment_id:
-                await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": None}})
+                # If there's another active enrollment, point at it; otherwise null
+                other = await db.dog_programs.find_one(
+                    {"dog_id": dog_id, "status": "active", "id": {"$ne": enrollment_id}},
+                    {"_id": 0},
+                )
+                await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": (other or {}).get("id")}})
     if body.trainer_notes is not None:
         update["trainer_notes"] = body.trainer_notes
+    if body.target_completion_date is not None:
+        update["target_completion_date"] = body.target_completion_date
     if update:
         await db.dog_programs.update_one({"id": enrollment_id}, {"$set": update})
         enrollment.update(update)
@@ -1907,6 +1941,91 @@ async def active_summary(_: dict = Depends(require_admin)):
         t = (r.get("program_snapshot") or {}).get("type", "unknown")
         by_type[t] = by_type.get(t, 0) + 1
     return {"total": len(rows), "by_type": by_type, "active": [_enrollment_summary(r) for r in rows[:20]]}
+
+
+@api.get("/programs/pipeline")
+async def programs_pipeline(
+    _: dict = Depends(require_admin),
+    status: Optional[str] = None,
+    type: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    """All-dogs training overview. Joins enrollments → dogs → clients with computed
+    progress, days_since_start, days_to_target. Supports filtering."""
+    query: Dict = {}
+    if status:
+        query["status"] = status
+    rows = await db.dog_programs.find(query, {"_id": 0}).to_list(2000)
+    if type:
+        rows = [r for r in rows if (r.get("program_snapshot") or {}).get("type") == type]
+
+    out = []
+    today = date.today()
+    for r in rows:
+        dog = await db.dogs.find_one({"id": r["dog_id"]}, {"_id": 0})
+        if not dog:
+            continue
+        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) if dog.get("owner_id") else None
+        if search:
+            haystack = f"{dog.get('name','')} {(client or {}).get('name','')} {r['program_snapshot'].get('name','')}".lower()
+            if search.lower() not in haystack:
+                continue
+        summary = _enrollment_summary(r)
+        # days since / until
+        days_since = None
+        days_to_target = None
+        try:
+            if summary.get("started_at"):
+                days_since = (today - date.fromisoformat(summary["started_at"])).days
+            if summary.get("target_completion_date"):
+                days_to_target = (date.fromisoformat(summary["target_completion_date"]) - today).days
+        except Exception:
+            pass
+        out.append({
+            **summary,
+            "dog_id": dog["id"],
+            "dog_name": dog.get("name"),
+            "dog_photo": dog.get("photo") or "",
+            "client_id": (client or {}).get("id"),
+            "client_name": (client or {}).get("name"),
+            "days_since_start": days_since,
+            "days_to_target": days_to_target,
+        })
+
+    # Sort: active first, then overdue (negative days_to_target), then by recency
+    def sort_key(x):
+        active = 0 if x["status"] == "active" else 1
+        overdue = 0 if (x.get("days_to_target") is not None and x["days_to_target"] < 0) else 1
+        return (active, overdue, -(x.get("days_since_start") or 0))
+    out.sort(key=sort_key)
+    return out
+
+
+# ----- Dog tags (lightweight, per-dog) -----
+class TagsIn(BaseModel):
+    tags: List[str] = []
+
+
+@api.put("/dogs/{dog_id}/tags")
+async def update_dog_tags(dog_id: str, body: TagsIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    cleaned = sorted({t.strip() for t in body.tags if t and t.strip()})
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"tags": cleaned}})
+    return {"tags": cleaned}
+
+
+@api.get("/dogs/tags/all")
+async def all_dog_tags(_: dict = Depends(require_admin)):
+    """Distinct tags currently in use, with counts."""
+    pipeline = [
+        {"$unwind": {"path": "$tags", "preserveNullAndEmptyArrays": False}},
+        {"$group": {"_id": "$tags", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1, "_id": 1}},
+    ]
+    rows = await db.dogs.aggregate(pipeline).to_list(500)
+    return [{"tag": r["_id"], "count": r["count"]} for r in rows]
 
 
 # -------- Run Sheet --------

@@ -31,7 +31,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   if (!meta) return <p className="text-gray-500 text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
 
   const typeByKey = Object.fromEntries(meta.types.map(t => [t.key, t]));
-  const active = enrollments.find(e => e.status === "active");
+  const active = enrollments.filter(e => e.status === "active");
   const history = enrollments.filter(e => e.status !== "active");
 
   const enrollIn = async (programId) => {
@@ -46,6 +46,11 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
+  const updateTarget = async (eid, target_completion_date) => {
+    try { await api.put(`/dogs/${dogId}/programs/${eid}`, { target_completion_date }); load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
   const setGoal = async (eid, gid, patch) => {
     try { await api.put(`/dogs/${dogId}/programs/${eid}/goals/${gid}`, patch); load(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -57,7 +62,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 
       {/* Enroll dropdown */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">{active ? "Currently in" : "No active program"}</p>
+        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
         <div className="flex gap-2">
           <button onClick={()=>setEnrollOpen(true)} data-testid="enroll-btn"
                   className="bg-shBlue text-white px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
@@ -70,10 +75,14 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         </div>
       </div>
 
-      {/* Active enrollment */}
-      {active ? (
-        <EnrollmentCard enrollment={active} typeMeta={typeByKey[active.program_snapshot.type]} dogId={dogId}
-                        onStatus={(s)=>updateStatus(active.id, s)} onGoal={(gid, patch)=>setGoal(active.id, gid, patch)} />
+      {/* Active enrollments (multi) */}
+      {active.length > 0 ? (
+        active.map(e => (
+          <EnrollmentCard key={e.id} enrollment={e} typeMeta={typeByKey[e.program_snapshot.type]} dogId={dogId}
+                          onStatus={(s)=>updateStatus(e.id, s)}
+                          onTargetDate={(d)=>updateTarget(e.id, d)}
+                          onGoal={(gid, patch)=>setGoal(e.id, gid, patch)} />
+        ))
       ) : (
         <div className="bg-bgBase/40 border border-dashed border-bgHover rounded p-6 text-center" data-testid="no-active">
           <i className="fas fa-graduation-cap text-shBlue text-3xl mb-2"/>
@@ -122,11 +131,13 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onGoal }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onTargetDate, onGoal }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
+  const [editTarget, setEditTarget] = useState(false);
+  const overdue = enrollment.target_completion_date && enrollment.target_completion_date < new Date().toISOString().slice(0,10);
   return (
-    <div className="bg-bgBase/60 border border-bgHover rounded-lg overflow-hidden" data-testid="active-enrollment">
+    <div className="bg-bgBase/60 border border-bgHover rounded-lg overflow-hidden" data-testid={`enrollment-${enrollment.id}`}>
       <div className="px-4 py-3 border-b border-bgHover flex items-center gap-4" style={{background: color + "10"}}>
         <ProgressRing percent={enrollment.mastered_pct} size={84} stroke={8} color={color}
                       label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
@@ -134,12 +145,26 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onGoal }) {
           <p className="text-[12px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
           <p className="text-base font-black text-white truncate">{snap.name}</p>
           <p className="text-[13px] text-gray-400">{snap.focus}</p>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">Started {enrollment.started_at} · {snap.format?.count} {snap.format?.unit}</p>
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
+            {editTarget ? (
+              <input type="date" defaultValue={enrollment.target_completion_date||""}
+                     onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
+                     data-testid={`target-date-input-${enrollment.id}`}
+                     className="bg-bgPanel border border-bgHover rounded px-1 text-[12px] text-white" style={{colorScheme:"dark"}} autoFocus />
+            ) : (
+              <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
+                      className={`text-[12px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
+                <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
+              </button>
+            )}
+          </div>
         </div>
         <div className="flex flex-col gap-1">
-          <button onClick={()=>onStatus("completed")} data-testid="complete-enrollment"
+          <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
                   className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest shadow"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
-          <button onClick={()=>onStatus("paused")} className="text-gray-400 hover:text-white text-[12px] font-black uppercase tracking-widest"><i className="fas fa-pause mr-1"/>Pause</button>
+          <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
+                  className="text-gray-400 hover:text-white text-[12px] font-black uppercase tracking-widest"><i className="fas fa-pause mr-1"/>On Hold</button>
         </div>
       </div>
 
@@ -166,21 +191,31 @@ function GoalRow({ goal, progress, onChange }) {
   useEffect(() => { setNote(progress.notes || ""); }, [progress.notes]);
   const colors = ["#475569","#f59e0b","#f97316","#eab308","#84cc16","#22c55e"];
   const labels = ["Not Started","Introductory","Learning","Emerging","Proficient","Mastered"];
+  const isManual = !!goal.manual_only;
+  const isDone = progress.status === "mastered" || progress.score >= 4;
   return (
     <div className="bg-bgPanel rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
       <div className="flex items-center gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-black text-white truncate">{goal.name}</p>
+          <p className="text-[14px] font-black text-white truncate">{goal.name} {isManual && <span className="text-[10px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
           {goal.description && <p className="text-[12px] text-gray-500">{goal.description}</p>}
         </div>
-        <div className="flex gap-0.5">
-          {[0,1,2,3,4,5].map(n => (
-            <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
-                    title={labels[n]}
-                    className={`w-6 h-6 text-[12px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
-                    style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
-          ))}
-        </div>
+        {isManual ? (
+          <button onClick={()=>onChange({ score: isDone ? 0 : 5, status: isDone ? "not_started" : "mastered" })}
+                  data-testid={`goal-toggle-${goal.id}`}
+                  className={`px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
+            <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
+          </button>
+        ) : (
+          <div className="flex gap-0.5">
+            {[0,1,2,3,4,5].map(n => (
+              <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
+                      title={labels[n]}
+                      className={`w-6 h-6 text-[12px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
+                      style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
+            ))}
+          </div>
+        )}
         <button onClick={()=>setOpenNote(o=>!o)} className="text-gray-400 hover:text-white text-xs px-1"><i className="fas fa-note-sticky"/></button>
       </div>
       {openNote && (

@@ -352,6 +352,10 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                     <Input label="Vet Phone" value={form.vet_phone} onChange={(v)=>setForm({...form, vet_phone:v})} />
                   </div>
                   <div>
+                    <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Tags (e.g. reactive, VIP, needs harness)</label>
+                    <TagEditor tags={form.tags||[]} onChange={(t)=>setForm({...form, tags: t})} />
+                  </div>
+                  <div>
                     <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes — allergies, behaviors, fears, key codes</label>
                     <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={6}
                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
