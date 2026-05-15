@@ -128,7 +128,7 @@ function AdminShell() {
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}
-          {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
+          {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
           {tab === "homework" && <Homework />}

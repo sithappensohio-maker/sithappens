@@ -4,7 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
 
-export default function Clients({ focusId = null, onConsumed = () => {} }) {
+export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
@@ -132,9 +132,13 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
               ) : (
                 <ul className="mt-1 text-[13px] text-white space-y-0.5">
                   {c.dogs.map(d => (
-                    <li key={d.id} className="flex items-baseline gap-2" data-testid={`client-dog-${d.id}`}>
-                      <span className="font-black uppercase tracking-tight">{d.name}</span>
-                      {d.breed && <span className="text-gray-500 text-[12px]">· {d.breed}</span>}
+                    <li key={d.id} data-testid={`client-dog-${d.id}`}>
+                      <button onClick={()=>onJumpToDog(d.id)} data-testid={`jump-to-dog-${d.id}`}
+                              className="flex items-baseline gap-2 text-left hover:text-shBlue transition group">
+                        <span className="font-black uppercase tracking-tight group-hover:underline">{d.name}</span>
+                        {d.breed && <span className="text-gray-500 text-[12px]">· {d.breed}</span>}
+                        <i className="fas fa-arrow-right text-[10px] text-shBlue opacity-0 group-hover:opacity-100 transition" />
+                      </button>
                     </li>
                   ))}
                 </ul>
