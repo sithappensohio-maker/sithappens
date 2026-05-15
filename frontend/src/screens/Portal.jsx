@@ -203,10 +203,21 @@ export default function Portal() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
-          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover text-center shadow-2xl" data-testid="credits-card">
-            <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Daycare Credits</p>
-            <p className="text-5xl font-black text-shGreen mt-2">{credits}</p>
-            <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-2">For daycare days · Boarding & training pay-on-the-day</p>
+          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl" data-testid="credits-card">
+            <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest text-center mb-4">Your Credits</p>
+            <div className="grid grid-cols-2 gap-3 text-center">
+              <div className="bg-bgBase rounded p-3">
+                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">Daycare</p>
+                <p className="text-4xl font-black text-shGreen mt-1">{credits}</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">days remaining</p>
+              </div>
+              <div className="bg-bgBase rounded p-3">
+                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">Training</p>
+                <p className="text-4xl font-black text-purple-400 mt-1">{client?.training_credits || 0}</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">sessions remaining</p>
+              </div>
+            </div>
+            <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">Boarding & grooming pay-on-the-day</p>
             <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
                     className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
               <i className="fas fa-user-pen mr-2"/>My Profile

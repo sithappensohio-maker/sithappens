@@ -80,13 +80,17 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
               {c.email && <p><i className="fas fa-envelope w-4 text-shBlue" /> {c.email}</p>}
               {c.address && <p><i className="fas fa-map-marker-alt w-4 text-shBlue" /> {c.address}</p>}
             </div>
-            <div className="mt-4 flex items-center justify-between border-t border-bgHover pt-3">
+            <div className="mt-4 grid grid-cols-3 gap-2 border-t border-bgHover pt-3">
               <div>
-                <p className="text-[15px] uppercase font-black text-gray-500 tracking-widest">Credits</p>
-                <p className="text-2xl font-black text-shGreen">{c.credits}</p>
+                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
+                <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{c.credits || 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Training</p>
+                <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{c.training_credits || 0}</p>
               </div>
               <div className="text-right">
-                <p className="text-[15px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
+                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
               </div>
             </div>
@@ -147,14 +151,22 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
 }
 
 function SellPackModal({ client, packs, onClose, onSold }) {
-  const active = packs.filter(p => p.active);
+  const [poolFilter, setPoolFilter] = useState("all"); // all | daycare | training
+  const active = packs.filter(p => p.active && (poolFilter === "all" || p.service_type === poolFilter));
   const [packId, setPackId] = useState(active[0]?.id || "");
   const [method, setMethod] = useState("cash");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // Re-pick first pack whenever the filter shrinks the list
+  useEffect(() => {
+    if (active.length === 0) { setPackId(""); return; }
+    if (!active.find(p => p.id === packId)) setPackId(active[0].id);
+  }, [poolFilter]);  // eslint-disable-line
+
   const selected = active.find(p => p.id === packId);
+  const isTraining = selected?.service_type === "training";
 
   const sell = async () => {
     setBusy(true); setErr("");
@@ -168,10 +180,22 @@ function SellPackModal({ client, packs, onClose, onSold }) {
 
   return (
     <Modal title={`Sell Credit Pack · ${client.name}`} onClose={onClose}>
-      {active.length === 0 ? (
+      {packs.filter(p=>p.active).length === 0 ? (
         <p className="text-[14px] text-gray-400">No packs configured. Set them up in <span className="text-shBlue">Settings → Credit Packs</span> first.</p>
       ) : (
         <div className="space-y-4" data-testid="sell-pack-modal">
+          <div className="flex gap-2">
+            {[
+              {k:"all", label:"All"},
+              {k:"daycare", label:"Daycare", color:"text-shGreen"},
+              {k:"training", label:"Training", color:"text-purple-400"},
+            ].map(p => (
+              <button key={p.k} onClick={()=>setPoolFilter(p.k)} data-testid={`pool-filter-${p.k}`}
+                      className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-bgBase border-shBlue text-shBlue":"border-bgHover text-gray-400 hover:text-shBlue"}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack</label>
             <select value={packId} onChange={(e)=>setPackId(e.target.value)} data-testid="sell-pack-select"
@@ -180,8 +204,12 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             </select>
           </div>
           {selected && (
-            <div className="bg-bgBase border border-shGreen/30 rounded p-3 grid grid-cols-3 gap-3 text-center">
-              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Credits</p><p className="text-shBlue text-2xl font-black">+{selected.qty}</p></div>
+            <div className={`bg-bgBase border rounded p-3 grid grid-cols-3 gap-3 text-center ${isTraining ? "border-purple-400/30" : "border-shGreen/30"}`}>
+              <div>
+                <p className="text-[11px] uppercase tracking-widest text-gray-500">Credits</p>
+                <p className={`text-2xl font-black ${isTraining ? "text-purple-400" : "text-shBlue"}`}>+{selected.qty}</p>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest">{isTraining ? "training" : "daycare"}</p>
+              </div>
               <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-shGreen text-2xl font-black">${selected.price.toFixed(2)}</p></div>
               <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Value/credit</p><p className="text-white text-2xl font-black">${selected.value_each.toFixed(2)}</p></div>
             </div>
@@ -190,7 +218,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="other">Other</option>
+              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           </div>
           <div>

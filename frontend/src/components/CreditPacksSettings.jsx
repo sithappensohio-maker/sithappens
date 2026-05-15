@@ -69,7 +69,10 @@ export default function CreditPacksSettings() {
           <div key={p.id} className={`bg-bgBase border rounded-lg p-3 grid grid-cols-12 items-center gap-2 ${p.active ? "border-bgHover" : "border-bgHover/30 opacity-50"}`}>
             <div className="col-span-5 min-w-0">
               <p className="text-white font-black text-[14px] tracking-tight">{p.name}</p>
-              <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{p.service_type}{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</p>
+              <p className="text-[12px] font-black uppercase tracking-widest mt-0.5">
+                <span className={p.service_type === "training" ? "text-purple-400" : "text-shGreen"}>{p.service_type}</span>
+                <span className="text-gray-500">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
+              </p>
             </div>
             <div className="col-span-2 text-center">
               <p className="text-shBlue font-black text-[18px]">{p.qty}</p>
@@ -93,11 +96,19 @@ export default function CreditPacksSettings() {
 
       <div className="bg-bgBase border border-bgHover rounded-lg p-4">
         <h5 className="text-white font-black text-[14px] uppercase tracking-tight mb-3">{editing ? `Edit · ${editing.name}` : "New Pack"}</h5>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack name</label>
             <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} placeholder="e.g., 50-Day Daycare Pack"
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+          </div>
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pool</label>
+            <select value={form.service_type} onChange={(e)=>setForm({...form, service_type: e.target.value})}
+                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+              <option value="daycare">Daycare credits</option>
+              <option value="training">Training credits</option>
+            </select>
           </div>
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Credits per pack</label>
