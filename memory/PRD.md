@@ -321,6 +321,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 38 — Check-out frees the slot (2026-02)
+- ✅ **Bug**: dogs that had checked out were still counted against daycare/boarding/training capacity for the rest of the day, so the dashboard showed e.g. "4/30" when only one dog was actually on-site.
+- ✅ **Fix** (`server.py`):
+  - `_booking_days_count_filtered()` (capacity-check helper used at booking creation, quick-check-in cap, and `/bookings/availability`) now skips any booking with `checked_out_at` set.
+  - `/api/dashboard/stats` increments `daycare_today/boarding_today/training_today` only when `checked_out_at` is empty.
+  - Roster still includes checked-out rows so admin can see who came and went today.
+- ✅ Verified: Sparky checked in → 1/30. Sparky checked out → 0/30 with 30 open_slots reported by `/bookings/availability`.
+
 ## Sprint 37 — Clickable dog names on client cards (2026-02)
 - ✅ **App.js** passes `onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }}` to `<Clients>`, reusing the same search-navigation pipeline that Pipeline already uses.
 - ✅ **Clients.jsx**: each dog name is now a button. Hover shows underline + a subtle blue arrow `→`. Click jumps to the Dogs tab and opens that dog's Edit modal automatically (via existing `focusId` plumbing).

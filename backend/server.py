@@ -870,6 +870,9 @@ async def _booking_days_count_filtered(target_date: str, service_type: str) -> i
     ).to_list(2000)
     count = 0
     for b in bookings:
+        # Once a booking is checked out, its slot frees up for the day.
+        if b.get("checked_out_at"):
+            continue
         days = _dates_in_range(b["date"], b.get("end_date"))
         if target_date in days:
             count += 1
@@ -2948,11 +2951,13 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     for b in today_bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
         if today in days:
-            if b["service_type"] == "daycare":
+            # Live counts: a dog that's already checked out no longer occupies its slot.
+            already_out = bool(b.get("checked_out_at"))
+            if b["service_type"] == "daycare" and not already_out:
                 daycare_today += 1
-            elif b["service_type"] == "boarding":
+            elif b["service_type"] == "boarding" and not already_out:
                 boarding_today += 1
-            elif b["service_type"] == "training":
+            elif b["service_type"] == "training" and not already_out:
                 training_today += 1
             enriched = dict(b)
             enriched["dog"] = dog_map.get(b["dog_id"], {})
