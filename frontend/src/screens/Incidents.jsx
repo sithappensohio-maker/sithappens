@@ -110,7 +110,7 @@ export default function Incidents() {
                 {i.witnesses && <p className="text-xs text-gray-400 mt-1"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Witnesses: </span>{i.witnesses}</p>}
                 {i.photos?.length > 0 && (
                   <div className="flex gap-2 mt-3 flex-wrap">
-                    {i.photos.map((p,idx)=><img key={idx} src={p} alt="" className="h-20 w-20 rounded object-cover border border-bgHover" />)}
+                    {i.photos.map((p,idx)=><img key={idx} src={p} alt="" loading="lazy" decoding="async" className="h-20 w-20 rounded object-cover border border-bgHover" />)}
                   </div>
                 )}
               </div>
@@ -209,7 +209,7 @@ export default function Incidents() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   {form.photos.map((p, i) => (
                     <div key={i} className="relative">
-                      <img src={p} alt="" className="h-20 w-20 rounded object-cover border border-bgHover" />
+                      <img src={p} alt="" loading="lazy" decoding="async" className="h-20 w-20 rounded object-cover border border-bgHover" />
                       <button onClick={()=>setForm({...form, photos: form.photos.filter((_,j)=>j!==i)})} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs">×</button>
                     </div>
                   ))}

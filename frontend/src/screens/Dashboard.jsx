@@ -224,7 +224,7 @@ function ReportCardModal({ booking, moodTags, onClose }) {
             <div className="mt-2 flex gap-2 flex-wrap">
               {photos.map((p, i) => (
                 <div key={i} className="relative">
-                  <img src={p} alt="" className="h-24 w-24 rounded object-cover border border-bgHover" />
+                  <img src={p} alt="" loading="lazy" decoding="async" className="h-24 w-24 rounded object-cover border border-bgHover" />
                   <button onClick={()=>setPhotos(photos.filter((_,j)=>j!==i))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 text-xs">×</button>
                 </div>
               ))}

@@ -229,7 +229,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
             <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
               {d.photo
                 ? <div className="h-40 w-full bg-bgBase flex items-center justify-center overflow-hidden">
-                    <img src={d.photo} alt={d.name} className="max-h-40 max-w-full object-contain" />
+                    <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-40 max-w-full object-contain" />
                   </div>
                 : <div className="h-40 w-full bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-5xl"><i className="fas fa-paw" /></div>}
               <div className="p-5">
@@ -363,7 +363,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   <div>
                     <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Photo</label>
                     <div className="mt-2 flex items-center gap-3">
-                      {form.photo && <img src={form.photo} alt="" className="h-16 w-16 rounded object-cover border border-bgHover" />}
+                      {form.photo && <img src={form.photo} alt="" loading="lazy" decoding="async" className="h-16 w-16 rounded object-cover border border-bgHover" />}
                       <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
                         Upload <input type="file" accept="image/*" onChange={onFile} className="hidden" data-testid="dog-photo-input" />
                       </label>
@@ -458,7 +458,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                       <div key={i} className="relative group" data-testid={`gallery-photo-${i}`}>
                         <div className="aspect-square w-full bg-bgBase rounded border border-bgHover hover:border-shBlue overflow-hidden flex items-center justify-center cursor-pointer"
                              onClick={()=>setLightbox({ open: true, photos: form.photos, index: i })}>
-                          <img src={p} alt="" className="max-h-full max-w-full object-contain" />
+                          <img src={p} alt="" loading="lazy" decoding="async" className="max-h-full max-w-full object-contain" />
                         </div>
                         <button onClick={()=>setForm({...form, photos: form.photos.filter((_,j)=>j!==i)})}
                                 className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full w-6 h-6 text-xs opacity-0 group-hover:opacity-100 transition"><i className="fas fa-times"/></button>

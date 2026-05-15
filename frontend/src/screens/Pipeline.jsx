@@ -108,7 +108,7 @@ function Row({ row, onJumpToDog }) {
     <button onClick={()=>onJumpToDog?.(row.dog_id)} data-testid={`pipeline-row-${row.id}`}
             className="w-full px-4 py-3 hover:bg-bgHover/30 text-left transition flex items-center gap-3">
       {row.dog_photo
-        ? <img src={row.dog_photo} alt={row.dog_name} className="w-10 h-10 rounded-full object-cover border border-bgHover shrink-0" />
+        ? <img src={row.dog_photo} alt={row.dog_name} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover border border-bgHover shrink-0" />
         : <div className="w-10 h-10 rounded-full bg-bgBase border border-bgHover flex items-center justify-center shrink-0 text-shGreen"><i className="fas fa-paw"/></div>}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">

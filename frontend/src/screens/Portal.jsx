@@ -361,7 +361,7 @@ export default function Portal() {
                         className="text-left bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg hover:border-shGreen transition group">
                   {d.photo
                     ? <div className="h-32 w-full bg-bgBase flex items-center justify-center overflow-hidden">
-                        <img src={d.photo} alt={d.name} className="max-h-32 max-w-full object-contain" />
+                        <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-32 max-w-full object-contain" />
                       </div>
                     : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
                   <div className="p-4">
@@ -448,7 +448,7 @@ export default function Portal() {
                       {b.report_card.photos?.length > 0 && (
                         <div className="flex gap-2 mb-3">
                           {b.report_card.photos.map((p, i) => (
-                            <img key={i} src={p} alt="" data-testid={`report-photo-${b.id}-${i}`}
+                            <img key={i} src={p} alt="" loading="lazy" decoding="async" data-testid={`report-photo-${b.id}-${i}`}
                                  onClick={()=>setLightbox({ open: true, photos: b.report_card.photos, index: i })}
                                  className="h-24 w-24 rounded object-cover border border-bgHover cursor-pointer hover:border-shGreen transition" />
                           ))}
@@ -497,7 +497,7 @@ export default function Portal() {
               <div>
                 <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Proof Photo (optional)</label>
                 <div className="mt-2 flex items-center gap-3">
-                  {hwPhoto && <img src={hwPhoto} alt="" className="h-20 w-20 rounded object-cover border border-bgHover" />}
+                  {hwPhoto && <img src={hwPhoto} alt="" loading="lazy" decoding="async" className="h-20 w-20 rounded object-cover border border-bgHover" />}
                   <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
                     Upload <input type="file" accept="image/*" onChange={onHwFile} className="hidden" />
                   </label>

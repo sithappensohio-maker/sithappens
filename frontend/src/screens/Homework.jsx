@@ -89,7 +89,7 @@ export default function Homework() {
                     <div className="mt-3 bg-shGreen/5 border border-shGreen/20 rounded p-3">
                       <p className="text-[14px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-check mr-1"/>Marked done {(h.completed_at||"").slice(0,10)}</p>
                       {h.completion_note && <p className="text-xs text-gray-300 italic">"{h.completion_note}"</p>}
-                      {h.completion_photo && <img src={h.completion_photo} alt="" className="mt-2 h-32 rounded object-cover border border-bgHover" />}
+                      {h.completion_photo && <img src={h.completion_photo} alt="" loading="lazy" decoding="async" className="mt-2 h-32 rounded object-cover border border-bgHover" />}
                     </div>
                   )}
                 </div>

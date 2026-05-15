@@ -131,7 +131,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
 
           <Field label="Photo (optional)">
             <div className="flex items-center gap-3">
-              {form.photo && <img src={form.photo} alt="" className="h-16 w-16 rounded object-cover border border-bgHover" />}
+              {form.photo && <img src={form.photo} alt="" loading="lazy" decoding="async" className="h-16 w-16 rounded object-cover border border-bgHover" />}
               <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
                 Upload <input type="file" accept="image/*" onChange={onFile} className="hidden" data-testid="pd-photo" />
               </label>
