@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ProgramsPanel } from "../components/Programs";
+import ServicesSettings from "../components/ServicesSettings";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -57,6 +58,7 @@ export default function Settings() {
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
     { id: "programs", label: "Programs", icon: "fa-list-check" },
+    { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
     { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
@@ -87,6 +89,7 @@ export default function Settings() {
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
           {tab === "programs" && <ProgramsPanel />}
+          {tab === "services" && <ServicesSettings />}
           {tab === "commands" && <CommandsPanel />}
           {tab === "backup" && <BackupPanel />}
           {tab === "account" && (

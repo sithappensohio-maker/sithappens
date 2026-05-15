@@ -247,6 +247,14 @@ class BookingOut(BaseModel):
     pickup_time: Optional[str] = ""
     cost: Optional[int] = 0
     grooming_type: Optional[str] = None
+    # Income tracking (Sprint 16) — populated when the booking is logged as
+    # a paid service. Backward-compatible; existing rows return None / "".
+    service_id: Optional[str] = None
+    service_name: Optional[str] = None
+    actual_price: Optional[float] = None
+    payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "other"]] = None
+    paid_at: Optional[str] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -823,9 +831,21 @@ async def check_out(booking_id: str, _: dict = Depends(require_admin)):
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     ts = now_iso()
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"checked_out_at": ts, "status": "completed"}})
-    booking["checked_out_at"] = ts
-    booking["status"] = "completed"
+    update = {"checked_out_at": ts, "status": "completed"}
+    # Auto-tally: if no price has been set yet, attach the matching default
+    # service's base price so this booking shows up in the weekly income view.
+    if not booking.get("actual_price") and not booking.get("service_id"):
+        default_svc = await db.services.find_one(
+            {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+            {"_id": 0},
+        )
+        if default_svc:
+            update["service_id"] = default_svc["id"]
+            update["service_name"] = default_svc["name"]
+            update["actual_price"] = float(default_svc.get("base_price") or 0)
+            update["payment_status"] = "unpaid"
+    await db.bookings.update_one({"id": booking_id}, {"$set": update})
+    booking.update(update)
     return booking
 
 @api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
@@ -2587,6 +2607,333 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     mongo_client.close()
+
+
+# ────────────────────────── Services Catalog + Income Tracking ──────────────────────────
+from services_data import SEED_SERVICES
+
+
+class ServiceIn(BaseModel):
+    slug: Optional[str] = ""
+    name: str = Field(min_length=1)
+    base_price: float = 0.0
+    service_type: Optional[Literal["daycare", "boarding", "training", "grooming", "other"]] = "other"
+    color: Optional[str] = "#64748b"
+    icon: Optional[str] = "fa-tag"
+    active: bool = True
+
+
+class LogServiceIn(BaseModel):
+    """Quick-log a completed-or-upcoming service. Creates a booking row with
+    service_id + actual_price baked in so it shows up in both Bookings and
+    Income views."""
+    dog_id: str
+    service_id: str
+    date: Optional[str] = ""  # YYYY-MM-DD; defaults today
+    actual_price: Optional[float] = None  # falls back to service.base_price
+    notes: Optional[str] = ""
+    status: Literal["pending", "approved", "completed"] = "completed"
+    payment_status: Literal["unpaid", "paid", "refunded", "comped"] = "paid"
+    payment_method: Literal["cash", "card", "transfer", "credits", "other"] = "cash"
+
+
+class TransactionUpdateIn(BaseModel):
+    actual_price: Optional[float] = None
+    payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "other"]] = None
+    status: Optional[Literal["pending", "approved", "rejected", "completed", "cancelled"]] = None
+    service_id: Optional[str] = None
+
+
+@api.get("/services")
+async def list_services(user: dict = Depends(get_current_user), include_inactive: bool = False):
+    q: Dict = {} if include_inactive else {"active": True}
+    items = await db.services.find(q, {"_id": 0}).sort("name", 1).to_list(500)
+    return items
+
+
+@api.post("/services")
+async def create_service(body: ServiceIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
+    doc["created_at"] = now_iso()
+    doc["is_default"] = False
+    await db.services.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/services/{service_id}")
+async def update_service(service_id: str, body: ServiceIn, _: dict = Depends(require_admin)):
+    existing = await db.services.find_one({"id": service_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Service not found")
+    update = body.model_dump()
+    update.pop("slug", None)  # slug is immutable
+    await db.services.update_one({"id": service_id}, {"$set": update})
+    return {**existing, **update}
+
+
+@api.delete("/services/{service_id}")
+async def delete_service(service_id: str, _: dict = Depends(require_admin)):
+    existing = await db.services.find_one({"id": service_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Service not found")
+    if existing.get("is_default"):
+        await db.services.update_one({"id": service_id}, {"$set": {"active": False}})
+    else:
+        await db.services.delete_one({"id": service_id})
+    return {"ok": True}
+
+
+@api.post("/services/seed-standard")
+async def seed_services(_: dict = Depends(require_admin)):
+    seeded = 0
+    for svc in SEED_SERVICES:
+        if await db.services.find_one({"slug": svc["slug"]}, {"_id": 0}):
+            continue
+        doc = {**svc, "id": str(uuid.uuid4()), "is_default": True, "active": True, "created_at": now_iso()}
+        await db.services.insert_one(doc)
+        seeded += 1
+    total = await db.services.count_documents({"active": True})
+    return {"seeded": seeded, "total_active": total}
+
+
+# ----- Transactions = bookings with service_id + actual_price -----
+@api.post("/transactions")
+async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
+    """Creates a booking row tagged with service_id + price. Use this for
+    walk-ins, one-off lessons, or any income event not started from the
+    normal booking flow."""
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    svc = await db.services.find_one({"id": body.service_id}, {"_id": 0})
+    if not svc:
+        raise HTTPException(status_code=404, detail="Service not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+    price = body.actual_price if body.actual_price is not None else float(svc.get("base_price") or 0)
+
+    booking_id = str(uuid.uuid4())
+    doc = {
+        "id": booking_id,
+        "dog_id": dog["id"],
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "date": body.date or date.today().isoformat(),
+        "end_date": None,
+        "service_type": svc.get("service_type") or "other",
+        "status": body.status,
+        "notes": body.notes or "",
+        "created_at": now_iso(),
+        "checked_in_at": now_iso() if body.status == "completed" else None,
+        "checked_out_at": now_iso() if body.status == "completed" else None,
+        "kennel": "",
+        "dropoff_time": "",
+        "pickup_time": "",
+        "cost": 0,
+        "credits_deducted": 0,
+        "service_id": svc["id"],
+        "service_name": svc["name"],
+        "actual_price": price,
+        "payment_status": body.payment_status,
+        "payment_method": body.payment_method,
+        "paid_at": now_iso() if body.payment_status == "paid" else None,
+    }
+    await db.bookings.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/transactions/{transaction_id}")
+async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    # If a service_id is being set, also refresh service_name + default price (only if price not also being set)
+    if body.service_id:
+        svc = await db.services.find_one({"id": body.service_id}, {"_id": 0})
+        if not svc:
+            raise HTTPException(status_code=404, detail="Service not found")
+        update["service_name"] = svc.get("name")
+        if body.actual_price is None and booking.get("actual_price") in (None, 0):
+            update["actual_price"] = float(svc.get("base_price") or 0)
+    # Auto-stamp paid_at on transition to paid
+    if body.payment_status == "paid" and not booking.get("paid_at"):
+        update["paid_at"] = now_iso()
+    # Auto-mark complete when invoice is paid (the "automation" the user asked for)
+    if body.payment_status == "paid" and booking.get("status") not in ("completed", "cancelled", "rejected"):
+        update.setdefault("status", "completed")
+    await db.bookings.update_one({"id": transaction_id}, {"$set": update})
+    return {**booking, **update}
+
+
+@api.delete("/transactions/{transaction_id}")
+async def delete_transaction(transaction_id: str, _: dict = Depends(require_admin)):
+    booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    # If it was created via log_service (no real check-in flow), hard-delete.
+    # Otherwise, just strip the income fields and leave the booking intact.
+    if booking.get("service_id") and not booking.get("checked_in_at"):
+        await db.bookings.delete_one({"id": transaction_id})
+    else:
+        await db.bookings.update_one(
+            {"id": transaction_id},
+            {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": ""}},
+        )
+    return {"ok": True}
+
+
+def _week_bounds(ref: Optional[date] = None) -> tuple:
+    """Returns (monday_iso, sunday_iso) for the week containing `ref` (default today)."""
+    ref = ref or date.today()
+    monday = ref - timedelta(days=ref.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday.isoformat(), sunday.isoformat()
+
+
+@api.get("/transactions")
+async def list_transactions(
+    _: dict = Depends(require_admin),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    dog_id: Optional[str] = None,
+    service_id: Optional[str] = None,
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+):
+    """Returns booking rows annotated as transactions.
+    By default: rows with `service_id` set OR `actual_price > 0` (i.e., revenue-bearing).
+    `actual_price` is computed from settings.credit_cost as a fallback for legacy
+    pre-Sprint-16 bookings so they still appear in the weekly tally.
+    """
+    q: Dict = {}
+    if start_date or end_date:
+        date_q: Dict = {}
+        if start_date:
+            date_q["$gte"] = start_date
+        if end_date:
+            date_q["$lte"] = end_date
+        q["date"] = date_q
+    if dog_id:
+        q["dog_id"] = dog_id
+    if service_id:
+        q["service_id"] = service_id
+    if status:
+        q["status"] = status
+    if payment_status:
+        q["payment_status"] = payment_status
+
+    rows = await db.bookings.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+    # Filter to revenue rows only (anything with a service_id OR an actual_price)
+    enriched = []
+    for r in rows:
+        if r.get("status") in ("cancelled", "rejected"):
+            continue
+        if r.get("service_id") or r.get("actual_price"):
+            enriched.append(r)
+            continue
+        # Legacy fallback — synthesize price from credit_cost
+        # (so historical bookings still show up & can be tallied).
+        if r.get("status") in ("approved", "completed", "pending"):
+            enriched.append(r)
+    return enriched
+
+
+@api.get("/transactions/weekly-summary")
+async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[str] = None):
+    """Mon-Sun income tally. Default = current week. Pass ?ref_date=YYYY-MM-DD
+    to inspect any other week. Returns cash + credits split so you can read
+    real-money revenue separately from credit redemptions."""
+    try:
+        ref = date.fromisoformat(ref_date) if ref_date else date.today()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid ref_date")
+    monday_iso, sunday_iso = _week_bounds(ref)
+
+    rows = await db.bookings.find(
+        {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
+        {"_id": 0},
+    ).to_list(2000)
+
+    completed_total = 0.0
+    booked_total = 0.0
+    paid_total = 0.0
+    unpaid_total = 0.0
+    credits_redeemed = 0
+    completed_count = 0
+    booked_count = 0
+    by_service: Dict[str, Dict] = {}
+
+    for r in rows:
+        if r.get("status") in ("cancelled", "rejected"):
+            continue
+        price = float(r.get("actual_price") or 0)
+        if r.get("status") == "completed":
+            completed_total += price
+            completed_count += 1
+        elif r.get("status") in ("approved", "pending"):
+            booked_total += price
+            booked_count += 1
+        if r.get("payment_status") == "paid":
+            paid_total += price
+        elif r.get("status") in ("completed", "approved"):
+            unpaid_total += price
+        credits_redeemed += int(r.get("credits_deducted") or 0)
+
+        svc_key = r.get("service_name") or r.get("service_type") or "Other"
+        b = by_service.setdefault(svc_key, {"name": svc_key, "count": 0, "total": 0.0})
+        b["count"] += 1
+        b["total"] += price
+
+    return {
+        "week_start": monday_iso,
+        "week_end": sunday_iso,
+        "completed_total": round(completed_total, 2),
+        "booked_total": round(booked_total, 2),
+        "paid_total": round(paid_total, 2),
+        "unpaid_total": round(unpaid_total, 2),
+        "credits_redeemed": credits_redeemed,
+        "completed_count": completed_count,
+        "booked_count": booked_count,
+        "by_service": sorted(by_service.values(), key=lambda x: -x["total"]),
+    }
+
+
+@api.get("/transactions/summary-range")
+async def summary_range(
+    _: dict = Depends(require_admin),
+    start_date: str = ...,
+    end_date: str = ...,
+):
+    """Aggregate income over an arbitrary date range (for monthly / quarterly views)."""
+    rows = await db.bookings.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0},
+    ).to_list(5000)
+    completed_total = 0.0
+    paid_total = 0.0
+    by_day: Dict[str, float] = {}
+    for r in rows:
+        if r.get("status") in ("cancelled", "rejected"):
+            continue
+        price = float(r.get("actual_price") or 0)
+        if r.get("status") == "completed":
+            completed_total += price
+            by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
+        if r.get("payment_status") == "paid":
+            paid_total += price
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "completed_total": round(completed_total, 2),
+        "paid_total": round(paid_total, 2),
+        "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
+    }
 
 
 @api.get("/")

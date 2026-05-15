@@ -12,6 +12,7 @@ import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
+import Income from "./screens/Income";
 import Tutorials from "./screens/Tutorials";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -52,6 +53,7 @@ function AdminShell() {
     { id: "dogs", label: "Dogs", icon: "fa-paw" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
+    { id: "income", label: "Income", icon: "fa-dollar-sign" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
@@ -128,6 +130,7 @@ function AdminShell() {
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
           {tab === "homework" && <Homework />}
+          {tab === "income" && <Income />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}
           {tab === "tutorials" && <Tutorials role="admin" />}
