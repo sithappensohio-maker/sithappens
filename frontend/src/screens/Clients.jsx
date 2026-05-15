@@ -37,9 +37,25 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
   const save = async () => {
     setErr("");
     try {
-      if (editing) await api.put(`/clients/${editing.id}`, form);
-      else await api.post("/clients", form);
-      setOpen(false); load();
+      if (editing) {
+        await api.put(`/clients/${editing.id}`, form);
+        setOpen(false); load();
+      } else {
+        const { data } = await api.post("/clients", form);
+        setOpen(false);
+        // If the new client has an email, auto-send a claim-your-account email.
+        if (form.email) {
+          try {
+            await api.post(`/clients/${data.id}/send-claim-email`);
+            setClaimToast({ clientId: data.id, msg: `Claim email sent to ${form.email}`, tone: "ok" });
+            setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 5000);
+          } catch (e) {
+            // Don't block client creation if email fails — surface a warning instead.
+            setClaimToast({ clientId: data.id, msg: "Client saved, but the claim email couldn't be sent. Use the button to retry.", tone: "warn" });
+          }
+        }
+        load();
+      }
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
@@ -60,6 +76,29 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
       await api.post(`/clients/${portalOpen}/portal-account`, portalForm);
       setPortalOpen(null); load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
+  const [claimToast, setClaimToast] = useState(null); // { clientId, msg, tone }
+  const sendClaimEmail = async (c) => {
+    const isReset = !!c.portal_email;
+    const verb = isReset ? "reset" : "claim";
+    if (!c.email) {
+      setClaimToast({ clientId: c.id, msg: "Add an email to this client first.", tone: "warn" });
+      return;
+    }
+    if (!(await confirm({
+      title: isReset ? "Send password reset email?" : "Send claim account email?",
+      body: `We'll email ${c.email} a one-time ${verb} link (valid for 7 days). They'll set their own password and be signed in automatically.`,
+      confirmText: isReset ? "Send reset email" : "Send claim email",
+      tone: "info",
+    }))) return;
+    try {
+      await api.post(`/clients/${c.id}/send-claim-email`);
+      setClaimToast({ clientId: c.id, msg: `Email sent to ${c.email}`, tone: "ok" });
+      setTimeout(() => setClaimToast(t => t && t.clientId === c.id ? null : t), 4000);
+    } catch (e) {
+      setClaimToast({ clientId: c.id, msg: formatErr(e.response?.data?.detail) || "Failed to send email.", tone: "warn" });
+    }
   };
 
   return (
@@ -98,9 +137,19 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
               </div>
             </div>
+            <button onClick={()=>sendClaimEmail(c)} data-testid={`send-claim-email-${c.id}`}
+                    className="mt-4 w-full bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
+              <i className="fas fa-envelope mr-1"/>{c.portal_email ? "Send password reset email" : "Send claim account email"}
+            </button>
+            {claimToast && claimToast.clientId === c.id && (
+              <div data-testid={`claim-toast-${c.id}`}
+                   className={`mt-2 text-[12px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shGreen/15 text-shGreen" : "bg-yellow-500/15 text-yellow-300"}`}>
+                <i className={`fas ${claimToast.tone === "ok" ? "fa-check" : "fa-exclamation-triangle"} mr-1`} />{claimToast.msg}
+              </div>
+            )}
             <button onClick={()=>openPortal(c)} data-testid={`portal-credentials-${c.id}`}
-                    className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
-              {c.portal_email ? "Update Portal Login" : "Create Portal Login"}
+                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
+              {c.portal_email ? "Manually set portal password" : "Manually create portal login"}
             </button>
             <button onClick={()=>setSellOpen(c)} data-testid={`sell-pack-${c.id}`}
                     className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">

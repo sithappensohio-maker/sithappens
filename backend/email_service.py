@@ -459,3 +459,52 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
         f"Booking confirmed · {booking.get('dog_name','')} · {booking.get('date','')}",
         html,
     )
+
+
+
+async def send_account_claim(
+    to_email: str,
+    client_name: str,
+    claim_url: str,
+    is_reset: bool = False,
+    expires_days: int = 7,
+) -> None:
+    """Send a 'Claim your account' (or 'Reset your password') email to a client.
+    The claim URL embeds a single-use token that the public /claim page consumes."""
+    first = (client_name or "there").split(" ")[0]
+    if is_reset:
+        title = "Reset your password"
+        intro = (
+            f"Hi {first}, we received a request to reset the password on your Sit Happens portal. "
+            f"Tap the button below to set a new one. The link expires in {expires_days} days."
+        )
+        subject = "Reset your Sit Happens password"
+        cta_text = "Reset password"
+    else:
+        title = "Welcome — claim your account"
+        intro = (
+            f"Hi {first}, your Sit Happens client portal is ready. "
+            f"Tap the button below to set your password and finish activating your account."
+        )
+        subject = "Activate your Sit Happens portal"
+        cta_text = "Claim your account"
+
+    instructions_html = f"""
+<div style="margin:8px 0 20px 0;padding:18px 20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;">
+  <p style="margin:0 0 10px 0;color:{BRAND_DARK};font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em;">How to {('reset your password' if is_reset else 'claim your account')}</p>
+  <ol style="margin:0;padding-left:22px;color:#334155;font-size:14px;line-height:1.7;">
+    <li>Tap the <strong>{cta_text}</strong> button below.</li>
+    <li>Choose a password (at least 6 characters) and confirm it.</li>
+    <li>You'll be signed in to your portal — bookmark it or install the app from your home screen.</li>
+  </ol>
+  <p style="margin:12px 0 0 0;color:#64748b;font-size:12px;">This link expires in {expires_days} days. If you didn't expect this email, you can ignore it.</p>
+</div>"""
+
+    html = _wrap(
+        title=title,
+        intro=intro + instructions_html,
+        rows=[("Account", to_email)],
+        cta_text=cta_text,
+        cta_url=claim_url,
+    )
+    await _send(to_email, subject, html)

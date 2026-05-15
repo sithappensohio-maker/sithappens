@@ -14,6 +14,7 @@ import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Tutorials from "./screens/Tutorials";
+import Claim from "./screens/Claim";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
@@ -151,6 +152,16 @@ function Gate() {
 }
 
 export default function App() {
+  // Public claim/reset link — handled before auth so unauthenticated visitors can land here.
+  const claimMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/claim\/([^/?#]+)/);
+  if (claimMatch) {
+    return (
+      <ErrorBoundary>
+        <Claim token={decodeURIComponent(claimMatch[1])} />
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <AuthProvider>

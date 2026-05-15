@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import uuid
+import secrets
 import logging
 import bcrypt
 import jwt
@@ -26,6 +27,7 @@ from email_service import (
     notify_client_homework_assigned,
     notify_client_low_credits,
     notify_client_pack_receipt,
+    send_account_claim,
 )
 
 # -------- Config --------
@@ -421,6 +423,166 @@ async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict =
     user.pop("password_hash", None)
     user.pop("_id", None)
     return user
+
+
+# -------- Account Claim (email-based password setup) --------
+CLAIM_TOKEN_EXPIRY_DAYS = 7
+
+
+def _build_claim_url(token: str) -> str:
+    base = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+    if not base:
+        return f"/claim/{token}"
+    return f"{base}/claim/{token}"
+
+
+class ClaimVerifyOut(BaseModel):
+    valid: bool
+    client_name: Optional[str] = None
+    email: Optional[str] = None
+    is_reset: bool = False
+    expires_at: Optional[str] = None
+
+
+class ClaimSetIn(BaseModel):
+    password: str = Field(min_length=6)
+
+
+@api.post("/clients/{client_id}/send-claim-email")
+async def send_claim_email(client_id: str, _: dict = Depends(require_admin)):
+    """Generate a one-time claim/reset token for this client and email it.
+    Re-callable any time — issuing a new token invalidates older unused ones."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    target_email = (client.get("email") or "").strip().lower()
+    if not target_email:
+        raise HTTPException(
+            status_code=400,
+            detail="This client has no email on file. Add an email first.",
+        )
+
+    existing_user = await db.users.find_one({"client_id": client_id})
+    is_reset = bool(existing_user)
+    if existing_user:
+        target_email = existing_user["email"]
+
+    await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
+    await db.claim_tokens.insert_one({
+        "token": token,
+        "client_id": client_id,
+        "email": target_email,
+        "is_reset": is_reset,
+        "used": False,
+        "created_at": now_iso(),
+        "expires_at": expires_at.isoformat(),
+    })
+
+    claim_url = _build_claim_url(token)
+    try:
+        await send_account_claim(
+            to_email=target_email,
+            client_name=client.get("name", ""),
+            claim_url=claim_url,
+            is_reset=is_reset,
+            expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+        )
+    except Exception as e:
+        logger.warning("send_claim_email: failed to dispatch email to %s: %s", target_email, e)
+
+    return {
+        "ok": True,
+        "is_reset": is_reset,
+        "sent_to": target_email,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+@api.get("/claim/{token}", response_model=ClaimVerifyOut)
+async def verify_claim_token(token: str):
+    """Public — verify a claim/reset token and return who it's for."""
+    rec = await db.claim_tokens.find_one({"token": token, "used": False}, {"_id": 0})
+    if not rec:
+        return ClaimVerifyOut(valid=False)
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        return ClaimVerifyOut(valid=False)
+    if datetime.now(timezone.utc) > exp:
+        return ClaimVerifyOut(valid=False)
+    client = await db.clients.find_one({"id": rec["client_id"]}, {"_id": 0, "name": 1})
+    return ClaimVerifyOut(
+        valid=True,
+        client_name=(client or {}).get("name", ""),
+        email=rec.get("email", ""),
+        is_reset=bool(rec.get("is_reset", False)),
+        expires_at=rec.get("expires_at"),
+    )
+
+
+@api.post("/claim/{token}", response_model=AuthOut)
+async def consume_claim_token(token: str, body: ClaimSetIn):
+    """Public — set the password using a valid claim/reset token and auto-log in."""
+    rec = await db.claim_tokens.find_one({"token": token, "used": False}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=400, detail="This link is invalid or has already been used.")
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="This link is invalid.")
+    if datetime.now(timezone.utc) > exp:
+        raise HTTPException(status_code=400, detail="This link has expired. Ask your trainer to send a new one.")
+
+    client_id = rec["client_id"]
+    email = (rec.get("email") or "").lower()
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=400, detail="The client account no longer exists.")
+
+    new_hash = hash_password(body.password)
+    existing_user = await db.users.find_one({"client_id": client_id})
+
+    if existing_user:
+        await db.users.update_one(
+            {"id": existing_user["id"]},
+            {"$set": {"password_hash": new_hash}},
+        )
+        user_id = existing_user["id"]
+        user_email = existing_user["email"]
+        user_name = existing_user.get("name") or client.get("name", "")
+    else:
+        conflict = await db.users.find_one({"email": email})
+        if conflict:
+            raise HTTPException(status_code=400, detail="This email is already in use. Contact your trainer.")
+        user_id = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": user_id,
+            "email": email,
+            "password_hash": new_hash,
+            "name": client.get("name", email),
+            "role": "client",
+            "client_id": client_id,
+            "created_at": now_iso(),
+        })
+        user_email = email
+        user_name = client.get("name", email)
+
+    await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
+
+    access = create_access_token(user_id, user_email, "client")
+    return AuthOut(
+        token=access,
+        user=UserOut(id=user_id, email=user_email, name=user_name, role="client", client_id=client_id),
+    )
+
+
 
 
 # -------- Dogs --------

@@ -321,6 +321,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 33 — Account Claim by Email (2026-02)
+- ✅ **Backend** (`server.py`): new `POST /api/clients/{client_id}/send-claim-email` (admin-only) generates a 32-byte `secrets.token_urlsafe` claim token in collection `claim_tokens` `{token, client_id, email, is_reset, used, created_at, expires_at}`. 7-day expiry. Re-callable any time — issuing a new token deletes older unused tokens for the same client. Auto-detects whether to send a "claim" (no user yet) or "password reset" (existing portal user) email.
+- ✅ **Backend public endpoints** (no auth): `GET /api/claim/{token}` returns `{valid, client_name, email, is_reset, expires_at}`. `POST /api/claim/{token}` body `{password}` either creates the portal user (claim) or updates the existing user's password (reset), burns the token, and returns an `AuthOut` (JWT + user) so the client is auto-logged in.
+- ✅ **Email service** (`email_service.py`): `send_account_claim(...)` reuses the existing branded `_wrap()` template with a step-by-step instructions box ("1. Tap the button below 2. Choose a password 3. You'll be signed in"), a 7-day expiry note, and the PWA install QR footer.
+- ✅ **Frontend admin** (`Clients.jsx`): every client card now has a prominent green "Send Claim Account Email" button (or "Send Password Reset Email" if portal account exists). Adding a new client with an email **auto-sends** the claim email on save and shows an inline toast. The manual "Create Portal Login" modal is preserved as a secondary fallback button.
+- ✅ **Frontend public** (`Claim.jsx` + `App.js`): new public route `/claim/:token` handled *before* `<AuthProvider>` so unauthenticated visitors can land there. Branded card with Sit Happens logo, welcome message, email confirmation, password + confirm inputs, "Activate Account" CTA. On success, stores the returned JWT in `sh_token` and redirects to `/`, dropping the client straight into their portal.
+- ✅ End-to-end verified via Playwright: admin creates a fresh client with an email → toast confirms "Claim email sent" → token stored in DB → public claim URL renders the welcome card → password set → user auto-logged into portal showing onboarding checklist. Zero console errors.
+
 ## Sprint 32 — Hotfix: Client Portal Missing useConfirm Import (2026-02)
 - ✅ `Portal.jsx` called `useConfirm()` on line 17 without importing it → every client login crashed with "useConfirm is not defined" caught by ErrorBoundary.
 - ✅ Added `import { useConfirm } from "../lib/useConfirm";` to Portal.jsx.
