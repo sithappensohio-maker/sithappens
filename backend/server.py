@@ -9,7 +9,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -263,18 +263,40 @@ class BookingOut(BaseModel):
     service_name: Optional[str] = None
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
     paid_at: Optional[str] = None
     # Sprint 17 — credit lot tracking. credit_value is accrued at approval,
     # promoted to actual_price at check-out.
     credit_value: Optional[float] = None
     credit_lot_ids: Optional[List[str]] = None
     credit_service_type: Optional[str] = None  # 'daycare' or 'training' — which pool was charged
+    # Sprint 29 — add-ons logged at check-out (bath, nail trim, etc.). Each
+    # row contributes to `actual_price` and the weekly income tally.
+    add_ons: Optional[List[Dict[str, Any]]] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
     mood_tags: List[str] = []
     note: Optional[str] = ""
+
+
+class CheckoutAddOn(BaseModel):
+    """One add-on service tacked on at check-out (bath, nail trim, etc.)."""
+    service_id: str
+    name: str
+    price: float = Field(ge=0)
+    qty: int = Field(default=1, ge=1, le=20)
+
+
+class CheckoutIn(BaseModel):
+    """Body for `POST /bookings/{id}/check-out`. All fields optional so existing
+    callers (legacy clients) still work — defaults to the previous behaviour:
+    use any pre-deducted credits, no add-ons, no payment-method override."""
+    use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
+    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
+    payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
+    base_price: Optional[float] = None  # override the auto-tally amount for the base service
+    add_ons: List[CheckoutAddOn] = []
 
 
 # -------- Auth --------
@@ -981,33 +1003,99 @@ async def check_in(booking_id: str, _: dict = Depends(require_admin)):
     return booking
 
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
-async def check_out(booking_id: str, _: dict = Depends(require_admin)):
+async def check_out(
+    booking_id: str,
+    body: Optional[CheckoutIn] = None,
+    _: dict = Depends(require_admin),
+):
+    """Check the dog out, optionally adding services or switching the payment.
+    All body fields are optional — calling with no body keeps the prior behaviour."""
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    body = body or CheckoutIn()
     ts = now_iso()
-    update = {"checked_out_at": ts, "status": "completed"}
-    # Credit-redemption income recognition — promote accrued credit_value to
-    # actual_price + mark paid via credits. This is the moment income shows
-    # up in the weekly tally.
-    if booking.get("credit_value") and not booking.get("actual_price"):
+    update: Dict[str, Any] = {"checked_out_at": ts, "status": "completed"}
+
+    had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
+    use_credits = bool(body.use_credits)
+
+    # ── Case A: client chose to KEEP using the credits that were already deducted.
+    if had_credit and use_credits:
         update["actual_price"] = float(booking["credit_value"])
         update["payment_status"] = "paid"
         update["payment_method"] = "credits"
         update["paid_at"] = ts
-    # Auto-tally for cash bookings: if no price has been set yet AND no
-    # credits were redeemed, attach the matching default service's base price
-    # so it shows up in the weekly income view as unpaid.
-    elif not booking.get("actual_price") and not booking.get("service_id"):
-        default_svc = await db.services.find_one(
-            {"service_type": booking.get("service_type"), "is_default": True, "active": True},
-            {"_id": 0},
-        )
-        if default_svc:
-            update["service_id"] = default_svc["id"]
-            update["service_name"] = default_svc["name"]
-            update["actual_price"] = float(default_svc.get("base_price") or 0)
+
+    # ── Case B: client wants to PAY today instead — refund the pre-deducted credits.
+    elif had_credit and not use_credits:
+        deducted = int(booking.get("credits_deducted") or 0)
+        lot_ids = booking.get("credit_lot_ids") or []
+        svc_type = booking.get("credit_service_type") or "daycare"
+        if deducted > 0:
+            await _restore_credit_lots(lot_ids, deducted)
+            balance_field = "training_credits" if svc_type == "training" else "credits"
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: deducted}})
+        # Clear credit fields on the booking so the income tally treats it as a paid service.
+        update["credit_value"] = 0.0
+        update["credit_lot_ids"] = []
+        update["credit_service_type"] = None
+        update["credits_deducted"] = 0
+        # Fall through to base-price logic below.
+
+    # Determine base price / service tag for paid-today bookings (no credits, or credits refunded).
+    will_charge = use_credits is False or not had_credit
+    base_price = 0.0
+    if will_charge and not booking.get("actual_price"):
+        # Honour explicit override from the modal.
+        if body.base_price is not None:
+            base_price = float(body.base_price)
+            update["actual_price"] = base_price
+        elif not booking.get("service_id"):
+            default_svc = await db.services.find_one(
+                {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+                {"_id": 0},
+            )
+            if default_svc:
+                update["service_id"] = default_svc["id"]
+                update["service_name"] = default_svc["name"]
+                base_price = float(default_svc.get("base_price") or 0)
+                update["actual_price"] = base_price
+        else:
+            base_price = float(booking.get("actual_price") or 0)
+    elif booking.get("actual_price"):
+        base_price = float(booking["actual_price"])
+
+    # ── Add-ons: sum prices, persist line items, fold into actual_price.
+    add_on_total = 0.0
+    add_on_rows: List[Dict[str, Any]] = []
+    for ao in body.add_ons:
+        add_on_total += float(ao.price) * int(ao.qty)
+        add_on_rows.append({
+            "service_id": ao.service_id,
+            "name": ao.name,
+            "price": float(ao.price),
+            "qty": int(ao.qty),
+            "line_total": round(float(ao.price) * int(ao.qty), 2),
+        })
+    if add_on_rows:
+        update["add_ons"] = add_on_rows
+        # Add-ons stack on top of whatever the base ended up being.
+        prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
+        update["actual_price"] = round(prev_price + add_on_total, 2)
+
+    # Resolve payment_status / payment_method when a charge is involved.
+    is_paid_today = update.get("payment_method") == "credits"
+    if not is_paid_today and (update.get("actual_price") or 0) > 0:
+        if body.payment_method:
+            update["payment_method"] = body.payment_method
+        if body.payment_status:
+            update["payment_status"] = body.payment_status
+        elif "payment_status" not in update and not booking.get("payment_status"):
             update["payment_status"] = "unpaid"
+        if update.get("payment_status") == "paid":
+            update["paid_at"] = ts
+
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
     return booking
@@ -2959,7 +3047,7 @@ class LogServiceIn(BaseModel):
 class TransactionUpdateIn(BaseModel):
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
     status: Optional[Literal["pending", "approved", "rejected", "completed", "cancelled"]] = None
     service_id: Optional[str] = None
 

@@ -18,27 +18,30 @@ export default function Dashboard() {
   const [alerts, setAlerts] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
+  const [checkoutFor, setCheckoutFor] = useState(null); // booking — opens checkout modal
+  const [services, setServices] = useState([]);
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
 
   const load = async () => {
     try {
-      const [s, a, st, pg] = await Promise.all([
+      const [s, a, st, pg, sv] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
+        api.get("/services").catch(()=>({data:[]})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
       setPrograms(pg.data);
+      setServices(sv.data || []);
     } catch {}
   };
   useEffect(() => { load(); }, []);
 
   const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
-  const checkOut = async (id) => { try { await api.post(`/bookings/${id}/check-out`); load(); } catch {} };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
   if (!stats) return <div className="text-gray-400 text-sm">Loading dashboard…</div>;
@@ -152,7 +155,7 @@ export default function Dashboard() {
                             className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
                   )}
                   {onPremises && (
-                    <button onClick={()=>checkOut(b.id)} data-testid={`checkout-${b.id}`}
+                    <button onClick={()=>setCheckoutFor(b)} data-testid={`checkout-${b.id}`}
                             className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
                   )}
                   {done && !b.report_card && (
@@ -171,6 +174,7 @@ export default function Dashboard() {
       </div>
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
+      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services} onClose={()=>{ setCheckoutFor(null); load(); }} />}
       {showQuick && <AdminBookingModal defaultCheckIn={true} onClose={()=>setShowQuick(false)} onCreated={load} />}
     </div>
   );
@@ -263,6 +267,184 @@ function ReportCardModal({ booking, moodTags, onClose }) {
               {saving?"Saving…":"Save Report Card"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function CheckoutModal({ booking, services, onClose }) {
+  // Pre-deducted credit info — if non-zero, the owner already has a pending charge
+  // on their pack that we'll either consume (default) or refund.
+  const hadCredit = !!booking.credit_value && !booking.actual_price;
+  const creditAmt = Number(booking.credit_value || 0);
+  const creditPool = booking.credit_service_type || booking.service_type || "daycare";
+  const creditsDeducted = booking.credits_deducted || 0;
+
+  const [useCredits, setUseCredits] = useState(hadCredit); // default keep credits if they exist
+  const [payMethod, setPayMethod] = useState("cash");
+  const [basePrice, setBasePrice] = useState(""); // empty = use service default
+  // Add-ons are NOT the same service-type as the booking (those would just bump the base).
+  // Show the rest of the active services as quick-add chips.
+  const addOnCandidates = (services || []).filter(s => s.active && s.service_type !== booking.service_type);
+  const [cart, setCart] = useState({}); // { service_id: { service, qty } }
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const addOne = (svc) => setCart(c => ({ ...c, [svc.id]: { service: svc, qty: (c[svc.id]?.qty || 0) + 1 } }));
+  const removeOne = (svc) => setCart(c => {
+    const next = { ...c };
+    const cur = next[svc.id];
+    if (!cur) return c;
+    if (cur.qty <= 1) delete next[svc.id]; else next[svc.id] = { ...cur, qty: cur.qty - 1 };
+    return next;
+  });
+
+  const cartItems = Object.values(cart);
+  const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
+
+  // Base price preview — what gets charged for the underlying booking line.
+  let basePreview = 0;
+  if (useCredits && hadCredit) basePreview = creditAmt; // owner pays nothing today, but credit is consumed
+  else if (basePrice !== "") basePreview = Number(basePrice) || 0;
+  else {
+    const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
+    basePreview = defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0);
+  }
+  const chargedToday = (useCredits ? 0 : basePreview) + addOnTotal;
+  const grandLine = basePreview + addOnTotal;
+
+  const submit = async () => {
+    setBusy(true); setErr("");
+    try {
+      const body = {
+        use_credits: useCredits,
+        add_ons: cartItems.map(it => ({
+          service_id: it.service.id, name: it.service.name,
+          price: Number(it.service.base_price || 0), qty: it.qty,
+        })),
+      };
+      if (!useCredits || !hadCredit) {
+        body.payment_method = payMethod;
+        body.payment_status = "paid"; // operator typing payment method means they're collecting now
+        if (basePrice !== "") body.base_price = Number(basePrice);
+      }
+      await api.post(`/bookings/${booking.id}/check-out`, body);
+      onClose();
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Check-out failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-1">
+          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
+            <i className="fas fa-sign-out-alt text-shBlue mr-2"/>Check Out · {booking.dog_name}
+          </h4>
+          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
+        </div>
+        <p className="text-[12px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
+
+        {/* Section 1 — How to pay the base service */}
+        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
+          {hadCredit ? (
+            <div className="space-y-2">
+              <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-use-credits">
+                <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
+                <div className="flex-1">
+                  <p className="text-sm font-black text-white">Use {creditsDeducted || 1} {creditPool} credit{(creditsDeducted || 1) === 1 ? "" : "s"}</p>
+                  <p className="text-[12px] text-gray-400">${creditAmt.toFixed(2)} value · already deducted from their pack at approval</p>
+                </div>
+              </label>
+              <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${!useCredits ? "border-shBlue bg-shBlue/10" : "border-bgHover hover:border-shBlue/50"}`} data-testid="opt-charge">
+                <input type="radio" checked={!useCredits} onChange={()=>setUseCredits(false)} className="mt-1 accent-shBlue" />
+                <div className="flex-1">
+                  <p className="text-sm font-black text-white">Charge as regular service</p>
+                  <p className="text-[12px] text-gray-400">Refund {creditsDeducted || 1} credit{(creditsDeducted || 1) === 1 ? "" : "s"} back to their pack & take payment today</p>
+                </div>
+              </label>
+            </div>
+          ) : (
+            <p className="text-[13px] text-gray-300">No credits on file for this booking — collecting payment today.</p>
+          )}
+        </div>
+
+        {/* Section 2 — Add-ons */}
+        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
+          {addOnCandidates.length === 0 ? (
+            <p className="text-[12px] text-gray-500 italic">No add-on services configured. Add some in Settings → Services & Prices.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {addOnCandidates.map(svc => {
+                const inCart = cart[svc.id]?.qty || 0;
+                return (
+                  <button key={svc.id} onClick={()=>addOne(svc)} data-testid={`addon-${svc.id}`}
+                          className={`text-left flex items-center justify-between gap-2 p-2.5 rounded border transition ${inCart > 0 ? "border-purple-400 bg-purple-400/10" : "border-bgHover hover:border-purple-400/60"}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-black text-white truncate"><i className={`fas ${svc.icon || 'fa-tag'} mr-1.5 text-purple-400`}/>{svc.name}</p>
+                      <p className="text-[11px] text-gray-400 font-bold">${Number(svc.base_price || 0).toFixed(2)}</p>
+                    </div>
+                    {inCart > 0 && (
+                      <div className="flex items-center gap-1 shrink-0" onClick={(e)=>e.stopPropagation()}>
+                        <button onClick={()=>removeOne(svc)} data-testid={`addon-minus-${svc.id}`} className="bg-bgHover w-6 h-6 rounded text-white font-black hover:bg-red-500/40">−</button>
+                        <span className="text-white font-black w-5 text-center text-sm">{inCart}</span>
+                        <span className="text-purple-400 text-[11px] font-black">+</span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Section 3 — Payment method + total (only if charging today) */}
+        {(!useCredits || !hadCredit || addOnTotal > 0) && (
+          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+            <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
+            <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
+                    className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
+              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
+            </select>
+            {(!useCredits || !hadCredit) && (
+              <div>
+                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Base price <span className="text-gray-600">(blank = use service default)</span></label>
+                <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
+                       placeholder={basePreview ? `$${basePreview.toFixed(2)}` : "$0.00"}
+                       className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Total summary */}
+        <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
+            {addOnTotal > 0 && <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
+            {useCredits && hadCredit && <p className="text-[10px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
+          </div>
+          <div className="text-right">
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 ? "Total" : "Charged today"}</p>
+            <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${chargedToday.toFixed(2)}</p>
+          </div>
+        </div>
+
+        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
+
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
+          <button onClick={submit} disabled={busy} data-testid="confirm-checkout"
+                  className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+            {busy ? "Checking out…" : "Complete Check-out"}
+          </button>
         </div>
       </div>
     </div>
