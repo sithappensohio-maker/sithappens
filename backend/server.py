@@ -412,8 +412,23 @@ async def _resolve_client_scope(user: dict) -> Optional[str]:
 async def list_dogs(user: dict = Depends(get_current_user)):
     scope = await _resolve_client_scope(user)
     q = {} if scope is None else {"owner_id": scope}
-    items = await db.dogs.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+    # Strip gallery photos from list payload — they balloon the response when
+    # multiple dogs have 5+ images each. Detail endpoint `/dogs/{id}` returns
+    # the full record (with gallery) for the edit modal.
+    items = await db.dogs.find(q, {"_id": 0, "photos": 0}).sort("name", 1).to_list(1000)
     return items
+
+
+@api.get("/dogs/{dog_id}", response_model=DogOut)
+async def get_dog(dog_id: str, user: dict = Depends(get_current_user)):
+    """Full dog record including gallery photos. Use this when the user
+    opens the edit modal so the list endpoint can stay lightweight."""
+    scope = await _resolve_client_scope(user)
+    q = {"id": dog_id} if scope is None else {"id": dog_id, "owner_id": scope}
+    dog = await db.dogs.find_one(q, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    return dog
 
 @api.post("/dogs", response_model=DogOut)
 async def create_dog(body: DogIn, _: dict = Depends(require_admin)):
@@ -491,13 +506,29 @@ async def _booking_days_count(target_date: str) -> int:
     return count
 
 @api.get("/bookings", response_model=List[BookingOut])
-async def list_bookings(user: dict = Depends(get_current_user), status_filter: Optional[str] = None):
-    q = {}
+async def list_bookings(
+    user: dict = Depends(get_current_user),
+    status_filter: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    include_all: bool = False,
+):
+    """Lists bookings. By default returns a tight rolling window (90 days
+    back to 90 days forward) so admin screens stay snappy as historical
+    bookings pile up. Pass `include_all=true` for the full table (CSV
+    exports, reconciliation) or `start_date` / `end_date` for a custom range."""
+    q: Dict = {}
     if status_filter:
         q["status"] = status_filter
     if user.get("role") != "admin":
         q["client_id"] = user.get("client_id")
-    items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(2000)
+    if not include_all:
+        if not start_date:
+            start_date = (date.today() - timedelta(days=90)).isoformat()
+        if not end_date:
+            end_date = (date.today() + timedelta(days=90)).isoformat()
+        q["date"] = {"$gte": start_date, "$lte": end_date}
+    items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(3000)
     return items
 
 def _service_cost(rules: dict, service_type: str, days: int) -> int:
@@ -2482,13 +2513,29 @@ async def programs_pipeline(
     if type:
         rows = [r for r in rows if (r.get("program_snapshot") or {}).get("type") == type]
 
+    # Batch-load all dogs + clients referenced by these enrollments in just
+    # two queries instead of N+1 round trips. Strip heavy photo fields from
+    # dogs since pipeline only renders the small thumbnail.
+    dog_ids = list({r["dog_id"] for r in rows if r.get("dog_id")})
+    dogs_list = await db.dogs.find(
+        {"id": {"$in": dog_ids}},
+        {"_id": 0, "photos": 0, "training_logs": 0, "feeding_schedule": 0, "medications": 0},
+    ).to_list(2000) if dog_ids else []
+    dog_map = {d["id"]: d for d in dogs_list}
+
+    client_ids = list({d.get("owner_id") for d in dogs_list if d.get("owner_id")})
+    clients_list = await db.clients.find(
+        {"id": {"$in": client_ids}}, {"_id": 0, "name": 1, "id": 1}
+    ).to_list(2000) if client_ids else []
+    client_map = {c["id"]: c for c in clients_list}
+
     out = []
     today = date.today()
     for r in rows:
-        dog = await db.dogs.find_one({"id": r["dog_id"]}, {"_id": 0})
+        dog = dog_map.get(r["dog_id"])
         if not dog:
             continue
-        client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) if dog.get("owner_id") else None
+        client = client_map.get(dog.get("owner_id")) if dog.get("owner_id") else None
         if search:
             haystack = f"{dog.get('name','')} {(client or {}).get('name','')} {r['program_snapshot'].get('name','')}".lower()
             if search.lower() not in haystack:
@@ -2596,7 +2643,10 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     today = date.today().isoformat()
     in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
-    dogs = await db.dogs.find({}, {"_id": 0}).to_list(2000)
+    # Projection skips heavy base64 photo fields — dashboard only needs
+    # vaccines, name, id, birthday, owner_id.
+    dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0, "feeding_schedule": 0, "medications": 0}
+    dogs = await db.dogs.find({}, dog_proj).to_list(2000)
     health_flags = 0
     for d in dogs:
         vac = d.get("vaccines") or {}
@@ -2609,8 +2659,17 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         if flagged:
             health_flags += 1
 
+    # Only need bookings whose date range overlaps today — pull a tight
+    # window instead of every booking in the DB.
+    today_dt = date.today()
+    win_start = (today_dt - timedelta(days=60)).isoformat()  # boarding stays might span back
+    win_end = (today_dt + timedelta(days=1)).isoformat()
     today_bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
+        {
+            "status": {"$in": ["approved", "pending", "completed"]},
+            "date": {"$gte": win_start, "$lte": win_end},
+        },
+        {"_id": 0},
     ).to_list(2000)
     # Build dog map for enrichment
     dog_map = {d["id"]: d for d in dogs}
@@ -2798,6 +2857,23 @@ async def startup():
     await db.clients.create_index("id", unique=True)
     await db.dogs.create_index("id", unique=True)
     await db.bookings.create_index("id", unique=True)
+    # Performance indexes — hot query paths used by Dashboard, Schedule,
+    # Bookings, Pipeline, Income. All safe to create; existing data uses
+    # them on next query. No data migration needed.
+    await db.bookings.create_index([("date", 1), ("status", 1)])
+    await db.bookings.create_index("dog_id")
+    await db.bookings.create_index("client_id")
+    await db.bookings.create_index("status")
+    await db.dogs.create_index("owner_id")
+    await db.homework.create_index("dog_id")
+    await db.homework.create_index("client_id")
+    await db.homework.create_index([("status", 1), ("created_at", -1)])
+    await db.dog_programs.create_index("dog_id")
+    await db.dog_programs.create_index([("dog_id", 1), ("status", 1)])
+    await db.credit_lots.create_index([("client_id", 1), ("purchased_at", -1)])
+    await db.credit_lots.create_index([("client_id", 1), ("service_type", 1), ("qty_remaining", 1)])
+    await db.incidents.create_index([("date", -1), ("dog_id", 1)])
+    await db.vaccine_dismissals.create_index("dog_id")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

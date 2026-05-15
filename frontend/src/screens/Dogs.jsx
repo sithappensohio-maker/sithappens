@@ -127,6 +127,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   };
   const openEdit = async (d, initialTab = "basics") => {
     setEditing(d);
+    // Hydrate the form with the list-view subset immediately so the modal
+    // opens snappy, then fetch the full record (with gallery photos) and
+    // patch it in once it lands.
     setForm({
       ...empty, ...d,
       vaccines: { ...empty.vaccines, ...(d.vaccines || {}) },
@@ -138,7 +141,25 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     });
     setTab(initialTab); setOpen(true); setErr("");
     setStats(null);
-    try { const { data } = await api.get(`/dogs/${d.id}/stats`); setStats(data); } catch {}
+    // Fire both in parallel — stats + full record (the list view strips
+    // gallery photos for payload size; we re-fetch them here for editing).
+    try {
+      const [{ data: full }, statsRes] = await Promise.all([
+        api.get(`/dogs/${d.id}`),
+        api.get(`/dogs/${d.id}/stats`).catch(() => null),
+      ]);
+      setForm(prev => ({
+        ...prev,
+        ...full,
+        vaccines: { ...empty.vaccines, ...(full.vaccines || {}) },
+        feeding_schedule: full.feeding_schedule || [],
+        medications: full.medications || [],
+        training_skills: full.training_skills || [],
+        photos: full.photos || [],
+        tags: full.tags || [],
+      }));
+      if (statsRes) setStats(statsRes.data);
+    } catch { /* keep list-view fallback */ }
   };
 
   const onFile = (e) => {
