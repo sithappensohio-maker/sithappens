@@ -3098,7 +3098,18 @@ class CreditPackIn(BaseModel):
 
 class SellCreditPackIn(BaseModel):
     pack_id: str
-    payment_method: Optional[Literal["cash", "card", "transfer", "other"]] = "cash"
+    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
+    note: Optional[str] = ""
+
+
+class SellCreditPackItem(BaseModel):
+    pack_id: str
+    quantity: int = Field(ge=1, le=50)
+
+
+class SellCreditPacksBulkIn(BaseModel):
+    items: List[SellCreditPackItem] = Field(min_length=1, max_length=20)
+    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
     note: Optional[str] = ""
 
 
@@ -3199,6 +3210,81 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     await db.clients.update_one({"id": client_id}, {"$inc": {balance_field: qty}})
     lot.pop("_id", None)
     return lot
+
+
+@api.post("/clients/{client_id}/sell-packs")
+async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, user: dict = Depends(require_admin)):
+    """Sell multiple credit packs to a client in a single transaction.
+    Each {pack_id, quantity} pair mints `quantity` separate FIFO lots so
+    accounting + redemption logic stays unchanged. Returns the list of new
+    lots plus a per-pool totals summary (qty + price)."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # Pre-fetch every pack referenced so we fail fast on unknown ids before
+    # any mutations land.
+    pack_ids = [it.pack_id for it in body.items]
+    packs = {p["id"]: p for p in await db.credit_packs.find({"id": {"$in": pack_ids}}, {"_id": 0}).to_list(200)}
+    missing = [pid for pid in pack_ids if pid not in packs]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Pack(s) not found: {', '.join(missing)}")
+
+    new_lots: List[Dict] = []
+    daycare_inc = 0
+    training_inc = 0
+    totals_by_pool = {"daycare": {"qty": 0, "price": 0.0}, "training": {"qty": 0, "price": 0.0}}
+
+    now = now_iso()
+    for item in body.items:
+        pack = packs[item.pack_id]
+        qty = int(pack["qty"])
+        value_each = round(float(pack["price"]) / max(qty, 1), 2)
+        svc_type = pack.get("service_type") or "daycare"
+        for _ in range(item.quantity):
+            lot = {
+                "id": str(uuid.uuid4()),
+                "client_id": client_id,
+                "pack_id": pack["id"],
+                "pack_name": pack["name"],
+                "service_type": svc_type,
+                "qty_total": qty,
+                "qty_remaining": qty,
+                "price_paid": float(pack["price"]),
+                "value_each": value_each,
+                "payment_method": body.payment_method,
+                "note": body.note or "",
+                "sold_by": user.get("name", "Admin"),
+                "purchased_at": now,
+            }
+            new_lots.append(lot)
+            if svc_type == "training":
+                training_inc += qty
+            else:
+                daycare_inc += qty
+            totals_by_pool[svc_type if svc_type in totals_by_pool else "daycare"]["qty"] += qty
+            totals_by_pool[svc_type if svc_type in totals_by_pool else "daycare"]["price"] += float(pack["price"])
+
+    await db.credit_lots.insert_many(new_lots)
+    inc_doc: Dict[str, int] = {}
+    if daycare_inc:
+        inc_doc["credits"] = daycare_inc
+    if training_inc:
+        inc_doc["training_credits"] = training_inc
+    if inc_doc:
+        await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
+
+    # Strip mongo _id from response payload defensively (insert_many mutates).
+    for lot in new_lots:
+        lot.pop("_id", None)
+    totals_by_pool["daycare"]["price"] = round(totals_by_pool["daycare"]["price"], 2)
+    totals_by_pool["training"]["price"] = round(totals_by_pool["training"]["price"], 2)
+    return {
+        "lots": new_lots,
+        "totals": totals_by_pool,
+        "total_price": round(totals_by_pool["daycare"]["price"] + totals_by_pool["training"]["price"], 2),
+        "lots_created": len(new_lots),
+    }
 
 
 @api.get("/clients/{client_id}/credit-lots")

@@ -153,25 +153,37 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
 function SellPackModal({ client, packs, onClose, onSold }) {
   const [poolFilter, setPoolFilter] = useState("all"); // all | daycare | training
   const active = packs.filter(p => p.active && (poolFilter === "all" || p.service_type === poolFilter));
-  const [packId, setPackId] = useState(active[0]?.id || "");
+  // cart: { [pack_id]: quantity }
+  const [cart, setCart] = useState({});
   const [method, setMethod] = useState("cash");
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Re-pick first pack whenever the filter shrinks the list
-  useEffect(() => {
-    if (active.length === 0) { setPackId(""); return; }
-    if (!active.find(p => p.id === packId)) setPackId(active[0].id);
-  }, [poolFilter]);  // eslint-disable-line
+  const addToCart = (id) => setCart(c => ({ ...c, [id]: (c[id] || 0) + 1 }));
+  const removeFromCart = (id) => setCart(c => {
+    const n = (c[id] || 0) - 1;
+    const next = { ...c };
+    if (n <= 0) delete next[id]; else next[id] = n;
+    return next;
+  });
+  const clearItem = (id) => setCart(c => { const n = { ...c }; delete n[id]; return n; });
 
-  const selected = active.find(p => p.id === packId);
-  const isTraining = selected?.service_type === "training";
+  const cartItems = Object.entries(cart).map(([pid, qty]) => {
+    const pack = packs.find(p => p.id === pid);
+    return pack ? { pack, qty } : null;
+  }).filter(Boolean);
+
+  const totalCredits = cartItems.reduce((sum, it) => sum + (it.pack.qty * it.qty), 0);
+  const totalDaycare = cartItems.filter(it => (it.pack.service_type || "daycare") === "daycare").reduce((s, it) => s + it.pack.qty * it.qty, 0);
+  const totalTraining = cartItems.filter(it => it.pack.service_type === "training").reduce((s, it) => s + it.pack.qty * it.qty, 0);
+  const totalCharge = cartItems.reduce((sum, it) => sum + (it.pack.price * it.qty), 0);
 
   const sell = async () => {
     setBusy(true); setErr("");
     try {
-      await api.post(`/clients/${client.id}/sell-pack`, { pack_id: packId, payment_method: method, note });
+      const items = cartItems.map(it => ({ pack_id: it.pack.id, quantity: it.qty }));
+      await api.post(`/clients/${client.id}/sell-packs`, { items, payment_method: method, note });
       onSold?.();
     } catch (e) {
       setErr(e.response?.data?.detail || "Sale failed");
@@ -179,7 +191,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   };
 
   return (
-    <Modal title={`Sell Credit Pack · ${client.name}`} onClose={onClose}>
+    <Modal title={`Sell Credit Packs · ${client.name}`} onClose={onClose}>
       {packs.filter(p=>p.active).length === 0 ? (
         <p className="text-[14px] text-gray-400">No packs configured. Set them up in <span className="text-shBlue">Settings → Credit Packs</span> first.</p>
       ) : (
@@ -196,24 +208,65 @@ function SellPackModal({ client, packs, onClose, onSold }) {
               </button>
             ))}
           </div>
+
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack</label>
-            <select value={packId} onChange={(e)=>setPackId(e.target.value)} data-testid="sell-pack-select"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              {active.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} credits · ${p.price.toFixed(2)} (${p.value_each.toFixed(2)}/credit)</option>)}
-            </select>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Available Packs · tap to add</label>
+            <div className="mt-2 space-y-1.5 max-h-56 overflow-auto pr-1">
+              {active.map(p => {
+                const isTr = p.service_type === "training";
+                const inCart = cart[p.id] || 0;
+                return (
+                  <button key={p.id} onClick={()=>addToCart(p.id)} data-testid={`add-pack-${p.id}`}
+                          className={`w-full text-left flex items-center justify-between bg-bgBase border rounded p-2.5 hover:border-shBlue transition ${inCart > 0 ? "border-shBlue" : "border-bgHover"}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] font-black text-white truncate">{p.name}</p>
+                      <p className={`text-[11px] uppercase tracking-widest font-bold ${isTr ? "text-purple-400" : "text-shGreen"}`}>
+                        {p.qty} {isTr ? "sessions" : "credits"} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {inCart > 0 && <span className="bg-shBlue text-bgHeader px-2 py-0.5 rounded text-[12px] font-black">×{inCart}</span>}
+                      <i className="fas fa-plus text-shGreen text-[14px]" />
+                    </div>
+                  </button>
+                );
+              })}
+              {active.length === 0 && <p className="text-[13px] text-gray-500 italic">No packs in this pool.</p>}
+            </div>
           </div>
-          {selected && (
-            <div className={`bg-bgBase border rounded p-3 grid grid-cols-3 gap-3 text-center ${isTraining ? "border-purple-400/30" : "border-shGreen/30"}`}>
-              <div>
-                <p className="text-[11px] uppercase tracking-widest text-gray-500">Credits</p>
-                <p className={`text-2xl font-black ${isTraining ? "text-purple-400" : "text-shBlue"}`}>+{selected.qty}</p>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest">{isTraining ? "training" : "daycare"}</p>
+
+          {cartItems.length > 0 && (
+            <div className="border border-shGreen/40 bg-shGreen/5 rounded p-3 space-y-2" data-testid="sell-cart">
+              <p className="text-[11px] uppercase tracking-widest text-shGreen font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
+              {cartItems.map(({ pack, qty }) => {
+                const isTr = pack.service_type === "training";
+                return (
+                  <div key={pack.id} className="flex items-center justify-between gap-2 bg-bgBase rounded px-2 py-1.5" data-testid={`cart-row-${pack.id}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] text-white font-bold truncate">{pack.name}</p>
+                      <p className={`text-[10px] uppercase tracking-widest font-bold ${isTr ? "text-purple-400" : "text-shGreen"}`}>
+                        {pack.qty * qty} {isTr ? "sessions" : "credits"} · ${(pack.price * qty).toFixed(2)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={()=>removeFromCart(pack.id)} data-testid={`cart-minus-${pack.id}`}
+                              className="bg-bgHover text-white w-7 h-7 rounded font-black text-sm hover:bg-red-500/40">−</button>
+                      <span className="text-white font-black w-6 text-center text-sm">{qty}</span>
+                      <button onClick={()=>addToCart(pack.id)} data-testid={`cart-plus-${pack.id}`}
+                              className="bg-bgHover text-white w-7 h-7 rounded font-black text-sm hover:bg-shGreen/40">+</button>
+                      <button onClick={()=>clearItem(pack.id)} className="text-gray-500 hover:text-red-400 ml-1"><i className="fas fa-times text-xs"/></button>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="grid grid-cols-3 gap-2 pt-2 text-center">
+                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Daycare</p><p className="text-shGreen text-lg font-black">+{totalDaycare}</p></div>
+                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
+                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-white text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
               </div>
-              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-shGreen text-2xl font-black">${selected.price.toFixed(2)}</p></div>
-              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Value/credit</p><p className="text-white text-2xl font-black">${selected.value_each.toFixed(2)}</p></div>
             </div>
           )}
+
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
@@ -230,9 +283,9 @@ function SellPackModal({ client, packs, onClose, onSold }) {
           {err && <p className="text-red-400 text-[13px]">{err}</p>}
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-            <button onClick={sell} disabled={busy || !packId} data-testid="confirm-sell-pack"
+            <button onClick={sell} disabled={busy || cartItems.length === 0} data-testid="confirm-sell-pack"
                     className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-              {busy ? "Selling…" : "Sell Pack"}
+              {busy ? "Selling…" : (totalCredits > 0 ? `Sell · +${totalCredits} credits · $${totalCharge.toFixed(2)}` : "Sell")}
             </button>
           </div>
         </div>
