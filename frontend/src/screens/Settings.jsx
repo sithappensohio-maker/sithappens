@@ -732,17 +732,3 @@ function CommandsPanel() {
     </div>
   );
 }
-
-        <div className="flex justify-end gap-3 pt-2">
-                <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-                <button onClick={save} data-testid="cmd-save"
-                        className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-

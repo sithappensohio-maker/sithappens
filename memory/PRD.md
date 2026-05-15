@@ -321,6 +321,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 31 — Hotfix: Frontend Compile Errors (2026-02)
+- ✅ Removed stray duplicated `);\n}` block trailing the `App` component in `/app/frontend/src/App.js` (lines 163-164) that crashed the bundler.
+- ✅ Found and removed a second related issue — 12 lines of duplicated JSX trailing the proper close of `Settings.jsx` (lines 736-747) — which was Babel's "Adjacent JSX elements must be wrapped in an enclosing tag" error revealed once App.js compiled.
+- ✅ ESLint clean across `/app/frontend/src`; login screen renders correctly in preview.
+
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY
