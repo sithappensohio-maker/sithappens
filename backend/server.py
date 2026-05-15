@@ -3339,6 +3339,70 @@ async def list_client_lots(client_id: str, _: dict = Depends(require_admin)):
     return lots
 
 
+@api.get("/clients/{client_id}/receipts")
+async def list_client_receipts(client_id: str, _: dict = Depends(require_admin)):
+    """Group credit_lots into receipts (one per bulk-sale transaction). All
+    lots created in the same `POST /sell-packs` call share an identical
+    `purchased_at` timestamp + payment_method + sold_by, so we group on that.
+    Returns receipts shaped exactly like the `receipt` object the sell-packs
+    endpoint emits, so the frontend can reuse the same ReceiptModal."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    lots = await db.credit_lots.find({"client_id": client_id}, {"_id": 0}).sort("purchased_at", -1).to_list(500)
+
+    # Group by (purchased_at, payment_method, sold_by, note) — each tuple
+    # represents one cart checkout.
+    groups: Dict[tuple, Dict] = {}
+    for lot in lots:
+        key = (
+            lot.get("purchased_at", ""),
+            lot.get("payment_method", "cash") or "cash",
+            lot.get("sold_by", "") or "",
+            lot.get("note", "") or "",
+        )
+        bucket = groups.setdefault(key, {
+            "sold_at": lot.get("purchased_at", ""),
+            "payment_method": lot.get("payment_method", "cash") or "cash",
+            "sold_by": lot.get("sold_by", "") or "",
+            "note": lot.get("note", "") or "",
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "client_email": client.get("email", ""),
+            "_lines_by_pack": {},  # pack_id -> aggregated line
+            "totals": {"daycare": {"qty": 0, "price": 0.0}, "training": {"qty": 0, "price": 0.0}},
+        })
+        pack_id = lot.get("pack_id", "")
+        pack_qty = int(lot.get("qty_total") or 0)
+        unit_price = float(lot.get("price_paid") or 0)
+        svc = lot.get("service_type") or "daycare"
+        line = bucket["_lines_by_pack"].setdefault(pack_id, {
+            "pack_id": pack_id,
+            "name": lot.get("pack_name", "Pack"),
+            "qty": 0,
+            "unit_price": unit_price,
+            "line_total": 0.0,
+            "service_type": svc,
+            "pack_qty": pack_qty,
+        })
+        line["qty"] += 1
+        line["line_total"] = round(line["unit_price"] * line["qty"], 2)
+        pool = bucket["totals"]["training"] if svc == "training" else bucket["totals"]["daycare"]
+        pool["qty"] += pack_qty
+        pool["price"] = round(pool["price"] + unit_price, 2)
+
+    out: List[Dict] = []
+    for bucket in groups.values():
+        lines = list(bucket.pop("_lines_by_pack").values())
+        bucket["lines"] = lines
+        bucket["total_price"] = round(bucket["totals"]["daycare"]["price"] + bucket["totals"]["training"]["price"], 2)
+        bucket["line_count"] = len(lines)
+        bucket["lot_count"] = sum(ln["qty"] for ln in lines)
+        out.append(bucket)
+    out.sort(key=lambda r: r["sold_at"], reverse=True)
+    return out
+
+
 # ────────────────────────── Multi-Date Bookings ──────────────────────────
 class MultiDateBookingIn(BaseModel):
     dog_id: str

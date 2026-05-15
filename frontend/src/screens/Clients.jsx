@@ -11,6 +11,7 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
   const [portalOpen, setPortalOpen] = useState(null); // client id
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
   const [sellOpen, setSellOpen] = useState(null); // client object
+  const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
@@ -103,6 +104,10 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
                     className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
               <i className="fas fa-coins mr-1"/>Sell Credit Pack
             </button>
+            <button onClick={()=>setReceiptsOpen(c)} data-testid={`receipts-${c.id}`}
+                    className="mt-2 w-full bg-bgHover/40 text-gray-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgHover/70 hover:text-white">
+              <i className="fas fa-receipt mr-1"/>Receipts
+            </button>
           </div>
         ))}
       </div>
@@ -150,6 +155,12 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
 
       {receipt && (
         <ReceiptModal data={receipt} onClose={()=>setReceipt(null)} />
+      )}
+
+      {receiptsOpen && (
+        <ReceiptsListModal client={receiptsOpen}
+                           onClose={()=>setReceiptsOpen(null)}
+                           onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
     </div>
   );
@@ -299,10 +310,10 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   );
 }
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, maxWidth = "max-w-md" }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-8 shadow-2xl animate-slide-in">
+      <div className={`bg-bgPanel border border-bgHover rounded-2xl w-full ${maxWidth} p-8 shadow-2xl animate-slide-in`}>
         <div className="flex items-center justify-between mb-6">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{title}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
@@ -310,6 +321,64 @@ function Modal({ title, children, onClose }) {
         {children}
       </div>
     </div>
+  );
+}
+
+function ReceiptsListModal({ client, onClose, onReprint }) {
+  const [receipts, setReceipts] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    api.get(`/clients/${client.id}/receipts`)
+      .then(r => { if (alive) setReceipts(r.data || []); })
+      .catch(e => { if (alive) setErr(e.response?.data?.detail || "Failed to load receipts"); });
+    return () => { alive = false; };
+  }, [client.id]);
+
+  return (
+    <Modal title={`Receipts · ${client.name}`} onClose={onClose} maxWidth="max-w-lg">
+      <div className="space-y-3 max-h-[60vh] overflow-auto" data-testid="receipts-list">
+        {err && <p className="text-red-400 text-[13px]">{err}</p>}
+        {receipts === null && !err && <p className="text-gray-500 text-[13px]">Loading…</p>}
+        {receipts && receipts.length === 0 && (
+          <p className="text-[14px] text-gray-400 italic">No pack purchases yet. Sales will appear here automatically.</p>
+        )}
+        {receipts && receipts.map((r, i) => {
+          const dt = new Date(r.sold_at);
+          const dc = r.totals?.daycare?.qty || 0;
+          const tr = r.totals?.training?.qty || 0;
+          return (
+            <div key={i} data-testid={`receipt-row-${i}`}
+                 className="bg-bgBase border border-bgHover rounded p-3 hover:border-shBlue transition">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14px] font-black text-white">{dt.toLocaleDateString()} · {dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                  <p className="text-[11px] uppercase tracking-widest text-gray-500 mt-0.5">
+                    {r.line_count} item{r.line_count === 1 ? "" : "s"} · {r.lot_count} pack{r.lot_count === 1 ? "" : "s"} · {r.payment_method} · {r.sold_by}
+                  </p>
+                  <div className="flex gap-2 mt-1.5 flex-wrap">
+                    {dc > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-shGreen bg-shGreen/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
+                    {tr > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-purple-400 bg-purple-400/10 px-2 py-0.5 rounded">+{tr} training</span>}
+                  </div>
+                  {r.note && <p className="text-[12px] text-gray-400 italic mt-1.5 truncate">"{r.note}"</p>}
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-shGreen text-xl font-black">${r.total_price.toFixed(2)}</p>
+                  <button onClick={()=>onReprint(r)} data-testid={`reprint-${i}`}
+                          className="mt-1.5 text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                    <i className="fas fa-print mr-1"/>Reprint
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-end pt-4">
+        <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
+      </div>
+    </Modal>
   );
 }
 
