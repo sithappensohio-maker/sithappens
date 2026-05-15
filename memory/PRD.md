@@ -321,6 +321,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 32 — Hotfix: Client Portal Missing useConfirm Import (2026-02)
+- ✅ `Portal.jsx` called `useConfirm()` on line 17 without importing it → every client login crashed with "useConfirm is not defined" caught by ErrorBoundary.
+- ✅ Added `import { useConfirm } from "../lib/useConfirm";` to Portal.jsx.
+- ✅ Scanned all other `.jsx`/`.js` consumers of `useConfirm()` — every one has the proper import. No other missing-import cases.
+- ✅ Verified end-to-end: `testclient@sithappens.com` logs in, portal renders credits / dogs / training progress / homework / booking form with zero console errors.
+
 ## Sprint 31 — Hotfix: Frontend Compile Errors + Missing ConfirmProvider (2026-02)
 - ✅ Removed stray duplicated `);\n}` block trailing the `App` component in `/app/frontend/src/App.js` (lines 163-164) that crashed the bundler.
 - ✅ Removed 12 lines of duplicated JSX trailing the proper close of `Settings.jsx` (lines 736-747) that caused a Babel "Adjacent JSX elements must be wrapped" error.

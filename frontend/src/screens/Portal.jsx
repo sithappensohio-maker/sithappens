@@ -10,6 +10,7 @@ import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import Tutorials from "./Tutorials";
+import { useConfirm } from "../lib/useConfirm";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
