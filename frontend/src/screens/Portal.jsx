@@ -14,6 +14,7 @@ import Tutorials from "./Tutorials";
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
 export default function Portal() {
+  const confirm = useConfirm();
   const { user, logout, reloadUser } = useAuth();
   const [dogs, setDogs] = useState([]);
   const [client, setClient] = useState(null);
@@ -130,7 +131,7 @@ export default function Portal() {
   const toggleRecDay = (d) => setRecDays(recDays.includes(d) ? recDays.filter(x=>x!==d) : [...recDays, d]);
 
   const cancel = async (id) => {
-    if (!window.confirm("Cancel this booking?")) return;
+    if (!(await confirm({ title: "Cancel this booking?", body: "Any deducted credits will be refunded to your pack.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
   };
 

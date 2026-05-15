@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
@@ -8,6 +9,7 @@ import { api } from "../lib/api";
 const empty = { name: "", qty: 10, price: 300, service_type: "daycare", active: true };
 
 export default function CreditPacksSettings() {
+  const confirm = useConfirm();
   const [packs, setPacks] = useState([]);
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
@@ -32,7 +34,7 @@ export default function CreditPacksSettings() {
   };
 
   const remove = async (p) => {
-    if (!window.confirm(`Remove "${p.name}"?`)) return;
+    if (!(await confirm({ title: `Remove "${p.name}"?`, body: "Already-issued credit lots stay valid. New sales of this pack will be disabled.", confirmText: "Remove pack", tone: "danger" }))) return;
     await api.delete(`/credit-packs/${p.id}`);
     load();
   };

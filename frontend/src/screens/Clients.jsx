@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
 
 export default function Clients({ focusId = null, onConsumed = () => {} }) {
+  const confirm = useConfirm();
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
@@ -42,7 +44,7 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
   };
 
   const remove = async (id) => {
-    if (!window.confirm("Delete this client and all their dogs?")) return;
+    if (!(await confirm({ title: "Delete this client?", body: "This client and all their dogs will be removed. Bookings, training notes, and homework will also be deleted. This cannot be undone.", confirmText: "Delete client", tone: "danger" }))) return;
     await api.delete(`/clients/${id}`); load();
   };
 

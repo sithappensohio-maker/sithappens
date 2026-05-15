@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import { useConfirm } from "../lib/useConfirm";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
@@ -179,8 +180,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
+  const confirm = useConfirm();
   const remove = async (id) => {
-    if (!window.confirm("Delete this dog?")) return;
+    if (!(await confirm({ title: "Delete this dog?", body: "All training logs, photos, and historical bookings for this dog will be removed. This cannot be undone.", confirmText: "Delete dog", tone: "danger" }))) return;
     await api.delete(`/dogs/${id}`); load();
   };
 

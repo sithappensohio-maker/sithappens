@@ -11,7 +11,7 @@ import jwt
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal, Dict, Any
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient

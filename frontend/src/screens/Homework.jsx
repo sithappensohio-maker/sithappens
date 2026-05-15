@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
 import HomeworkReportPanel from "../components/HomeworkReportPanel";
 
@@ -33,7 +34,8 @@ export default function Homework() {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
-  const remove = async (id) => { if(!window.confirm("Delete homework?")) return; await api.delete(`/homework/${id}`); load(); };
+  const confirm = useConfirm();
+  const remove = async (id) => { if (!(await confirm({ title: "Delete homework?", body: "This will remove the assignment and all its session logs. This cannot be undone.", confirmText: "Delete", tone: "danger" }))) return; await api.delete(`/homework/${id}`); load(); };
 
   const filtered = filter === "all" ? list : list.filter(h => h.status === filter);
   const counts = { all: list.length, assigned: list.filter(h=>h.status==="assigned").length, completed: list.filter(h=>h.status==="completed").length };

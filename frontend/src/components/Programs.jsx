@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
  * ============================================================ */
 export function ProgramsPanel() {
+  const confirm = useConfirm();
   const [programs, setPrograms] = useState([]);
   const [meta, setMeta] = useState(null);
   const [edit, setEdit] = useState(null);
@@ -35,7 +37,7 @@ export function ProgramsPanel() {
   };
 
   const remove = async (id) => {
-    if (!window.confirm("Archive this program? Existing enrollments are preserved.")) return;
+    if (!(await confirm({ title: "Archive this program?", body: "Existing dogs already enrolled in this program will keep their progress. New enrollments will no longer be possible.", confirmText: "Archive", tone: "warning" }))) return;
     try { await api.delete(`/programs/${id}`); load(); } catch (e) { setErr(e.response?.data?.detail); }
   };
 
@@ -84,7 +86,7 @@ export function ProgramsPanel() {
 /* ============================================================
  *  Program editor modal — used for both standard and custom programs
  * ============================================================ */
-export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false }) {
+export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "" }) {
   const set = (patch) => setProgram(p => ({ ...p, ...patch }));
   const addModule = () => set({ modules: [...(program.modules||[]), { name: "New module", description: "", goals: [] }] });
   const removeModule = (i) => set({ modules: program.modules.filter((_, j) => j !== i) });
@@ -216,10 +218,13 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
           </div>
         </div>
 
-        <div className="px-6 py-3 border-t border-bgHover flex justify-end gap-3 shrink-0">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-          <button onClick={onSave} data-testid="prog-save"
-                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save Program</button>
+        <div className="px-6 py-3 border-t border-bgHover flex justify-between items-center gap-3 shrink-0">
+          {extraError ? <p className="text-red-400 text-[12px] font-bold truncate flex-1" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
+          <div className="flex gap-3 shrink-0">
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+            <button onClick={onSave} data-testid="prog-save"
+                    className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save Program</button>
+          </div>
         </div>
       </div>
     </div>

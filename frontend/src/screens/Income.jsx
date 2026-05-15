@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
@@ -14,6 +15,7 @@ const PAYMENT_STATUSES = [
 const PAYMENT_METHODS = ["cash", "card", "transfer", "credits", "other"];
 
 export default function Income() {
+  const confirm = useConfirm();
   const [summary, setSummary] = useState(null);
   const [refDate, setRefDate] = useState(todayISO());
   const [rangeSummary, setRangeSummary] = useState(null);
@@ -28,6 +30,7 @@ export default function Income() {
   const [showLegacy, setShowLegacy] = useState(false);
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
+  const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
 
   const load = async () => {
     const [s, sum, svcs, ds] = await Promise.all([
@@ -112,19 +115,26 @@ export default function Income() {
       const sum = await api.get("/transactions/weekly-summary", { params: { ref_date: refDate } });
       setSummary(sum.data);
     } catch (e) {
-      window.alert(`Update failed: ${e.response?.data?.detail || e.message}`);
+      setEditErr(`Update failed: ${e.response?.data?.detail || e.message}`);
       load();  // pull fresh values to revert local optimistic state
     } finally { setSavingId(null); }
   };
 
   const removeTxn = async (r) => {
-    if (!window.confirm(`Remove transaction for ${r.dog_name} on ${r.date}?`)) return;
+    if (!(await confirm({ title: "Remove transaction?", body: `Transaction for ${r.dog_name} on ${r.date} will be permanently removed from your income log.`, confirmText: "Remove", tone: "danger" }))) return;
     await api.delete(`/transactions/${r.id}`);
     load();
   };
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="income-screen">
+      {editErr && (
+        <div className="fixed top-4 right-4 z-[70] bg-red-500/95 text-white px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 animate-slide-in" data-testid="income-edit-err">
+          <i className="fas fa-exclamation-triangle"/>
+          <span className="text-[13px] font-bold">{editErr}</span>
+          <button onClick={()=>setEditErr("")} className="ml-2 text-white/80 hover:text-white"><i className="fas fa-times"/></button>
+        </div>
+      )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-dollar-sign text-shGreen mr-2"/>Income & Services</h3>

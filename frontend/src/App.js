@@ -18,6 +18,7 @@ import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
 import InstallAppButton from "./components/InstallAppButton";
+import { ConfirmProvider } from "./lib/useConfirm";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -158,4 +159,6 @@ export default function App() {
       </AuthProvider>
     </ErrorBoundary>
   );
+}
+);
 }

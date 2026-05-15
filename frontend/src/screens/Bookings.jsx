@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
 
 export default function Bookings() {
@@ -8,14 +9,18 @@ export default function Bookings() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
 
+  const confirm = useConfirm();
   const load = async () => {
     try { const { data } = await api.get("/bookings"); setBookings(data); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { load(); }, []);
 
-  const approve = async (id) => { try { await api.post(`/bookings/${id}/approve`); load(); } catch (e) { alert(formatErr(e.response?.data?.detail)); } };
-  const reject = async (id) => { try { await api.post(`/bookings/${id}/reject`); load(); } catch (e) { alert(formatErr(e.response?.data?.detail)); } };
-  const cancel = async (id) => { if(!window.confirm("Cancel booking?")) return; try { await api.delete(`/bookings/${id}`); load(); } catch (e) { alert(formatErr(e.response?.data?.detail)); } };
+  const approve = async (id) => { try { await api.post(`/bookings/${id}/approve`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); } };
+  const reject = async (id) => { try { await api.post(`/bookings/${id}/reject`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); } };
+  const cancel = async (id) => {
+    if (!(await confirm({ title: "Cancel booking?", body: "This will remove the booking and refund any deducted credits.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
+    try { await api.delete(`/bookings/${id}`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
 
   const statusStyle = (s) => ({
     pending: "bg-shOrange/15 text-shOrange",

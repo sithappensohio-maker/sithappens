@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 /**
  * Admin-managed catalog of services with prices.
@@ -16,6 +17,7 @@ const SERVICE_TYPES = [
 const emptyService = { name: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", active: true };
 
 export default function ServicesSettings() {
+  const confirm = useConfirm();
   const [services, setServices] = useState([]);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyService);
@@ -44,7 +46,7 @@ export default function ServicesSettings() {
   };
 
   const remove = async (s) => {
-    if (!window.confirm(`Remove "${s.name}"? Default services soft-delete (re-seed to restore).`)) return;
+    if (!(await confirm({ title: `Remove "${s.name}"?`, body: "Default services are soft-deleted; re-seed from Settings to restore. Custom services are permanently removed.", confirmText: "Remove", tone: "danger" }))) return;
     await api.delete(`/services/${s.id}`);
     load();
   };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useConfirm } from "../lib/useConfirm";
 import { ProgramsPanel } from "../components/Programs";
 import ServicesSettings from "../components/ServicesSettings";
 import CreditPacksSettings from "../components/CreditPacksSettings";
@@ -353,7 +354,7 @@ function WaiverPanel({ s, save, saving }) {
                 className="bg-shBlue text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save Without Bumping
         </button>
-        <button onClick={()=>{ if(window.confirm("Bumping the version will require every client to re-sign before their next booking. Continue?")) saveAndMaybeBump(true); }} disabled={saving} data-testid="save-waiver-bump"
+        <button onClick={bumpAndSave} disabled={saving} data-testid="save-waiver-bump"
                 className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save & Bump Version (re-sign required)
         </button>
@@ -385,6 +386,7 @@ function SaveBar({ onSave, saving }) {
 
 
 function BackupPanel() {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [restoreFile, setRestoreFile] = useState(null);
@@ -427,7 +429,7 @@ function BackupPanel() {
     if (!restoreFile || !restorePreview) return;
     const total = Object.values(restorePreview.counts).reduce((a,b)=>a+b, 0);
     const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data";
-    if (!window.confirm(`Are you sure? This will ${verb} ${total} records from ${restoreFile.name}.\n\nThis cannot be undone — make sure you have a current backup downloaded first.`)) return;
+    if (!(await confirm({ title: restoreMode === "replace" ? "Replace ALL data?" : "Merge into current data?", body: `This will ${verb} ${total} records from ${restoreFile.name}.\n\nThis cannot be undone — make sure you have a current backup downloaded first.`, confirmText: restoreMode === "replace" ? "Yes, replace everything" : "Yes, merge", tone: "danger" }))) return;
     setBusy(true); setMsg("");
     try {
       const r = new FileReader();
@@ -528,6 +530,7 @@ function BackupPanel() {
 }
 
 function PhotoCompressionPanel() {
+  const confirm = useConfirm();
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -546,7 +549,7 @@ function PhotoCompressionPanel() {
   }, [status?.running]);
 
   const start = async () => {
-    if (!window.confirm("This will recompress every photo in your database (dogs, gallery, report cards, incidents). It runs in the background and may take several minutes. Safe to leave the page during the job. Proceed?")) return;
+    if (!(await confirm({ title: "Shrink all photos?", body: "This will recompress every photo in your database (dogs, gallery, report cards, incidents). It runs in the background and may take several minutes. Safe to leave the page during the job.", confirmText: "Start compression", tone: "warning" }))) return;
     setBusy(true); setErr("");
     try { const { data } = await api.post("/admin/compress-photos"); setStatus(data); }
     catch (e) { setErr(e.response?.data?.detail || "Could not start"); }
@@ -622,6 +625,7 @@ function PhotoCompressionPanel() {
 }
 
 function CommandsPanel() {
+  const confirm = useConfirm();
   const [commands, setCommands] = useState([]);
   const [meta, setMeta] = useState(null);
   const [edit, setEdit] = useState(null);
@@ -644,7 +648,7 @@ function CommandsPanel() {
     } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
   };
   const remove = async (id) => {
-    if (!window.confirm("Remove this command from the library? Existing dog progress is preserved.")) return;
+    if (!(await confirm({ title: "Remove command?", body: "Existing dog progress is preserved. The command will no longer be available for new training plans.", confirmText: "Remove", tone: "warning" }))) return;
     try { await api.delete(`/commands/${id}`); load(); } catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
   };
 
@@ -717,6 +721,19 @@ function CommandsPanel() {
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div className="flex justify-end gap-3 pt-2">
+                <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+                <button onClick={save} data-testid="cmd-save"
+                        className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+        <div className="flex justify-end gap-3 pt-2">
                 <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
                 <button onClick={save} data-testid="cmd-save"
                         className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>

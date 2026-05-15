@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
 import { ProgramEditor } from "./Programs";
 
@@ -284,11 +285,13 @@ function CustomProgramBuilder({ dogId, dogName, meta, onClose, onCreated }) {
     format: { count: 4, unit: "sessions" },
     modules: [{ name: "Phase 1", description: "", goals: [{ name: "First goal", description: "" }] }],
   });
+  const [saveErr, setSaveErr] = useState("");
   const save = async () => {
+    setSaveErr("");
     try {
       await api.post(`/dogs/${dogId}/programs/custom`, program);
       onCreated?.();
-    } catch (e) { window.alert(formatErr(e.response?.data?.detail) || "Save failed"); }
+    } catch (e) { setSaveErr(formatErr(e.response?.data?.detail) || "Save failed"); }
   };
-  return <ProgramEditor program={program} setProgram={setProgram} meta={meta} hideTypePicker={true} onSave={save} onClose={onClose} />;
+  return <ProgramEditor program={program} setProgram={setProgram} meta={meta} hideTypePicker={true} onSave={save} onClose={onClose} extraError={saveErr} />;
 }

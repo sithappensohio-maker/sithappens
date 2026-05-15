@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 
 const TYPES = [
@@ -26,6 +27,7 @@ const emptyForm = {
 };
 
 export default function Incidents() {
+  const confirm = useConfirm();
   const [incidents, setIncidents] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [open, setOpen] = useState(false);
@@ -64,7 +66,7 @@ export default function Incidents() {
   };
 
   const remove = async (id) => {
-    if (!window.confirm("Delete this incident? This is a permanent legal record.")) return;
+    if (!(await confirm({ title: "Delete this incident?", body: "Incident reports are a permanent legal record. Deleting one is rare — usually you'd resolve or amend instead.", confirmText: "Delete anyway", tone: "danger" }))) return;
     await api.delete(`/incidents/${id}`); load();
   };
 
