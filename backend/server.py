@@ -2949,7 +2949,56 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "total_dogs": len(dogs),
         "today_roster": roster,
         "upcoming_birthdays": _upcoming_birthdays(dogs, days_ahead=14),
+        "first_time_bookings_today": await _first_time_bookings_today(today, dog_map),
     }
+
+
+async def _first_time_bookings_today(today: str, dog_map: dict) -> list:
+    """Celebratory banner: bookings created today by clients who had no prior bookings.
+    Used to surface 'first booking from {Name}!' on the admin dashboard."""
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    today_prefix_lo = f"{today}T"
+    today_prefix_hi = f"{tomorrow}T"
+    # Pull just the bookings created in today's window (indexed on created_at).
+    new_today = await db.bookings.find(
+        {"created_at": {"$gte": today_prefix_lo, "$lt": today_prefix_hi}},
+        {"_id": 0},
+    ).to_list(200)
+    if not new_today:
+        return []
+    client_ids = list({b.get("client_id") for b in new_today if b.get("client_id")})
+    if not client_ids:
+        return []
+    # For each client, find the earliest booking created_at in one aggregation.
+    pipeline = [
+        {"$match": {"client_id": {"$in": client_ids}}},
+        {"$group": {"_id": "$client_id", "first_created": {"$min": "$created_at"}}},
+    ]
+    first_map = {}
+    async for row in db.bookings.aggregate(pipeline):
+        first_map[row["_id"]] = row.get("first_created") or ""
+    seen = set()
+    out = []
+    for b in new_today:
+        cid = b.get("client_id")
+        if not cid or cid in seen:
+            continue
+        first_iso = first_map.get(cid, "")
+        if not first_iso or not first_iso.startswith(today):
+            continue
+        seen.add(cid)
+        dog = dog_map.get(b.get("dog_id", ""), {})
+        out.append({
+            "booking_id": b.get("id"),
+            "client_id": cid,
+            "client_name": b.get("client_name", ""),
+            "dog_id": b.get("dog_id"),
+            "dog_name": dog.get("name") or b.get("dog_name", ""),
+            "service_type": b.get("service_type"),
+            "date": b.get("date"),
+            "end_date": b.get("end_date"),
+        })
+    return out
 
 
 def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:

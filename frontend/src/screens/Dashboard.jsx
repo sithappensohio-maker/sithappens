@@ -71,6 +71,26 @@ export default function Dashboard() {
         </div>
       )}
 
+      {(stats.first_time_bookings_today || []).length > 0 && (
+        <div className="bg-gradient-to-r from-shGreen/25 via-shGreen/10 to-shBlue/15 border border-shGreen/50 rounded-xl p-5 shadow-xl" data-testid="first-booking-banner">
+          <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2 mb-3">
+            <i className="fas fa-party-horn"/> First Booking Celebration · {stats.first_time_bookings_today.length}
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {stats.first_time_bookings_today.map(b => (
+              <div key={b.booking_id} className="bg-bgBase/60 rounded-full px-4 py-2 flex items-center gap-3 text-xs" data-testid={`first-booking-${b.booking_id}`}>
+                <span className="text-shGreen text-base"><i className="fas fa-paw"/></span>
+                <span className="font-black text-white uppercase">{b.client_name || "New client"}</span>
+                <span className="text-gray-400">just booked their</span>
+                <span className="font-black text-shGreen uppercase">first {b.service_type || "session"}</span>
+                {b.dog_name && <span className="text-gray-400">for <span className="font-black text-white uppercase">{b.dog_name}</span></span>}
+                {b.date && <span className="text-shBlue font-black uppercase text-[11px] tracking-widest">· {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {(stats.upcoming_birthdays || []).length > 0 && (
         <div className="bg-gradient-to-r from-shGreen/20 to-shBlue/10 border border-shGreen/40 rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
           <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2 mb-3"><i className="fas fa-cake-candles"/> Upcoming Birthdays · {stats.upcoming_birthdays.length}</h3>

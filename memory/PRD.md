@@ -321,6 +321,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 34 — First Booking Celebration Banner (2026-02)
+- ✅ **Backend** (`server.py`): added `_first_time_bookings_today()` helper called from `/api/dashboard/stats`. Logic: pull bookings created today (uses indexed `created_at` range filter), aggregate by client_id to find each client's earliest booking, include only those whose first-ever booking falls on today. One Mongo aggregation, deduped per client.
+- ✅ **Frontend** (`Dashboard.jsx`): new `<First Booking Celebration · N>` banner between the vaccine alerts and the upcoming birthdays. Green/blue gradient pill chips with a paw icon, "{Client} just booked their first {service} for {Dog} · {date}." Auto-disappears the next day. Hidden when zero qualifying bookings.
+- ✅ End-to-end verified: dashboard renders the banner with the 3 first-time bookings seeded by the test pipeline today.
+
 ## Sprint 33 — Account Claim by Email (2026-02)
 - ✅ **Backend** (`server.py`): new `POST /api/clients/{client_id}/send-claim-email` (admin-only) generates a 32-byte `secrets.token_urlsafe` claim token in collection `claim_tokens` `{token, client_id, email, is_reset, used, created_at, expires_at}`. 7-day expiry. Re-callable any time — issuing a new token deletes older unused tokens for the same client. Auto-detects whether to send a "claim" (no user yet) or "password reset" (existing portal user) email.
 - ✅ **Backend public endpoints** (no auth): `GET /api/claim/{token}` returns `{valid, client_name, email, is_reset, expires_at}`. `POST /api/claim/{token}` body `{password}` either creates the portal user (claim) or updates the existing user's password (reset), burns the token, and returns an `AuthOut` (JWT + user) so the client is auto-logged in.
