@@ -138,6 +138,7 @@ class ClientOut(ClientIn):
     id: str
     waiver: bool = False
     portal_email: Optional[str] = None  # the login email of linked user
+    dogs: Optional[List[Dict[str, Any]]] = None  # lightweight [{id, name, breed}] for admin listing
     created_at: str
 
 class PortalAccountIn(BaseModel):
@@ -364,10 +365,18 @@ async def me(user: dict = Depends(get_current_user)):
 @api.get("/clients", response_model=List[ClientOut])
 async def list_clients(_: dict = Depends(require_admin)):
     items = await db.clients.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
-    # attach portal email
+    # Pull all dogs once (without photos) and group by owner — avoids N+1.
+    dogs = await db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1}).to_list(2000)
+    dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
+    for d in dogs:
+        dogs_by_owner.setdefault(d.get("owner_id", ""), []).append(
+            {"id": d.get("id"), "name": d.get("name", ""), "breed": d.get("breed", "")}
+        )
+    # attach portal email + dogs
     for c in items:
         u = await db.users.find_one({"client_id": c["id"]}, {"_id": 0, "email": 1})
         c["portal_email"] = u["email"] if u else None
+        c["dogs"] = sorted(dogs_by_owner.get(c["id"], []), key=lambda x: (x.get("name") or "").lower())
     return items
 
 @api.post("/clients", response_model=ClientOut)

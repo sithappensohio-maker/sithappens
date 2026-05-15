@@ -123,6 +123,23 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
               {c.email && <p><i className="fas fa-envelope w-4 text-shBlue" /> {c.email}</p>}
               {c.address && <p><i className="fas fa-map-marker-alt w-4 text-shBlue" /> {c.address}</p>}
             </div>
+            <div className="mt-3 border-t border-bgHover pt-3" data-testid={`client-dogs-${c.id}`}>
+              <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest flex items-center gap-2">
+                <i className="fas fa-paw text-shGreen" /> Dogs · {(c.dogs || []).length}
+              </p>
+              {(c.dogs || []).length === 0 ? (
+                <p className="text-[12px] text-gray-600 italic mt-1">No dogs on file</p>
+              ) : (
+                <ul className="mt-1 text-[13px] text-white space-y-0.5">
+                  {c.dogs.map(d => (
+                    <li key={d.id} className="flex items-baseline gap-2" data-testid={`client-dog-${d.id}`}>
+                      <span className="font-black uppercase tracking-tight">{d.name}</span>
+                      {d.breed && <span className="text-gray-500 text-[12px]">· {d.breed}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div className="mt-4 grid grid-cols-3 gap-2 border-t border-bgHover pt-3">
               <div>
                 <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>

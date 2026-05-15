@@ -321,6 +321,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 36 — Client Hub: Dog list per client card (2026-02)
+- ✅ **Backend** (`server.py`): added `dogs: List[{id,name,breed}]` to `ClientOut`. `GET /api/clients` now pulls all dogs in one query (photo fields excluded), groups by `owner_id`, and attaches the sorted list to each client. No N+1.
+- ✅ **Frontend** (`Clients.jsx`): each client card now shows a "🐾 Dogs · N" section between contact info and credit stats. Lists each dog as "{Name} · {Breed}". Empty state: "No dogs on file" in muted grey.
+- ✅ Verified live: Alex Owner → Buddy, First Booker → Pixel · Mix, Garrett Compston → A, Celebration Test → Sparky · Lab.
+
 ## Sprint 35 — First Booking Email Notification (2026-02)
 - ✅ **Email service** (`email_service.py`): new `notify_admin_first_booking(booking, client)` — branded celebratory email with title "🎉 First booking — {Name}", subject prefixed with 🎉, includes client/dog/service/dates + phone/email contact, "Open Admin" CTA. Sends to `ADMIN_NOTIFICATION_EMAIL`.
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
