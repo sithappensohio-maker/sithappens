@@ -2643,9 +2643,10 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     today = date.today().isoformat()
     in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
-    # Projection skips heavy base64 photo fields — dashboard only needs
-    # vaccines, name, id, birthday, owner_id.
-    dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0, "feeding_schedule": 0, "medications": 0}
+    # Projection skips heavy base64 photo fields — dashboard roster needs
+    # feeding/medications/training_skills for the care-icon badges, but the
+    # photo arrays + raw training_logs are the bandwidth hogs.
+    dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0}
     dogs = await db.dogs.find({}, dog_proj).to_list(2000)
     health_flags = 0
     for d in dogs:
