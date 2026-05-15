@@ -197,6 +197,45 @@ async def notify_admin_new_client(user: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_first_booking(booking: dict, client: dict) -> None:
+    """🎉 The client just made their first-ever booking — celebrate it with the operator."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    svc_label = _service_label(booking.get("service_type", ""))
+    if booking.get("service_type") == "grooming" and booking.get("grooming_type"):
+        gt = "Bath" if booking["grooming_type"] == "bath" else "Nail Trim"
+        svc_label = f"{svc_label} · {gt}"
+    rows = [
+        ("Client", client.get("name") or booking.get("client_name", "—")),
+        ("Dog", booking.get("dog_name", "—")),
+        ("Service", svc_label),
+        ("Dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
+    ]
+    if client.get("phone"):
+        rows.append(("Phone", client["phone"]))
+    if client.get("email"):
+        rows.append(("Email", client["email"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    name = client.get("name") or booking.get("client_name", "A new client")
+    html = _wrap(
+        title=f"🎉 First booking — {name}",
+        intro=(
+            f"<strong>{name}</strong> just made their first-ever booking on Sit Happens. "
+            f"That's a brand-new client across the threshold — nice work."
+        ),
+        rows=rows,
+        cta_text="Open Admin" if cta_url else None,
+        cta_url=cta_url,
+        show_install=False,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"🎉 First booking · {name} · {svc_label} · {booking.get('date','')}",
+        html,
+    )
+
+
+
 async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     """A client logged a training note on their dog — notify the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:

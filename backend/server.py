@@ -23,6 +23,7 @@ from email_service import (
     notify_admin_new_client,
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
+    notify_admin_first_booking,
     notify_client_booking_approved,
     notify_client_homework_assigned,
     notify_client_low_credits,
@@ -838,6 +839,13 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             await notify_admin_new_booking(doc, client)
         except Exception:
             pass
+    # 🎉 First-ever booking for this client? Send a celebratory email to the operator.
+    try:
+        booking_count = await db.bookings.count_documents({"client_id": client["id"]})
+        if booking_count == 1:
+            await notify_admin_first_booking(doc, client)
+    except Exception:
+        pass
     # Low-credit heads-up to client (fires once per threshold crossing).
     if low_credit_remaining is not None:
         try:
