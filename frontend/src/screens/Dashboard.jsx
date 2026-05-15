@@ -42,6 +42,14 @@ export default function Dashboard() {
   useEffect(() => { load(); }, []);
 
   const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
+  const cancelBooking = async (b) => {
+    const credits = b.credits_deducted || 0;
+    const pool = b.credit_service_type || b.service_type;
+    const note = credits > 0 ? ` ${credits} ${pool} credit${credits === 1 ? "" : "s"} will be refunded to ${b.client_name}.` : "";
+    if (!window.confirm(`Cancel this booking for ${b.dog_name}?${note}\n\nUse this when a dog was checked in by mistake or the client changed their mind.`)) return;
+    try { await api.delete(`/bookings/${b.id}`); load(); }
+    catch (e) { alert(e.response?.data?.detail || "Cancel failed"); }
+  };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
   if (!stats) return <div className="text-gray-400 text-sm">Loading dashboard…</div>;
@@ -155,8 +163,15 @@ export default function Dashboard() {
                             className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
                   )}
                   {onPremises && (
-                    <button onClick={()=>setCheckoutFor(b)} data-testid={`checkout-${b.id}`}
-                            className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
+                    <>
+                      <button onClick={()=>setCheckoutFor(b)} data-testid={`checkout-${b.id}`}
+                              className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
+                      <button onClick={()=>cancelBooking(b)} data-testid={`cancel-${b.id}`}
+                              title="Cancel booking — refunds any credit deducted"
+                              className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[12px] tracking-widest hover:bg-red-500/40 hover:text-white">
+                        <i className="fas fa-times mr-1"/>Cancel
+                      </button>
+                    </>
                   )}
                   {done && !b.report_card && (
                     <button onClick={()=>setReportFor(b)} data-testid={`report-${b.id}`}
@@ -439,12 +454,26 @@ function CheckoutModal({ booking, services, onClose }) {
 
         {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
 
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-          <button onClick={submit} disabled={busy} data-testid="confirm-checkout"
-                  className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-            {busy ? "Checking out…" : "Complete Check-out"}
+        <div className="flex items-center justify-between gap-3">
+          <button onClick={async () => {
+            const credits = booking.credits_deducted || 0;
+            const pool = booking.credit_service_type || booking.service_type;
+            const note = credits > 0 ? ` ${credits} ${pool} credit${credits === 1 ? "" : "s"} will be refunded.` : "";
+            if (!window.confirm(`Cancel this booking instead?${note}`)) return;
+            setBusy(true);
+            try { await api.delete(`/bookings/${booking.id}`); onClose(); }
+            catch (e) { setErr(e.response?.data?.detail || "Cancel failed"); setBusy(false); }
+          }} disabled={busy} data-testid="checkout-cancel-booking"
+                  className="text-red-400 font-black uppercase text-[12px] tracking-widest hover:text-red-300 disabled:opacity-50">
+            <i className="fas fa-times-circle mr-1"/>Cancel booking instead
           </button>
+          <div className="flex gap-3">
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
+            <button onClick={submit} disabled={busy} data-testid="confirm-checkout"
+                    className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+              {busy ? "Checking out…" : "Complete Check-out"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
