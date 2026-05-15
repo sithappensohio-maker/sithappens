@@ -298,6 +298,79 @@ async def notify_client_low_credits(client: dict, service_type: str, remaining: 
     )
 
 
+async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, payment_method: str, note: str, sold_by: str, sold_at: str) -> None:
+    """Email a receipt to the client after one or more credit packs are sold.
+    `lines` is [{name, qty, unit_price, line_total, service_type}], totals is
+    the same shape returned by /sell-packs."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    rows_html = "".join(
+        f'<tr>'
+        f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
+        f'{ln["name"]}<br/><span style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:0.08em;">{ln["qty"]} × ${ln["unit_price"]:.2f} · {("training sessions" if ln.get("service_type")=="training" else "daycare credits")}</span></td>'
+        f'<td style="padding:10px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${ln["line_total"]:.2f}</td>'
+        f'</tr>'
+        for ln in lines
+    )
+    grand_total = round((totals.get("daycare", {}).get("price", 0) or 0) + (totals.get("training", {}).get("price", 0) or 0), 2)
+    pool_breakdown = ""
+    if totals.get("daycare", {}).get("qty", 0):
+        pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Daycare added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['daycare']['qty']} credits</td></tr>"
+    if totals.get("training", {}).get("qty", 0):
+        pool_breakdown += f"<tr><td style='padding:6px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;'>Training added</td><td style='padding:6px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;'>+{totals['training']['qty']} sessions</td></tr>"
+
+    method_label = (payment_method or "cash").title()
+    note_html = f'<p style="margin:14px 0 0 0;color:#64748b;font-size:13px;font-style:italic;">Note: {note}</p>' if note else ""
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    cta_html = (
+        f'<a href="{cta_url}" style="display:inline-block;background:{BRAND_BLUE};color:#fff;text-decoration:none;'
+        f'padding:14px 28px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:13px;margin-top:18px;">Open Portal</a>'
+        if cta_url else ""
+    )
+    first_name = (client.get("name") or "there").split(" ")[0]
+    body_html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr><td style="background:{BRAND_DARK};padding:24px 32px;">
+          <p style="margin:0;color:{BRAND_GREEN};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">Sit Happens · Receipt</p>
+          <h1 style="margin:6px 0 0 0;color:#fff;font-size:22px;font-weight:900;letter-spacing:-0.01em;">Thanks, {first_name}!</h1>
+          <p style="margin:8px 0 0 0;color:#94a3b8;font-size:13px;">Your credit pack purchase has been recorded.</p>
+        </td></tr>
+        <tr><td style="padding:24px 32px;">
+          <table cellpadding="0" cellspacing="0" style="width:100%;">{rows_html}</table>
+          <table cellpadding="0" cellspacing="0" style="width:100%;margin-top:10px;">{pool_breakdown}</table>
+          <table cellpadding="0" cellspacing="0" style="width:100%;margin-top:14px;border-top:2px solid #0f172a;">
+            <tr>
+              <td style="padding:12px 12px 4px 12px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;font-weight:700;">Payment</td>
+              <td style="padding:12px 12px 4px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;">{method_label}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 12px 12px 12px;color:#0f172a;font-size:18px;font-weight:900;text-transform:uppercase;letter-spacing:0.04em;">Total charged</td>
+              <td style="padding:4px 12px 12px 12px;color:{BRAND_GREEN};font-size:22px;font-weight:900;text-align:right;">${grand_total:.2f}</td>
+            </tr>
+          </table>
+          {note_html}
+          <p style="margin:18px 0 0 0;color:#64748b;font-size:12px;">Sold {sold_at[:10]} by {sold_by}. Credits never expire.</p>
+          {cta_html}
+        </td></tr>
+        <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">Sit Happens Dog Training · Daycare · Boarding<br/>
+          Questions about this receipt? Just reply to this email.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+    await _send(
+        to_email,
+        f"Receipt · ${grand_total:.2f} · Sit Happens credit packs",
+        body_html,
+    )
+
+
 async def notify_client_booking_approved(booking: dict, client: dict) -> None:
     """Booking approved — let the client know."""
     to_email = client.get("email", "")

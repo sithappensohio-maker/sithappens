@@ -25,6 +25,7 @@ from email_service import (
     notify_client_booking_approved,
     notify_client_homework_assigned,
     notify_client_low_credits,
+    notify_client_pack_receipt,
 )
 
 # -------- Config --------
@@ -3279,11 +3280,56 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         lot.pop("_id", None)
     totals_by_pool["daycare"]["price"] = round(totals_by_pool["daycare"]["price"], 2)
     totals_by_pool["training"]["price"] = round(totals_by_pool["training"]["price"], 2)
+    grand_total = round(totals_by_pool["daycare"]["price"] + totals_by_pool["training"]["price"], 2)
+
+    # Build line-items for the receipt (group identical packs into one row).
+    receipt_lines: List[Dict] = []
+    for item in body.items:
+        pack = packs[item.pack_id]
+        unit_price = float(pack["price"])
+        receipt_lines.append({
+            "pack_id": pack["id"],
+            "name": pack["name"],
+            "qty": item.quantity,
+            "unit_price": unit_price,
+            "line_total": round(unit_price * item.quantity, 2),
+            "service_type": pack.get("service_type") or "daycare",
+            "pack_qty": int(pack["qty"]),
+        })
+
+    receipt = {
+        "client_id": client_id,
+        "client_name": client.get("name", ""),
+        "client_email": client.get("email", ""),
+        "lines": receipt_lines,
+        "totals": totals_by_pool,
+        "total_price": grand_total,
+        "payment_method": body.payment_method,
+        "note": body.note or "",
+        "sold_by": user.get("name", "Admin"),
+        "sold_at": now,
+    }
+
+    # Best-effort: email the client a receipt copy.
+    try:
+        await notify_client_pack_receipt(
+            client=client,
+            lines=receipt_lines,
+            totals=totals_by_pool,
+            payment_method=body.payment_method or "cash",
+            note=body.note or "",
+            sold_by=user.get("name", "Admin"),
+            sold_at=now,
+        )
+    except Exception:
+        pass
+
     return {
         "lots": new_lots,
         "totals": totals_by_pool,
-        "total_price": round(totals_by_pool["daycare"]["price"] + totals_by_pool["training"]["price"], 2),
+        "total_price": grand_total,
         "lots_created": len(new_lots),
+        "receipt": receipt,
     }
 
 

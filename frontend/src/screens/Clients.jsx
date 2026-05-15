@@ -13,6 +13,7 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
   const [sellOpen, setSellOpen] = useState(null); // client object
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
+  const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
 
   const load = async () => {
     const [c, p] = await Promise.all([api.get("/clients"), api.get("/credit-packs").catch(()=>({data:[]}))]);
@@ -144,7 +145,11 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
       {sellOpen && (
         <SellPackModal client={sellOpen} packs={packs}
                        onClose={()=>setSellOpen(null)}
-                       onSold={()=>{ setSellOpen(null); load(); }} />
+                       onSold={(r)=>{ setSellOpen(null); load(); if (r?.receipt) setReceipt({ client: sellOpen, ...r.receipt }); }} />
+      )}
+
+      {receipt && (
+        <ReceiptModal data={receipt} onClose={()=>setReceipt(null)} />
       )}
     </div>
   );
@@ -183,8 +188,8 @@ function SellPackModal({ client, packs, onClose, onSold }) {
     setBusy(true); setErr("");
     try {
       const items = cartItems.map(it => ({ pack_id: it.pack.id, quantity: it.qty }));
-      await api.post(`/clients/${client.id}/sell-packs`, { items, payment_method: method, note });
-      onSold?.();
+      const r = await api.post(`/clients/${client.id}/sell-packs`, { items, payment_method: method, note });
+      onSold?.(r.data);
     } catch (e) {
       setErr(e.response?.data?.detail || "Sale failed");
     } finally { setBusy(false); }
@@ -303,6 +308,105 @@ function Modal({ title, children, onClose }) {
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function ReceiptModal({ data, onClose }) {
+  const { client, lines = [], totals = {}, total_price = 0, payment_method = "cash", note = "", sold_by = "", sold_at = "" } = data || {};
+  const dc = totals.daycare?.qty || 0;
+  const tr = totals.training?.qty || 0;
+  const dateStr = sold_at ? new Date(sold_at).toLocaleString() : new Date().toLocaleString();
+  const print = () => window.print();
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 print:bg-white print:p-0 print:block" data-testid="pack-receipt">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg shadow-2xl print:shadow-none print:bg-white print:border-0 print:rounded-none print:max-w-none print:w-full">
+        {/* Header (hidden in print) */}
+        <div className="flex items-center justify-between p-6 border-b border-bgHover print:hidden">
+          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
+            <i className="fas fa-receipt text-shGreen mr-2"/>Sale Complete
+          </h4>
+          <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="receipt-close"><i className="fas fa-times"/></button>
+        </div>
+
+        {/* Printable receipt body */}
+        <div id="pack-receipt-print" className="p-6 text-white print:text-black print:p-10">
+          <div className="border-b border-bgHover pb-4 mb-4 print:border-gray-300">
+            <p className="text-[11px] uppercase tracking-widest text-shGreen print:text-gray-600 font-black">Sit Happens · Receipt</p>
+            <h3 className="text-2xl font-black mt-1 uppercase tracking-tight print:text-black">{client?.name}</h3>
+            <p className="text-[12px] text-gray-400 print:text-gray-600 mt-1">{dateStr} · Sold by {sold_by}</p>
+          </div>
+
+          <table className="w-full text-[14px]">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600">
+                <th className="text-left font-black pb-2">Item</th>
+                <th className="text-right font-black pb-2">Qty</th>
+                <th className="text-right font-black pb-2">Each</th>
+                <th className="text-right font-black pb-2">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l, i) => (
+                <tr key={i} className="border-t border-bgHover print:border-gray-300" data-testid={`receipt-line-${i}`}>
+                  <td className="py-2.5 font-bold">
+                    {l.name}
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-bold">
+                      {(l.pack_qty || 0) * l.qty} {l.service_type === "training" ? "training sessions" : "daycare credits"}
+                    </p>
+                  </td>
+                  <td className="text-right py-2.5 font-bold">{l.qty}</td>
+                  <td className="text-right py-2.5">${l.unit_price.toFixed(2)}</td>
+                  <td className="text-right py-2.5 font-black">${l.line_total.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 text-[13px]">
+            {dc > 0 && (
+              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Daycare credits added</p>
+                <p className="text-shGreen text-2xl font-black print:text-black">+{dc}</p>
+              </div>
+            )}
+            {tr > 0 && (
+              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Training sessions added</p>
+                <p className="text-purple-400 text-2xl font-black print:text-black">+{tr}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-5 border-t-2 border-shGreen pt-3 flex items-end justify-between print:border-black">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Payment · {payment_method}</p>
+              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black mt-1">Credits never expire</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Total charged</p>
+              <p className="text-shGreen text-3xl font-black print:text-black" data-testid="receipt-total">${total_price.toFixed(2)}</p>
+            </div>
+          </div>
+
+          {note && <p className="mt-4 text-[12px] text-gray-400 italic print:text-gray-600">Note: {note}</p>}
+
+          <p className="mt-6 text-[11px] text-gray-500 print:text-gray-600 text-center">
+            Sit Happens Dog Training · Daycare · Boarding<br/>
+            Thank you for your business!
+          </p>
+        </div>
+
+        {/* Actions (hidden in print) */}
+        <div className="flex justify-end gap-3 p-6 border-t border-bgHover print:hidden">
+          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest" data-testid="receipt-done">Done</button>
+          <button onClick={print} data-testid="receipt-print"
+                  className="bg-shBlue text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
+            <i className="fas fa-print mr-2"/>Print Receipt
+          </button>
+        </div>
       </div>
     </div>
   );

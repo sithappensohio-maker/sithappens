@@ -44,3 +44,17 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-slide-in { animation: slide-in 0.25s ease-out; }
+
+/* Pack-sale receipt print mode — hide everything except the receipt.
+   Triggered by the .printing-receipt class added when [data-testid="pack-receipt"]
+   is in the DOM and the user invokes print. */
+@media print {
+  body > *:not(#root) { display: none !important; }
+  body, html { background: #fff !important; }
+  /* If a receipt modal is rendered, hide everything outside it during print */
+  #root:has([data-testid="pack-receipt"]) > *:not(:last-child) { display: none !important; }
+  #root:has([data-testid="pack-receipt"]) * { visibility: hidden; }
+  #root:has([data-testid="pack-receipt"]) [data-testid="pack-receipt"],
+  #root:has([data-testid="pack-receipt"]) [data-testid="pack-receipt"] * { visibility: visible !important; }
+  [data-testid="pack-receipt"] { position: absolute !important; inset: 0 !important; background: #fff !important; }
+}
