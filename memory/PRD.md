@@ -321,10 +321,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
-## Sprint 31 — Hotfix: Frontend Compile Errors (2026-02)
+## Sprint 31 — Hotfix: Frontend Compile Errors + Missing ConfirmProvider (2026-02)
 - ✅ Removed stray duplicated `);\n}` block trailing the `App` component in `/app/frontend/src/App.js` (lines 163-164) that crashed the bundler.
-- ✅ Found and removed a second related issue — 12 lines of duplicated JSX trailing the proper close of `Settings.jsx` (lines 736-747) — which was Babel's "Adjacent JSX elements must be wrapped in an enclosing tag" error revealed once App.js compiled.
-- ✅ ESLint clean across `/app/frontend/src`; login screen renders correctly in preview.
+- ✅ Removed 12 lines of duplicated JSX trailing the proper close of `Settings.jsx` (lines 736-747) that caused a Babel "Adjacent JSX elements must be wrapped" error.
+- ✅ **Critical fix:** `ConfirmProvider` was imported in `App.js` but never mounted, so every screen using the `useConfirm` hook (Clients, Dogs, Bookings, Homework, Income, Incidents, Pipeline) threw `useConfirm must be used inside <ConfirmProvider />` and was caught by ErrorBoundary as "Something tripped up." Wrapped `<Gate />` + `<InstallPrompt />` inside `<ConfirmProvider>`.
+- ✅ End-to-end verified via Playwright: logged in as admin and successfully navigated all 8 affected screens with zero page errors / zero console errors.
 
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models

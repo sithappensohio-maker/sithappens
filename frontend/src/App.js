@@ -154,8 +154,10 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <Gate />
-        <InstallPrompt />
+        <ConfirmProvider>
+          <Gate />
+          <InstallPrompt />
+        </ConfirmProvider>
       </AuthProvider>
     </ErrorBoundary>
   );
