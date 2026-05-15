@@ -354,7 +354,7 @@ function WaiverPanel({ s, save, saving }) {
                 className="bg-shBlue text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save Without Bumping
         </button>
-        <button onClick={bumpAndSave} disabled={saving} data-testid="save-waiver-bump"
+        <button onClick={()=>saveAndMaybeBump(true)} disabled={saving} data-testid="save-waiver-bump"
                 className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
           Save & Bump Version (re-sign required)
         </button>
