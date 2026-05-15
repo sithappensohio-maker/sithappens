@@ -17,7 +17,13 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
-from email_service import notify_admin_new_booking, notify_client_booking_approved
+from email_service import (
+    notify_admin_new_booking,
+    notify_admin_new_client,
+    notify_admin_homework_section_log,
+    notify_admin_homework_completed,
+    notify_client_booking_approved,
+)
 
 # -------- Config --------
 JWT_SECRET = os.environ["JWT_SECRET"]
@@ -299,6 +305,11 @@ async def register(body: RegisterIn):
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
+    # Best-effort: alert the operator that a new client just signed up.
+    try:
+        await notify_admin_new_client(user, client_doc)
+    except Exception:
+        pass
     token = create_access_token(user["id"], user["email"], user["role"])
     return {"token": token, "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]}}
 
@@ -1415,6 +1426,14 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
     }
     await db.homework.update_one({"id": homework_id}, {"$set": update})
     hw.update(update)
+    # Notify the operator when a client completes homework (skip admin-triggered marks).
+    if user.get("role") != "admin":
+        try:
+            client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
+            dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
+            await notify_admin_homework_completed(hw, client, dog)
+        except Exception:
+            pass
     return hw
 
 
@@ -1615,6 +1634,14 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
         {"$push": {"section_logs": entry}},
     )
     hw["section_logs"] = (hw.get("section_logs") or []) + [entry]
+    # Notify the operator when a client logs a session (skip self-logs by admin).
+    if user.get("role") != "admin":
+        try:
+            client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
+            dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
+            await notify_admin_homework_section_log(hw, entry, client, dog)
+        except Exception:
+            pass
     return hw
 
 

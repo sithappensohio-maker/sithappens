@@ -208,7 +208,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
           return (
             <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
               {d.photo
-                ? <img src={d.photo} alt={d.name} className="h-40 w-full object-cover" />
+                ? <div className="h-40 w-full bg-bgBase flex items-center justify-center overflow-hidden">
+                    <img src={d.photo} alt={d.name} className="max-h-40 max-w-full object-contain" />
+                  </div>
                 : <div className="h-40 w-full bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-5xl"><i className="fas fa-paw" /></div>}
               <div className="p-5">
                 <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
@@ -434,8 +436,10 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   <div className="grid grid-cols-3 gap-2">
                     {(form.photos || []).map((p, i) => (
                       <div key={i} className="relative group" data-testid={`gallery-photo-${i}`}>
-                        <img src={p} alt="" className="aspect-square w-full object-cover rounded cursor-pointer border border-bgHover hover:border-shBlue"
-                             onClick={()=>setLightbox({ open: true, photos: form.photos, index: i })} />
+                        <div className="aspect-square w-full bg-bgBase rounded border border-bgHover hover:border-shBlue overflow-hidden flex items-center justify-center cursor-pointer"
+                             onClick={()=>setLightbox({ open: true, photos: form.photos, index: i })}>
+                          <img src={p} alt="" className="max-h-full max-w-full object-contain" />
+                        </div>
                         <button onClick={()=>setForm({...form, photos: form.photos.filter((_,j)=>j!==i)})}
                                 className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full w-6 h-6 text-xs opacity-0 group-hover:opacity-100 transition"><i className="fas fa-times"/></button>
                       </div>

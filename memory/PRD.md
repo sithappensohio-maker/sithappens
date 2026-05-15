@@ -235,6 +235,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Client portal** — credit card split into two tiles: "Daycare · days remaining" (green) and "Training · sessions remaining" (purple).
 - ✅ **Payment method enum extended** — added `check` to support paper-check tracking on pack sales.
 
+## Sprint 19 — Admin Email Alerts + Photo Fit (2026-02)
+- ✅ **Dog photos display in full** — main dog card hero, gallery thumbnails, and portal dog cards now use `object-contain` with a bgBase letterbox so uploaded photos are never cropped. Lightbox already showed full image.
+- ✅ **Admin email notifications** wired through Resend (best-effort, non-blocking) for four client-triggered events:
+  - New client account registration (`/api/auth/register`)
+  - New booking from portal — already existed (`POST /api/bookings`)
+  - Homework session log by a client (`POST /api/homework/{id}/section-log`)
+  - Homework completion by a client (`POST /api/homework/{id}/complete`)
+- ✅ All notifications skip self-triggered admin actions (only fire when `user.role != "admin"`) and never raise — failures are logged but never break the underlying flow.
+- ✅ Smoke-tested via curl on `/api/auth/register` — Resend confirmed delivery to `sithappensohio@gmail.com`.
+
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY

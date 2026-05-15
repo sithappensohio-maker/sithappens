@@ -121,6 +121,119 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_new_client(user: dict, client: dict) -> None:
+    """A new client just self-registered — let the operator know."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    rows = [
+        ("Name", client.get("name") or user.get("name", "—")),
+        ("Email", user.get("email", "—")),
+        ("Phone", client.get("phone") or "—"),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title="🎉 New client signup",
+        intro=f"<strong>{client.get('name') or user.get('name', 'A new client')}</strong> just created an account on the Sit Happens portal.",
+        rows=rows,
+        cta_text="Open Admin" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"New client signup · {client.get('name') or user.get('name', '')}",
+        html,
+    )
+
+
+async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
+    """A client logged a training note on their dog — notify the operator."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    rows = [
+        ("Dog", dog.get("name", "—")),
+        ("Client", client.get("name", "—")),
+        ("Date", log.get("date", "—")),
+    ]
+    if log.get("tags"):
+        rows.append(("Tags", ", ".join(log["tags"])))
+    if log.get("note"):
+        rows.append(("Note", log["note"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"📝 New training note · {dog.get('name', '')}",
+        intro=f"<strong>{client.get('name', 'A client')}</strong> just added a training note for <strong>{dog.get('name','their dog')}</strong>.",
+        rows=rows,
+        cta_text="Open Pipeline" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"Training note · {dog.get('name','')} · {client.get('name','')}",
+        html,
+    )
+
+
+async def notify_admin_homework_section_log(hw: dict, entry: dict, client: dict, dog: dict) -> None:
+    """A client logged a homework session — notify the operator."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    section_name = "—"
+    snap = hw.get("template_snapshot") or {}
+    for s in snap.get("sections", []):
+        if s.get("id") == entry.get("section_id"):
+            section_name = s.get("name") or s.get("label") or section_name
+            break
+    rows = [
+        ("Dog", dog.get("name", "—") if dog else "—"),
+        ("Client", client.get("name", "—")),
+        ("Homework", hw.get("title", "—")),
+        ("Section", section_name),
+        ("Date", entry.get("date", "—")),
+    ]
+    if entry.get("note"):
+        rows.append(("Note", entry["note"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title="📋 Homework session logged",
+        intro=f"<strong>{client.get('name', 'A client')}</strong> just logged a training session for <strong>{hw.get('title','homework')}</strong>.",
+        rows=rows,
+        cta_text="Open Homework" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"Homework session · {hw.get('title','')} · {client.get('name','')}",
+        html,
+    )
+
+
+async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> None:
+    """A client marked a homework assignment as complete — notify the operator."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    rows = [
+        ("Dog", dog.get("name", "—") if dog else "—"),
+        ("Client", client.get("name", "—")),
+        ("Homework", hw.get("title", "—")),
+        ("Completed", hw.get("completed_at", "—")),
+    ]
+    if hw.get("completion_note"):
+        rows.append(("Note", hw["completion_note"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"✅ Homework completed · {hw.get('title','')}",
+        intro=f"<strong>{client.get('name', 'A client')}</strong> just finished a homework assignment.",
+        rows=rows,
+        cta_text="Open Homework" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"Homework completed · {hw.get('title','')} · {client.get('name','')}",
+        html,
+    )
+
+
 async def notify_client_booking_approved(booking: dict, client: dict) -> None:
     """Booking approved — let the client know."""
     to_email = client.get("email", "")

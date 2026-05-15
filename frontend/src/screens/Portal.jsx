@@ -361,7 +361,9 @@ export default function Portal() {
                 <button key={d.id} onClick={()=>setDogModal({open:true, dog:d})} data-testid={`portal-dog-${d.id}`}
                         className="text-left bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg hover:border-shGreen transition group">
                   {d.photo
-                    ? <img src={d.photo} alt={d.name} className="h-32 w-full object-cover" />
+                    ? <div className="h-32 w-full bg-bgBase flex items-center justify-center overflow-hidden">
+                        <img src={d.photo} alt={d.name} className="max-h-32 max-w-full object-contain" />
+                      </div>
                     : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
                   <div className="p-4">
                     <div className="flex items-center justify-between gap-2">
