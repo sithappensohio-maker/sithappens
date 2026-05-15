@@ -10,11 +10,14 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
   const [form, setForm] = useState(empty);
   const [portalOpen, setPortalOpen] = useState(null); // client id
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
+  const [sellOpen, setSellOpen] = useState(null); // client object
+  const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
 
   const load = async () => {
-    const { data } = await api.get("/clients");
-    setClients(data);
+    const [c, p] = await Promise.all([api.get("/clients"), api.get("/credit-packs").catch(()=>({data:[]}))]);
+    setClients(c.data);
+    setPacks(p.data || []);
   };
   useEffect(() => { load(); }, []);
 
@@ -91,6 +94,10 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
                     className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
               {c.portal_email ? "Update Portal Login" : "Create Portal Login"}
             </button>
+            <button onClick={()=>setSellOpen(c)} data-testid={`sell-pack-${c.id}`}
+                    className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
+              <i className="fas fa-coins mr-1"/>Sell Credit Pack
+            </button>
           </div>
         ))}
       </div>
@@ -129,7 +136,80 @@ export default function Clients({ focusId = null, onConsumed = () => {} }) {
           </div>
         </Modal>
       )}
+
+      {sellOpen && (
+        <SellPackModal client={sellOpen} packs={packs}
+                       onClose={()=>setSellOpen(null)}
+                       onSold={()=>{ setSellOpen(null); load(); }} />
+      )}
     </div>
+  );
+}
+
+function SellPackModal({ client, packs, onClose, onSold }) {
+  const active = packs.filter(p => p.active);
+  const [packId, setPackId] = useState(active[0]?.id || "");
+  const [method, setMethod] = useState("cash");
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const selected = active.find(p => p.id === packId);
+
+  const sell = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.post(`/clients/${client.id}/sell-pack`, { pack_id: packId, payment_method: method, note });
+      onSold?.();
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Sale failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Sell Credit Pack · ${client.name}`} onClose={onClose}>
+      {active.length === 0 ? (
+        <p className="text-[14px] text-gray-400">No packs configured. Set them up in <span className="text-shBlue">Settings → Credit Packs</span> first.</p>
+      ) : (
+        <div className="space-y-4" data-testid="sell-pack-modal">
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack</label>
+            <select value={packId} onChange={(e)=>setPackId(e.target.value)} data-testid="sell-pack-select"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              {active.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} credits · ${p.price.toFixed(2)} (${p.value_each.toFixed(2)}/credit)</option>)}
+            </select>
+          </div>
+          {selected && (
+            <div className="bg-bgBase border border-shGreen/30 rounded p-3 grid grid-cols-3 gap-3 text-center">
+              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Credits</p><p className="text-shBlue text-2xl font-black">+{selected.qty}</p></div>
+              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-shGreen text-2xl font-black">${selected.price.toFixed(2)}</p></div>
+              <div><p className="text-[11px] uppercase tracking-widest text-gray-500">Value/credit</p><p className="text-white text-2xl font-black">${selected.value_each.toFixed(2)}</p></div>
+            </div>
+          )}
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
+            <select value={method} onChange={(e)=>setMethod(e.target.value)}
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note (optional)</label>
+            <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="e.g., birthday gift, returning customer"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+          </div>
+          <p className="text-[11px] text-gray-500 italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
+          {err && <p className="text-red-400 text-[13px]">{err}</p>}
+          <div className="flex justify-end gap-3 pt-2">
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
+            <button onClick={sell} disabled={busy || !packId} data-testid="confirm-sell-pack"
+                    className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+              {busy ? "Selling…" : "Sell Pack"}
+            </button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

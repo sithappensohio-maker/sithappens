@@ -16,6 +16,10 @@ const PAYMENT_METHODS = ["cash", "card", "transfer", "credits", "other"];
 export default function Income() {
   const [summary, setSummary] = useState(null);
   const [refDate, setRefDate] = useState(todayISO());
+  const [rangeSummary, setRangeSummary] = useState(null);
+  const [rangePreset, setRangePreset] = useState("month"); // month | quarter | ytd | custom
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
   const [rows, setRows] = useState([]);
   const [services, setServices] = useState([]);
   const [dogs, setDogs] = useState([]);
@@ -35,6 +39,36 @@ export default function Income() {
     setRows(s.data); setSummary(sum.data); setServices(svcs.data); setDogs(ds.data);
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [refDate, showLegacy]);
+
+  // Compute preset range start/end (Month / Quarter / YTD anchored to refDate)
+  useEffect(() => {
+    if (rangePreset === "custom") return;
+    const d = new Date(refDate);
+    let s, e;
+    if (rangePreset === "month") {
+      s = new Date(d.getFullYear(), d.getMonth(), 1);
+      e = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    } else if (rangePreset === "quarter") {
+      const qStart = Math.floor(d.getMonth() / 3) * 3;
+      s = new Date(d.getFullYear(), qStart, 1);
+      e = new Date(d.getFullYear(), qStart + 3, 0);
+    } else if (rangePreset === "ytd") {
+      s = new Date(d.getFullYear(), 0, 1);
+      e = d;
+    }
+    setRangeStart(s.toISOString().split("T")[0]);
+    setRangeEnd(e.toISOString().split("T")[0]);
+  }, [rangePreset, refDate]);
+
+  // Load range summary whenever range changes
+  useEffect(() => {
+    if (!rangeStart || !rangeEnd) return;
+    let cancelled = false;
+    api.get("/transactions/summary-range", { params: { start_date: rangeStart, end_date: rangeEnd } })
+       .then(r => !cancelled && setRangeSummary(r.data))
+       .catch(()=>{});
+    return () => { cancelled = true; };
+  }, [rangeStart, rangeEnd]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -154,6 +188,41 @@ export default function Income() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Range view (month / quarter / YTD / custom) */}
+      {rangeSummary && (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="range-summary">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+            <div>
+              <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Longer-Range View</p>
+              <p className="text-white font-black uppercase italic tracking-tight">{rangeStart} → {rangeEnd}</p>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {["month","quarter","ytd","custom"].map(k => (
+                <button key={k} onClick={()=>setRangePreset(k)} data-testid={`range-preset-${k}`}
+                        className={`px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest ${rangePreset===k?"bg-shBlue text-white":"bg-bgBase text-gray-400 border border-bgHover hover:border-shBlue"}`}>
+                  {k === "ytd" ? "YTD" : k}
+                </button>
+              ))}
+            </div>
+          </div>
+          {rangePreset === "custom" && (
+            <div className="flex gap-2 mb-4">
+              <input type="date" value={rangeStart} onChange={(e)=>setRangeStart(e.target.value)} style={{colorScheme:"dark"}}
+                     className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+              <span className="text-gray-500 self-center">to</span>
+              <input type="date" value={rangeEnd} onChange={(e)=>setRangeEnd(e.target.value)} style={{colorScheme:"dark"}}
+                     className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+            </div>
+          )}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+            <StatTile label="Completed (revenue earned)" value={fmt(rangeSummary.completed_total)} sub={`over ${rangeSummary.by_day?.length || 0} active days`} color="text-shGreen" icon="fa-circle-check" big />
+            <StatTile label="Paid" value={fmt(rangeSummary.paid_total)} sub="received" color="text-shBlue" icon="fa-dollar-sign" />
+            <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
+          </div>
+          {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}
         </div>
       )}
 
@@ -287,8 +356,31 @@ export default function Income() {
   );
 }
 
-function StatTile({ label, value, sub, color, icon, big = false }) {
+function DailyBarChart({ points }) {
+  if (!points || points.length === 0) return null;
+  const max = Math.max(...points.map(p => p.total), 1);
   return (
+    <div className="bg-bgBase border border-bgHover rounded p-3" data-testid="daily-bar-chart">
+      <div className="flex items-end gap-[2px] h-32 overflow-x-auto">
+        {points.map((p) => {
+          const h = Math.max((p.total / max) * 100, 2);
+          return (
+            <div key={p.date} className="flex-1 min-w-[6px] flex flex-col items-center group" title={`${p.date} · $${p.total.toFixed(2)}`}>
+              <div className="w-full bg-shGreen/30 hover:bg-shGreen transition rounded-t" style={{ height: `${h}%` }} />
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-between mt-2 text-[10px] text-gray-500 font-black uppercase tracking-widest">
+        <span>{points[0]?.date}</span>
+        <span>{points.length} days w/ revenue</span>
+        <span>{points[points.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, sub, color, icon, big = false }) {  return (
     <div className={`bg-bgBase border border-bgHover rounded-lg p-3 ${big ? "md:col-span-1" : ""}`}>
       <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
       <p className={`${big ? "text-[24px]" : "text-[18px]"} font-black ${color} mt-1`}>{value}</p>

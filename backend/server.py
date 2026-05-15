@@ -255,6 +255,10 @@ class BookingOut(BaseModel):
     payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
     payment_method: Optional[Literal["cash", "card", "transfer", "credits", "other"]] = None
     paid_at: Optional[str] = None
+    # Sprint 17 — credit lot tracking. credit_value is accrued at approval,
+    # promoted to actual_price at check-out.
+    credit_value: Optional[float] = None
+    credit_lot_ids: Optional[List[str]] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -560,12 +564,18 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         doc["checked_in_at"] = now_iso()
     # Deduct daycare credits up to available balance — no hard block.
     deducted = 0
+    credit_value = 0.0
+    lot_ids: List[str] = []
     if status_val == "approved" and cost > 0:
         available = int(client.get("credits") or 0)
         deducted = min(cost, available)
         if deducted > 0:
             await db.clients.update_one({"id": client["id"]}, {"$inc": {"credits": -deducted}})
+            credit_value, lot_ids = await _consume_credit_lots(client["id"], deducted)
     doc["credits_deducted"] = deducted
+    if deducted > 0:
+        doc["credit_value"] = credit_value
+        doc["credit_lot_ids"] = lot_ids
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     # Best-effort notification: tell admin when a client books from the portal.
@@ -649,15 +659,22 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     # Credits only apply to daycare. Deduct up to available; don't block approval if short.
     cost = booking.get("cost") or 0
     deducted = 0
+    credit_value = 0.0
+    lot_ids: List[str] = []
     if booking.get("service_type") == "daycare" and cost > 0:
         client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = int((client or {}).get("credits") or 0)
         deducted = min(cost, available)
         if deducted > 0:
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": -deducted}})
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "approved", "credits_deducted": deducted}})
-    booking["status"] = "approved"
-    booking["credits_deducted"] = deducted
+            # Consume from oldest-first credit lots (FIFO) to determine per-credit value
+            credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], deducted)
+    update = {"status": "approved", "credits_deducted": deducted}
+    if deducted > 0:
+        update["credit_value"] = credit_value  # accrued revenue, recognized at check-out
+        update["credit_lot_ids"] = lot_ids
+    await db.bookings.update_one({"id": booking_id}, {"$set": update})
+    booking.update(update)
     # Best-effort confirmation email to the client
     try:
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
@@ -666,6 +683,50 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     except Exception:
         pass
     return booking
+
+
+async def _consume_credit_lots(client_id: str, qty: int) -> tuple:
+    """FIFO consumption: oldest lot first. Returns (total_value, [lot_ids_touched]).
+    If lots don't cover qty (legacy clients with credits but no lots), the
+    remainder is valued at $0 — preserves balance integrity without inventing
+    revenue."""
+    remaining = qty
+    total_value = 0.0
+    touched: List[str] = []
+    cursor = db.credit_lots.find(
+        {"client_id": client_id, "qty_remaining": {"$gt": 0}},
+        {"_id": 0},
+    ).sort("purchased_at", 1)
+    async for lot in cursor:
+        if remaining <= 0:
+            break
+        take = min(remaining, int(lot.get("qty_remaining") or 0))
+        if take <= 0:
+            continue
+        value = float(lot.get("value_each") or 0) * take
+        await db.credit_lots.update_one(
+            {"id": lot["id"]},
+            {"$inc": {"qty_remaining": -take}, "$set": {"last_redeemed_at": now_iso()}},
+        )
+        total_value += value
+        touched.append(lot["id"])
+        remaining -= take
+    return round(total_value, 2), touched
+
+
+async def _restore_credit_lots(lot_ids: List[str], qty: int) -> None:
+    """Restore lot quantities (used when cancelling/rejecting an approved
+    booking). Distributes the restore proportionally — simplest: just bump
+    the first lot in the list by qty."""
+    if not lot_ids or qty <= 0:
+        return
+    remaining = qty
+    # Restore in reverse order so the most-recently-consumed lot is restored first.
+    for lot_id in reversed(lot_ids):
+        if remaining <= 0:
+            break
+        await db.credit_lots.update_one({"id": lot_id}, {"$inc": {"qty_remaining": remaining}})
+        remaining = 0  # restore the full quantity into the first available lot
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
 async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
@@ -698,6 +759,7 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
         refund = int(booking.get("credits_deducted") or 0)
         if refund > 0:
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"credits": refund}})
+            await _restore_credit_lots(booking.get("credit_lot_ids") or [], refund)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
     return {"ok": True}
 
@@ -832,9 +894,18 @@ async def check_out(booking_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Booking not found")
     ts = now_iso()
     update = {"checked_out_at": ts, "status": "completed"}
-    # Auto-tally: if no price has been set yet, attach the matching default
-    # service's base price so this booking shows up in the weekly income view.
-    if not booking.get("actual_price") and not booking.get("service_id"):
+    # Credit-redemption income recognition — promote accrued credit_value to
+    # actual_price + mark paid via credits. This is the moment income shows
+    # up in the weekly tally.
+    if booking.get("credit_value") and not booking.get("actual_price"):
+        update["actual_price"] = float(booking["credit_value"])
+        update["payment_status"] = "paid"
+        update["payment_method"] = "credits"
+        update["paid_at"] = ts
+    # Auto-tally for cash bookings: if no price has been set yet AND no
+    # credits were redeemed, attach the matching default service's base price
+    # so it shows up in the weekly income view as unpaid.
+    elif not booking.get("actual_price") and not booking.get("service_id"):
         default_svc = await db.services.find_one(
             {"service_type": booking.get("service_type"), "is_default": True, "active": True},
             {"_id": 0},
@@ -2935,6 +3006,171 @@ async def summary_range(
         "paid_total": round(paid_total, 2),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
     }
+
+
+# ────────────────────────── Credit Packs + FIFO Lots ──────────────────────────
+from credit_packs_data import SEED_CREDIT_PACKS
+
+
+class CreditPackIn(BaseModel):
+    slug: Optional[str] = ""
+    name: str = Field(min_length=1)
+    qty: int = Field(ge=1)
+    price: float = Field(ge=0)
+    service_type: Optional[str] = "daycare"
+    active: bool = True
+
+
+class SellCreditPackIn(BaseModel):
+    pack_id: str
+    payment_method: Optional[Literal["cash", "card", "transfer", "other"]] = "cash"
+    note: Optional[str] = ""
+
+
+@api.get("/credit-packs")
+async def list_credit_packs(_: dict = Depends(get_current_user), include_inactive: bool = False):
+    q: Dict = {} if include_inactive else {"active": True}
+    packs = await db.credit_packs.find(q, {"_id": 0}).sort("qty", 1).to_list(200)
+    # Compute value_each on the fly so admins always see correct per-credit cost
+    for p in packs:
+        p["value_each"] = round(float(p.get("price") or 0) / max(int(p.get("qty") or 1), 1), 2)
+    return packs
+
+
+@api.post("/credit-packs")
+async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
+    doc["is_default"] = False
+    doc["created_at"] = now_iso()
+    await db.credit_packs.insert_one(doc)
+    doc.pop("_id", None)
+    doc["value_each"] = round(doc["price"] / max(doc["qty"], 1), 2)
+    return doc
+
+
+@api.put("/credit-packs/{pack_id}")
+async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends(require_admin)):
+    existing = await db.credit_packs.find_one({"id": pack_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    update = body.model_dump()
+    update.pop("slug", None)
+    update.pop("is_default", None)
+    await db.credit_packs.update_one({"id": pack_id}, {"$set": update})
+    merged = {**existing, **update}
+    merged["value_each"] = round(float(merged.get("price") or 0) / max(int(merged.get("qty") or 1), 1), 2)
+    return merged
+
+
+@api.delete("/credit-packs/{pack_id}")
+async def delete_credit_pack(pack_id: str, _: dict = Depends(require_admin)):
+    existing = await db.credit_packs.find_one({"id": pack_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    if existing.get("is_default"):
+        await db.credit_packs.update_one({"id": pack_id}, {"$set": {"active": False}})
+    else:
+        await db.credit_packs.delete_one({"id": pack_id})
+    return {"ok": True}
+
+
+@api.post("/credit-packs/seed-standard")
+async def seed_credit_packs(_: dict = Depends(require_admin)):
+    seeded = 0
+    for pack in SEED_CREDIT_PACKS:
+        if await db.credit_packs.find_one({"slug": pack["slug"]}, {"_id": 0}):
+            continue
+        doc = {**pack, "id": str(uuid.uuid4()), "is_default": True, "active": True, "created_at": now_iso()}
+        await db.credit_packs.insert_one(doc)
+        seeded += 1
+    total = await db.credit_packs.count_documents({"active": True})
+    return {"seeded": seeded, "total_active": total}
+
+
+@api.post("/clients/{client_id}/sell-pack")
+async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = Depends(require_admin)):
+    """Sell a pack to a client — increments their credit balance AND creates a
+    FIFO credit_lot tagged with the per-credit value. Does NOT generate a
+    revenue event (income is recognized when each credit is redeemed at
+    check-out)."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    pack = await db.credit_packs.find_one({"id": body.pack_id}, {"_id": 0})
+    if not pack:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    qty = int(pack["qty"])
+    value_each = round(float(pack["price"]) / max(qty, 1), 2)
+    lot = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "pack_id": pack["id"],
+        "pack_name": pack["name"],
+        "qty_total": qty,
+        "qty_remaining": qty,
+        "price_paid": float(pack["price"]),
+        "value_each": value_each,
+        "payment_method": body.payment_method,
+        "note": body.note or "",
+        "sold_by": user.get("name", "Admin"),
+        "purchased_at": now_iso(),
+    }
+    await db.credit_lots.insert_one(lot)
+    await db.clients.update_one({"id": client_id}, {"$inc": {"credits": qty}})
+    lot.pop("_id", None)
+    return lot
+
+
+@api.get("/clients/{client_id}/credit-lots")
+async def list_client_lots(client_id: str, _: dict = Depends(require_admin)):
+    lots = await db.credit_lots.find({"client_id": client_id}, {"_id": 0}).sort("purchased_at", -1).to_list(200)
+    return lots
+
+
+# ────────────────────────── Multi-Date Bookings ──────────────────────────
+class MultiDateBookingIn(BaseModel):
+    dog_id: str
+    dates: List[str] = Field(min_length=1, max_length=60)  # YYYY-MM-DD strings
+    service_type: Literal["daycare", "training", "grooming"] = "daycare"
+    notes: Optional[str] = ""
+    override_capacity: Optional[bool] = False  # admin only
+    override_vaccines: Optional[bool] = False  # admin only
+
+
+@api.post("/bookings/multi-dates")
+async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depends(get_current_user)):
+    """Creates one booking per date in `dates`. Returns
+    {created: [...], skipped: [{date, reason}]} so the UI can show exactly
+    which days made it and which were rejected (capacity, vaccine, etc).
+    Each booking goes through the standard create_booking validations, so
+    capacity + vaccines + waiver still apply."""
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog["owner_id"] != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+
+    created: List[Dict] = []
+    skipped: List[Dict] = []
+    for d in sorted(set(body.dates)):
+        try:
+            inn = BookingIn(
+                dog_id=body.dog_id,
+                date=d,
+                service_type=body.service_type,
+                notes=body.notes or "",
+                override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
+                override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
+            )
+            booking = await create_booking(inn, user)
+            created.append(booking)
+        except HTTPException as e:
+            skipped.append({"date": d, "reason": e.detail})
+        except Exception as e:
+            skipped.append({"date": d, "reason": str(e)[:200]})
+    return {"created": created, "skipped": skipped, "summary": f"{len(created)} booked, {len(skipped)} skipped"}
 
 
 @api.get("/")

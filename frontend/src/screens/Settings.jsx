@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ProgramsPanel } from "../components/Programs";
 import ServicesSettings from "../components/ServicesSettings";
+import CreditPacksSettings from "../components/CreditPacksSettings";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -59,6 +60,7 @@ export default function Settings() {
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
     { id: "programs", label: "Programs", icon: "fa-list-check" },
     { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
+    { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
     { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
@@ -90,6 +92,7 @@ export default function Settings() {
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
           {tab === "programs" && <ProgramsPanel />}
           {tab === "services" && <ServicesSettings />}
+          {tab === "credit_packs" && <CreditPacksSettings />}
           {tab === "commands" && <CommandsPanel />}
           {tab === "backup" && <BackupPanel />}
           {tab === "account" && (

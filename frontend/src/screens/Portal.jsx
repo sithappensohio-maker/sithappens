@@ -7,6 +7,7 @@ import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
+import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import Tutorials from "./Tutorials";
 
@@ -23,6 +24,8 @@ export default function Portal() {
   const [bookType, setBookType] = useState("daycare");
   const [groomingType, setGroomingType] = useState("bath");
   const [isRecurring, setIsRecurring] = useState(false);
+  const [isMultiDate, setIsMultiDate] = useState(false);
+  const [multiDates, setMultiDates] = useState([]);  // array of YYYY-MM-DD
   const [recEnd, setRecEnd] = useState("");
   const [recDays, setRecDays] = useState([]);
   const [avail, setAvail] = useState(null);
@@ -95,7 +98,16 @@ export default function Portal() {
   const book = async () => {
     setErr(""); setSuccess("");
     try {
-      if (isRecurring && bookType !== "boarding") {
+      if (isMultiDate && bookType !== "boarding") {
+        if (multiDates.length === 0) { setErr("Pick at least one date"); return; }
+        const { data } = await api.post("/bookings/multi-dates", {
+          dog_id: bookDogId, dates: multiDates, service_type: bookType,
+        });
+        const c = data.created?.length || 0;
+        const s = data.skipped?.length || 0;
+        setSuccess(`${c} bookings created${s?`, ${s} skipped (${data.skipped.map(x=>`${x.date}: ${x.reason}`).join('; ')})`:""}.`);
+        setMultiDates([]); setIsMultiDate(false);
+      } else if (isRecurring && bookType !== "boarding") {
         if (recDays.length === 0) { setErr("Pick at least one weekday"); return; }
         if (!recEnd) { setErr("Pick an end date for the recurrence"); return; }
         const { data } = await api.post("/bookings/recurring", {
@@ -112,6 +124,8 @@ export default function Portal() {
       loadAll();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
+
+  const toggleMultiDate = (d) => setMultiDates(multiDates.includes(d) ? multiDates.filter(x=>x!==d) : [...multiDates, d].sort());
 
   const toggleRecDay = (d) => setRecDays(recDays.includes(d) ? recDays.filter(x=>x!==d) : [...recDays, d]);
 
@@ -254,15 +268,25 @@ export default function Portal() {
             )}
 
             {bookType !== "boarding" && (
-              <label className="flex items-center gap-2 mb-3 cursor-pointer">
-                <input type="checkbox" checked={isRecurring} onChange={(e)=>setIsRecurring(e.target.checked)} data-testid="recurring-toggle" className="accent-shGreen" />
-                <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Recurring booking</span>
-              </label>
+              <div className="flex gap-4 mb-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isRecurring} onChange={(e)=>{setIsRecurring(e.target.checked); if(e.target.checked) setIsMultiDate(false);}} data-testid="recurring-toggle" className="accent-shGreen" />
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Recurring (weekdays)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={isMultiDate} onChange={(e)=>{setIsMultiDate(e.target.checked); if(e.target.checked) setIsRecurring(false);}} data-testid="multi-date-toggle" className="accent-shGreen" />
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Pick specific days</span>
+                </label>
+              </div>
             )}
 
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":isRecurring?"Recurrence Start":"Date"}</label>
-            <input type="date" value={bookDate} onChange={(e)=>setBookDate(e.target.value)} data-testid="portal-book-date"
-                   className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+            {!isMultiDate && (
+              <>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":isRecurring?"Recurrence Start":"Date"}</label>
+                <input type="date" value={bookDate} onChange={(e)=>setBookDate(e.target.value)} data-testid="portal-book-date"
+                       className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+              </>
+            )}
 
             {bookType==="boarding" && <>
               <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">End Date</label>
@@ -282,6 +306,10 @@ export default function Portal() {
                 ))}
               </div>
             </>}
+
+            {isMultiDate && bookType!=="boarding" && (
+              <MultiDateCalendar selected={multiDates} onToggle={toggleMultiDate} />
+            )}
 
             {avail && (
               <div className={`text-[14px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 ${!avail.vaccine_ok?"bg-red-500/20 text-red-400":avail.open_slots<=0?"bg-shOrange/20 text-shOrange":"bg-shGreen/10 text-shGreen"}`} data-testid="availability-message">
