@@ -234,6 +234,70 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     )
 
 
+async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
+    """A client just got a new homework assignment — let them know."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    rows = [
+        ("Dog", hw.get("dog_name", "—")),
+        ("Assignment", hw.get("title", "—")),
+    ]
+    if hw.get("due_date"):
+        rows.append(("Due", hw["due_date"]))
+    if hw.get("assigned_by"):
+        rows.append(("Assigned by", hw["assigned_by"]))
+    if hw.get("instructions"):
+        # Trim long instructions for the email preview
+        notes = hw["instructions"]
+        if len(notes) > 280:
+            notes = notes[:280] + "…"
+        rows.append(("Notes", notes))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    html = _wrap(
+        title=f"📚 New homework · {hw.get('dog_name', '')}",
+        intro=f"Hi {first_name}, your trainer just assigned <strong>{hw.get('title','a new homework')}</strong> for <strong>{hw.get('dog_name','your pup')}</strong>. Log in to your portal to start tracking sessions.",
+        rows=rows,
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        to_email,
+        f"New homework · {hw.get('title','')} · {hw.get('dog_name','')}",
+        html,
+    )
+
+
+async def notify_client_low_credits(client: dict, service_type: str, remaining: int) -> None:
+    """Heads-up to the client when their daycare/training credits hit the
+    low-balance threshold (currently 2 or fewer)."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    label = "Training" if service_type == "training" else "Daycare"
+    unit = "sessions" if service_type == "training" else "days"
+    rows = [
+        ("Pool", f"{label} credits"),
+        ("Remaining", f"{remaining} {unit}"),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    intro_state = "you're out of credits" if remaining <= 0 else f"you've only got <strong>{remaining} {unit}</strong> left on your <strong>{label.lower()}</strong> pack"
+    html = _wrap(
+        title=f"⚠️ Low {label.lower()} credits",
+        intro=f"Hi {first_name}, heads up — {intro_state}. Reach out anytime and we'll get a new pack set up so {label.lower()} doesn't pause.",
+        rows=rows,
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        to_email,
+        f"Low {label.lower()} credits · {remaining} {unit} left",
+        html,
+    )
+
+
 async def notify_client_booking_approved(booking: dict, client: dict) -> None:
     """Booking approved — let the client know."""
     to_email = client.get("email", "")

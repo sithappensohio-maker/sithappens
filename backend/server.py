@@ -23,6 +23,8 @@ from email_service import (
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
     notify_client_booking_approved,
+    notify_client_homework_assigned,
+    notify_client_low_credits,
 )
 
 # -------- Config --------
@@ -579,6 +581,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     deducted = 0
     credit_value = 0.0
     lot_ids: List[str] = []
+    low_credit_remaining: Optional[int] = None  # set when balance crosses the low-credit threshold
     if status_val == "approved" and body.service_type in ("daycare", "training"):
         balance_field = "training_credits" if body.service_type == "training" else "credits"
         needed = 1 if body.service_type == "training" else cost
@@ -587,6 +590,10 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         if deducted > 0:
             await db.clients.update_one({"id": client["id"]}, {"$inc": {balance_field: -deducted}})
             credit_value, lot_ids = await _consume_credit_lots(client["id"], deducted, body.service_type)
+            # Low-credit heads-up: previously >2, now ≤2 → notify (fires once per crossing).
+            after = available - deducted
+            if available > 2 and after <= 2:
+                low_credit_remaining = after
     doc["credits_deducted"] = deducted
     if deducted > 0:
         doc["credit_value"] = credit_value
@@ -599,6 +606,12 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if not is_admin:
         try:
             await notify_admin_new_booking(doc, client)
+        except Exception:
+            pass
+    # Low-credit heads-up to client (fires once per threshold crossing).
+    if low_credit_remaining is not None:
+        try:
+            await notify_client_low_credits(client, body.service_type, low_credit_remaining)
         except Exception:
             pass
     return doc
@@ -680,6 +693,7 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     credit_value = 0.0
     lot_ids: List[str] = []
     svc_type = booking.get("service_type")
+    low_credit_remaining: Optional[int] = None  # set when balance crosses the low-credit threshold
     if svc_type in ("daycare", "training"):
         # Training uses 1 credit per session regardless of `cost` (which is a
         # daycare-day count). Daycare uses the existing `cost` field.
@@ -692,6 +706,11 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
             if deducted > 0:
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -deducted}})
                 credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], deducted, svc_type)
+                # Low-credit heads-up: previously >2, now ≤2 → notify (fires once per crossing).
+                before = available
+                after = available - deducted
+                if before > 2 and after <= 2:
+                    low_credit_remaining = after
     update = {"status": "approved", "credits_deducted": deducted}
     if deducted > 0:
         update["credit_value"] = credit_value
@@ -704,6 +723,8 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         if client_doc:
             await notify_client_booking_approved(booking, client_doc)
+            if low_credit_remaining is not None:
+                await notify_client_low_credits(client_doc, svc_type, low_credit_remaining)
     except Exception:
         pass
     return booking
@@ -1404,6 +1425,12 @@ async def create_homework(body: HomeworkIn, user: dict = Depends(require_admin))
     })
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
+    # Best-effort: let the client know they have new homework.
+    if client:
+        try:
+            await notify_client_homework_assigned(doc, client)
+        except Exception:
+            pass
     return doc
 
 @api.delete("/homework/{homework_id}")
@@ -1603,6 +1630,12 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
+    # Best-effort: let the client know they have new homework.
+    if client:
+        try:
+            await notify_client_homework_assigned(doc, client)
+        except Exception:
+            pass
     return doc
 
 
