@@ -21,19 +21,20 @@ export default function Income() {
   const [dogs, setDogs] = useState([]);
   const [logOpen, setLogOpen] = useState(false);
   const [filters, setFilters] = useState({ dog_id: "", service_id: "", payment_status: "", status: "" });
+  const [showLegacy, setShowLegacy] = useState(false);
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
 
   const load = async () => {
     const [s, sum, svcs, ds] = await Promise.all([
-      api.get("/transactions", { params: { start_date: undefined } }),
+      api.get("/transactions", { params: { revenue_only: !showLegacy } }),
       api.get("/transactions/weekly-summary", { params: { ref_date: refDate } }),
       api.get("/services"),
       api.get("/dogs"),
     ]);
     setRows(s.data); setSummary(sum.data); setServices(svcs.data); setDogs(ds.data);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [refDate]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [refDate, showLegacy]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -74,9 +75,11 @@ export default function Income() {
     try {
       const { data } = await api.put(`/transactions/${r.id}`, patch);
       setRows(rs => rs.map(x => x.id === r.id ? { ...x, ...data } : x));
-      // Recompute summary if status / price changed within current week
       const sum = await api.get("/transactions/weekly-summary", { params: { ref_date: refDate } });
       setSummary(sum.data);
+    } catch (e) {
+      window.alert(`Update failed: ${e.response?.data?.detail || e.message}`);
+      load();  // pull fresh values to revert local optimistic state
     } finally { setSavingId(null); }
   };
 
@@ -180,6 +183,11 @@ export default function Income() {
           <option value="approved">Approved</option>
           <option value="completed">Completed</option>
         </select>
+        <label className="flex items-center gap-2 text-[12px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shBlue">
+          <input type="checkbox" checked={showLegacy} onChange={(e)=>setShowLegacy(e.target.checked)} data-testid="show-legacy-toggle"
+                 className="w-4 h-4 accent-shBlue" />
+          Include unpriced
+        </label>
       </div>
 
       {/* Spreadsheet table */}
@@ -212,11 +220,14 @@ export default function Income() {
                       <p className="text-[11px] text-gray-500">{r.client_name}</p>
                     </td>
                     <td className="px-3 py-2">
-                      <select value={r.service_id || ""} onChange={(e)=>inlineUpdate(r, { service_id: e.target.value })}
+                      <select value={r.service_id || ""} onChange={(e)=>{ if (e.target.value) inlineUpdate(r, { service_id: e.target.value }); }}
                               className="bg-bgBase border border-bgHover rounded p-1 text-[12px] text-gray-300 max-w-[150px]">
-                        <option value="">{r.service_type || "(none)"}</option>
+                        <option value="" disabled>— select service —</option>
                         {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
+                      {!r.service_id && r.service_type && (
+                        <p className="text-[10px] text-gray-500 mt-0.5 uppercase">legacy · {r.service_type}</p>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <input type="number" step="0.01" defaultValue={r.actual_price || 0}

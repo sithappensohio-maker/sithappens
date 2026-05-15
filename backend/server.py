@@ -2671,6 +2671,7 @@ async def update_service(service_id: str, body: ServiceIn, _: dict = Depends(req
         raise HTTPException(status_code=404, detail="Service not found")
     update = body.model_dump()
     update.pop("slug", None)  # slug is immutable
+    update.pop("is_default", None)  # is_default is server-managed
     await db.services.update_one({"id": service_id}, {"$set": update})
     return {**existing, **update}
 
@@ -2805,12 +2806,13 @@ async def list_transactions(
     service_id: Optional[str] = None,
     status: Optional[str] = None,
     payment_status: Optional[str] = None,
+    revenue_only: bool = True,
 ):
     """Returns booking rows annotated as transactions.
-    By default: rows with `service_id` set OR `actual_price > 0` (i.e., revenue-bearing).
-    `actual_price` is computed from settings.credit_cost as a fallback for legacy
-    pre-Sprint-16 bookings so they still appear in the weekly tally.
-    """
+    Default (`revenue_only=true`): only rows tagged with a service or non-zero
+    actual_price — keeps the Income screen focused on real revenue events.
+    Set `revenue_only=false` to include legacy approved/pending bookings that
+    haven't been priced yet (useful for backfill / migrations)."""
     q: Dict = {}
     if start_date or end_date:
         date_q: Dict = {}
@@ -2829,18 +2831,17 @@ async def list_transactions(
         q["payment_status"] = payment_status
 
     rows = await db.bookings.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
-    # Filter to revenue rows only (anything with a service_id OR an actual_price)
     enriched = []
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
-        if r.get("service_id") or r.get("actual_price"):
-            enriched.append(r)
-            continue
-        # Legacy fallback — synthesize price from credit_cost
-        # (so historical bookings still show up & can be tallied).
-        if r.get("status") in ("approved", "completed", "pending"):
-            enriched.append(r)
+        is_revenue = bool(r.get("service_id")) or bool(r.get("actual_price"))
+        if revenue_only:
+            if is_revenue:
+                enriched.append(r)
+        else:
+            if is_revenue or r.get("status") in ("approved", "completed", "pending"):
+                enriched.append(r)
     return enriched
 
 

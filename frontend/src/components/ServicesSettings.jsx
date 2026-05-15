@@ -88,7 +88,7 @@ export default function ServicesSettings() {
               <i className={`fas ${s.icon || "fa-tag"}`} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-white font-black text-[14px] uppercase tracking-tight">{s.name}</p>
+              <p className="text-white font-black text-[14px] tracking-tight">{s.name}</p>
               <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{s.service_type}{s.is_default ? " · default" : ""}{!s.active ? " · inactive" : ""}</p>
             </div>
             <p className="text-shGreen font-black text-[18px]">${s.base_price?.toFixed(2)}</p>
