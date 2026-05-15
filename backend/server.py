@@ -2797,6 +2797,24 @@ BACKUP_COLLECTIONS = [
 ]
 BACKUP_VERSION = 1
 
+@api.post("/admin/compress-photos")
+async def admin_compress_photos(_: dict = Depends(require_admin)):
+    """Kick off a one-time background job that recompresses every base64
+    photo in dogs, bookings.report_card, and incidents to the smaller JPEG
+    format used by the frontend compressor. Idempotent: photos already
+    under ~350 KB are skipped, so re-running is cheap. Returns the current
+    progress snapshot — poll `GET /admin/compress-photos/status` to watch."""
+    import photo_backfill
+    return photo_backfill.start_backfill(db)
+
+
+@api.get("/admin/compress-photos/status")
+async def admin_compress_photos_status(_: dict = Depends(require_admin)):
+    """Snapshot of the photo backfill (running / counts / bytes saved)."""
+    import photo_backfill
+    return photo_backfill.get_status()
+
+
 @api.get("/backup/export")
 async def backup_export(_: dict = Depends(require_admin)):
     """Download a full JSON backup of every business collection. User accounts
@@ -2860,21 +2878,29 @@ async def startup():
     await db.bookings.create_index("id", unique=True)
     # Performance indexes — hot query paths used by Dashboard, Schedule,
     # Bookings, Pipeline, Income. All safe to create; existing data uses
-    # them on next query. No data migration needed.
-    await db.bookings.create_index([("date", 1), ("status", 1)])
-    await db.bookings.create_index("dog_id")
-    await db.bookings.create_index("client_id")
-    await db.bookings.create_index("status")
-    await db.dogs.create_index("owner_id")
-    await db.homework.create_index("dog_id")
-    await db.homework.create_index("client_id")
-    await db.homework.create_index([("status", 1), ("created_at", -1)])
-    await db.dog_programs.create_index("dog_id")
-    await db.dog_programs.create_index([("dog_id", 1), ("status", 1)])
-    await db.credit_lots.create_index([("client_id", 1), ("purchased_at", -1)])
-    await db.credit_lots.create_index([("client_id", 1), ("service_type", 1), ("qty_remaining", 1)])
-    await db.incidents.create_index([("date", -1), ("dog_id", 1)])
-    await db.vaccine_dismissals.create_index("dog_id")
+    # them on next query. Each wrapped individually so one failure (e.g.
+    # legacy collection with a conflicting index def) never aborts startup.
+    perf_indexes = [
+        (db.bookings, [("date", 1), ("status", 1)], {}),
+        (db.bookings, "dog_id", {}),
+        (db.bookings, "client_id", {}),
+        (db.bookings, "status", {}),
+        (db.dogs, "owner_id", {}),
+        (db.homework, "dog_id", {}),
+        (db.homework, "client_id", {}),
+        (db.homework, [("status", 1), ("created_at", -1)], {}),
+        (db.dog_programs, "dog_id", {}),
+        (db.dog_programs, [("dog_id", 1), ("status", 1)], {}),
+        (db.credit_lots, [("client_id", 1), ("purchased_at", -1)], {}),
+        (db.credit_lots, [("client_id", 1), ("service_type", 1), ("qty_remaining", 1)], {}),
+        (db.incidents, [("date", -1), ("dog_id", 1)], {}),
+        (db.vaccine_dismissals, "dog_id", {}),
+    ]
+    for coll, key, opts in perf_indexes:
+        try:
+            await coll.create_index(key, **opts)
+        except Exception as e:
+            logger.warning(f"Could not create index {key} on {coll.name}: {e}")
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

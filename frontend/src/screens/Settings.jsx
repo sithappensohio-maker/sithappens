@@ -521,6 +521,102 @@ function BackupPanel() {
         <p className="text-shBlue font-black uppercase tracking-widest mb-2"><i className="fas fa-circle-info mr-2"/>What's in a backup?</p>
         <p>Clients, dogs, bookings, incidents, homework, waiver signatures, and your settings. Admin login credentials are <span className="text-white font-black">not</span> included — your password stays in the database and is never exported. Backups are plain JSON and safe to email to yourself or store in cloud storage.</p>
       </div>
+
+      <PhotoCompressionPanel />
+    </div>
+  );
+}
+
+function PhotoCompressionPanel() {
+  const [status, setStatus] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    try { const { data } = await api.get("/admin/compress-photos/status"); setStatus(data); }
+    catch (e) { setErr(e.response?.data?.detail || "Could not fetch status"); }
+  };
+
+  // Poll while running.
+  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    if (!status?.running) return;
+    const t = setInterval(refresh, 1500);
+    return () => clearInterval(t);
+  }, [status?.running]);
+
+  const start = async () => {
+    if (!window.confirm("This will recompress every photo in your database (dogs, gallery, report cards, incidents). It runs in the background and may take several minutes. Safe to leave the page during the job. Proceed?")) return;
+    setBusy(true); setErr("");
+    try { const { data } = await api.post("/admin/compress-photos"); setStatus(data); }
+    catch (e) { setErr(e.response?.data?.detail || "Could not start"); }
+    finally { setBusy(false); }
+  };
+
+  const finished = status && !status.running && status.finished_at;
+  const stageLabel = {
+    "starting": "Getting ready…",
+    "dogs": "Compressing dog photos & gallery",
+    "bookings": "Compressing report card photos",
+    "incidents": "Compressing incident photos",
+    "done": "All done",
+  }[status?.current_stage] || (status?.running ? "Working…" : "Idle");
+
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="photo-compress-panel">
+      <h4 className="text-sm font-black text-purple-400 uppercase tracking-widest mb-2"><i className="fas fa-compress-arrows-alt mr-2"/>Shrink Existing Photos</h4>
+      <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
+        One-time job that recompresses every photo currently in your database to the smaller format used by new uploads. Typical savings: <span className="text-purple-400 font-black">10–20× smaller</span> per photo with no visible quality loss. Safe to run again later — already-small photos are skipped automatically.
+      </p>
+
+      {status && (
+        <div className="bg-bgBase border border-bgHover rounded p-4 mb-3 grid grid-cols-2 md:grid-cols-4 gap-4 text-center" data-testid="photo-compress-stats">
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Scanned</p>
+            <p className="text-shBlue text-2xl font-black">{status.scanned}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Compressed</p>
+            <p className="text-shGreen text-2xl font-black">{status.compressed}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Skipped</p>
+            <p className="text-gray-400 text-2xl font-black">{status.skipped}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Space saved</p>
+            <p className="text-purple-400 text-2xl font-black">{status.mb_saved} MB</p>
+          </div>
+        </div>
+      )}
+
+      {status?.running && (
+        <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 mb-3 flex items-center gap-3" data-testid="photo-compress-progress">
+          <i className="fas fa-circle-notch fa-spin text-shBlue text-xl"/>
+          <div className="flex-1">
+            <p className="text-[14px] font-black text-shBlue uppercase tracking-widest">{stageLabel}</p>
+            <p className="text-[12px] text-gray-400 mt-0.5">Working in the background. You can leave this page and come back later.</p>
+          </div>
+        </div>
+      )}
+
+      {finished && status.error_message && (
+        <p className="text-red-400 text-[14px] font-black mb-3" data-testid="photo-compress-error">
+          <i className="fas fa-exclamation-triangle mr-2"/>{status.error_message}
+        </p>
+      )}
+
+      {finished && !status.error_message && status.compressed > 0 && (
+        <p className="text-shGreen text-[14px] font-black mb-3" data-testid="photo-compress-done">
+          <i className="fas fa-check-circle mr-2"/>Saved {status.mb_saved} MB across {status.compressed} photos.
+        </p>
+      )}
+
+      <button onClick={start} disabled={busy || status?.running} data-testid="photo-compress-start"
+              className="bg-purple-500 text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+        <i className="fas fa-compress-arrows-alt mr-2"/>{status?.running ? "Running…" : (status?.finished_at ? "Run again" : "Shrink all photos")}
+      </button>
+      {err && <p className="text-red-400 text-[14px] mt-2">{err}</p>}
     </div>
   );
 }
