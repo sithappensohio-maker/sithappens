@@ -1,0 +1,52 @@
+{
+  "summary": "Iteration 13 — Sprint 17 regression validation. Fixed a critical bug in the new TEST_DATE_OFFSET (was 45-120 → exceeded server's 60-day max_advance_days booking guard, breaking test_insufficient_credits and other Boarding tests). Lowered to random.randint(20, 40) so worst-case (offset + extra_days 17) stays inside the 60-day window while still avoiding capacity collisions with stale near-term TEST data. After fix: test_sithappens.py 20/20 pass. Wrote new tests/test_iter13_sprint17.py covering: (a) /auth/register still emails without crashing on the new QR install footer in email_service.py, (b) enrollment auto-completes when all goals score=5 with completion_rule.type=all_mastered (status→completed, auto_completed=true, completed_at stamped), (c) POST /clients/{id}/sell-packs bulk returns {lots, lots_created, receipt:{lines,totals,payment_method}, total_price}, (d) GET /clients/{id}/receipts returns grouped shape with totals.daycare/{training}.{qty,price} plus top-level total_price/line_count/lot_count. All 5 new tests pass. Full suite still healthy: 163/164 prior tests pass; the one transient failure (test_put_settings_partial_persists) was a one-off HTTPS connect timeout that succeeded on immediate retry — not a code issue. email_service imports cleanly (qrcode module loaded, _install_footer + _qr_data_url functional, base64 PNG generation verified). Backend logs show 'Email sent to flow_*@x.com' Resend IDs after each register, confirming the footer doesn't break Resend rendering.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "tests/test_sithappens.py:16",
+        "issue": "TEST_DATE_OFFSET = random.randint(45, 120) overshoots server.booking_rules.max_advance_days=60. With extra_days up to 17 in TestBookings, the request hits 'Bookings allowed up to 60 days in advance' and pytest fails on first random seed >43. FIXED by lowering to random.randint(20, 40)."
+      },
+      {
+        "endpoint": "GET /api/clients/{id}/receipts",
+        "issue": "Receipt shape differs from the spec in the review_request: total_price, line_count, lot_count are emitted at the TOP LEVEL of each receipt (per server.py L3467-3469), NOT nested inside `totals`. The actual totals dict only contains {daycare:{qty,price}, training:{qty,price}}. This matches what bulk-sell returns (consistent), but the documented contract in the review_request was inaccurate. Frontend (ReceiptModal) already reads from top level so this is just a doc drift — no action required unless the frontend was implemented to read from totals.total_price."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sithappens.py",
+    "/app/backend/tests/test_iter13_sprint17.py",
+    "/app/test_reports/pytest/iteration13_sithappens.xml",
+    "/app/test_reports/pytest/iteration13_sprint17.xml",
+    "/app/test_reports/pytest/iteration13_combined.xml"
+  ],
+  "action_items": [
+    "(Optional) Update the receipts contract documentation / frontend reference to clarify total_price + line_count + lot_count are top-level, totals dict only holds {daycare:{qty,price}, training:{qty,price}}.",
+    "(Optional) Consider relaxing booking_rules.max_advance_days in conftest._legacy_settings_compat (currently 60) to ~365 so future tests can use TEST_DATE_OFFSET >60 without colliding with the guard. Not strictly needed since current fix is sufficient."
+  ],
+  "critical_code_review_comments": [
+    "email_service.py _qr_data_url generates a fresh QR PNG on EVERY email send — no caching. For high-volume notifications this is wasted CPU. Suggest @functools.lru_cache(maxsize=4) keyed on the install URL.",
+    "server.py L3411-3472 list_client_receipts groups by tuple (purchased_at, payment_method, sold_by, note). If two distinct bulk-sells happen within the same millisecond AND same operator AND same note, they'd merge into one receipt. Low risk in practice but worth a stable group_id stamped at sale time on the credit_lot doc for absolute determinism.",
+    "server.py L2239 _auto_complete_if_satisfied silently picks 'another' active enrollment as the new active_program_id (L2259-2263) — fine, but no audit log entry. Add to activity log so admins can see the auto-completion + auto-pivot.",
+    "test_sithappens.py TEST_DATE_OFFSET pattern is good but should live in conftest.py with a session-scoped fixture, so all test files share the same random offset and can be cross-referenced if a flaky failure happens (currently each suite re-randomises on import)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_sithappens.py (lowered TEST_DATE_OFFSET from 45-120 to 20-40 to stay inside max_advance_days=60)",
+    "/app/backend/tests/test_iter13_sprint17.py (NEW — 5 tests covering register-email, enrollment auto-complete, bulk sell-packs, receipts shape, cleanup)"
+  ],
+  "success_rate": {
+    "backend": "100% (25/25 targeted; 163/164 full suite with 1 transient HTTPS timeout that passed on retry)",
+    "frontend": "skipped per review_request (testing_type=backend only)"
+  },
+  "test_credentials": "Admin: admin@sithappens.com / admin123 ; Buddy dog_id=a1e63d21-2d4b-444f-8286-56f3324c4401 ; Alex client_id=b3488337-bb4a-4bdd-9aa9-e55cba57b478",
+  "seed_data_creation": "test_iter13_sprint17.py creates TEST_iter13_<hex>@example.com client accounts (left in DB, harmless — register endpoint emails sithappensohio@gmail.com + the test address). Bulk-sell test creates 2 credit_lots with note='TEST_iter13_bulk' which are then deleted by post-test mongo cleanup. Buddy gets enrolled and auto-completed during the test; the prior agent's stale auto_completed enrollments (3 found) + stale TEST_iter13_bulk lots (4 found from earlier dry-runs) were hard-deleted from credit_lots and dog_programs. Alex credits reset to 10. Buddy active_program_id reset to None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TEST_DATE_OFFSET fix is essential — if the offset gets bumped above 43 again, every booking test in test_sithappens.py will fail on the 60-day guard. If main agent reduces conftest legacy max_advance_days, leave the test offset alone. The bulk-sell endpoint returns a WRAPPER {lots, lots_created, receipt, total_price} — `receipt` is nested. The grouped /receipts endpoint flattens the same data and removes the wrapper, so frontend ReceiptsListModal needs to know both shapes. Buddy's auto-complete test selects the FIRST program with goals — if that program changes name/order, the test still works but enrolls Buddy into whatever's first; the cleanup hard-deletes auto_completed enrollments, so no pollution.",
+  "rca of the issue": "RCA — TestBookings::test_insufficient_credits: random.seed at module-import-time produced TEST_DATE_OFFSET=58 on this run. _future_date(3) = today + 58 + 3 = 61 days out. server.py L550-554 (create_booking → _check_booking_rules) rejected with 'Bookings allowed up to 60 days in advance' (max_advance_days default = 60). The offset range (45, 120) was specifically chosen to outrun stale TEST capacity bookings, but the author missed that booking_rules.max_advance_days caps the same date range. Fix: random.randint(20, 40) — 40 + max(extra_days)=17 = 57, comfortably under 60, while still 20+ days past today to avoid colliding with near-term stale TEST data."
+}

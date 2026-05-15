@@ -2,9 +2,12 @@
 All sends are non-blocking (asyncio.to_thread) and best-effort —
 failures log a warning but never break the booking flow."""
 import asyncio
+import base64
+import io
 import logging
 import os
 
+import qrcode
 import resend
 
 logger = logging.getLogger(__name__)
@@ -23,7 +26,52 @@ BRAND_BLUE = "#00a9e0"
 BRAND_DARK = "#0f172a"
 
 
-def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None) -> str:
+def _qr_data_url(url: str) -> str:
+    """Return a base64 data: URL containing a 200x200 PNG QR code for `url`.
+    Cached per-URL so we don't regenerate on every email send."""
+    if url in _QR_CACHE:
+        return _QR_CACHE[url]
+    img = qrcode.make(url, box_size=6, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data = base64.b64encode(buf.getvalue()).decode("ascii")
+    data_url = f"data:image/png;base64,{data}"
+    _QR_CACHE[url] = data_url
+    return data_url
+
+
+_QR_CACHE: dict = {}
+
+
+def _install_footer() -> str:
+    """Branded "Install the app" block (QR + iOS/Android steps) appended
+    inside the white card of every client-facing email. No-op if APP_PUBLIC_URL
+    isn't configured."""
+    if not APP_PUBLIC_URL:
+        return ""
+    qr = _qr_data_url(APP_PUBLIC_URL)
+    return f"""
+<div style="margin-top:28px;border-top:1px solid #e2e8f0;padding-top:20px;">
+  <p style="margin:0 0 12px 0;color:{BRAND_DARK};font-size:14px;font-weight:900;text-transform:uppercase;letter-spacing:0.08em;">📱 Install the app on your phone</p>
+  <table cellpadding="0" cellspacing="0" style="width:100%;">
+    <tr>
+      <td style="vertical-align:top;width:120px;padding-right:16px;">
+        <img src="{qr}" alt="Scan to open Sit Happens" width="110" height="110" style="display:block;border:4px solid #fff;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.08);" />
+      </td>
+      <td style="vertical-align:top;color:#334155;font-size:13px;line-height:1.55;">
+        <strong style="color:{BRAND_DARK};">Scan the QR with your phone camera</strong> to open your client portal, then:
+        <ul style="margin:8px 0 0 18px;padding:0;color:#334155;">
+          <li><strong>iPhone:</strong> tap <span style="white-space:nowrap;">Share <span style="font-size:11px;">⬆️</span></span> → <em>Add to Home Screen</em></li>
+          <li><strong>Android:</strong> tap the <span style="white-space:nowrap;">⋮ menu</span> → <em>Install app</em></li>
+        </ul>
+        <p style="margin:10px 0 0 0;color:#64748b;font-size:12px;">Opens in one tap — no app store needed.</p>
+      </td>
+    </tr>
+  </table>
+</div>"""
+
+
+def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None, show_install: bool = True) -> str:
     rows_html = "".join(
         f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;width:140px;">{k}</td>'
         f'<td style="padding:8px 0;color:#0f172a;font-size:15px;font-weight:600;">{v}</td></tr>'
@@ -34,6 +82,7 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
         f'padding:14px 28px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:13px;">{cta_text}</a>'
         if cta_text and cta_url else ""
     )
+    install_html = _install_footer() if show_install else ""
     return f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
@@ -47,6 +96,7 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
           <p style="margin:0 0 18px 0;color:#334155;font-size:15px;line-height:1.5;">{intro}</p>
           <table cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px 0;">{rows_html}</table>
           {cta_html}
+          {install_html}
         </td></tr>
         <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
           <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">Sit Happens Dog Training · Daycare · Boarding<br/>
@@ -113,6 +163,7 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
         rows=rows,
         cta_text="Open Bookings" if cta_url else None,
         cta_url=cta_url,
+        show_install=False,
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
@@ -137,6 +188,7 @@ async def notify_admin_new_client(user: dict, client: dict) -> None:
         rows=rows,
         cta_text="Open Admin" if cta_url else None,
         cta_url=cta_url,
+        show_install=False,
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
@@ -165,6 +217,7 @@ async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
         rows=rows,
         cta_text="Open Pipeline" if cta_url else None,
         cta_url=cta_url,
+        show_install=False,
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
@@ -199,6 +252,7 @@ async def notify_admin_homework_section_log(hw: dict, entry: dict, client: dict,
         rows=rows,
         cta_text="Open Homework" if cta_url else None,
         cta_url=cta_url,
+        show_install=False,
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
@@ -226,6 +280,7 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
         rows=rows,
         cta_text="Open Homework" if cta_url else None,
         cta_url=cta_url,
+        show_install=False,
     )
     await _send(
         ADMIN_NOTIFICATION_EMAIL,
@@ -355,6 +410,7 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
           {note_html}
           <p style="margin:18px 0 0 0;color:#64748b;font-size:12px;">Sold {sold_at[:10]} by {sold_by}. Credits never expire.</p>
           {cta_html}
+          {_install_footer()}
         </td></tr>
         <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
           <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">Sit Happens Dog Training · Daycare · Boarding<br/>

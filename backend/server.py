@@ -449,6 +449,20 @@ async def add_training_log(dog_id: str, body: TrainingLogIn, _: dict = Depends(r
     log = TrainingLog(date=body.date, note=body.note, tags=body.tags).model_dump()
     await db.dogs.update_one({"id": dog_id}, {"$push": {"training_logs": log}})
     existing["training_logs"] = existing.get("training_logs", []) + [log]
+    # If a `sessions` completion rule is configured on the active enrollment,
+    # this new log might tip it over the threshold — check now.
+    active_id = existing.get("active_program_id")
+    if active_id:
+        enrollment = await db.dog_programs.find_one({"id": active_id}, {"_id": 0})
+        if enrollment and enrollment.get("status") == "active":
+            rule = enrollment.get("completion_rule") or {}
+            if rule.get("type") == "sessions":
+                started = enrollment.get("started_at", "")[:10]
+                logs_since = [
+                    lg for lg in existing["training_logs"]
+                    if (lg.get("date") or "") >= started
+                ]
+                await _auto_complete_if_satisfied(enrollment, sessions_logged=len(logs_since))
     return existing
 
 
@@ -2197,6 +2211,59 @@ def _enrollment_summary(enrollment: dict) -> dict:
             "in_progress_goals": in_progress, "mastered_pct": pct}
 
 
+async def _check_completion_rule(enrollment: dict, *, sessions_logged: int = 0) -> bool:
+    """Evaluate the enrollment's `completion_rule` against current progress.
+    Returns True if the rule is satisfied (program should auto-complete).
+    `sessions_logged` only matters for the "sessions" rule type."""
+    rule = enrollment.get("completion_rule") or _default_completion_rule()
+    rtype = rule.get("type") or "percent"
+    if rtype == "manual":
+        return False  # admin-only
+
+    summary = _enrollment_summary(enrollment)
+    total = summary["total_goals"]
+    mastered = summary["mastered_goals"]
+    pct = summary["mastered_pct"]
+
+    if rtype == "all_mastered":
+        return total > 0 and mastered == total
+    if rtype == "percent":
+        threshold = int(rule.get("threshold") or 80)
+        return total > 0 and pct >= threshold
+    if rtype == "sessions":
+        target = int(rule.get("threshold") or rule.get("count") or 0)
+        return target > 0 and sessions_logged >= target
+    return False
+
+
+async def _auto_complete_if_satisfied(enrollment: dict, *, sessions_logged: int = 0) -> dict:
+    """If the enrollment's completion rule is satisfied AND it's still
+    active, mark it completed and clear `dogs.active_program_id` so a new
+    enrollment can take its place. Returns the (possibly mutated) enrollment."""
+    if enrollment.get("status") != "active":
+        return enrollment
+    satisfied = await _check_completion_rule(enrollment, sessions_logged=sessions_logged)
+    if not satisfied:
+        return enrollment
+    update = {
+        "status": "completed",
+        "completed_at": now_iso(),
+        "auto_completed": True,
+    }
+    await db.dog_programs.update_one({"id": enrollment["id"]}, {"$set": update})
+    enrollment.update(update)
+    # Clear the dog's pointer if it was pointing at this enrollment, then
+    # pick another active one if available.
+    dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
+    if dog and dog.get("active_program_id") == enrollment["id"]:
+        other = await db.dog_programs.find_one(
+            {"dog_id": enrollment["dog_id"], "status": "active", "id": {"$ne": enrollment["id"]}},
+            {"_id": 0},
+        )
+        await db.dogs.update_one({"id": enrollment["dog_id"]}, {"$set": {"active_program_id": (other or {}).get("id")}})
+    return enrollment
+
+
 def _suggest_target_date(started: str, fmt: dict) -> Optional[str]:
     """Estimate completion date from program format."""
     try:
@@ -2340,6 +2407,8 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
     progress[goal_id] = cur
     await db.dog_programs.update_one({"id": enrollment_id}, {"$set": {"goal_progress": progress}})
     enrollment["goal_progress"] = progress
+    # Auto-complete the enrollment if the configured completion_rule is now satisfied.
+    enrollment = await _auto_complete_if_satisfied(enrollment)
     return _enrollment_summary(enrollment)
 
 

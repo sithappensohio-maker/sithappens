@@ -1,5 +1,6 @@
 """Sit Happens API end-to-end tests."""
 import os
+import random
 import uuid
 from datetime import date, timedelta
 import pytest
@@ -8,6 +9,16 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
 ADMIN_EMAIL = "admin@sithappens.com"
 ADMIN_PASSWORD = "admin123"
+
+# Random forward-shift (45-120 days out) so consecutive test runs never collide
+# with bookings left over by earlier runs on the same dates. Re-rolled per
+# pytest session via the module-level constant.
+TEST_DATE_OFFSET = random.randint(20, 40)
+
+
+def _future_date(extra_days: int = 0) -> str:
+    """Return an ISO date string `TEST_DATE_OFFSET + extra_days` from today."""
+    return (date.today() + timedelta(days=TEST_DATE_OFFSET + extra_days)).isoformat()
 
 
 @pytest.fixture(scope="session")
@@ -145,7 +156,7 @@ class TestDogs:
 class TestBookings:
     def test_rabies_expired(self, client_h, expired_dog):
         r = requests.post(f"{BASE_URL}/api/bookings",
-                          json={"dog_id": expired_dog["id"], "date": (date.today() + timedelta(days=2)).isoformat(),
+                          json={"dog_id": expired_dog["id"], "date": _future_date(2),
                                 "service_type": "daycare"}, headers=client_h, timeout=15)
         assert r.status_code == 400
         assert "Rabies" in r.json()["detail"]
@@ -156,7 +167,7 @@ class TestBookings:
         requests.put(f"{BASE_URL}/api/clients/{created_client['id']}",
                      json={"name": created_client["name"], "credits": 0, "email": "tc@x.com"}, headers=admin_h, timeout=15)
         r = requests.post(f"{BASE_URL}/api/bookings",
-                          json={"dog_id": created_dog["id"], "date": (date.today() + timedelta(days=3)).isoformat(),
+                          json={"dog_id": created_dog["id"], "date": _future_date(3),
                                 "service_type": "daycare"}, headers=client_h, timeout=15)
         assert r.status_code == 200, r.text
         b = r.json()
@@ -164,8 +175,8 @@ class TestBookings:
         assert b["cost"] == 1  # daycare still has a cost (charged on day)
         # Boarding & training should be cost 0 (pay-on-the-day, not credit-based)
         rb = requests.post(f"{BASE_URL}/api/bookings",
-                           json={"dog_id": created_dog["id"], "date": (date.today() + timedelta(days=15)).isoformat(),
-                                 "end_date": (date.today() + timedelta(days=17)).isoformat(),
+                           json={"dog_id": created_dog["id"], "date": _future_date(15),
+                                 "end_date": _future_date(17),
                                  "service_type": "boarding"}, headers=client_h, timeout=15)
         assert rb.status_code == 200, rb.text
         assert rb.json()["cost"] == 0
@@ -174,7 +185,7 @@ class TestBookings:
         # set credits=3
         requests.put(f"{BASE_URL}/api/clients/{created_client['id']}",
                      json={"name": created_client["name"], "credits": 3, "email": "tc@x.com"}, headers=admin_h, timeout=15)
-        target = (date.today() + timedelta(days=5)).isoformat()
+        target = _future_date(5)
         r = requests.post(f"{BASE_URL}/api/bookings",
                           json={"dog_id": created_dog["id"], "date": target, "service_type": "daycare"},
                           headers=client_h, timeout=15)
@@ -197,7 +208,7 @@ class TestBookings:
         assert cur2["credits"] == 3
 
     def test_availability(self, client_h, created_dog):
-        target = (date.today() + timedelta(days=7)).isoformat()
+        target = _future_date(7)
         r = requests.get(f"{BASE_URL}/api/bookings/availability",
                          params={"date_str": target, "dog_id": created_dog["id"]}, headers=client_h, timeout=15)
         assert r.status_code == 200

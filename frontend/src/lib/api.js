@@ -11,6 +11,23 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
+// Stale-token auto-clear: any 401 from the backend means the saved JWT
+// is invalid (expired, server restart, role change). Drop it and bounce
+// to the login screen instead of letting React crash on a half-loaded UI.
+api.interceptors.response.use(
+  (res) => res,
+  (err) => {
+    if (err?.response?.status === 401) {
+      try { localStorage.removeItem("sh_token"); } catch (e) { /* ignore */ }
+      // Avoid the redirect storm if we're already on the auth screen
+      if (window.location.pathname !== "/" && !window.location.pathname.startsWith("/login")) {
+        window.location.replace("/");
+      }
+    }
+    return Promise.reject(err);
+  }
+);
+
 export function formatErr(detail) {
   if (detail == null) return "Something went wrong.";
   if (typeof detail === "string") return detail;
