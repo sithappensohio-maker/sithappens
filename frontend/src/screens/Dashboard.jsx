@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
   const [checkoutFor, setCheckoutFor] = useState(null); // booking — opens checkout modal
+  const [cancelFor, setCancelFor] = useState(null); // booking — opens cancel-confirm modal
   const [services, setServices] = useState([]);
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
@@ -42,14 +43,6 @@ export default function Dashboard() {
   useEffect(() => { load(); }, []);
 
   const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
-  const cancelBooking = async (b) => {
-    const credits = b.credits_deducted || 0;
-    const pool = b.credit_service_type || b.service_type;
-    const note = credits > 0 ? ` ${credits} ${pool} credit${credits === 1 ? "" : "s"} will be refunded to ${b.client_name}.` : "";
-    if (!window.confirm(`Cancel this booking for ${b.dog_name}?${note}\n\nUse this when a dog was checked in by mistake or the client changed their mind.`)) return;
-    try { await api.delete(`/bookings/${b.id}`); load(); }
-    catch (e) { alert(e.response?.data?.detail || "Cancel failed"); }
-  };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
   if (!stats) return <div className="text-gray-400 text-sm">Loading dashboard…</div>;
@@ -166,7 +159,7 @@ export default function Dashboard() {
                     <>
                       <button onClick={()=>setCheckoutFor(b)} data-testid={`checkout-${b.id}`}
                               className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
-                      <button onClick={()=>cancelBooking(b)} data-testid={`cancel-${b.id}`}
+                      <button onClick={()=>setCancelFor(b)} data-testid={`cancel-${b.id}`}
                               title="Cancel booking — refunds any credit deducted"
                               className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[12px] tracking-widest hover:bg-red-500/40 hover:text-white">
                         <i className="fas fa-times mr-1"/>Cancel
@@ -189,7 +182,10 @@ export default function Dashboard() {
       </div>
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
-      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services} onClose={()=>{ setCheckoutFor(null); load(); }} />}
+      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
+                                     onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
+                                     onClose={()=>{ setCheckoutFor(null); load(); }} />}
+      {cancelFor && <CancelBookingModal booking={cancelFor} onClose={()=>{ setCancelFor(null); load(); }} />}
       {showQuick && <AdminBookingModal defaultCheckIn={true} onClose={()=>setShowQuick(false)} onCreated={load} />}
     </div>
   );
@@ -289,7 +285,7 @@ function ReportCardModal({ booking, moodTags, onClose }) {
 }
 
 
-function CheckoutModal({ booking, services, onClose }) {
+function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Pre-deducted credit info — if non-zero, the owner already has a pending charge
   // on their pack that we'll either consume (default) or refund.
   const hadCredit = !!booking.credit_value && !booking.actual_price;
@@ -455,15 +451,7 @@ function CheckoutModal({ booking, services, onClose }) {
         {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
 
         <div className="flex items-center justify-between gap-3">
-          <button onClick={async () => {
-            const credits = booking.credits_deducted || 0;
-            const pool = booking.credit_service_type || booking.service_type;
-            const note = credits > 0 ? ` ${credits} ${pool} credit${credits === 1 ? "" : "s"} will be refunded.` : "";
-            if (!window.confirm(`Cancel this booking instead?${note}`)) return;
-            setBusy(true);
-            try { await api.delete(`/bookings/${booking.id}`); onClose(); }
-            catch (e) { setErr(e.response?.data?.detail || "Cancel failed"); setBusy(false); }
-          }} disabled={busy} data-testid="checkout-cancel-booking"
+          <button onClick={() => onRequestCancel?.(booking)} disabled={busy} data-testid="checkout-cancel-booking"
                   className="text-red-400 font-black uppercase text-[12px] tracking-widest hover:text-red-300 disabled:opacity-50">
             <i className="fas fa-times-circle mr-1"/>Cancel booking instead
           </button>
@@ -474,6 +462,68 @@ function CheckoutModal({ booking, services, onClose }) {
               {busy ? "Checking out…" : "Complete Check-out"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function CancelBookingModal({ booking, onClose }) {
+  const credits = Number(booking.credits_deducted || 0);
+  const pool = booking.credit_service_type || booking.service_type;
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const confirm = async () => {
+    setBusy(true); setErr("");
+    try { await api.delete(`/bookings/${booking.id}`); onClose(); }
+    catch (e) {
+      setErr(e.response?.data?.detail || "Cancel failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]" data-testid="cancel-modal">
+      <div className="bg-bgPanel border border-red-500/40 rounded-2xl w-full max-w-md p-7 shadow-2xl animate-slide-in">
+        <div className="flex items-center gap-3 mb-3">
+          <div className="bg-red-500/20 text-red-400 w-12 h-12 rounded-full flex items-center justify-center text-xl">
+            <i className="fas fa-times"/>
+          </div>
+          <div>
+            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Cancel booking?</h4>
+            <p className="text-[12px] text-gray-400">{booking.dog_name} · {booking.client_name}</p>
+          </div>
+        </div>
+
+        <p className="text-[14px] text-gray-300 leading-relaxed mb-4">
+          This will remove the booking from today's list. Use it if the dog was checked in by mistake or the client changed their mind.
+        </p>
+
+        {credits > 0 ? (
+          <div className="bg-shGreen/10 border border-shGreen/40 rounded p-3 mb-4 flex items-center gap-2">
+            <i className="fas fa-coins text-shGreen text-lg"/>
+            <p className="text-[13px] text-white">
+              <span className="text-shGreen font-black">{credits} {pool} credit{credits === 1 ? "" : "s"}</span> will be refunded to <strong>{booking.client_name}</strong>.
+            </p>
+          </div>
+        ) : (
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-4 text-[13px] text-gray-400">
+            <i className="fas fa-info-circle mr-1.5"/>No credits to refund on this booking.
+          </div>
+        )}
+
+        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
+
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} disabled={busy} data-testid="cancel-keep" className="text-gray-400 font-black uppercase text-[14px] tracking-widest hover:text-white disabled:opacity-50">
+            Keep it
+          </button>
+          <button onClick={confirm} disabled={busy} data-testid="cancel-confirm"
+                  className="bg-red-500 text-white px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-red-600 disabled:opacity-50">
+            {busy ? "Cancelling…" : "Yes, cancel it"}
+          </button>
         </div>
       </div>
     </div>
