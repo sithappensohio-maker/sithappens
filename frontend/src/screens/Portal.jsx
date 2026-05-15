@@ -141,11 +141,10 @@ export default function Portal() {
     } catch (e) { alert(formatErr(e.response?.data?.detail)); }
   };
 
-  const onHwFile = (e) => {
+  const onHwFile = async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = () => setHwPhoto(r.result);
-    r.readAsDataURL(f);
+    const dataUrl = await compressImage(f);
+    setHwPhoto(dataUrl);
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);

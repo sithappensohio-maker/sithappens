@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { compressImage } from "../lib/imageCompress";
 
 const TYPES = [
   { key: "bite", label: "Bite", color: "bg-red-500/15 text-red-400" },
@@ -47,13 +48,10 @@ export default function Incidents() {
   };
   const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm, ...inc }); setOpen(true); setErr(""); };
 
-  const onFiles = (e) => {
+  const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 4 - form.photos.length);
-    files.forEach(f => {
-      const r = new FileReader();
-      r.onload = () => setForm((cur)=>({ ...cur, photos: [...cur.photos, r.result].slice(0,4) }));
-      r.readAsDataURL(f);
-    });
+    const compressed = await Promise.all(files.map(f => compressImage(f)));
+    setForm((cur) => ({ ...cur, photos: [...cur.photos, ...compressed.filter(Boolean)].slice(0, 4) }));
   };
 
   const save = async () => {

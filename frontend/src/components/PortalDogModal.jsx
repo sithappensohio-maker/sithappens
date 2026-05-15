@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { compressImage } from "../lib/imageCompress";
 
 const empty = {
   name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -20,11 +21,10 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
   const [err, setErr] = useState("");
   const isEdit = !!dog;
 
-  const onFile = (e) => {
+  const onFile = async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
-    const r = new FileReader();
-    r.onload = () => setForm((p) => ({ ...p, photo: r.result }));
-    r.readAsDataURL(f);
+    const dataUrl = await compressImage(f);
+    setForm((p) => ({ ...p, photo: dataUrl }));
   };
 
   const set = (patch) => setForm((p) => ({ ...p, ...patch }));

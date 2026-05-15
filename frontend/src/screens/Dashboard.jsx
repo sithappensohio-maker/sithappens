@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
@@ -191,13 +192,10 @@ function ReportCardModal({ booking, moodTags, onClose }) {
   const [note, setNote] = useState(existing.note || "");
   const [saving, setSaving] = useState(false);
 
-  const onFiles = (e) => {
+  const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 3 - photos.length);
-    files.forEach(f => {
-      const r = new FileReader();
-      r.onload = () => setPhotos((p) => [...p, r.result].slice(0, 3));
-      r.readAsDataURL(f);
-    });
+    const compressed = await Promise.all(files.map(f => compressImage(f)));
+    setPhotos((p) => [...p, ...compressed.filter(Boolean)].slice(0, 3));
   };
 
   const toggleMood = (m) => setMoods((cur) => cur.includes(m) ? cur.filter(x => x !== m) : [...cur, m]);

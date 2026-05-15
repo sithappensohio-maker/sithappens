@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { compressImage } from "../lib/imageCompress";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
@@ -162,11 +163,10 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     } catch { /* keep list-view fallback */ }
   };
 
-  const onFile = (e) => {
+  const onFile = async (e) => {
     const file = e.target.files?.[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setForm((f) => ({ ...f, photo: reader.result }));
-    reader.readAsDataURL(file);
+    const dataUrl = await compressImage(file);
+    setForm((f) => ({ ...f, photo: dataUrl }));
   };
 
   const save = async () => {
@@ -203,13 +203,12 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     { id: "notes", label: "Notes & Vet", icon: "fa-clipboard" },
   ];
 
-  const onGalleryFiles = (e) => {
+  const onGalleryFiles = async (e) => {
     const files = Array.from(e.target.files || []);
-    files.forEach(f => {
-      const r = new FileReader();
-      r.onload = () => setForm((prev) => ({ ...prev, photos: [...(prev.photos || []), r.result] }));
-      r.readAsDataURL(f);
-    });
+    // Compress all files in parallel — at typical browser concurrency this
+    // is fast even for 5+ photos at once.
+    const compressed = await Promise.all(files.map(f => compressImage(f)));
+    setForm((prev) => ({ ...prev, photos: [...(prev.photos || []), ...compressed.filter(Boolean)] }));
     e.target.value = "";
   };
 
