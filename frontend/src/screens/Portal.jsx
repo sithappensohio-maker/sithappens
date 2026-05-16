@@ -65,10 +65,11 @@ const SERVICE_INFO = {
   },
 };
 
-function ServiceInfoModal({ type, onClose }) {
+function ServiceInfoModal({ type, onClose, customDescriptions }) {
   if (!type) return null;
   const info = SERVICE_INFO[type];
   if (!info) return null;
+  const summary = customDescriptions?.[type] || info.summary;
   return (
     <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose} data-testid="service-info-modal">
       <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe" onClick={(e)=>e.stopPropagation()}>
@@ -79,7 +80,7 @@ function ServiceInfoModal({ type, onClose }) {
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1 -m-1" data-testid="service-info-close"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[14px] text-gray-300 mb-4">{info.summary}</p>
+        <p className="text-[14px] text-gray-300 mb-4 whitespace-pre-line">{summary}</p>
         <ul className="space-y-2">
           {info.bullets.map((b, i) => (
             <li key={i} className="flex items-start gap-2 text-[13px] text-gray-300">
@@ -646,7 +647,7 @@ export default function Portal() {
         </div>
       )}
 
-      <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} />
+      <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
     </div>
   );
 }

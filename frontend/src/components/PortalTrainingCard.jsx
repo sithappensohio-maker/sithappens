@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ProgressRing from "./ProgressRing";
+import CollapsibleText from "./CollapsibleText";
 
 /** Per-dog training summary shown on the client portal.
  *  Read-only view of the dog's active enrollment + history + completed certs. */
@@ -84,14 +85,17 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
 
   return (
     <>
-      <div className="px-5 py-4 border-b border-bgHover flex items-center gap-4" style={{background: color + "08"}}>
-        <ProgressRing percent={enrollment.mastered_pct} size={88} stroke={8} color={color}
+      <div className="px-4 sm:px-5 py-4 border-b border-bgHover flex items-start gap-3 sm:gap-4" style={{background: color + "08"}}>
+        <ProgressRing percent={enrollment.mastered_pct} size={72} stroke={7} color={color}
                       label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
         <div className="flex-1 min-w-0">
           <p className="text-[11px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
-          <p className="text-base font-black text-white uppercase italic tracking-tight">{dogName} · {snap.name}</p>
-          <p className="text-[13px] text-gray-400 mt-0.5">{snap.focus}</p>
-          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">Started {enrollment.started_at} · {snap.format?.count} {snap.format?.unit}</p>
+          <p className="text-sm sm:text-base font-black text-white uppercase italic tracking-tight">{dogName} · {snap.name}</p>
+          {snap.focus && (
+            <CollapsibleText text={snap.focus} maxChars={70} className="mt-1"
+                             testid={`portal-enrollment-focus-${enrollment.id}`} />
+          )}
+          <p className="text-[11px] sm:text-[12px] text-gray-500 font-black uppercase tracking-widest mt-2">Started {enrollment.started_at} · {snap.format?.count} {snap.format?.unit}</p>
         </div>
       </div>
 

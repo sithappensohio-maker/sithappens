@@ -321,6 +321,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 42 — Collapsible descriptions + editable service info (2026-02)
+- ✅ **`CollapsibleText` component** (`components/CollapsibleText.jsx`): single-line preview + inline "More" toggle. Used wherever short blurbs would otherwise wrap into 8-line vertical walls on mobile.
+- ✅ **Training program card** (`DogTrainingTab.jsx`): the "focus" description was wrapping into a tall narrow column on phones (visible in user's screenshot). Now: header restructured to keep ProgressRing/title/buttons on a single row; description sits below in a collapsible single line with a "More" toggle.
+- ✅ **Client portal training card** (`PortalTrainingCard.jsx`): same `CollapsibleText` treatment so clients see a tidy summary instead of an 8-line wall.
+- ✅ **Settings → Service Info tab** (new `ServiceInfoPanel` in `Settings.jsx`): 4 editable textareas (daycare/boarding/training/grooming) saved to `service_descriptions` on the settings doc. Backend (`server.py`) adds the new field to `_default_settings`, `SettingsIn`, the nested-backfill block, and `/api/settings/public`. `Portal.jsx`'s `ServiceInfoModal` now reads `pubSettings.service_descriptions[type]` with a hardcoded fallback.
+- ✅ End-to-end verified at 390×844: enrollment card shows 2 collapsible focus rows with "More" toggles, Settings → Service Info renders 4 textareas pre-populated with defaults.
+
 ## Sprint 41 — Mobile polish: sticky CTA, pull-to-refresh, safe-area, service info (2026-02)
 - ✅ **Service info modal** (`Portal.jsx`): added `SERVICE_INFO` constant + `<ServiceInfoModal>`. Each service-type pill on the portal now has a small ⓘ icon — tap to open a bottom-sheet description with a summary + 4 bullet points. Keeps the booking form short.
 - ✅ **Sticky mobile "Book Service" CTA** (`Portal.jsx`): `fixed bottom-0 md:hidden` bar with `pb-safe`. Tapping smooth-scrolls to `#portal-book-section`. Scroll area gets `pb-24 md:pb-8` so content never hides behind it.

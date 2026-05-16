@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
+import CollapsibleText from "./CollapsibleText";
 import { ProgramEditor } from "./Programs";
 
 /* ============================================================
@@ -139,33 +140,38 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onTargetDate, o
   const overdue = enrollment.target_completion_date && enrollment.target_completion_date < new Date().toISOString().slice(0,10);
   return (
     <div className="bg-bgBase/60 border border-bgHover rounded-lg overflow-hidden" data-testid={`enrollment-${enrollment.id}`}>
-      <div className="px-4 py-3 border-b border-bgHover flex items-center gap-4" style={{background: color + "10"}}>
-        <ProgressRing percent={enrollment.mastered_pct} size={84} stroke={8} color={color}
-                      label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
-        <div className="flex-1 min-w-0">
-          <p className="text-[12px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
-          <p className="text-base font-black text-white truncate">{snap.name}</p>
-          <p className="text-[13px] text-gray-400">{snap.focus}</p>
-          <div className="flex items-center gap-2 flex-wrap mt-1">
-            <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
-            {editTarget ? (
-              <input type="date" defaultValue={enrollment.target_completion_date||""}
-                     onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
-                     data-testid={`target-date-input-${enrollment.id}`}
-                     className="bg-bgPanel border border-bgHover rounded px-1 text-[12px] text-white" style={{colorScheme:"dark"}} autoFocus />
-            ) : (
-              <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
-                      className={`text-[12px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
-                <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
-              </button>
-            )}
+      <div className="px-3 sm:px-4 py-3 border-b border-bgHover" style={{background: color + "10"}}>
+        <div className="flex items-center gap-3 sm:gap-4">
+          <ProgressRing percent={enrollment.mastered_pct} size={64} stroke={6} color={color}
+                        label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+            <p className="text-sm sm:text-base font-black text-white truncate">{snap.name}</p>
+          </div>
+          <div className="flex flex-col gap-1 shrink-0">
+            <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
+                    className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[11px] sm:text-[12px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
+            <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
+                    className="text-gray-400 hover:text-white text-[11px] sm:text-[12px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
           </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
-                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest shadow"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
-          <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
-                  className="text-gray-400 hover:text-white text-[12px] font-black uppercase tracking-widest"><i className="fas fa-pause mr-1"/>On Hold</button>
+        {snap.focus && (
+          <CollapsibleText text={snap.focus} maxChars={70} className="mt-2"
+                           testid={`enrollment-focus-${enrollment.id}`} />
+        )}
+        <div className="flex items-center gap-2 flex-wrap mt-2">
+          <p className="text-[11px] sm:text-[12px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
+          {editTarget ? (
+            <input type="date" defaultValue={enrollment.target_completion_date||""}
+                   onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
+                   data-testid={`target-date-input-${enrollment.id}`}
+                   className="bg-bgPanel border border-bgHover rounded px-1 text-[12px] text-white" style={{colorScheme:"dark"}} autoFocus />
+          ) : (
+            <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
+                    className={`text-[11px] sm:text-[12px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
+              <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
+            </button>
+          )}
         </div>
       </div>
 

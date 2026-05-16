@@ -1411,6 +1411,12 @@ def _default_settings() -> dict:
         "waiver_text": DEFAULT_WAIVER_TEXT,
         "waiver_required_for_booking": True,
         "waiver_version": 1,
+        "service_descriptions": {
+            "daycare": "Drop your dog off for the day to play, socialise, and get supervised exercise.",
+            "boarding": "Overnight stays in our climate-controlled kennels with daily playtime.",
+            "training": "1-on-1 sessions with your trainer working through your dog's training program.",
+            "grooming": "Bath services and nail trims — keep your pup looking sharp.",
+        },
     }
 
 async def get_settings() -> dict:
@@ -1431,6 +1437,12 @@ async def get_settings() -> dict:
             if svc_key not in s["service_hours"]:
                 s["service_hours"][svc_key] = svc_default
                 changed = True
+    # Nested backfill for service_descriptions
+    if isinstance(s.get("service_descriptions"), dict):
+        for svc_key, svc_default in (defaults.get("service_descriptions") or {}).items():
+            if svc_key not in s["service_descriptions"]:
+                s["service_descriptions"][svc_key] = svc_default
+                changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -1449,6 +1461,7 @@ class SettingsIn(BaseModel):
     waiver_text: Optional[str] = None
     waiver_required_for_booking: Optional[bool] = None
     waiver_version: Optional[int] = None
+    service_descriptions: Optional[dict] = None
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -1467,6 +1480,7 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "waiver_text": s.get("waiver_text"),
         "waiver_version": s.get("waiver_version", 1),
         "waiver_required_for_booking": s.get("waiver_required_for_booking", True),
+        "service_descriptions": s.get("service_descriptions") or {},
     }
 
 @api.put("/settings")

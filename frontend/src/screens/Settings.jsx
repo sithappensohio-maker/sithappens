@@ -59,6 +59,7 @@ export default function Settings() {
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
+    { id: "service_info", label: "Service Info", icon: "fa-circle-info" },
     { id: "programs", label: "Programs", icon: "fa-list-check" },
     { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
     { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
@@ -91,6 +92,7 @@ export default function Settings() {
           {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
+          {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
           {tab === "programs" && <ProgramsPanel />}
           {tab === "services" && <ServicesSettings />}
           {tab === "credit_packs" && <CreditPacksSettings />}
@@ -362,6 +364,43 @@ function WaiverPanel({ s, save, saving }) {
     </div>
   );
 }
+
+function ServiceInfoPanel({ s, save, saving }) {
+  const defaults = s.service_descriptions || {};
+  const [descs, setDescs] = useState({
+    daycare: defaults.daycare || "",
+    boarding: defaults.boarding || "",
+    training: defaults.training || "",
+    grooming: defaults.grooming || "",
+  });
+  const services = [
+    { k: "daycare", label: "Daycare", icon: "fa-sun", color: "text-shBlue" },
+    { k: "boarding", label: "Boarding", icon: "fa-moon", color: "text-shGreen" },
+    { k: "training", label: "Training", icon: "fa-graduation-cap", color: "text-purple-400" },
+    { k: "grooming", label: "Grooming", icon: "fa-bath", color: "text-pink-400" },
+  ];
+  return (
+    <div className="space-y-5" data-testid="service-info-panel">
+      <p className="text-[14px] text-gray-400">
+        These appear when your clients tap the <i className="fas fa-circle-info text-shBlue mx-1"/> next to a service on the booking form. Keep them short and reassuring — what is it, who it's for, what to bring.
+      </p>
+      {services.map(svc => (
+        <Section key={svc.k} title={<span><i className={`fas ${svc.icon} ${svc.color} mr-2`}/>{svc.label}</span>}>
+          <textarea
+            value={descs[svc.k]}
+            onChange={(e)=>setDescs(d => ({...d, [svc.k]: e.target.value}))}
+            rows={3}
+            data-testid={`service-desc-${svc.k}`}
+            placeholder={`Tell clients what ${svc.label.toLowerCase()} is like at your business…`}
+            className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm leading-relaxed"
+          />
+        </Section>
+      ))}
+      <SaveBar onSave={()=>save({ service_descriptions: descs })} saving={saving} />
+    </div>
+  );
+}
+
 
 function Section({ title, subtitle, children }) {
   return (
