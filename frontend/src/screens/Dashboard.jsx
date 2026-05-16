@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
+import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -45,10 +46,13 @@ export default function Dashboard() {
   const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
+  const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
+
   if (!stats) return <div className="text-gray-400 text-sm">Loading dashboard…</div>;
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="admin-dashboard">
+      <RefreshSpinner pulling={pulling} progress={progress} />
       {alerts.length > 0 && (
         <div className="bg-gradient-to-r from-shOrange/20 to-red-500/10 border border-shOrange/40 rounded-xl p-5 shadow-xl" data-testid="vaccine-alerts-banner">
           <div className="flex items-center justify-between mb-3">

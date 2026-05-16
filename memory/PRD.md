@@ -321,6 +321,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 41 — Mobile polish: sticky CTA, pull-to-refresh, safe-area, service info (2026-02)
+- ✅ **Service info modal** (`Portal.jsx`): added `SERVICE_INFO` constant + `<ServiceInfoModal>`. Each service-type pill on the portal now has a small ⓘ icon — tap to open a bottom-sheet description with a summary + 4 bullet points. Keeps the booking form short.
+- ✅ **Sticky mobile "Book Service" CTA** (`Portal.jsx`): `fixed bottom-0 md:hidden` bar with `pb-safe`. Tapping smooth-scrolls to `#portal-book-section`. Scroll area gets `pb-24 md:pb-8` so content never hides behind it.
+- ✅ **Pull-to-refresh hook** (`usePullToRefresh.js`): new touch-only hook + `<RefreshSpinner>`. Tracks vertical pull while `scrollTop === 0`, fires `onRefresh()` past 70px threshold. Skips on non-touch devices. Wired into Dashboard + Bookings, both using a shared `[data-scroll-root]` selector on App.js's main scroll container.
+- ✅ **Safe-area-inset CSS** (`index.css`): utility classes `pt-safe`, `pb-safe`, `pl-safe`, `pr-safe`, `mb-safe`, and `h-safe-screen` for PWA notch/home-indicator support on iPhone.
+- ✅ End-to-end verified at 390×844: sticky CTA present, tapping scrolls to booking section, ⓘ buttons open the description modal (verified "Training" content: "1-on-1 sessions...", bullet list correct). At 1920×800: sticky CTA correctly hidden, info modal still works centered.
+
 ## Sprint 40 — Broad mobile UX sweep (2026-02)
 - ✅ **Portal header**: was `h-24 px-8` with logo+tagline+welcome+3 buttons that all overflowed on phones (user's first complaint). Now: 40px logo on mobile / 64px desktop, tagline hidden under `sm:`, welcome name truncates, Logout collapses to icon-only on phones. Padding `p-3` on mobile / `p-8` desktop.
 - ✅ **Portal onboarding banner**: tightened padding (`p-4 sm:p-6`), shrunk text sizes, narrowed the "X of 3" pill.

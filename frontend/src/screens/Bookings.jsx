@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
+import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 
 export default function Bookings() {
   const [bookings, setBookings] = useState([]);
@@ -30,8 +31,11 @@ export default function Bookings() {
     completed: "bg-shBlue/15 text-shBlue",
   })[s] || "bg-gray-500/15 text-gray-400";
 
+  const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
+
   return (
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
+      <RefreshSpinner pulling={pulling} progress={progress} />
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Bookings</h3>
         <button onClick={()=>setShowModal(true)} data-testid="new-booking-button"

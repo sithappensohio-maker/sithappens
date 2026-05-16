@@ -14,6 +14,86 @@ import { useConfirm } from "../lib/useConfirm";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
+const SERVICE_INFO = {
+  daycare: {
+    label: "Daycare",
+    icon: "fa-sun",
+    color: "text-shBlue",
+    summary: "Drop your dog off for the day to play, socialise, and get supervised exercise.",
+    bullets: [
+      "Best for friendly dogs aged 6 months+",
+      "Drop-off & pick-up during business hours",
+      "Deducted from your Daycare credit pack on approval",
+      "Bordetella + DHPP vaccines required",
+    ],
+  },
+  boarding: {
+    label: "Boarding",
+    icon: "fa-moon",
+    color: "text-shGreen",
+    summary: "Overnight stays in our climate-controlled kennels with daily playtime.",
+    bullets: [
+      "Choose start + end dates (we count nights)",
+      "Pay-on-the-day — no credit pack needed",
+      "Bring your dog's regular food if possible",
+      "Pickup before noon to avoid an extra night",
+    ],
+  },
+  training: {
+    label: "Training",
+    icon: "fa-graduation-cap",
+    color: "text-purple-400",
+    summary: "1-on-1 sessions with your trainer working through your dog's training program.",
+    bullets: [
+      "Deducted from your Training credit pack on approval",
+      "Bring a hungry dog (skip the meal beforehand!)",
+      "We'll log progress + homework for you to practice",
+      "Sessions are usually 30-60 minutes",
+    ],
+  },
+  grooming: {
+    label: "Grooming",
+    icon: "fa-bath",
+    color: "text-pink-400",
+    summary: "Bath services and nail trims — keep your pup looking sharp.",
+    bullets: [
+      "Choose Bath or Nail Trim above",
+      "Pay-on-the-day at pickup",
+      "Drop off in the morning, pickup same day",
+      "Mention any sensitive spots when you arrive",
+    ],
+  },
+};
+
+function ServiceInfoModal({ type, onClose }) {
+  if (!type) return null;
+  const info = SERVICE_INFO[type];
+  if (!info) return null;
+  return (
+    <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose} data-testid="service-info-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe" onClick={(e)=>e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className={`text-2xl ${info.color}`}><i className={`fas ${info.icon}`}/></span>
+            <h4 className="text-lg sm:text-xl font-black text-white uppercase italic tracking-tight">{info.label}</h4>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white p-1 -m-1" data-testid="service-info-close"><i className="fas fa-times text-lg"/></button>
+        </div>
+        <p className="text-[14px] text-gray-300 mb-4">{info.summary}</p>
+        <ul className="space-y-2">
+          {info.bullets.map((b, i) => (
+            <li key={i} className="flex items-start gap-2 text-[13px] text-gray-300">
+              <i className={`fas fa-check ${info.color} mt-1 text-[11px] shrink-0`}/>
+              <span>{b}</span>
+            </li>
+          ))}
+        </ul>
+        <button onClick={onClose} className="mt-5 w-full bg-bgBase border border-bgHover text-gray-300 hover:text-white py-3 rounded font-black text-[13px] uppercase tracking-widest">Got it</button>
+      </div>
+    </div>
+  );
+}
+
 export default function Portal() {
   const confirm = useConfirm();
   const { user, logout, reloadUser } = useAuth();
@@ -35,6 +115,7 @@ export default function Portal() {
   const [success, setSuccess] = useState("");
   const [waiver, setWaiver] = useState(null); // {signed, current_version, signature, needs_resign}
   const [pubSettings, setPubSettings] = useState(null);
+  const [showServiceInfo, setShowServiceInfo] = useState(null); // service type key
   const [showWaiver, setShowWaiver] = useState(false);
   const [homework, setHomework] = useState([]);
   const [hwModal, setHwModal] = useState(null);
@@ -187,7 +268,7 @@ export default function Portal() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
         {!onboardingDone && (
           <div className="mb-4 sm:mb-6 bg-gradient-to-br from-shGreen/15 via-bgPanel to-shBlue/15 border border-shGreen/40 rounded-xl p-4 sm:p-6 shadow-2xl" data-testid="onboarding-banner">
             <div className="flex items-start justify-between gap-3 mb-4">
@@ -248,7 +329,7 @@ export default function Portal() {
             )}
           </div>
 
-          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
+          <div id="portal-book-section" className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
             <h4 className="font-black text-shBlue mb-4 uppercase text-xs tracking-widest"><i className="fas fa-calendar-plus mr-2"/>Book Service</h4>
 
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
@@ -258,10 +339,17 @@ export default function Portal() {
             </select>
 
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-            <div className="grid grid-cols-2 gap-2 mt-1 mb-3">
+            <div className="grid grid-cols-2 gap-2 mt-1 mb-3" data-testid="portal-service-grid">
               {["daycare","boarding","training","grooming"].map(t => (
-                <button key={t} onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); if(t==="grooming") setIsRecurring(false); }} data-testid={`book-service-${t}`}
-                        className={`py-2 rounded text-[14px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
+                <div key={t} className="relative">
+                  <button onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); if(t==="grooming") setIsRecurring(false); }} data-testid={`book-service-${t}`}
+                          className={`w-full py-2 pr-7 rounded text-[14px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
+                  <button onClick={(e)=>{e.stopPropagation(); setShowServiceInfo(t);}} data-testid={`book-service-info-${t}`}
+                          aria-label={`About ${t}`}
+                          className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-[13px] ${bookType===t?"text-white hover:bg-white/15":"text-gray-500 hover:text-shBlue hover:bg-shBlue/10"}`}>
+                    <i className="fas fa-circle-info"/>
+                  </button>
+                </div>
               ))}
             </div>
 
@@ -488,6 +576,17 @@ export default function Portal() {
         />
       )}
 
+      {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always reachable */}
+      {dogs.length > 0 && (
+        <button
+          onClick={()=>{ const el = document.getElementById("portal-book-section"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+          data-testid="portal-sticky-book"
+          className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-shGreen text-bgHeader py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t border-shGreen/60"
+        >
+          <i className="fas fa-calendar-plus"/>Book Service
+        </button>
+      )}
+
       {hwModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
           <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-8 shadow-2xl animate-slide-in">
@@ -546,6 +645,8 @@ export default function Portal() {
           </div>
         </div>
       )}
+
+      <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} />
     </div>
   );
 }

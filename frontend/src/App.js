@@ -123,7 +123,7 @@ function AdminShell() {
           </button>
           <button onClick={()=>setSearchOpen(true)} className="md:hidden text-gray-300 p-2"><i className="fas fa-search" /></button>
         </header>
-        <div className="flex-1 overflow-y-auto p-4 md:p-8">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 relative" data-scroll-root>
           {tab === "dashboard" && <Dashboard />}
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}

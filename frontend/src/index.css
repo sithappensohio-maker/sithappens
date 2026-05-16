@@ -50,6 +50,16 @@ body {
 
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
+/* PWA safe-area insets — respect iPhone notch + Android nav bar */
+.pt-safe { padding-top: env(safe-area-inset-top); }
+.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pl-safe { padding-left: env(safe-area-inset-left); }
+.pr-safe { padding-right: env(safe-area-inset-right); }
+.mb-safe { margin-bottom: env(safe-area-inset-bottom); }
+@supports (padding: env(safe-area-inset-bottom)) {
+  .h-safe-screen { height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+}
+
 @keyframes slide-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
