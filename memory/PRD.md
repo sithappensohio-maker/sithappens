@@ -321,6 +321,10 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 45 — Hotfix: portal-snapshot decorator lost during marketing-qr insert (2026-02)
+- ✅ When inserting the marketing-qr endpoint above the portal-snapshot endpoint, the `@api.get("/admin/clients/{client_id}/portal-snapshot")` decorator got accidentally consumed by the search/replace — the function body remained but it was no longer wired to a route, so the snapshot endpoint silently returned FastAPI's default 404.
+- ✅ Restored the decorator. Verified preview: snapshot for Alex Owner returns full payload (1 dog, 1 booking, waiver signed). Production needs a redeploy to clear the same bug.
+
 ## Sprint 44 — Downloadable marketing QR code (2026-02)
 - ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/marketing-qr?size=N&ref=tag`. Generates a high-error-correction PNG QR pointing at `APP_PUBLIC_URL`, optional `?ref=` query param baked into the encoded URL for future scan analytics. Returns the PNG as `attachment` with a friendly filename and an `X-QR-Target-Url` header so the UI can show what's encoded.
 - ✅ **Frontend** (`Settings.jsx`): new "Marketing QR" tab with a `MarketingQRPanel` component. Live PNG preview, debounced tracking-tag input (regenerates preview as you type), three download buttons (Small 512px / Print 1024px / Poster 2048px) sized for different print use cases. Uses `responseType: "blob"` + `URL.createObjectURL` + auto-clicked anchor for the download.

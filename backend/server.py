@@ -3216,6 +3216,7 @@ async def admin_marketing_qr(
 
 
 
+@api.get("/admin/clients/{client_id}/portal-snapshot")
 async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require_admin)):
     """Read-only snapshot of what a client would see in their portal — for admin testing/QA.
     No state changes, no impersonation token: just an aggregated payload."""
