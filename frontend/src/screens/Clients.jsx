@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import ClientPortalPreview from "../components/ClientPortalPreview";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
 
@@ -17,6 +18,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
+  const [previewId, setPreviewId] = useState(null); // client id whose portal we're previewing
 
   const load = async () => {
     const [c, p] = await Promise.all([api.get("/clients"), api.get("/credit-packs").catch(()=>({data:[]}))]);
@@ -158,8 +160,12 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
               </div>
             </div>
+            <button onClick={()=>setPreviewId(c.id)} data-testid={`preview-portal-${c.id}`}
+                    className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
+              <i className="fas fa-eye"/>Preview client portal
+            </button>
             <button onClick={()=>sendClaimEmail(c)} data-testid={`send-claim-email-${c.id}`}
-                    className="mt-4 w-full bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
+                    className="mt-2 w-full bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
               <i className="fas fa-envelope mr-1"/>{c.portal_email ? "Send password reset email" : "Send claim account email"}
             </button>
             {claimToast && claimToast.clientId === c.id && (
@@ -234,6 +240,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                            onClose={()=>setReceiptsOpen(null)}
                            onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
+      {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
     </div>
   );
 }

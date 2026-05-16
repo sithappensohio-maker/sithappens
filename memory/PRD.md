@@ -321,6 +321,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 43 — "Preview as client" read-only portal viewer (2026-02)
+- ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/clients/{client_id}/portal-snapshot`. Single aggregated payload — `{client, dogs, bookings, enrollments_by_dog, homework, waiver, waiver_required}`. Read-only, no state changes. Same data shape Portal.jsx fetches but pulled by client_id instead of from the JWT.
+- ✅ **Frontend component** (`components/ClientPortalPreview.jsx`): full-screen modal with a red "VIEWING AS {Name} (READ-ONLY)" banner + "Return to Admin" button. Shows credits tiles, waiver status, My Dogs cards, Upcoming bookings, Training Progress rings, Homework list, and Recent visits. No interactive controls — admin can't book/sign/edit on the client's behalf.
+- ✅ **Wired** into `Clients.jsx`: each client card now has a blue "👁 Preview Client Portal" button at the top. Tap → opens the modal.
+- ✅ Verified end-to-end at 1440×900 and 390×844: clicking Alex Owner's preview shows their actual credits (10/5), waiver status, Buddy dog card, and recent cancelled booking — exactly what Alex would see.
+
 ## Sprint 42 — Collapsible descriptions + editable service info (2026-02)
 - ✅ **`CollapsibleText` component** (`components/CollapsibleText.jsx`): single-line preview + inline "More" toggle. Used wherever short blurbs would otherwise wrap into 8-line vertical walls on mobile.
 - ✅ **Training program card** (`DogTrainingTab.jsx`): the "focus" description was wrapping into a tall narrow column on phones (visible in user's screenshot). Now: header restructured to keep ProgressRing/title/buttons on a single row; description sits below in a collapsible single line with a "More" toggle.

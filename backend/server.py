@@ -3166,6 +3166,60 @@ async def backup_export(_: dict = Depends(require_admin)):
     return payload
 
 
+
+@api.get("/admin/clients/{client_id}/portal-snapshot")
+async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require_admin)):
+    """Read-only snapshot of what a client would see in their portal — for admin testing/QA.
+    No state changes, no impersonation token: just an aggregated payload."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    dogs = await db.dogs.find({"owner_id": client_id}, {"_id": 0}).to_list(200)
+    bookings = await db.bookings.find({"client_id": client_id}, {"_id": 0}).sort("date", -1).to_list(200)
+
+    # Active enrollments per dog (mirrors what PortalTrainingCard fetches)
+    enrollments_by_dog: Dict[str, list] = {}
+    if dogs:
+        dog_ids = [d["id"] for d in dogs]
+        enrolls = await db.program_enrollments.find(
+            {"dog_id": {"$in": dog_ids}, "status": "active"},
+            {"_id": 0},
+        ).to_list(200)
+        for e in enrolls:
+            enrollments_by_dog.setdefault(e["dog_id"], []).append(e)
+
+    # Homework assigned to this client
+    homework = await db.homework.find(
+        {"client_id": client_id, "status": {"$in": ["assigned", "in_progress"]}},
+        {"_id": 0},
+    ).sort("due_date", 1).to_list(200)
+
+    # Waiver status
+    settings = await get_settings()
+    waiver_version = settings.get("waiver_version", 1)
+    sig = await db.waiver_signatures.find_one(
+        {"client_id": client_id},
+        {"_id": 0},
+        sort=[("signed_at", -1)],
+    )
+    waiver = {
+        "signed": bool(sig),
+        "needs_resign": bool(sig and sig.get("waiver_version", 1) < waiver_version),
+        "signature": sig,
+    }
+
+    return {
+        "client": client,
+        "dogs": dogs,
+        "bookings": bookings,
+        "enrollments_by_dog": enrollments_by_dog,
+        "homework": homework,
+        "waiver": waiver,
+        "waiver_required": bool(settings.get("waiver_required_for_booking", True)),
+    }
+
+
 class BackupRestoreIn(BaseModel):
     version: int
     collections: dict
