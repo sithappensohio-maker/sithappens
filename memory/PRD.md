@@ -321,6 +321,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 40 — Broad mobile UX sweep (2026-02)
+- ✅ **Portal header**: was `h-24 px-8` with logo+tagline+welcome+3 buttons that all overflowed on phones (user's first complaint). Now: 40px logo on mobile / 64px desktop, tagline hidden under `sm:`, welcome name truncates, Logout collapses to icon-only on phones. Padding `p-3` on mobile / `p-8` desktop.
+- ✅ **Portal onboarding banner**: tightened padding (`p-4 sm:p-6`), shrunk text sizes, narrowed the "X of 3" pill.
+- ✅ **Bookings**: was a 6-column wide table that forced horizontal scroll on phones. Now: hidden on mobile + replaced with stacked cards showing dog/client/service/date/status pill + inline action links. Desktop table unchanged.
+- ✅ **Schedule** (`Schedule.jsx` + `index.css`): auto-detects mobile (`matchMedia <=767px`) → switches FullCalendar to `dayGridWeek` view with a compact toolbar (prev/next/today + abbreviated MMM-YY title). Added mobile-only CSS targeting `.fc-toolbar`, `.fc-button`, `.fc-event` to shrink font sizes so events actually fit in narrow day cells.
+- ✅ **Clients + Dogs cards**: removed the `opacity-0 group-hover` pattern that hid Edit/Trash icons until hover (broken on touch devices — phone users literally couldn't access them). Now always visible on `<md`, hover-only on desktop.
+- ✅ Verified at 390×844 and 1920×800: mobile is now navigable end-to-end; desktop has zero regression (Bookings still shows wide table, Schedule still shows month grid).
+
 ## Sprint 39 — Mobile UX overhaul: dog edit + grading (2026-02)
 - ✅ **`Modal` component** (`Clients.jsx`): now responsive. Mobile (<640px) renders as a bottom-sheet (`items-end`, `rounded-t-2xl`), tighter padding (`p-5` instead of `p-8`), and a sticky title bar with the close button. Desktop unchanged (centered, `sm:rounded-2xl`, `sm:p-8`). Added `max-h-[95vh] overflow-y-auto` so long forms scroll naturally on phones.
 - ✅ **`GoalRow`** (`DogTrainingTab.jsx`): main row was `flex items-center` — on phones, the 6 score buttons (0-5) competed with the goal description for the same horizontal space, causing the chips to overlap the text (visible in user's screenshot). Changed to `flex-col sm:flex-row` so on mobile the goal name sits on its own line and the score chips sit on a new row below. Buttons also enlarged to `w-8 h-8` on mobile for easier tapping.

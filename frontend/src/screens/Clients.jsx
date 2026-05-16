@@ -109,15 +109,15 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 className="bg-shBlue text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">+ Add Client</button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="client-grid">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
         {clients.length === 0 && <div className="col-span-full text-center text-gray-500 text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
         {clients.map(c => (
-          <div key={c.id} className="bg-bgPanel p-6 rounded-xl border-l-4 border-shBlue group relative shadow-lg" data-testid={`client-card-${c.id}`}>
-            <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
-              <button onClick={()=>openEdit(c)} className="text-gray-400 hover:text-white p-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
-              <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-1"><i className="fas fa-trash" /></button>
+          <div key={c.id} className="bg-bgPanel p-5 sm:p-6 rounded-xl border-l-4 border-shBlue group relative shadow-lg" data-testid={`client-card-${c.id}`}>
+            <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
+              <button onClick={()=>openEdit(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
+              <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
             </div>
-            <h4 className="text-lg font-black text-white uppercase tracking-tight">{c.name}</h4>
+            <h4 className="text-lg font-black text-white uppercase tracking-tight pr-16">{c.name}</h4>
             <div className="mt-2 space-y-1 text-xs text-gray-400">
               {c.phone && <p><i className="fas fa-phone w-4 text-shBlue" /> {c.phone}</p>}
               {c.email && <p><i className="fas fa-envelope w-4 text-shBlue" /> {c.email}</p>}

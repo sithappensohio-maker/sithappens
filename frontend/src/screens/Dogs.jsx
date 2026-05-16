@@ -235,7 +235,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   </div>
                 : <div className="h-40 w-full bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-5xl"><i className="fas fa-paw" /></div>}
               <div className="p-5">
-                <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                <div className="absolute top-3 right-3 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
                   <button onClick={()=>openEdit(d)} className="bg-black/60 text-white p-2 rounded" data-testid={`edit-dog-${d.id}`}><i className="fas fa-edit text-xs" /></button>
                   <button onClick={()=>remove(d.id)} className="bg-black/60 text-red-400 p-2 rounded"><i className="fas fa-trash text-xs" /></button>
                 </div>
@@ -463,7 +463,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                           <img src={p} alt="" loading="lazy" decoding="async" className="max-h-full max-w-full object-contain" />
                         </div>
                         <button onClick={()=>setForm({...form, photos: form.photos.filter((_,j)=>j!==i)})}
-                                className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full w-6 h-6 text-xs opacity-0 group-hover:opacity-100 transition"><i className="fas fa-times"/></button>
+                                className="absolute top-1 right-1 bg-red-500/90 text-white rounded-full w-6 h-6 text-xs opacity-100 md:opacity-0 md:group-hover:opacity-100 transition"><i className="fas fa-times"/></button>
                       </div>
                     ))}
                   </div>

@@ -37,6 +37,17 @@ body {
 .fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: #94a3b8; text-decoration: none; font-weight: 700; font-size: 11px; text-transform: uppercase; }
 .fc .fc-event { padding: 2px 6px; font-weight: 700; font-size: 11px; cursor: pointer; }
 
+/* FullCalendar mobile: tighter toolbar so prev/next/title don't wrap */
+@media (max-width: 767px) {
+  .fc .fc-toolbar { flex-wrap: wrap; gap: 6px; }
+  .fc .fc-toolbar-title { font-size: 0.95rem; letter-spacing: 0; }
+  .fc .fc-button { font-size: 10px; padding: 4px 8px; }
+  .fc .fc-toolbar-chunk { display: flex; align-items: center; }
+  .fc .fc-col-header-cell-cushion { font-size: 9px; padding: 4px 2px; }
+  .fc .fc-daygrid-day-number { font-size: 10px; padding: 2px 4px; }
+  .fc .fc-event { font-size: 9px; padding: 1px 3px; }
+}
+
 input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 
 @keyframes slide-in {

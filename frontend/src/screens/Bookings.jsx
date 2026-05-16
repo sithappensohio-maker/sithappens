@@ -39,7 +39,8 @@ export default function Bookings() {
       </div>
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
-        <table className="w-full text-left text-sm">
+        {/* Desktop: table */}
+        <table className="w-full text-left text-sm hidden md:table">
           <thead className="text-[14px] text-gray-500 font-black uppercase">
             <tr><th className="px-6 py-3">Dog</th><th className="px-6 py-3">Client</th><th className="px-6 py-3">Service</th><th className="px-6 py-3">Dates</th><th className="px-6 py-3">Status</th><th className="px-6 py-3 text-right">Actions</th></tr>
           </thead>
@@ -64,6 +65,34 @@ export default function Bookings() {
             ))}
           </tbody>
         </table>
+
+        {/* Mobile: stacked cards */}
+        <div className="md:hidden divide-y divide-bgHover/40" data-testid="bookings-mobile">
+          {bookings.length === 0 && <div className="px-4 py-10 text-center text-xs text-gray-500 uppercase font-black">No bookings yet.</div>}
+          {bookings.map(b => (
+            <div key={b.id} className="p-4 space-y-2" data-testid={`booking-card-${b.id}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-black uppercase text-white">{b.dog_name}</p>
+                  <p className="text-[11px] text-gray-400 truncate">{b.client_name}</p>
+                </div>
+                <span className={`shrink-0 text-[11px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+                <span className="font-black uppercase tracking-widest text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>
+                <span className="text-gray-400">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</span>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
+                <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-m`} className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
+                {b.status === "pending" && <>
+                  <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-m`} className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:underline">Approve</button>
+                  <button onClick={()=>reject(b.id)} className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
+                </>}
+                {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
       {showModal && <AdminBookingModal onClose={()=>setShowModal(false)} onCreated={load} />}
       {editing && <AdminBookingModal existing={editing} onClose={()=>setEditing(null)} onCreated={load} />}

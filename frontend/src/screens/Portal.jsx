@@ -161,38 +161,41 @@ export default function Portal() {
 
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
-      <header className="bg-bgHeader border-b border-bgHover h-24 flex items-center justify-between px-8">
-        <div className="flex items-center gap-4">
-          <img src="/logo.png" alt="Sit Happens" className="h-16" data-testid="portal-logo" />
-          <div>
-            <p className="text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding</p>
-            <p className="text-xs text-shGreen font-black uppercase tracking-widest mt-1">Welcome, {user.name}</p>
+      <header className="bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-24">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+          <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-16 shrink-0" data-testid="portal-logo" />
+          <div className="min-w-0">
+            <p className="hidden sm:block text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding</p>
+            <p className="text-[11px] sm:text-xs text-shGreen font-black uppercase tracking-widest sm:mt-1 truncate">Welcome, {user.name}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
-                  className="text-xs bg-shBlue/10 text-shBlue px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
+                  className="text-[11px] sm:text-xs bg-shBlue/10 text-shBlue px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
             <i className="fas fa-circle-question"/>
             <span className="hidden sm:inline">How to Use</span>
           </button>
           <InstallAppButton
             testid="portal-install-app"
             label="Install"
-            className="text-xs bg-shGreen/10 text-shGreen px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
+            className="text-[11px] sm:text-xs bg-shGreen/10 text-shGreen px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
           />
-          <button onClick={logout} data-testid="logout-button" className="text-xs bg-red-500/10 text-red-400 px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">Logout</button>
+          <button onClick={logout} data-testid="logout-button" className="text-[11px] sm:text-xs bg-red-500/10 text-red-400 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">
+            <i className="fas fa-right-from-bracket sm:hidden"/>
+            <span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-8 max-w-6xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full">
         {!onboardingDone && (
-          <div className="mb-6 bg-gradient-to-br from-shGreen/15 via-bgPanel to-shBlue/15 border border-shGreen/40 rounded-xl p-6 shadow-2xl" data-testid="onboarding-banner">
-            <div className="flex items-start justify-between gap-4 mb-4">
-              <div>
-                <h3 className="text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
-                <p className="text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
+          <div className="mb-4 sm:mb-6 bg-gradient-to-br from-shGreen/15 via-bgPanel to-shBlue/15 border border-shGreen/40 rounded-xl p-4 sm:p-6 shadow-2xl" data-testid="onboarding-banner">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <div className="min-w-0">
+                <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
+                <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
               </div>
-              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[13px] font-black uppercase tracking-widest px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
+              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[11px] sm:text-[13px] font-black uppercase tracking-widest px-2 sm:px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <OnboardStep n={1} done={profileComplete} active={onboardingStep===1} title="Complete your profile" desc="Add your phone, address and emergency contact." cta="Edit Profile" onClick={()=>setProfileOpen(true)} testId="onb-profile" />
