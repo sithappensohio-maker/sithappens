@@ -321,6 +321,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 39 — Mobile UX overhaul: dog edit + grading (2026-02)
+- ✅ **`Modal` component** (`Clients.jsx`): now responsive. Mobile (<640px) renders as a bottom-sheet (`items-end`, `rounded-t-2xl`), tighter padding (`p-5` instead of `p-8`), and a sticky title bar with the close button. Desktop unchanged (centered, `sm:rounded-2xl`, `sm:p-8`). Added `max-h-[95vh] overflow-y-auto` so long forms scroll naturally on phones.
+- ✅ **`GoalRow`** (`DogTrainingTab.jsx`): main row was `flex items-center` — on phones, the 6 score buttons (0-5) competed with the goal description for the same horizontal space, causing the chips to overlap the text (visible in user's screenshot). Changed to `flex-col sm:flex-row` so on mobile the goal name sits on its own line and the score chips sit on a new row below. Buttons also enlarged to `w-8 h-8` on mobile for easier tapping.
+- ✅ **`StatPill`** (`Dogs.jsx`): label font shrunk from `text-[15px]` to `text-[10px] sm:text-[15px]` and value from `text-xl` to `text-lg sm:text-xl` so the 4 stat tiles fit cleanly in a 2×2 grid on phones without eating half the modal vertical space.
+- ✅ **Dog edit modal**: removed the hardcoded `max-h-[75vh]` + nested `overflow-y-auto` inner div that was competing with the new Modal's outer scroll, eliminating double-scrollbars. Promoted modal to `max-w-2xl` for better desktop use of space.
+- ✅ Verified at 390×844 (iPhone): score buttons measured cleanly within viewport (x=58 to x_end=303), no overlap. Verified at 1920×800 (desktop): no regression — modal still centered with generous padding.
+
 ## Sprint 38 — Check-out frees the slot (2026-02)
 - ✅ **Bug**: dogs that had checked out were still counted against daycare/boarding/training capacity for the rest of the day, so the dashboard showed e.g. "4/30" when only one dog was actually on-site.
 - ✅ **Fix** (`server.py`):

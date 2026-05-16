@@ -196,28 +196,30 @@ function GoalRow({ goal, progress, onChange }) {
   const isDone = progress.status === "mastered" || progress.score >= 4;
   return (
     <div className="bg-bgPanel rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-black text-white truncate">{goal.name} {isManual && <span className="text-[10px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
+          <p className="text-[14px] font-black text-white">{goal.name} {isManual && <span className="text-[10px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
           {goal.description && <p className="text-[12px] text-gray-500">{goal.description}</p>}
         </div>
-        {isManual ? (
-          <button onClick={()=>onChange({ score: isDone ? 0 : 5, status: isDone ? "not_started" : "mastered" })}
-                  data-testid={`goal-toggle-${goal.id}`}
-                  className={`px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
-            <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
-          </button>
-        ) : (
-          <div className="flex gap-0.5">
-            {[0,1,2,3,4,5].map(n => (
-              <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
-                      title={labels[n]}
-                      className={`w-6 h-6 text-[12px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
-                      style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
-            ))}
-          </div>
-        )}
-        <button onClick={()=>setOpenNote(o=>!o)} className="text-gray-400 hover:text-white text-xs px-1"><i className="fas fa-note-sticky"/></button>
+        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
+          {isManual ? (
+            <button onClick={()=>onChange({ score: isDone ? 0 : 5, status: isDone ? "not_started" : "mastered" })}
+                    data-testid={`goal-toggle-${goal.id}`}
+                    className={`px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
+              <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
+            </button>
+          ) : (
+            <div className="flex gap-1">
+              {[0,1,2,3,4,5].map(n => (
+                <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
+                        title={labels[n]}
+                        className={`w-8 h-8 sm:w-6 sm:h-6 text-[13px] sm:text-[12px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
+                        style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
+              ))}
+            </div>
+          )}
+          <button onClick={()=>setOpenNote(o=>!o)} className="text-gray-400 hover:text-white text-xs px-2 py-1"><i className="fas fa-note-sticky"/></button>
+        </div>
       </div>
       {openNote && (
         <div className="mt-2 flex gap-2">

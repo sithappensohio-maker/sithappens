@@ -313,8 +313,8 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       </div>
 
       {open && (
-        <Modal title={editing?`Edit · ${form.name||"Dog"}`:"New Dog"} onClose={()=>setOpen(false)}>
-          <div className="max-h-[75vh] flex flex-col">
+        <Modal title={editing?`Edit · ${form.name||"Dog"}`:"New Dog"} onClose={()=>setOpen(false)} maxWidth="max-w-2xl">
+          <div className="flex flex-col">
             {editing && stats && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" data-testid="dog-stats">
                 <StatPill label="Daycare days" value={stats.daycare_days} color="text-shBlue" icon="fa-sun" />
@@ -323,7 +323,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                 <StatPill label="Last visit" value={stats.last_visit || "—"} color="text-shOrange" icon="fa-clock-rotate-left" small />
               </div>
             )}
-            <nav className="flex gap-1 mb-4 overflow-x-auto pb-2 border-b border-bgHover">
+            <nav className="flex gap-1 mb-4 overflow-x-auto pb-2 border-b border-bgHover -mx-1 px-1">
               {tabs.map(t => (
                 <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`dog-tab-${t.id}`}
                         className={`shrink-0 px-3 py-2 rounded text-[14px] font-black uppercase tracking-widest ${tab===t.id?"bg-shBlue text-white":"text-gray-400 hover:bg-bgHover"}`}>
@@ -331,7 +331,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                 </button>
               ))}
             </nav>
-            <div className="overflow-y-auto pr-1 flex-1 space-y-4">
+            <div className="space-y-4">
               {tab === "basics" && (
                 <>
                   <div>
@@ -532,9 +532,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 
 function StatPill({ label, value, color, icon, small = false }) {
   return (
-    <div className="bg-bgBase rounded p-3 border border-bgHover">
-      <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
-      <p className={`font-black mt-1 ${color} ${small ? "text-xs" : "text-xl"}`}>{value}</p>
+    <div className="bg-bgBase rounded p-2 sm:p-3 border border-bgHover">
+      <p className="text-[10px] sm:text-[15px] text-gray-500 font-black uppercase tracking-widest leading-tight"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
+      <p className={`font-black mt-1 ${color} ${small ? "text-[11px] sm:text-xs" : "text-lg sm:text-xl"}`}>{value}</p>
     </div>
   );
 }
