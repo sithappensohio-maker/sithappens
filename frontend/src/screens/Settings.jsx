@@ -60,6 +60,7 @@ export default function Settings() {
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
     { id: "service_info", label: "Service Info", icon: "fa-circle-info" },
+    { id: "marketing_qr", label: "Marketing QR", icon: "fa-qrcode" },
     { id: "programs", label: "Programs", icon: "fa-list-check" },
     { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
     { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
@@ -93,6 +94,7 @@ export default function Settings() {
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
           {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
+          {tab === "marketing_qr" && <MarketingQRPanel />}
           {tab === "programs" && <ProgramsPanel />}
           {tab === "services" && <ServicesSettings />}
           {tab === "credit_packs" && <CreditPacksSettings />}
@@ -364,6 +366,109 @@ function WaiverPanel({ s, save, saving }) {
     </div>
   );
 }
+
+function MarketingQRPanel() {
+  const [ref, setRef] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [targetUrl, setTargetUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  const buildUrl = (size = 512) => {
+    const params = new URLSearchParams({ size: String(size) });
+    if (ref.trim()) params.set("ref", ref.trim());
+    return `/admin/marketing-qr?${params.toString()}`;
+  };
+
+  const loadPreview = async () => {
+    setLoading(true); setErr("");
+    try {
+      const r = await api.get(buildUrl(512), { responseType: "blob" });
+      const blob = new Blob([r.data], { type: "image/png" });
+      setPreviewUrl(URL.createObjectURL(blob));
+      setTargetUrl(r.headers["x-qr-target-url"] || "");
+    } catch (e) {
+      setErr(formatErr(e?.response?.data?.detail) || "Couldn't generate the QR code.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadPreview(); /* eslint-disable-next-line */ }, []);
+  // Regenerate preview when ref changes (debounced).
+  useEffect(() => {
+    const id = setTimeout(loadPreview, 400);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line
+  }, [ref]);
+
+  const download = async (size) => {
+    setErr("");
+    try {
+      const r = await api.get(buildUrl(size), { responseType: "blob" });
+      const blob = new Blob([r.data], { type: "image/png" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sit-happens-qr${ref ? "-" + ref : ""}-${size}px.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErr(formatErr(e?.response?.data?.detail) || "Download failed.");
+    }
+  };
+
+  return (
+    <div className="space-y-5" data-testid="marketing-qr-panel">
+      <Section title="Marketing QR Code"
+               subtitle="Scan with any phone camera to jump straight to your app. Print this on flyers, business cards, fridge magnets — anywhere clients might see it.">
+        <div className="flex flex-col md:flex-row items-stretch gap-5">
+          <div className="bg-white p-4 rounded-xl flex items-center justify-center w-full md:w-64 h-64 shrink-0">
+            {loading && !previewUrl && <p className="text-gray-500 text-xs font-black uppercase tracking-widest">Generating…</p>}
+            {previewUrl && <img src={previewUrl} alt="App QR code" className="max-w-full max-h-full" data-testid="qr-preview-img" />}
+          </div>
+          <div className="flex-1 space-y-4">
+            <div>
+              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Points to</label>
+              <p className="text-[13px] text-shBlue break-all mt-1 font-mono" data-testid="qr-target-url">{targetUrl || "—"}</p>
+            </div>
+            <div>
+              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Tracking tag <span className="text-gray-600 normal-case tracking-normal">(optional — e.g. flyer, postcard, fb-ad)</span></label>
+              <input
+                type="text"
+                value={ref}
+                onChange={(e)=>setRef(e.target.value.replace(/[^a-z0-9_-]/gi, "").slice(0, 24))}
+                placeholder="flyer"
+                data-testid="qr-ref-input"
+                className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">Appended as <span className="font-mono text-shBlue">?ref=…</span> so future analytics can show where each scan came from.</p>
+            </div>
+            {err && <p className="text-[12px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={()=>download(512)} data-testid="qr-download-small"
+                      className="bg-bgBase border border-bgHover hover:border-shBlue text-shBlue py-2 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-download mr-1"/>Small<br /><span className="text-[10px] text-gray-500">512px</span>
+              </button>
+              <button onClick={()=>download(1024)} data-testid="qr-download-medium"
+                      className="bg-shBlue/15 border border-shBlue/40 hover:bg-shBlue/30 text-shBlue py-2 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-download mr-1"/>Print<br /><span className="text-[10px] opacity-70">1024px</span>
+              </button>
+              <button onClick={()=>download(2048)} data-testid="qr-download-large"
+                      className="bg-shGreen text-bgHeader py-2 rounded text-[12px] font-black uppercase tracking-widest shadow">
+                <i className="fas fa-download mr-1"/>Poster<br /><span className="text-[10px] opacity-70">2048px</span>
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-500">Higher resolutions = sharper print at larger sizes. Use Poster for full-page flyers, Print for cards, Small for screen sharing.</p>
+          </div>
+        </div>
+      </Section>
+    </div>
+  );
+}
+
 
 function ServiceInfoPanel({ s, save, saving }) {
   const defaults = s.service_descriptions || {};

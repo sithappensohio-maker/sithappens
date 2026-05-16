@@ -3167,7 +3167,55 @@ async def backup_export(_: dict = Depends(require_admin)):
 
 
 
-@api.get("/admin/clients/{client_id}/portal-snapshot")
+@api.get("/admin/marketing-qr")
+async def admin_marketing_qr(
+    size: int = 1024,
+    ref: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """High-resolution QR code pointing at the public app URL — for printing on flyers/cards.
+    Optional `ref` query param is appended to the URL for tracking (e.g. ?ref=flyer1).
+    Returns a PNG with strong error-correction so partial damage on print still scans."""
+    import qrcode
+    from qrcode.constants import ERROR_CORRECT_H
+    from io import BytesIO
+    from fastapi.responses import Response
+
+    target_url = (os.environ.get("APP_PUBLIC_URL") or "").rstrip("/")
+    if not target_url:
+        raise HTTPException(status_code=500, detail="APP_PUBLIC_URL is not configured.")
+    if ref:
+        sep = "&" if "?" in target_url else "?"
+        target_url = f"{target_url}{sep}ref={ref}"
+
+    # Pick a box_size that lands close to the requested pixel size.
+    # A v2 (25x25) QR with border 4 gives 33 modules; box_size = size/33.
+    box = max(8, min(40, int(size / 33)))
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=ERROR_CORRECT_H,
+        box_size=box,
+        border=4,
+    )
+    qr.add_data(target_url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    filename = f"sit-happens-qr{('-' + ref) if ref else ''}.png"
+    return Response(
+        content=buf.getvalue(),
+        media_type="image/png",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-QR-Target-Url": target_url,
+        },
+    )
+
+
+
 async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require_admin)):
     """Read-only snapshot of what a client would see in their portal — for admin testing/QA.
     No state changes, no impersonation token: just an aggregated payload."""
