@@ -417,7 +417,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 38 — Unified Services & Programs Catalog (2026-02)
+## Sprint 39 — Bottom-aligned Full-Width Services + Request-a-Quote (2026-02)
+- ✅ **Portal layout**: moved the Services & Pricing section out of the left sidebar and below the main 3-column grid so it now spans the **full width** of the screen and sits **at the bottom** — clients see their personal info first, then browse the catalog. 3-column tile grid on desktop, 2-column on tablet, 1-column on mobile.
+- ✅ **"Request Info" button** on every service + program tile. Opens a modal with auto-filled name/email/phone (no manual entry) + optional message (500 chars). Submit fires `POST /api/portal/quote-request` → writes `quote_requests` Mongo row → emails the admin via the new `notify_admin_quote_request` Resend template.
+- ✅ **Admin Quote Requests panel** on the Dashboard — new "QUOTE REQUESTS · N" card lists open requests with client name, requested item, listed price, timestamp, clickable email/phone, custom message, and "Mark Handled" button (`POST /admin/quote-requests/{id}/close` flips status to `closed`).
+
+
 - ✅ **Admin Settings**: removed the dedicated "Programs" tab; renamed "Services & Prices" → "Services & Programs" and rebuilt the catalog UI to group services by category (Daycare / Boarding / Training / Grooming / Photography / Other), with **Training Programs embedded as a final category section** that hosts the existing `ProgramsPanel` editor.
 - ✅ **Programs price field**: added `price: float = 0` to `ProgramIn` Pydantic model. Programs editor now includes a Price input with helper text ("Shown on the client portal so prospects can see what each program costs"). Default-program prices seeded ($450 / $550 / $350 / $1500 / $2750 / $3900).
 - ✅ **Client access**: `/api/programs` now returns a slim view (id, name, type, focus, format, price, module_count) to authenticated clients instead of 403.

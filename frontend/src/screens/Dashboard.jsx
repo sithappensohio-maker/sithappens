@@ -28,11 +28,12 @@ export default function Dashboard() {
   const [pendingVax, setPendingVax] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
+  const [quoteRequests, setQuoteRequests] = useState([]);
   const confirm = useConfirm();
 
   const load = async () => {
     try {
-      const [s, a, st, pg, sv, vx, lb] = await Promise.all([
+      const [s, a, st, pg, sv, vx, lb, qr] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
@@ -40,6 +41,7 @@ export default function Dashboard() {
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
         api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
+        api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
@@ -48,6 +50,7 @@ export default function Dashboard() {
       setServices(sv.data || []);
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
+      setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
     } catch {}
   };
   useEffect(() => { load(); }, []);
@@ -156,6 +159,47 @@ export default function Dashboard() {
                     <i className="fas fa-check mr-1"/> Approve
                   </button>
                 </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {quoteRequests.length > 0 && (
+        <div className="bg-gradient-to-r from-shGreen/15 to-shBlue/10 border border-shGreen/40 rounded-xl p-5 shadow-xl" data-testid="quote-requests-panel">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2">
+              <i className="fas fa-envelope-open-text"/> Quote Requests · {quoteRequests.length}
+            </h3>
+            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Clients interested in services/programs</span>
+          </div>
+          <div className="space-y-2">
+            {quoteRequests.map(q => (
+              <div key={q.id} className="flex items-start justify-between gap-3 bg-bgBase/50 rounded p-3 flex-wrap" data-testid={`quote-request-${q.id}`}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[13px] font-black text-white uppercase italic tracking-tight">
+                    {q.client_name} <span className="text-gray-500 font-normal normal-case">wants info on</span> <span className="text-shGreen">{q.item_name}</span>
+                    {q.listed_price > 0 && <span className="text-gray-400 text-[12px] font-normal normal-case"> · ${Number(q.listed_price).toFixed(2)}</span>}
+                  </div>
+                  <div className="text-[11px] text-gray-500 mt-1 flex flex-wrap items-center gap-2">
+                    <span><i className="fas fa-clock mr-1"/>{q.created_at ? new Date(q.created_at).toLocaleString() : ""}</span>
+                    {q.client_email && <a href={`mailto:${q.client_email}`} className="text-shBlue hover:underline"><i className="fas fa-envelope mr-1"/>{q.client_email}</a>}
+                    {q.client_phone && <a href={`tel:${q.client_phone}`} className="text-shBlue hover:underline"><i className="fas fa-phone mr-1"/>{q.client_phone}</a>}
+                  </div>
+                  {q.message && <p className="text-[12px] text-gray-300 mt-2 italic bg-bgPanel/60 rounded p-2"><i className="fas fa-quote-left text-gray-600 mr-1"/>{q.message}</p>}
+                </div>
+                <button
+                  onClick={async ()=>{
+                    try {
+                      await api.post(`/admin/quote-requests/${q.id}/close`);
+                      setQuoteRequests(prev => prev.filter(x => x.id !== q.id));
+                    } catch {}
+                  }}
+                  data-testid={`close-quote-${q.id}`}
+                  className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition self-start"
+                >
+                  <i className="fas fa-check mr-1"/> Mark Handled
+                </button>
               </div>
             ))}
           </div>

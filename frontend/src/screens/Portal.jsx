@@ -461,20 +461,6 @@ export default function Portal() {
             )}
           </div>
 
-          {(publicServices.length > 0 || publicPrograms.length > 0) && (
-            <div className="bg-bgPanel p-4 sm:p-5 rounded-xl border border-bgHover shadow-lg" data-testid="portal-services-section">
-              <div className="flex items-center justify-between mb-1">
-                <h2 className="text-lg font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
-                <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{publicServices.length + publicPrograms.length} offered</span>
-              </div>
-              <p className="text-[12px] text-gray-500 mb-4">Everything we offer at Sit Happens, grouped by category.</p>
-
-              <ServicesByCategory services={publicServices} programs={publicPrograms}/>
-
-              <p className="text-[11px] text-gray-500 mt-4 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
-            </div>
-          )}
-
           {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
             <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
               <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
@@ -809,6 +795,18 @@ export default function Portal() {
         </div>
         </div>
       </div>
+
+      {(publicServices.length > 0 || publicPrograms.length > 0) && (
+        <div className="bg-bgPanel p-4 sm:p-6 rounded-xl border border-bgHover shadow-lg" data-testid="portal-services-section">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+            <h2 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
+            <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{publicServices.length + publicPrograms.length} offered · tap any tile to request info</span>
+          </div>
+          <p className="text-[13px] text-gray-400 mb-5">Everything we offer at Sit Happens, grouped by category. See something you love? Tap "Request Info" and we'll get back to you.</p>
+          <ServicesByCategory services={publicServices} programs={publicPrograms}/>
+          <p className="text-[11px] text-gray-500 mt-4 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
+        </div>
+      )}
 
       {showWaiver && pubSettings?.waiver_text && (
         <WaiverModal

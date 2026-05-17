@@ -25,6 +25,7 @@ from email_service import (
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
     notify_admin_first_booking,
+    notify_admin_quote_request,
     notify_client_booking_approved,
     notify_client_homework_assigned,
     notify_client_low_credits,
@@ -3884,6 +3885,78 @@ async def mark_awarded_seen(awarded_id: str, user: dict = Depends(get_current_us
     if user.get("role") != "admin" and user.get("client_id") != row.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
     await db.awarded_trophies.update_one({"id": awarded_id}, {"$set": {"seen_by_client": True}})
+    return {"ok": True}
+
+
+
+
+class QuoteRequestIn(BaseModel):
+    kind: Literal["service", "program"]
+    item_id: str
+    message: Optional[str] = ""
+
+
+@api.post("/portal/quote-request")
+async def portal_quote_request(body: QuoteRequestIn, user: dict = Depends(get_current_user)):
+    """Client submits 'Request a Quote' from the portal — fires an email to the
+    operator with the client's contact info + which service/program they're
+    interested in. Logs to `quote_requests` collection for the admin to follow up."""
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Clients only")
+    client = await db.clients.find_one({"id": user["client_id"]}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client record not found")
+    # Resolve the requested item.
+    if body.kind == "service":
+        item = await db.services.find_one({"id": body.item_id, "active": True}, {"_id": 0})
+    else:
+        item = await db.programs.find_one({"id": body.item_id, "active": True}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Service or program not found")
+    summary = {
+        "kind": body.kind,
+        "name": item.get("name", ""),
+        "price": float(item.get("price") or item.get("base_price") or 0),
+    }
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": client["id"],
+        "client_name": client.get("name", ""),
+        "client_email": client.get("email", ""),
+        "client_phone": client.get("phone", ""),
+        "kind": body.kind,
+        "item_id": body.item_id,
+        "item_name": summary["name"],
+        "listed_price": summary["price"],
+        "message": (body.message or "").strip(),
+        "status": "open",
+        "created_at": now_iso(),
+    }
+    await db.quote_requests.insert_one(doc)
+    try:
+        await notify_admin_quote_request(client, summary, doc["message"])
+    except Exception as exc:
+        logger.warning("Quote-request email failed: %s", exc)
+    doc.pop("_id", None)
+    return {"ok": True, "request_id": doc["id"]}
+
+
+@api.get("/admin/quote-requests")
+async def admin_list_quote_requests(_: dict = Depends(require_admin), status: Optional[str] = None):
+    query = {}
+    if status:
+        query["status"] = status
+    rows = await db.quote_requests.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return rows
+
+
+@api.post("/admin/quote-requests/{request_id}/close")
+async def admin_close_quote_request(request_id: str, _: dict = Depends(require_admin)):
+    res = await db.quote_requests.update_one(
+        {"id": request_id}, {"$set": {"status": "closed", "closed_at": now_iso()}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Quote request not found")
     return {"ok": True}
 
 

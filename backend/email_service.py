@@ -235,6 +235,44 @@ async def notify_admin_first_booking(booking: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_quote_request(client: dict, item: dict, message: str) -> None:
+    """A logged-in client requested pricing/availability for a service or program."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    name = client.get("name") or "—"
+    kind = "Program" if item.get("kind") == "program" else "Service"
+    item_label = item.get("name") or "—"
+    rows = [
+        ("Client", name),
+        (kind, item_label),
+    ]
+    if item.get("price") is not None:
+        rows.append(("Listed price", f"${float(item['price']):.2f}"))
+    if client.get("phone"):
+        rows.append(("Phone", client["phone"]))
+    if client.get("email"):
+        rows.append(("Email", client["email"]))
+    if message:
+        rows.append(("Message", message))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"💬 Quote request — {item_label}",
+        intro=(
+            f"<strong>{name}</strong> is interested in <strong>{item_label}</strong> and would like a quote or more info. "
+            f"Reach out when you can."
+        ),
+        rows=rows,
+        cta_text="Open Admin" if cta_url else None,
+        cta_url=cta_url,
+        show_install=False,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"💬 Quote request · {name} · {item_label}",
+        html,
+    )
+
+
 
 async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     """A client logged a training note on their dog — notify the operator."""
