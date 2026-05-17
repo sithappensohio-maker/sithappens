@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 15 — Regression sweep on (a) Pending Vaccine Reviews on Admin Dashboard and (b) Referral auto-credit relocated from first booking to FIRST CHECKOUT. Created /app/backend/tests/test_iter15_referral_and_vax_review.py (19 tests, all PASS) covering: register w/ valid+invalid+missing referred_by_code (uppercase normalisation verified, invalid stored as null, duplicate-email 400); referral hook idempotency (credit increments by exactly +1 on first checkout, NOT on second checkout, NOT on booking-create alone, NOT on self-referral); admin vaccine-cert list (default unreviewed-only, include_reviewed=true returns full set, required fields photo/expires_on/client_name/uploaded_at present); approve marks reviewed_at+reviewed_by and preserves expiry on dog doc; reject clears both cert AND vaccines.{vaccine} string (subsequent booking attempt is then 400/422 when that vaccine is required); admin auth gating returns 403 on client token for all three admin endpoints; light regression on /api/dashboard/stats, /api/clients, /api/services, /api/portal/me, /api/waivers/sign. Playwright sweep on the preview URL confirmed: ?ref=7ktumq auto-flips Login → Register tab AND prefills register-refcode-input with uppercased '7KTUMQ'; Admin Dashboard pending-vax-reviews panel renders, photo thumbnail click opens vax-photo-lightbox (close works), Approve button optimistically removes the row, Reject button opens useConfirm modal whose confirm-yes triggers DELETE and removes the row. Total: 19/19 backend + 3/3 frontend critical UI flows passing. No bugs found in either feature.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter15_referral_and_vax_review.py",
+    "/app/test_reports/pytest/iteration15_iter15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DogOut pydantic model intentionally drops vaccine_certs from /api/dogs/{id} response (only id+vaccines round-trip). That's fine since the dedicated /api/admin/vaccine-cert-uploads exposes them, but worth documenting since a naive consumer hitting /dogs/{id} won't see review state.",
+    "Referral hook in check_out swallows ALL exceptions silently (try/except: pass at L1579). If a future schema change breaks the increment, you'll lose referral credits without any log. Suggest at minimum log.warning(exc) in the except.",
+    "Self-referral guard checks referrer.id != client_id AFTER lookup but referral row is still keyed by referred_id, so the next checkout of a self-referrer never re-enters the hook (good). Test confirmed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15_referral_and_vax_review.py"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (3/3 flows)"},
+  "test_credentials": "admin@sithappens.com/admin123 + testclient@sithappens.com/test1234 (referral_code 7KTUMQ). Test cleans up its own seeded clients/dogs/bookings; leaves audit rows in referrals + credit_adjustments collections by design.",
+  "seed_data_creation": "Each frontend test seeds a fresh pending bordetella cert on dog e519e548-... via POST /api/portal/dogs/{id}/vaccine-update before exercising the Approve/Reject button (because the panel only renders when pendingVax.length > 0).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter15 expects conftest's loosened settings (rabies-only). The test_reject_blocks_future_bookings_for_that_vaccine sub-test temporarily flips required_vaccines to ['rabies','bordetella'] inside a try/finally that restores the prior settings — so running it standalone is safe. Test client's referral_code is lazily minted by /api/portal/me; the referral_code fixture handles this.",
+  "rca of the issue": "No bugs found. Initial test_approve assertion read vaccine_certs through GET /api/dogs/{id} which doesn't include it (DogOut model strips it); pivoted to GET /api/admin/vaccine-cert-uploads?include_reviewed=true which is the contract surface for that data. Initial Playwright fill() of email/password didn't take (likely a fast effect re-mounting the form); switched to keyboard.type which worked reliably."
+}
