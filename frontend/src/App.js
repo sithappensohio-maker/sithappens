@@ -21,6 +21,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
 import InstallAppButton from "./components/InstallAppButton";
 import { ConfirmProvider } from "./lib/useConfirm";
+import ImpersonationBanner from "./components/ImpersonationBanner";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -169,6 +170,7 @@ export default function App() {
     <ErrorBoundary>
       <AuthProvider>
         <ConfirmProvider>
+          <ImpersonationBanner />
           <Gate />
           <InstallPrompt />
         </ConfirmProvider>

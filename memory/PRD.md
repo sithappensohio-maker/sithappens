@@ -417,7 +417,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 39.5 — Auto-Responder Email + Full Regression (2026-02)
+## Sprint 40 — True "View Portal as Client" Impersonation (2026-02)
+- ✅ Replaced the old read-only ClientPortalPreview snapshot modal with a **real impersonation flow** — `POST /api/admin/clients/{id}/impersonation-token` mints a 15-min client-scoped JWT, frontend saves the admin token into a `sh_admin_token` slot, swaps `sh_token`, and reloads. The admin sees the **actual** Portal, 1:1 with what the client sees (same trophies, same services & pricing, same gallery CTA, same homework, same booking widget).
+- ✅ Persistent yellow `ImpersonationBanner` at the top of the page with "Return to Admin" — one click restores the admin token and reloads back to wherever they came from.
+- ✅ Token rejects non-admins (403); rejects clients who haven't claimed a portal account yet (400 with helpful "send a Claim Account email first" hint).
+- ✅ Backward compat: kept the old "Quick portal snapshot" button on each client card for a faster non-impersonated read-only summary.
+
+
 - ✅ **`notify_client_quote_received`** Resend template: friendly "Hey {first_name}! Thanks for asking about {item} — someone will be in touch within 24 hours" auto-responder fires on `POST /api/portal/quote-request`. Echoes their listed price + their own message back. CTA returns to portal.
 - ✅ **BookingOut model** extended with `extra_nights: Optional[Dict[str, Any]]` so the audit dict written at check-out (count, credits_used, billed_nights, per_night_rate, charge, added_at) round-trips back through the API — addresses the only minor finding from iteration 17.
 - ✅ **Full regression**: 51/51 backend tests pass (19 iter15 + 21 iter16 + 11 NEW iter17 covering Sprints 37/38/39/39.5). Frontend smoke confirms Quote Requests panel, vaccine alerts, first-booking celebration, leaderboards, unified Settings (no separate Programs nav), portal services-at-bottom + 15 Request Info buttons + gallery CTA. Zero critical bugs. Zero frontend bugs.

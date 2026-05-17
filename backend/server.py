@@ -3654,6 +3654,41 @@ async def admin_marketing_qr(
 
 
 @api.get("/admin/clients/{client_id}/portal-snapshot")
+
+
+@api.post("/admin/clients/{client_id}/impersonation-token")
+async def admin_impersonation_token(client_id: str, _: dict = Depends(require_admin)):
+    """Mint a short-lived (15 min) access token for the user record linked to a
+    client, so an admin can log into the client portal as that client and see
+    the *exact* same UI the client sees. Tokens carry an `impersonator=true`
+    flag so audit logs can identify them later if needed."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "name": 1, "email": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    # Find the linked user record (created during signup/account claim).
+    user = await db.users.find_one({"client_id": client_id, "role": "client"}, {"_id": 0, "id": 1, "email": 1, "role": 1})
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="This client doesn't have a portal account yet. Send them a Claim Account email first.",
+        )
+    payload = {
+        "sub": user["id"],
+        "email": user["email"],
+        "role": "client",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
+        "type": "access",
+        "imp": True,  # short-lived impersonation flag (informational; not enforced)
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALG)
+    return {
+        "token": token,
+        "expires_in_minutes": 15,
+        "client_name": client.get("name", ""),
+        "client_id": client_id,
+    }
+
+
 async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require_admin)):
     """Read-only snapshot of what a client would see in their portal — for admin testing/QA.
     No state changes, no impersonation token: just an aggregated payload."""

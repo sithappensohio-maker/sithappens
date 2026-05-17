@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
+import { startImpersonation } from "../lib/impersonation";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"" };
 
@@ -183,9 +184,20 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
               </div>
             </div>
+            <button onClick={async ()=>{
+                      try { await startImpersonation(c.id); }
+                      catch (e) {
+                        const msg = formatErr(e.response?.data?.detail) || "Couldn't open portal as this client";
+                        setClaimToast({ clientId: c.id, tone: "warn", msg });
+                      }
+                    }}
+                    data-testid={`view-as-client-${c.id}`}
+                    className="mt-4 w-full bg-yellow-500 text-bgHeader py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-yellow-400 flex items-center justify-center gap-2 shadow-lg">
+              <i className="fas fa-user-shield"/>View Portal as {c.name?.split(" ")[0] || "Client"}
+            </button>
             <button onClick={()=>setPreviewId(c.id)} data-testid={`preview-portal-${c.id}`}
-                    className="mt-4 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
-              <i className="fas fa-eye"/>Preview client portal
+                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
+              <i className="fas fa-eye"/>Quick portal snapshot
             </button>
             <button onClick={()=>sendClaimEmail(c)} data-testid={`send-claim-email-${c.id}`}
                     className="mt-2 w-full bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
