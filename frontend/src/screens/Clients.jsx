@@ -4,7 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 
-const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
+const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -249,6 +249,13 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             </div>
             <Input label="Email" type="email" value={form.email} onChange={(v)=>setForm({...form, email:v})} />
             <Input label="Emergency Contact" color="text-red-400" value={form.emerg} onChange={(v)=>setForm({...form, emerg:v})} />
+            <div>
+              <Input label="Photo Gallery URL (PicTime, Pixieset, etc.)" color="text-shGreen"
+                     value={form.photo_gallery_url || ""}
+                     onChange={(v)=>setForm({...form, photo_gallery_url: v.trim()})}
+                     testId="client-photo-gallery-input" />
+              <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as "See your pup in action — order prints". Leave blank if no gallery yet.</p>
+            </div>
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
               <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>

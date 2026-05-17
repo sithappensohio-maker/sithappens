@@ -146,6 +146,7 @@ class ClientIn(BaseModel):
     training_credits: int = 0  # 1-on-1 / lesson credits
     boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
     referred_by_code: Optional[str] = None  # set on creation if referred by another client
+    photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
 
 class ClientOut(ClientIn):
     id: str

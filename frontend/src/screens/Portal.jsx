@@ -442,7 +442,7 @@ export default function Portal() {
             )}
           </div>
 
-          {(pubSettings?.client_portal_links?.website_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
+          {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
             <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
               <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
               <div className="grid grid-cols-1 gap-2">
@@ -455,13 +455,19 @@ export default function Portal() {
                     <i className="fas fa-arrow-up-right-from-square text-gray-500 text-xs"/>
                   </a>
                 )}
-                {pubSettings?.client_portal_links?.photo_gallery_url && (
-                  <a href={pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
+                {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
+                  <a href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
                      data-testid="portal-link-gallery"
-                     className="flex items-center gap-3 bg-bgBase hover:bg-shGreen/15 border border-bgHover hover:border-shGreen/50 rounded px-3 py-2.5 transition">
-                    <i className="fas fa-images text-shGreen text-lg w-6 text-center"/>
-                    <span className="text-[14px] font-black text-white uppercase tracking-widest flex-1 text-left">View Stay Photos</span>
-                    <i className="fas fa-arrow-up-right-from-square text-gray-500 text-xs"/>
+                     className="flex items-start gap-3 bg-gradient-to-br from-shGreen/15 to-shBlue/10 hover:from-shGreen/25 hover:to-shBlue/20 border border-shGreen/40 hover:border-shGreen/60 rounded-lg px-3 py-3 transition group">
+                    <i className="fas fa-camera-retro text-shGreen text-2xl w-7 text-center mt-0.5"/>
+                    <div className="flex-1 min-w-0 text-left">
+                      <div className="text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                        See Your Pup In Action
+                        <span className="text-[10px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">Browse your private gallery & order high-quality prints</p>
+                    </div>
+                    <i className="fas fa-arrow-up-right-from-square text-shGreen group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition text-xs mt-1"/>
                   </a>
                 )}
                 {referralCode && (

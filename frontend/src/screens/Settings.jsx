@@ -496,7 +496,7 @@ function PortalLinksPanel({ s, save, saving }) {
         />
         <p className="text-[11px] text-gray-500 mt-1">Shows up as a "Visit Our Website" button on the portal.</p>
       </Section>
-      <Section title={<span><i className="fas fa-images text-shGreen mr-2"/>Photo Gallery</span>}>
+      <Section title={<span><i className="fas fa-images text-shGreen mr-2"/>Photo Gallery (Fallback Only)</span>}>
         <input
           type="url"
           value={links.photo_gallery_url}
@@ -505,7 +505,10 @@ function PortalLinksPanel({ s, save, saving }) {
           data-testid="link-gallery-input"
           className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono"
         />
-        <p className="text-[11px] text-gray-500 mt-1">Wherever you host stay photos (SmugMug, Google Photos, your own host). Shows up as a "View Photos" button.</p>
+        <p className="text-[11px] text-gray-500 mt-1">
+          <i className="fas fa-circle-info mr-1 text-shBlue"/>
+          Photo galleries are now <span className="font-black text-white">per-client</span> — set each client's gallery URL on their record in the Clients screen. This field is only used as a fallback for clients who don't have their own gallery URL set.
+        </p>
       </Section>
       <SaveBar onSave={onSave} saving={saving} />
     </div>
