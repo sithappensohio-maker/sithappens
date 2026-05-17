@@ -60,6 +60,7 @@ export default function Settings() {
     { id: "tags", label: "Mood Tags", icon: "fa-tags" },
     { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
     { id: "service_info", label: "Service Info", icon: "fa-circle-info" },
+    { id: "portal_links", label: "Portal Links", icon: "fa-link" },
     { id: "marketing_qr", label: "Marketing QR", icon: "fa-qrcode" },
     { id: "programs", label: "Programs", icon: "fa-list-check" },
     { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
@@ -94,6 +95,7 @@ export default function Settings() {
           {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
           {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
           {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
+          {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
           {tab === "marketing_qr" && <MarketingQRPanel />}
           {tab === "programs" && <ProgramsPanel />}
           {tab === "services" && <ServicesSettings />}
@@ -465,6 +467,47 @@ function MarketingQRPanel() {
           </div>
         </div>
       </Section>
+    </div>
+  );
+}
+
+
+
+function PortalLinksPanel({ s, save, saving }) {
+  const initial = s.client_portal_links || {};
+  const [links, setLinks] = useState({
+    website_url: initial.website_url || "",
+    photo_gallery_url: initial.photo_gallery_url || "",
+  });
+  const onSave = () => save({ client_portal_links: links });
+  return (
+    <div className="space-y-5" data-testid="portal-links-panel">
+      <p className="text-[14px] text-gray-400">
+        These appear as quick-link buttons on your client portal. Leave blank to hide a button. You can change them anytime — clients always get the current URL.
+      </p>
+      <Section title={<span><i className="fas fa-globe text-shBlue mr-2"/>Your Website</span>}>
+        <input
+          type="url"
+          value={links.website_url}
+          onChange={(e)=>setLinks(l => ({ ...l, website_url: e.target.value.trim() }))}
+          placeholder="https://your-business.com"
+          data-testid="link-website-input"
+          className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono"
+        />
+        <p className="text-[11px] text-gray-500 mt-1">Shows up as a "Visit Our Website" button on the portal.</p>
+      </Section>
+      <Section title={<span><i className="fas fa-images text-shGreen mr-2"/>Photo Gallery</span>}>
+        <input
+          type="url"
+          value={links.photo_gallery_url}
+          onChange={(e)=>setLinks(l => ({ ...l, photo_gallery_url: e.target.value.trim() }))}
+          placeholder="https://photos.your-business.com"
+          data-testid="link-gallery-input"
+          className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono"
+        />
+        <p className="text-[11px] text-gray-500 mt-1">Wherever you host stay photos (SmugMug, Google Photos, your own host). Shows up as a "View Photos" button.</p>
+      </Section>
+      <SaveBar onSave={onSave} saving={saving} />
     </div>
   );
 }

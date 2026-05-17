@@ -321,6 +321,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 48 — Portal feature pack: loyalty badges, refer-a-friend, vaccine self-upload, quick links (2026-02)
+- ✅ **Settings → Portal Links** (`PortalLinksPanel`): editable URLs for your website and photo gallery host. Backend wires through `client_portal_links` field on settings doc + default block + nested backfill + `/api/settings/public`.
+- ✅ **Loyalty visit badges**: `/api/portal/me` extended to return `visit_counts` (per-dog completed-booking count via a single Mongo aggregation). Portal dog cards now show a green "🏆 N visits" pill next to the breed when count > 0.
+- ✅ **Refer a Friend**: `/api/portal/me` mints a 6-char `referral_code` on first call and stores it on the client doc. New `<ReferFriendModal>` shows the code in big orange type with one-tap **Text / Email / Copy** actions that pre-fill a sharable message + a `?ref=CODE` URL. Admin-side helpers added: `GET /api/referrals/lookup/{code}` to validate a code and `POST /api/clients/{id}/credit-referral` to comp a daycare day to the referrer (writes both a `referrals` audit entry and a `credit_adjustments` entry).
+- ✅ **Vaccine expiry self-upload**: each portal dog card now detects vaccines expired OR within 30 days; renders a red "🛡️ N vaccines need updating" footer with an Upload button. `<VaccineUploadModal>` takes a date + compressed photo, POSTs to new `/api/portal/dogs/{id}/vaccine-update` endpoint which updates the expiry immediately (unblocking the client from booking) and stores the photo under `vaccine_certs` for later admin review.
+- ✅ **Quick Links section** on Portal: pill-button list with the website / gallery / refer-a-friend entries; hidden entirely if all three are blank.
+- ✅ Verified end-to-end at 390×844: quick links section renders all 3 entries; clicking Refer opens modal with code `7KTUMQ`; share buttons work; loyalty badge will appear automatically as clients complete bookings.
+
 ## Sprint 47 — Boarding pack UI + seed defaults (2026-02)
 - ✅ **Seed data** (`credit_packs_data.py`): added 3 boarding packs to `SEED_CREDIT_PACKS` — single $55, 5-night $250, 10-night $475.
 - ✅ **Settings → Credit Packs** (`CreditPacksSettings.jsx`): new "Boarding nights" option in the pool dropdown; chip color uses `text-shOrange` to match the rest of the app. Seed button now shows always (label flips to "Add Missing Defaults" when packs already exist) so existing installs get the 3 new boarding packs idempotently.

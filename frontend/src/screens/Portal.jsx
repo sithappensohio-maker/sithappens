@@ -11,8 +11,99 @@ import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
+import { compressImage } from "../lib/imageCompress";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
+
+function ReferFriendModal({ code, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const shareUrl = `${window.location.origin}/?ref=${code}`;
+  const message = `Hey! I use Sit Happens for my dog and they're great. Use my referral code ${code} when you sign up and we both win 🐾 ${shareUrl}`;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(message); setCopied(true); setTimeout(()=>setCopied(false), 2500); } catch {}
+  };
+  const sms = `sms:?&body=${encodeURIComponent(message)}`;
+  const email = `mailto:?subject=${encodeURIComponent("Try Sit Happens with my code!")}&body=${encodeURIComponent(message)}`;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="refer-modal">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <div className="flex items-center gap-3"><span className="text-shOrange text-2xl"><i className="fas fa-gift"/></span><h4 className="text-xl font-black text-white uppercase italic tracking-tight">Refer a Friend</h4></div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
+        </div>
+        <p className="text-[14px] text-gray-300 mb-4">Share your code with a friend. When they sign up and book their first stay, we'll add a free daycare day to your account as a thank-you.</p>
+        <div className="bg-bgBase border border-shOrange/40 rounded-lg p-4 text-center mb-4">
+          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Your code</p>
+          <p className="text-3xl font-black text-shOrange tracking-[0.3em] mt-1" data-testid="refer-code">{code}</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <a href={sms} data-testid="refer-via-sms" className="bg-shGreen/10 hover:bg-shGreen/20 text-shGreen text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className="fas fa-comment mr-1"/>Text</a>
+          <a href={email} data-testid="refer-via-email" className="bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className="fas fa-envelope mr-1"/>Email</a>
+          <button onClick={copy} data-testid="refer-copy" className="bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className={`fas ${copied?"fa-check":"fa-copy"} mr-1`}/>{copied?"Copied":"Copy"}</button>
+        </div>
+        <button onClick={onClose} className="w-full bg-bgBase border border-bgHover text-gray-300 py-3 rounded font-black text-[13px] uppercase tracking-widest">Done</button>
+      </div>
+    </div>
+  );
+}
+
+function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
+  const [expiresOn, setExpiresOn] = useState("");
+  const [photo, setPhoto] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const handleFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      const compressed = await compressImage(f, { maxWidth: 1400, maxHeight: 1400, quality: 0.78 });
+      setPhoto(compressed);
+    } catch (ex) {
+      setErr("Couldn't read that photo. Try a different one.");
+    }
+  };
+  const save = async () => {
+    if (!expiresOn) { setErr("Pick the new expiry date."); return; }
+    setErr(""); setSaving(true);
+    try {
+      await api.post(`/portal/dogs/${dog.id}/vaccine-update`, { vaccine, expires_on: expiresOn, photo });
+      onSaved();
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Upload failed.");
+    } finally { setSaving(false); }
+  };
+  const label = { rabies: "Rabies", bordetella: "Bordetella", dhpp: "DHPP" }[vaccine] || vaccine;
+  return (
+    <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="vaccine-upload-modal">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe">
+        <div className="flex items-start justify-between gap-3 mb-3">
+          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Update {label} for {dog.name}</h4>
+          <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
+        </div>
+        <p className="text-[13px] text-gray-400 mb-4">Snap a photo of the new vaccine certificate and enter the expiry date your vet wrote on it.</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">New expiry date</label>
+            <input type="date" value={expiresOn} onChange={(e)=>setExpiresOn(e.target.value)} data-testid="vaccine-expiry-input"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm" style={{colorScheme:"dark"}} />
+          </div>
+          <div>
+            <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Cert photo (optional but recommended)</label>
+            <input type="file" accept="image/*" capture="environment" onChange={handleFile} data-testid="vaccine-photo-input"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm file:bg-shBlue file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:font-black file:text-[12px] file:uppercase file:tracking-widest" />
+            {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-bgHover"/>}
+          </div>
+          {err && <p className="text-[13px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+          <div className="flex gap-2">
+            <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[13px] font-black uppercase tracking-widest">Cancel</button>
+            <button onClick={save} disabled={saving || !expiresOn} data-testid="vaccine-save"
+                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit Update"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const SERVICE_INFO = {
   daycare: {
@@ -155,13 +246,17 @@ export default function Portal() {
   // Fetch credits separately via a small endpoint - we'll use the user from useAuth but credits live on client doc.
   // Use a helper: fetch own client info via portal endpoint
   const [credits, setCredits] = useState(0);
+  const [visitCounts, setVisitCounts] = useState({});
+  const [referralCode, setReferralCode] = useState(null);
+  const [showReferModal, setShowReferModal] = useState(false);
+  const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
   useEffect(() => {
     (async () => {
       try {
-        // we'll use list of bookings client_name + try to load client info via a workaround - call /clients/me? we don't have that.
-        // instead, fetch from auth/me extended: we'll add credits by computing - but simpler: fetch credits from server via /portal/me below.
         const { data } = await api.get("/portal/me");
         setClient(data.client); setCredits(data.client.credits);
+        setVisitCounts(data.visit_counts || {});
+        setReferralCode(data.referral_code || null);
       } catch {}
     })();
   }, [bookings]);
@@ -335,6 +430,43 @@ export default function Portal() {
             )}
           </div>
 
+          {(pubSettings?.client_portal_links?.website_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
+            <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
+              <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
+              <div className="grid grid-cols-1 gap-2">
+                {pubSettings?.client_portal_links?.website_url && (
+                  <a href={pubSettings.client_portal_links.website_url} target="_blank" rel="noopener noreferrer"
+                     data-testid="portal-link-website"
+                     className="flex items-center gap-3 bg-bgBase hover:bg-shBlue/15 border border-bgHover hover:border-shBlue/50 rounded px-3 py-2.5 transition">
+                    <i className="fas fa-globe text-shBlue text-lg w-6 text-center"/>
+                    <span className="text-[14px] font-black text-white uppercase tracking-widest flex-1 text-left">Visit Our Website</span>
+                    <i className="fas fa-arrow-up-right-from-square text-gray-500 text-xs"/>
+                  </a>
+                )}
+                {pubSettings?.client_portal_links?.photo_gallery_url && (
+                  <a href={pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
+                     data-testid="portal-link-gallery"
+                     className="flex items-center gap-3 bg-bgBase hover:bg-shGreen/15 border border-bgHover hover:border-shGreen/50 rounded px-3 py-2.5 transition">
+                    <i className="fas fa-images text-shGreen text-lg w-6 text-center"/>
+                    <span className="text-[14px] font-black text-white uppercase tracking-widest flex-1 text-left">View Stay Photos</span>
+                    <i className="fas fa-arrow-up-right-from-square text-gray-500 text-xs"/>
+                  </a>
+                )}
+                {referralCode && (
+                  <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
+                          className="flex items-center gap-3 bg-bgBase hover:bg-shOrange/15 border border-bgHover hover:border-shOrange/50 rounded px-3 py-2.5 transition w-full text-left">
+                    <i className="fas fa-gift text-shOrange text-lg w-6 text-center"/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[14px] font-black text-white uppercase tracking-widest">Refer a Friend</p>
+                      <p className="text-[11px] text-gray-500 normal-case tracking-normal">Earn a free daycare day for every referral</p>
+                    </div>
+                    <i className="fas fa-arrow-right text-gray-500 text-xs"/>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div id="portal-book-section" className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
             <h4 className="font-black text-shBlue mb-4 uppercase text-xs tracking-widest"><i className="fas fa-calendar-plus mr-2"/>Book Service</h4>
 
@@ -455,24 +587,55 @@ export default function Portal() {
                   <p className="text-[14px] text-gray-400 mt-1">Click "Add a Dog" above to tell us about your pup.</p>
                 </div>
               )}
-              {dogs.map(d => (
-                <button key={d.id} onClick={()=>setDogModal({open:true, dog:d})} data-testid={`portal-dog-${d.id}`}
-                        className="text-left bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg hover:border-shGreen transition group">
-                  {d.photo
-                    ? <div className="h-32 w-full bg-bgBase flex items-center justify-center overflow-hidden">
-                        <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-32 max-w-full object-contain" />
+              {dogs.map(d => {
+                const visits = visitCounts[d.id] || 0;
+                const today = todayISO();
+                const soon = new Date(); soon.setDate(soon.getDate() + 30);
+                const soonStr = soon.toISOString().slice(0, 10);
+                const expiringVaccines = ["rabies", "bordetella", "dhpp"].filter(v => {
+                  const exp = d.vaccines?.[v];
+                  return !exp || exp < today || exp < soonStr;
+                });
+                return (
+                <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg" data-testid={`portal-dog-${d.id}`}>
+                  <button onClick={()=>setDogModal({open:true, dog:d})}
+                          className="block w-full text-left hover:border-shGreen transition group">
+                    {d.photo
+                      ? <div className="h-32 w-full bg-bgBase flex items-center justify-center overflow-hidden">
+                          <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-32 max-w-full object-contain" />
+                        </div>
+                      : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
+                    <div className="p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-lg font-black text-white uppercase truncate">{d.name}</h4>
+                        <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px]"/>
                       </div>
-                    : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
-                  <div className="p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <h4 className="text-lg font-black text-white uppercase truncate">{d.name}</h4>
-                      <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px]"/>
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <p className="text-[14px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown"}</p>
+                        {visits > 0 && (
+                          <span className="shrink-0 bg-shGreen/15 text-shGreen text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" data-testid={`visit-badge-${d.id}`}>
+                            <i className="fas fa-trophy mr-1"/>{visits}{visits >= 100 ? "+" : ""} {visits === 1 ? "visit" : "visits"}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[14px] text-gray-400 mt-2">Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=today?"text-shGreen":"text-red-400"}>{d.vaccines?.rabies||"Missing"}</span></p>
                     </div>
-                    <p className="text-[14px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown"}</p>
-                    <p className="text-[14px] text-gray-400 mt-2">Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=todayISO()?"text-shGreen":"text-red-400"}>{d.vaccines?.rabies||"Missing"}</span></p>
-                  </div>
-                </button>
-              ))}
+                  </button>
+                  {expiringVaccines.length > 0 && (
+                    <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-alert-${d.id}`}>
+                      <p className="text-[11px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
+                        <i className="fas fa-shield-virus mr-1"/>{expiringVaccines.length} vaccine{expiringVaccines.length > 1 ? "s" : ""} need updating
+                      </p>
+                      <button onClick={()=>setVaccineModal({ dog: d, vaccine: expiringVaccines[0] })}
+                              data-testid={`vaccine-upload-btn-${d.id}`}
+                              className="shrink-0 text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
+                        Upload <i className="fas fa-arrow-right ml-1"/>
+                      </button>
+                    </div>
+                  )}
+                </div>
+                );
+              })}
             </div>
           </div>
 
@@ -653,6 +816,8 @@ export default function Portal() {
       )}
 
       <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
+      {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}
+      {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); }} />}
     </div>
   );
 }

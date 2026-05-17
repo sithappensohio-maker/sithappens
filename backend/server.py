@@ -1118,9 +1118,130 @@ async def portal_me(user: dict = Depends(get_current_user)):
     cid = user.get("client_id")
     client = await db.clients.find_one({"id": cid}, {"_id": 0}) if cid else None
     if not client:
-        # client without linked record - return zero
-        return {"client": {"id": "", "name": user.get("name"), "credits": 0}}
-    return {"client": client}
+        return {"client": {"id": "", "name": user.get("name"), "credits": 0}, "visit_counts": {}, "referral_code": None}
+
+    # Ensure the client has a referral code minted (one-time, server-generated).
+    if not client.get("referral_code"):
+        code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
+        # Re-roll on the (unlikely) chance of collision.
+        for _ in range(3):
+            if not await db.clients.find_one({"referral_code": code}):
+                break
+            code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
+        await db.clients.update_one({"id": cid}, {"$set": {"referral_code": code}})
+        client["referral_code"] = code
+
+    # Visit counts per dog (status=completed counts as a real visit).
+    dog_ids = [d["id"] async for d in db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1})]
+    visit_counts: Dict[str, int] = {}
+    if dog_ids:
+        pipeline = [
+            {"$match": {"dog_id": {"$in": dog_ids}, "status": "completed"}},
+            {"$group": {"_id": "$dog_id", "count": {"$sum": 1}}},
+        ]
+        async for row in db.bookings.aggregate(pipeline):
+            visit_counts[row["_id"]] = int(row.get("count") or 0)
+        for d in dog_ids:
+            visit_counts.setdefault(d, 0)
+
+    return {
+        "client": client,
+        "visit_counts": visit_counts,
+        "referral_code": client.get("referral_code"),
+    }
+
+
+# -------- Referral lookup (admin only, used to validate referral codes during seed/sign-up) --------
+@api.get("/referrals/lookup/{code}")
+async def lookup_referral_code(code: str, _: dict = Depends(require_admin)):
+    """Return the client owning this referral code, or 404. Admin uses this when manually
+    crediting a referral, or wiring it into the sign-up flow."""
+    client = await db.clients.find_one({"referral_code": code.upper()}, {"_id": 0, "id": 1, "name": 1, "email": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="No client with that referral code")
+    return client
+
+
+@api.post("/clients/{client_id}/credit-referral")
+async def credit_referral(client_id: str, body: dict, user: dict = Depends(require_admin)):
+    """Admin helper: comp a daycare credit to {client_id} as a thank-you for referring
+    {referred_client_id} (passed in body). Writes a `credit_adjustments` entry + a
+    `referrals` collection entry for the audit trail."""
+    referred = (body or {}).get("referred_client_id")
+    note = (body or {}).get("note", "Referral bonus")
+    bonus = int((body or {}).get("bonus", 1))
+    if not referred:
+        raise HTTPException(status_code=400, detail="Missing referred_client_id")
+    if bonus < 1 or bonus > 10:
+        raise HTTPException(status_code=400, detail="Bonus must be between 1 and 10")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Referrer not found")
+    rclient = await db.clients.find_one({"id": referred}, {"_id": 0})
+    if not rclient:
+        raise HTTPException(status_code=404, detail="Referred client not found")
+
+    await db.clients.update_one({"id": client_id}, {"$inc": {"credits": bonus}})
+    log = {
+        "id": str(uuid.uuid4()),
+        "referrer_id": client_id,
+        "referrer_name": client.get("name", ""),
+        "referred_id": referred,
+        "referred_name": rclient.get("name", ""),
+        "bonus_credits": bonus,
+        "note": note,
+        "created_by": user.get("name", "Admin"),
+        "created_at": now_iso(),
+    }
+    await db.referrals.insert_one(log)
+    await db.credit_adjustments.insert_one({
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "client_name": client.get("name", ""),
+        "changes": {"daycare": {"before": int(client.get("credits") or 0), "delta": bonus, "after": int(client.get("credits") or 0) + bonus}},
+        "note": f"Referral bonus — referred {rclient.get('name','')}",
+        "adjusted_by": user.get("name", "Admin"),
+        "adjusted_at": now_iso(),
+    })
+    log.pop("_id", None)
+    return log
+
+
+# -------- Vaccine cert self-upload (client portal) --------
+class VaccineUpdateIn(BaseModel):
+    vaccine: Literal["rabies", "bordetella", "dhpp"]
+    expires_on: str  # ISO date "YYYY-MM-DD"
+    photo: Optional[str] = ""  # base64 data URL of cert photo
+
+
+@api.post("/portal/dogs/{dog_id}/vaccine-update")
+async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(get_current_user)):
+    """Client uploads a new vaccine cert photo + expiry date. Pending admin review,
+    but we update the expiry immediately so they're unblocked from booking."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog or dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=404, detail="Dog not found")
+    # Validate date
+    try:
+        date.fromisoformat(body.expires_on)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid expiry date")
+    vaccines = dict(dog.get("vaccines") or {})
+    vaccines[body.vaccine] = body.expires_on
+    update_doc: Dict[str, Any] = {"vaccines": vaccines}
+    if body.photo:
+        certs = dict(dog.get("vaccine_certs") or {})
+        certs[body.vaccine] = {
+            "photo": body.photo,
+            "uploaded_at": now_iso(),
+            "uploaded_by": user.get("name", ""),
+            "expires_on": body.expires_on,
+        }
+        update_doc["vaccine_certs"] = certs
+    await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
+    return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
 
 
 # -------- Portal self-service: profile + dogs --------
@@ -1439,6 +1560,11 @@ def _default_settings() -> dict:
             "training": "1-on-1 sessions with your trainer working through your dog's training program.",
             "grooming": "Bath services and nail trims — keep your pup looking sharp.",
         },
+        # External links shown on the client portal. Blank = button hidden.
+        "client_portal_links": {
+            "website_url": "",
+            "photo_gallery_url": "",
+        },
     }
 
 async def get_settings() -> dict:
@@ -1465,6 +1591,15 @@ async def get_settings() -> dict:
             if svc_key not in s["service_descriptions"]:
                 s["service_descriptions"][svc_key] = svc_default
                 changed = True
+    # Backfill client_portal_links
+    if not isinstance(s.get("client_portal_links"), dict):
+        s["client_portal_links"] = defaults.get("client_portal_links", {})
+        changed = True
+    else:
+        for lk, lv in (defaults.get("client_portal_links") or {}).items():
+            if lk not in s["client_portal_links"]:
+                s["client_portal_links"][lk] = lv
+                changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -1484,6 +1619,7 @@ class SettingsIn(BaseModel):
     waiver_required_for_booking: Optional[bool] = None
     waiver_version: Optional[int] = None
     service_descriptions: Optional[dict] = None
+    client_portal_links: Optional[dict] = None
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -1503,6 +1639,7 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "waiver_version": s.get("waiver_version", 1),
         "waiver_required_for_booking": s.get("waiver_required_for_booking", True),
         "service_descriptions": s.get("service_descriptions") or {},
+        "client_portal_links": s.get("client_portal_links") or {},
     }
 
 @api.put("/settings")
