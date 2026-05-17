@@ -134,6 +134,7 @@ class ClientIn(BaseModel):
     credits: int = 0  # daycare credits (back-compat — kept as plain `credits` field)
     training_credits: int = 0  # 1-on-1 / lesson credits
     boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
+    referred_by_code: Optional[str] = None  # set on creation if referred by another client
 
 class ClientOut(ClientIn):
     id: str
@@ -384,6 +385,13 @@ async def list_clients(_: dict = Depends(require_admin)):
 async def create_client(body: ClientIn, _: dict = Depends(require_admin)):
     doc = body.model_dump()
     doc.update({"id": str(uuid.uuid4()), "waiver": False, "created_at": now_iso()})
+    # Normalise referred_by_code: uppercase + strip, drop if invalid (no matching referrer)
+    code = (doc.get("referred_by_code") or "").upper().strip()
+    if code:
+        ref = await db.clients.find_one({"referral_code": code}, {"_id": 0, "id": 1})
+        doc["referred_by_code"] = code if ref else None
+    else:
+        doc["referred_by_code"] = None
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
     doc["portal_email"] = None
@@ -854,11 +862,108 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             await notify_admin_new_booking(doc, client)
         except Exception:
             pass
-    # 🎉 First-ever booking for this client? Send a celebratory email to the operator.
+    # 🎉 First-ever booking for this client? Send a celebratory email to the operator,
+    # and if they came in via a referral code, auto-credit the referrer one daycare day.
     try:
         booking_count = await db.bookings.count_documents({"client_id": client["id"]})
         if booking_count == 1:
             await notify_admin_first_booking(doc, client)
+            ref_code = (client.get("referred_by_code") or "").upper().strip()
+            if ref_code:
+
+
+@api.get("/admin/vaccine-cert-uploads")
+async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
+    """List recent client-uploaded vaccine certificates. Unreviewed first."""
+    dogs = await db.dogs.find(
+        {"vaccine_certs": {"$exists": True, "$ne": {}}},
+        {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccine_certs": 1},
+    ).to_list(500)
+    out = []
+    for d in dogs:
+        certs = d.get("vaccine_certs") or {}
+        for vacc, info in certs.items():
+            if not info or not isinstance(info, dict):
+                continue
+            reviewed = bool(info.get("reviewed_at"))
+            if reviewed and not include_reviewed:
+                continue
+            out.append({
+                "dog_id": d["id"],
+                "dog_name": d.get("name", ""),
+                "owner_id": d.get("owner_id"),
+                "vaccine": vacc,
+                "expires_on": info.get("expires_on"),
+                "photo": info.get("photo"),
+                "uploaded_at": info.get("uploaded_at"),
+                "uploaded_by": info.get("uploaded_by", ""),
+                "reviewed_at": info.get("reviewed_at"),
+                "reviewed_by": info.get("reviewed_by", ""),
+            })
+    # Owner names
+    owner_ids = list({x["owner_id"] for x in out if x.get("owner_id")})
+    if owner_ids:
+        owners = await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        omap = {o["id"]: o["name"] for o in owners}
+        for x in out:
+            x["client_name"] = omap.get(x.get("owner_id"), "")
+    out.sort(key=lambda x: (bool(x.get("reviewed_at")), x.get("uploaded_at", "")), reverse=False)
+    out.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return out
+
+
+@api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
+async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
+    """Mark a client-uploaded vaccine cert as reviewed. Doesn't change the expiry —
+    the expiry was already set when the client uploaded it (so they could keep booking).
+    To reject/correct the expiry, edit the dog from the Dogs screen."""
+    if vaccine not in ("rabies", "bordetella", "dhpp"):
+        raise HTTPException(status_code=400, detail="Invalid vaccine type")
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    certs = dict(dog.get("vaccine_certs") or {})
+    if vaccine not in certs:
+        raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
+    certs[vaccine] = dict(certs[vaccine])
+    certs[vaccine]["reviewed_at"] = now_iso()
+    certs[vaccine]["reviewed_by"] = user.get("name", "Admin")
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs}})
+    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine}
+
+
+                referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
+                # Don't credit self-referrals
+                if referrer and referrer.get("id") != client["id"]:
+                    await db.clients.update_one(
+                        {"id": referrer["id"]},
+                        {"$inc": {"credits": 1}},
+                    )
+                    now = now_iso()
+                    await db.referrals.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "referrer_id": referrer["id"],
+                        "referrer_name": referrer.get("name", ""),
+                        "referred_id": client["id"],
+                        "referred_name": client.get("name", ""),
+                        "bonus_credits": 1,
+                        "note": "Auto-credit on first booking",
+                        "created_by": "system",
+                        "created_at": now,
+                    })
+                    await db.credit_adjustments.insert_one({
+                        "id": str(uuid.uuid4()),
+                        "client_id": referrer["id"],
+                        "client_name": referrer.get("name", ""),
+                        "changes": {"daycare": {
+                            "before": int(referrer.get("credits") or 0),
+                            "delta": 1,
+                            "after": int(referrer.get("credits") or 0) + 1,
+                        }},
+                        "note": f"Referral bonus — referred {client.get('name','')}",
+                        "adjusted_by": "system",
+                        "adjusted_at": now,
+                    })
     except Exception:
         pass
     # Low-credit heads-up to client (fires once per threshold crossing).
