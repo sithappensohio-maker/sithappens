@@ -417,7 +417,22 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 34 — First Booking Celebration Banner (2026-02)
+## Sprint 35 — Pending Vaccine Reviews + Referral Auto-Credit on First Checkout (2026-02)
+- ✅ **Backend** (`server.py`):
+  - `GET /api/admin/vaccine-cert-uploads?include_reviewed=false` — lists client-uploaded certs with photo, expiry, owner, uploaded_at, reviewed_at. Defaults to unreviewed-only.
+  - `POST /api/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review` — approves a cert (stamps reviewed_at + reviewed_by). Vaccine expiry untouched.
+  - `DELETE /api/admin/dogs/{dog_id}/vaccine-cert/{vaccine}` — rejects: removes the cert AND clears the matching vaccine expiry so the dog is blocked from new bookings until reuploaded.
+  - **CRITICAL FIX:** A previous edit had nested these endpoints inside an `if ref_code:` block, causing an `IndentationError` and a stale-cached backend. Hoisted to module level — backend now boots cleanly.
+- ✅ **Backend referral hook** moved from "first booking" → **"first completed checkout (any service)"** per user request. Fires from `POST /api/bookings/{booking_id}/check-out`. Idempotent via `referrals` collection guard (`referred_id` lookup). Skips self-referrals. Writes both `referrals` audit row and `credit_adjustments` entry with `{daycare: {before, delta:1, after}}`.
+- ✅ **Backend `auth/register`** now accepts `referred_by_code` field — normalizes/uppercases, validates against existing `referral_code`, persists on the new client doc (or stores `null` if invalid/empty).
+- ✅ **Frontend** (`Dashboard.jsx`): new "Pending Vaccine Reviews · N" panel between vaccine alerts and first-booking banner. Renders thumbnail (click → lightbox), dog/owner, vaccine pill, expiry, uploaded-at, plus Approve / Reject buttons. Reject uses `useConfirm` to warn about clearing expiry.
+- ✅ **Frontend** (`Login.jsx`): auto-detects `?ref=CODE` URL param → flips to Register tab and pre-fills referral code input. Updated copy: "Your friend gets a free daycare day once you finish your first appointment!"
+- ✅ **Frontend** (`Portal.jsx`): Refer-a-Friend modal copy updated to reflect new trigger: "After they sign up and complete their first appointment…".
+- ✅ End-to-end verified via curl:
+  - Referrer at 8 credits → new client registers w/ `?ref=7KTUMQ` → books → credits stay 8 → check-in + check-out → credits jump to 9 → 2nd checkout (different booking) → still 9 (idempotent).
+  - Pending list returns/excludes reviewed properly; approve stamps reviewed_at; reject removes cert + zeroes expiry.
+
+
 - ✅ **Backend** (`server.py`): added `_first_time_bookings_today()` helper called from `/api/dashboard/stats`. Logic: pull bookings created today (uses indexed `created_at` range filter), aggregate by client_id to find each client's earliest booking, include only those whose first-ever booking falls on today. One Mongo aggregation, deduped per client.
 - ✅ **Frontend** (`Dashboard.jsx`): new `<First Booking Celebration · N>` banner between the vaccine alerts and the upcoming birthdays. Green/blue gradient pill chips with a paw icon, "{Client} just booked their first {service} for {Dog} · {date}." Auto-disappears the next day. Hidden when zero qualifying bookings.
 - ✅ End-to-end verified: dashboard renders the banner with the 3 first-time bookings seeded by the test pipeline today.

@@ -31,7 +31,7 @@ function ReferFriendModal({ code, onClose }) {
           <div className="flex items-center gap-3"><span className="text-shOrange text-2xl"><i className="fas fa-gift"/></span><h4 className="text-xl font-black text-white uppercase italic tracking-tight">Refer a Friend</h4></div>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[14px] text-gray-300 mb-4">Share your code with a friend. When they sign up and book their first stay, we'll add a free daycare day to your account as a thank-you.</p>
+        <p className="text-[14px] text-gray-300 mb-4">Share your code with a friend. After they sign up and complete their first appointment (daycare, training, or boarding), we'll add a free daycare day to your account as a thank-you.</p>
         <div className="bg-bgBase border border-shOrange/40 rounded-lg p-4 text-center mb-4">
           <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Your code</p>
           <p className="text-3xl font-black text-shOrange tracking-[0.3em] mt-1" data-testid="refer-code">{code}</p>

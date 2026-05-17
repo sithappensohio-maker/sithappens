@@ -872,45 +872,12 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         except Exception:
             pass
     # 🎉 First-ever booking for this client? Send a celebratory email to the operator,
-    # and if they came in via a referral code, auto-credit the referrer one daycare day.
+    # and if they came in via a referral code, the referrer is auto-credited on
+    # this client's FIRST CHECKOUT — see check_out() below.
     try:
         booking_count = await db.bookings.count_documents({"client_id": client["id"]})
         if booking_count == 1:
             await notify_admin_first_booking(doc, client)
-            ref_code = (client.get("referred_by_code") or "").upper().strip()
-            if ref_code:
-                referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
-                # Don't credit self-referrals
-                if referrer and referrer.get("id") != client["id"]:
-                    await db.clients.update_one(
-                        {"id": referrer["id"]},
-                        {"$inc": {"credits": 1}},
-                    )
-                    now = now_iso()
-                    await db.referrals.insert_one({
-                        "id": str(uuid.uuid4()),
-                        "referrer_id": referrer["id"],
-                        "referrer_name": referrer.get("name", ""),
-                        "referred_id": client["id"],
-                        "referred_name": client.get("name", ""),
-                        "bonus_credits": 1,
-                        "note": "Auto-credit on first booking",
-                        "created_by": "system",
-                        "created_at": now,
-                    })
-                    await db.credit_adjustments.insert_one({
-                        "id": str(uuid.uuid4()),
-                        "client_id": referrer["id"],
-                        "client_name": referrer.get("name", ""),
-                        "changes": {"daycare": {
-                            "before": int(referrer.get("credits") or 0),
-                            "delta": 1,
-                            "after": int(referrer.get("credits") or 0) + 1,
-                        }},
-                        "note": f"Referral bonus — referred {client.get('name','')}",
-                        "adjusted_by": "system",
-                        "adjusted_at": now,
-                    })
     except Exception:
         pass
     # Low-credit heads-up to client (fires once per threshold crossing).
@@ -1557,6 +1524,61 @@ async def check_out(
 
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
+
+    # 🎁 Referral reward: when the referred client COMPLETES their first-ever
+    # appointment (any service), credit the referrer one free daycare day.
+    # Guarded by referrals collection so it only ever fires once per referred client.
+    try:
+        client_id = booking.get("client_id")
+        if client_id:
+            client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+            ref_code = (client or {}).get("referred_by_code") or ""
+            ref_code = ref_code.upper().strip()
+            if ref_code and not await db.referrals.find_one({"referred_id": client_id}):
+                # Was this the client's first checkout?
+                prior = await db.bookings.count_documents({
+                    "client_id": client_id,
+                    "checked_out_at": {"$ne": None, "$exists": True},
+                    "id": {"$ne": booking_id},
+                })
+                if prior == 0:
+                    referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
+                    # Don't credit self-referrals
+                    if referrer and referrer.get("id") != client_id:
+                        await db.clients.update_one(
+                            {"id": referrer["id"]},
+                            {"$inc": {"credits": 1}},
+                        )
+                        now = now_iso()
+                        await db.referrals.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "referrer_id": referrer["id"],
+                            "referrer_name": referrer.get("name", ""),
+                            "referred_id": client_id,
+                            "referred_name": client.get("name", ""),
+                            "bonus_credits": 1,
+                            "trigger_booking_id": booking_id,
+                            "trigger_service_type": booking.get("service_type", ""),
+                            "note": "Auto-credit on first completed appointment",
+                            "created_by": "system",
+                            "created_at": now,
+                        })
+                        await db.credit_adjustments.insert_one({
+                            "id": str(uuid.uuid4()),
+                            "client_id": referrer["id"],
+                            "client_name": referrer.get("name", ""),
+                            "changes": {"daycare": {
+                                "before": int(referrer.get("credits") or 0),
+                                "delta": 1,
+                                "after": int(referrer.get("credits") or 0) + 1,
+                            }},
+                            "note": f"Referral bonus — referred {client.get('name','')}",
+                            "adjusted_by": "system",
+                            "adjusted_at": now,
+                        })
+    except Exception:
+        pass
+
     return booking
 
 @api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)

@@ -56,7 +56,7 @@ export default function Login() {
               <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
                      placeholder="e.g. 7KTUMQ"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono uppercase focus:border-shBlue outline-none" />
-              {refCode && <p className="text-[11px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day on your first booking!</p>}
+              {refCode && <p className="text-[11px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
             </div>
           )}
           <div>
