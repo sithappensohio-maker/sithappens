@@ -321,6 +321,19 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 46 — Boarding credits + manual credit adjustments (2026-02)
+- ✅ **Boarding now uses the credit pool**: new `boarding_credits` field on the client doc (1 credit = 1 night). Helper `_credit_balance_field(service_type)` centralises the daycare/training/boarding → field mapping. Every existing call site (booking create, approve-booking, cancel-with-refund, check-out toggle, single sell-pack, bulk sell-pack) routed through the helper so boarding behaves exactly like daycare for FIFO consumption + refunds.
+- ✅ **Bulk sell-packs** (`sell_credit_packs_bulk`): generalised to a 3-pool increment dict (`daycare`/`training`/`boarding`) — packs with `service_type: "boarding"` now mint proper lots and bump the right balance.
+- ✅ **New endpoints** (`server.py`):
+  - `POST /api/clients/{id}/adjust-credits` — `{daycare, training, boarding, note}` with signed deltas. Refuses negatives that'd take a balance below zero. Writes a `credit_adjustments` collection entry (before/delta/after per pool + note + admin name + timestamp) for audit.
+  - `GET /api/clients/{id}/credit-adjustments` — list the audit log.
+- ✅ **Frontend**:
+  - Client card credit grid now shows **Daycare/Training/Boarding/Portal** (4 cols on `sm:`, stacked 2x2 on phones). Boarding uses `text-shOrange` for consistent color coding.
+  - New "± Adjust Credits" button between Sell Pack and Receipts on every client card.
+  - `<AdjustCreditsModal>` with live preview ("Current X → New Y"), red highlight if the proposed value would go negative, +/- step buttons, manual number input, required note, save-disabled when nothing changed or anything's negative.
+  - Portal credit card + ClientPortalPreview both updated to a 3-col display showing all three pools.
+- ✅ End-to-end verified: API call adjusts Alex Owner's daycare 9→12 with note logged, audit log returns the entry, UI grid + modal preview match.
+
 ## Sprint 45 — Hotfix: portal-snapshot decorator lost during marketing-qr insert (2026-02)
 - ✅ When inserting the marketing-qr endpoint above the portal-snapshot endpoint, the `@api.get("/admin/clients/{client_id}/portal-snapshot")` decorator got accidentally consumed by the search/replace — the function body remained but it was no longer wired to a route, so the snapshot endpoint silently returned FastAPI's default 404.
 - ✅ Restored the decorator. Verified preview: snapshot for Alex Owner returns full payload (1 dog, 1 booking, waiver signed). Production needs a redeploy to clear the same bug.

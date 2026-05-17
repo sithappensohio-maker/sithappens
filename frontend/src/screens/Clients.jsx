@@ -14,6 +14,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [portalOpen, setPortalOpen] = useState(null); // client id
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
   const [sellOpen, setSellOpen] = useState(null); // client object
+  const [adjustOpen, setAdjustOpen] = useState(null); // client object
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
@@ -146,7 +147,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 </ul>
               )}
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-2 border-t border-bgHover pt-3">
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-bgHover pt-3">
               <div>
                 <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
                 <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{c.credits || 0}</p>
@@ -154,6 +155,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               <div>
                 <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Training</p>
                 <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{c.training_credits || 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
+                <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{c.boarding_credits || 0}</p>
               </div>
               <div className="text-right">
                 <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
@@ -181,6 +186,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             <button onClick={()=>setSellOpen(c)} data-testid={`sell-pack-${c.id}`}
                     className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
               <i className="fas fa-coins mr-1"/>Sell Credit Pack
+            </button>
+            <button onClick={()=>setAdjustOpen(c)} data-testid={`adjust-credits-${c.id}`}
+                    className="mt-2 w-full bg-shOrange/10 text-shOrange py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/20">
+              <i className="fas fa-plus-minus mr-1"/>Adjust Credits
             </button>
             <button onClick={()=>setReceiptsOpen(c)} data-testid={`receipts-${c.id}`}
                     className="mt-2 w-full bg-bgHover/40 text-gray-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgHover/70 hover:text-white">
@@ -241,9 +250,98 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                            onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
+      {adjustOpen && <AdjustCreditsModal client={adjustOpen} onClose={()=>setAdjustOpen(null)} onSaved={()=>{ setAdjustOpen(null); load(); }} />}
     </div>
   );
 }
+
+
+function AdjustCreditsModal({ client, onClose, onSaved }) {
+  const [deltas, setDeltas] = useState({ daycare: 0, training: 0, boarding: 0 });
+  const [note, setNote] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const current = {
+    daycare: client.credits || 0,
+    training: client.training_credits || 0,
+    boarding: client.boarding_credits || 0,
+  };
+  const next = {
+    daycare: current.daycare + (Number(deltas.daycare) || 0),
+    training: current.training + (Number(deltas.training) || 0),
+    boarding: current.boarding + (Number(deltas.boarding) || 0),
+  };
+  const anyChange = (Number(deltas.daycare)||0) || (Number(deltas.training)||0) || (Number(deltas.boarding)||0);
+  const anyNegative = next.daycare < 0 || next.training < 0 || next.boarding < 0;
+
+  const rows = [
+    { key: "daycare", label: "Daycare", color: "text-shGreen", testid: "adjust-daycare" },
+    { key: "training", label: "Training", color: "text-purple-400", testid: "adjust-training" },
+    { key: "boarding", label: "Boarding", color: "text-shOrange", testid: "adjust-boarding" },
+  ];
+
+  const save = async () => {
+    setErr(""); setSaving(true);
+    try {
+      await api.post(`/clients/${client.id}/adjust-credits`, {
+        daycare: Number(deltas.daycare) || 0,
+        training: Number(deltas.training) || 0,
+        boarding: Number(deltas.boarding) || 0,
+        note,
+      });
+      onSaved();
+    } catch (e) {
+      setErr(formatErr(e?.response?.data?.detail) || "Save failed.");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Adjust credits · ${client.name}`} onClose={onClose} maxWidth="max-w-md">
+      <p className="text-[12px] text-gray-400 mb-4">
+        Use positive numbers to add, negative to remove. This is for fixing data-entry mistakes or comping a client — it doesn't create a receipt.
+      </p>
+      <div className="space-y-3" data-testid="adjust-credits-modal">
+        {rows.map(r => (
+          <div key={r.key} className="bg-bgBase/60 border border-bgHover rounded p-3 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">{r.label}</p>
+              <p className="text-[12px] text-gray-500">Current <span className="text-white font-black">{current[r.key]}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{next[r.key]}</span></p>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) - 1 }))}
+                      data-testid={`${r.testid}-minus`}
+                      className="w-9 h-9 bg-bgHover hover:bg-red-500/30 text-red-400 rounded font-black"><i className="fas fa-minus"/></button>
+              <input type="number" value={deltas[r.key]}
+                     onChange={(e)=>setDeltas(d => ({ ...d, [r.key]: e.target.value }))}
+                     data-testid={`${r.testid}-input`}
+                     className="w-16 bg-bgPanel border border-bgHover rounded p-2 text-center text-white text-sm" />
+              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) + 1 }))}
+                      data-testid={`${r.testid}-plus`}
+                      className="w-9 h-9 bg-bgHover hover:bg-shGreen/30 text-shGreen rounded font-black"><i className="fas fa-plus"/></button>
+            </div>
+          </div>
+        ))}
+        <div>
+          <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Reason / note <span className="text-gray-600 normal-case tracking-normal">(saved to audit log)</span></label>
+          <textarea value={note} onChange={(e)=>setNote(e.target.value)} rows={2} data-testid="adjust-note"
+                    placeholder="e.g. comp for missed appointment, fixing entry mistake…"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        </div>
+        {err && <p className="text-[13px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+        {anyNegative && <p className="text-[12px] text-red-400 font-black uppercase tracking-widest">Cannot drop a balance below zero.</p>}
+        <div className="flex gap-2 pt-1">
+          <button onClick={onClose} className="flex-1 text-gray-400 hover:text-white py-2 text-[13px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={save} disabled={!anyChange || anyNegative || saving} data-testid="adjust-save"
+                  className="flex-1 bg-shOrange text-bgHeader py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+            {saving ? "Saving…" : "Apply"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 
 function SellPackModal({ client, packs, onClose, onSold }) {
   const [poolFilter, setPoolFilter] = useState("all"); // all | daycare | training

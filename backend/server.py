@@ -133,6 +133,7 @@ class ClientIn(BaseModel):
     emerg: Optional[str] = ""
     credits: int = 0  # daycare credits (back-compat — kept as plain `credits` field)
     training_credits: int = 0  # 1-on-1 / lesson credits
+    boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
 
 class ClientOut(ClientIn):
     id: str
@@ -817,20 +818,25 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     }
     if is_admin and body.check_in_now:
         doc["checked_in_at"] = now_iso()
-    # Deduct credits by service-type pool. Both daycare + training are supported.
+    # Deduct credits by service-type pool. Daycare, training, and boarding all use the pool;
+    # boarding only deducts if the client *has* boarding credits (otherwise it's pay-on-the-day).
     deducted = 0
     credit_value = 0.0
     lot_ids: List[str] = []
-    low_credit_remaining: Optional[int] = None  # set when balance crosses the low-credit threshold
-    if status_val == "approved" and body.service_type in ("daycare", "training"):
-        balance_field = "training_credits" if body.service_type == "training" else "credits"
-        needed = 1 if body.service_type == "training" else cost
+    low_credit_remaining: Optional[int] = None
+    balance_field = _credit_balance_field(body.service_type) if status_val == "approved" else None
+    if balance_field:
+        if body.service_type == "training":
+            needed = 1
+        elif body.service_type == "boarding":
+            needed = max(int(cost), 0)  # 1 credit per night
+        else:  # daycare
+            needed = int(cost)
         available = int(client.get(balance_field) or 0)
         deducted = min(needed, available) if needed > 0 else 0
         if deducted > 0:
             await db.clients.update_one({"id": client["id"]}, {"$inc": {balance_field: -deducted}})
             credit_value, lot_ids = await _consume_credit_lots(client["id"], deducted, body.service_type)
-            # Low-credit heads-up: previously >2, now ≤2 → notify (fires once per crossing).
             after = available - deducted
             if available > 2 and after <= 2:
                 low_credit_remaining = after
@@ -947,10 +953,15 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     if svc_type in ("daycare", "training"):
         # Training uses 1 credit per session regardless of `cost` (which is a
         # daycare-day count). Daycare uses the existing `cost` field.
-        needed = 1 if svc_type == "training" else cost
+        if svc_type == "training":
+            needed = 1
+        elif svc_type == "boarding":
+            needed = max(int(cost), 0)
+        else:
+            needed = int(cost)
         if needed > 0:
             client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
-            balance_field = "training_credits" if svc_type == "training" else "credits"
+            balance_field = _credit_balance_field(svc_type) or "credits"
             available = int((client or {}).get(balance_field) or 0)
             deducted = min(needed, available)
             if deducted > 0:
@@ -978,6 +989,17 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     except Exception:
         pass
     return booking
+
+
+def _credit_balance_field(service_type: str) -> Optional[str]:
+    """Map service_type → the integer balance field on the client document.
+    Returns None for services that don't use credit pools (e.g. grooming)."""
+    return {
+        "daycare": "credits",
+        "training": "training_credits",
+        "boarding": "boarding_credits",
+    }.get(service_type)
+
 
 
 async def _consume_credit_lots(client_id: str, qty: int, service_type: str = "daycare") -> tuple:
@@ -1054,7 +1076,7 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
         refund = int(booking.get("credits_deducted") or 0)
         if refund > 0:
             credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
-            balance_field = "training_credits" if credit_pool == "training" else "credits"
+            balance_field = _credit_balance_field(credit_pool) or "credits"
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
             await _restore_credit_lots(booking.get("credit_lot_ids") or [], refund)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
@@ -1216,7 +1238,7 @@ async def check_out(
         svc_type = booking.get("credit_service_type") or "daycare"
         if deducted > 0:
             await _restore_credit_lots(lot_ids, deducted)
-            balance_field = "training_credits" if svc_type == "training" else "credits"
+            balance_field = _credit_balance_field(svc_type) or "credits"
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: deducted}})
         # Clear credit fields on the booking so the income tally treats it as a paid service.
         update["credit_value"] = 0.0
@@ -3773,6 +3795,77 @@ async def delete_credit_pack(pack_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+class CreditAdjustIn(BaseModel):
+    daycare: int = 0       # positive = add, negative = subtract
+    training: int = 0
+    boarding: int = 0
+    note: Optional[str] = ""
+
+
+@api.post("/clients/{client_id}/adjust-credits")
+async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict = Depends(require_admin)):
+    """Manual +/- credit adjustment for fixing mistakes or comping a client.
+    Does NOT touch credit_lots (no revenue change). Writes a `credit_adjustments`
+    entry so you have an audit trail. Refuses to take a balance below zero."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    pool_map = {
+        "daycare": ("credits", int(body.daycare or 0)),
+        "training": ("training_credits", int(body.training or 0)),
+        "boarding": ("boarding_credits", int(body.boarding or 0)),
+    }
+    if not any(delta for _, delta in pool_map.values()):
+        raise HTTPException(status_code=400, detail="No adjustment specified.")
+
+    # Validate no balance would go negative.
+    for pool, (field, delta) in pool_map.items():
+        if delta == 0:
+            continue
+        current = int(client.get(field) or 0)
+        if current + delta < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot subtract {abs(delta)} {pool} credit(s): client only has {current}.",
+            )
+
+    inc_doc: Dict[str, int] = {}
+    changes: Dict[str, Dict[str, int]] = {}
+    for pool, (field, delta) in pool_map.items():
+        if delta:
+            inc_doc[field] = delta
+            changes[pool] = {
+                "before": int(client.get(field) or 0),
+                "delta": delta,
+                "after": int(client.get(field) or 0) + delta,
+            }
+
+    await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
+    log_entry = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "client_name": client.get("name", ""),
+        "changes": changes,
+        "note": body.note or "",
+        "adjusted_by": user.get("name", "Admin"),
+        "adjusted_at": now_iso(),
+    }
+    await db.credit_adjustments.insert_one(log_entry)
+    log_entry.pop("_id", None)
+    return log_entry
+
+
+@api.get("/clients/{client_id}/credit-adjustments")
+async def list_credit_adjustments(client_id: str, _: dict = Depends(require_admin)):
+    items = await db.credit_adjustments.find(
+        {"client_id": client_id}, {"_id": 0}
+    ).sort("adjusted_at", -1).to_list(100)
+    return items
+
+
+
+
 @api.post("/credit-packs/seed-standard")
 async def seed_credit_packs(_: dict = Depends(require_admin)):
     seeded = 0
@@ -3817,7 +3910,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
         "purchased_at": now_iso(),
     }
     await db.credit_lots.insert_one(lot)
-    balance_field = "training_credits" if svc_type == "training" else "credits"
+    balance_field = _credit_balance_field(svc_type) or "credits"
     await db.clients.update_one({"id": client_id}, {"$inc": {balance_field: qty}})
     lot.pop("_id", None)
     return lot
@@ -3842,9 +3935,12 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         raise HTTPException(status_code=404, detail=f"Pack(s) not found: {', '.join(missing)}")
 
     new_lots: List[Dict] = []
-    daycare_inc = 0
-    training_inc = 0
-    totals_by_pool = {"daycare": {"qty": 0, "price": 0.0}, "training": {"qty": 0, "price": 0.0}}
+    pool_increments: Dict[str, int] = {"daycare": 0, "training": 0, "boarding": 0}
+    totals_by_pool = {
+        "daycare": {"qty": 0, "price": 0.0},
+        "training": {"qty": 0, "price": 0.0},
+        "boarding": {"qty": 0, "price": 0.0},
+    }
 
     now = now_iso()
     for item in body.items:
@@ -3852,6 +3948,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         qty = int(pack["qty"])
         value_each = round(float(pack["price"]) / max(qty, 1), 2)
         svc_type = pack.get("service_type") or "daycare"
+        pool_key = svc_type if svc_type in pool_increments else "daycare"
         for _ in range(item.quantity):
             lot = {
                 "id": str(uuid.uuid4()),
@@ -3869,28 +3966,27 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
                 "purchased_at": now,
             }
             new_lots.append(lot)
-            if svc_type == "training":
-                training_inc += qty
-            else:
-                daycare_inc += qty
-            totals_by_pool[svc_type if svc_type in totals_by_pool else "daycare"]["qty"] += qty
-            totals_by_pool[svc_type if svc_type in totals_by_pool else "daycare"]["price"] += float(pack["price"])
+            pool_increments[pool_key] += qty
+            totals_by_pool[pool_key]["qty"] += qty
+            totals_by_pool[pool_key]["price"] += float(pack["price"])
 
     await db.credit_lots.insert_many(new_lots)
     inc_doc: Dict[str, int] = {}
-    if daycare_inc:
-        inc_doc["credits"] = daycare_inc
-    if training_inc:
-        inc_doc["training_credits"] = training_inc
+    if pool_increments["daycare"]:
+        inc_doc["credits"] = pool_increments["daycare"]
+    if pool_increments["training"]:
+        inc_doc["training_credits"] = pool_increments["training"]
+    if pool_increments["boarding"]:
+        inc_doc["boarding_credits"] = pool_increments["boarding"]
     if inc_doc:
         await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
 
     # Strip mongo _id from response payload defensively (insert_many mutates).
     for lot in new_lots:
         lot.pop("_id", None)
-    totals_by_pool["daycare"]["price"] = round(totals_by_pool["daycare"]["price"], 2)
-    totals_by_pool["training"]["price"] = round(totals_by_pool["training"]["price"], 2)
-    grand_total = round(totals_by_pool["daycare"]["price"] + totals_by_pool["training"]["price"], 2)
+    for pool in totals_by_pool.values():
+        pool["price"] = round(pool["price"], 2)
+    grand_total = round(sum(p["price"] for p in totals_by_pool.values()), 2)
 
     # Build line-items for the receipt (group identical packs into one row).
     receipt_lines: List[Dict] = []

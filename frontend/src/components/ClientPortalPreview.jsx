@@ -44,7 +44,7 @@ export default function ClientPortalPreview({ clientId, onClose }) {
           {data && (
             <>
               {/* Credits + waiver */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="bg-bgPanel border border-bgHover rounded-xl p-4 text-center">
                   <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Daycare</p>
                   <p className="text-3xl font-black text-shGreen mt-1" data-testid="preview-daycare-credits">{data.client.credits ?? 0}</p>
@@ -54,6 +54,11 @@ export default function ClientPortalPreview({ clientId, onClose }) {
                   <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Training</p>
                   <p className="text-3xl font-black text-purple-400 mt-1" data-testid="preview-training-credits">{data.client.training_credits ?? 0}</p>
                   <p className="text-[10px] text-gray-500 font-black uppercase">Sessions</p>
+                </div>
+                <div className="bg-bgPanel border border-bgHover rounded-xl p-4 text-center">
+                  <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Boarding</p>
+                  <p className="text-3xl font-black text-shOrange mt-1" data-testid="preview-boarding-credits">{data.client.boarding_credits ?? 0}</p>
+                  <p className="text-[10px] text-gray-500 font-black uppercase">Nights</p>
                 </div>
                 <div className={`rounded-xl p-4 text-center border ${data.waiver.signed && !data.waiver.needs_resign ? "bg-shGreen/10 border-shGreen/40" : "bg-red-500/10 border-red-500/40"}`}>
                   <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Waiver</p>
