@@ -19,26 +19,29 @@ import { compressImage } from "../lib/imageCompress";
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
 /**
- * Compact PIN row shown right under the "See your pup in action" CTA in the
- * portal. Admin sets the per-client PIN (used to unlock photo downloads on
- * services like PicTime / Pixieset). Hidden entirely if no PIN is set.
+ * Inner "Download PIN" strip that sits inside the gallery card (below the
+ * clickable link), making the relationship between the PIN and the gallery
+ * unmistakable. Hidden if no PIN is set.
  */
-function GalleryPinRow({ pin }) {
+function GalleryPinRow({ pin, accent = "green" }) {
   const [copied, setCopied] = useState(false);
   if (!pin) return null;
-  const copy = async () => {
+  const copy = async (e) => {
+    e?.stopPropagation?.();
     try { await navigator.clipboard.writeText(pin); setCopied(true); setTimeout(()=>setCopied(false), 1800); } catch {}
   };
+  const divider = accent === "orange" ? "border-shOrange/30 bg-shOrange/5" : "border-shGreen/30 bg-bgBase/40";
   return (
     <div data-testid="portal-gallery-pin"
-         className="flex items-center gap-3 bg-bgBase border border-shOrange/30 rounded px-3 py-2 -mt-1">
-      <i className="fas fa-key text-shOrange text-base w-6 text-center"/>
+         className={`flex items-center gap-3 px-3 py-3 border-t ${divider}`}>
+      <i className="fas fa-key text-shOrange text-lg w-6 text-center shrink-0"/>
       <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none">Download PIN</p>
-        <p className="text-white font-black text-[15px] tracking-[0.25em] mt-1 truncate" data-testid="portal-gallery-pin-value">{pin}</p>
+        <p className="text-[10px] font-black text-shOrange uppercase tracking-widest leading-none">Your Download PIN</p>
+        <p className="text-white font-black text-[17px] tracking-[0.3em] mt-1.5 truncate" data-testid="portal-gallery-pin-value">{pin}</p>
+        <p className="text-[10px] text-gray-400 normal-case tracking-normal mt-1.5 leading-tight">Enter this PIN when the gallery asks for it to unlock photo downloads.</p>
       </div>
       <button type="button" onClick={copy} data-testid="portal-gallery-pin-copy"
-              className="text-[11px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded bg-shOrange/15 text-shOrange hover:bg-shOrange/25 transition whitespace-nowrap">
+              className="text-[11px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded bg-shOrange/15 text-shOrange hover:bg-shOrange/25 transition whitespace-nowrap shrink-0">
         <i className={`fas ${copied ? "fa-check" : "fa-copy"} mr-1`}/>{copied ? "Copied" : "Copy"}
       </button>
     </div>
@@ -518,42 +521,41 @@ export default function Portal() {
                   </a>
                 )}
                 {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
-                  <a href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
-                     data-testid="portal-link-gallery"
-                     onClick={() => {
-                       // Fire-and-forget: clear the admin-set "new photos" nudge the moment
-                       // the client opens their gallery. Never block the click.
-                       if (client?.photo_gallery_has_new) {
-                         api.post("/portal/gallery/mark-seen").catch(() => {});
-                         setClient((c) => c ? { ...c, photo_gallery_has_new: false } : c);
-                       }
-                     }}
-                     className={`relative flex items-start gap-3 bg-gradient-to-br rounded-lg px-3 py-3 transition group ${client?.photo_gallery_has_new
-                         ? "from-shOrange/20 to-shGreen/10 hover:from-shOrange/30 hover:to-shGreen/20 border border-shOrange/60 hover:border-shOrange shadow-[0_0_18px_-6px_rgba(255,138,0,0.7)]"
-                         : "from-shGreen/15 to-shBlue/10 hover:from-shGreen/25 hover:to-shBlue/20 border border-shGreen/40 hover:border-shGreen/60"}`}>
+                  <div data-testid="portal-gallery-card"
+                       className={`relative rounded-lg overflow-hidden bg-gradient-to-br border transition ${client?.photo_gallery_has_new
+                           ? "from-shOrange/20 to-shGreen/10 border-shOrange/60 shadow-[0_0_18px_-6px_rgba(255,138,0,0.7)]"
+                           : "from-shGreen/15 to-shBlue/10 border-shGreen/40 hover:border-shGreen/60"}`}>
                     {client?.photo_gallery_has_new && (
                       <span data-testid="portal-gallery-new-badge"
-                            className="absolute -top-2 -right-2 flex items-center gap-1 bg-shOrange text-bgHeader text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-lg animate-pulse">
+                            className="absolute -top-2 -right-2 flex items-center gap-1 bg-shOrange text-bgHeader text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-lg animate-pulse z-10">
                         <i className="fas fa-bell text-[9px]"/> New
                       </span>
                     )}
-                    <i className={`fas fa-camera-retro text-2xl w-7 text-center mt-0.5 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
-                    <div className="flex-1 min-w-0 text-left">
-                      <div className="text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2">
-                        See Your Pup In Action
-                        <span className="text-[10px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
+                    <a href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
+                       data-testid="portal-link-gallery"
+                       onClick={() => {
+                         if (client?.photo_gallery_has_new) {
+                           api.post("/portal/gallery/mark-seen").catch(() => {});
+                           setClient((c) => c ? { ...c, photo_gallery_has_new: false } : c);
+                         }
+                       }}
+                       className="flex items-start gap-3 px-3 py-3 hover:bg-white/[0.03] transition group">
+                      <i className={`fas fa-camera-retro text-2xl w-7 text-center mt-0.5 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
+                      <div className="flex-1 min-w-0 text-left">
+                        <div className="text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                          See Your Pup In Action
+                          <span className="text-[10px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
+                        </div>
+                        <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">
+                          {client?.photo_gallery_has_new
+                            ? "Fresh photos just dropped! Browse your private gallery & order prints"
+                            : "Browse your private gallery & order high-quality prints"}
+                        </p>
                       </div>
-                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">
-                        {client?.photo_gallery_has_new
-                          ? "Fresh photos just dropped! Browse your private gallery & order prints"
-                          : "Browse your private gallery & order high-quality prints"}
-                      </p>
-                    </div>
-                    <i className={`fas fa-arrow-up-right-from-square group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition text-xs mt-1 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
-                  </a>
-                )}
-                {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
-                  <GalleryPinRow pin={client?.photo_gallery_pin} />
+                      <i className={`fas fa-arrow-up-right-from-square group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition text-xs mt-1 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
+                    </a>
+                    <GalleryPinRow pin={client?.photo_gallery_pin} accent={client?.photo_gallery_has_new ? "orange" : "green"} />
+                  </div>
                 )}
                 {referralCode && (
                   <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
