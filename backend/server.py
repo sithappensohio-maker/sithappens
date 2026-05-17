@@ -30,6 +30,7 @@ from email_service import (
     notify_client_homework_assigned,
     notify_client_low_credits,
     notify_client_pack_receipt,
+    notify_client_quote_received,
     send_account_claim,
 )
 
@@ -3936,7 +3937,11 @@ async def portal_quote_request(body: QuoteRequestIn, user: dict = Depends(get_cu
     try:
         await notify_admin_quote_request(client, summary, doc["message"])
     except Exception as exc:
-        logger.warning("Quote-request email failed: %s", exc)
+        logger.warning("Quote-request admin email failed: %s", exc)
+    try:
+        await notify_client_quote_received(client, summary, doc["message"])
+    except Exception as exc:
+        logger.warning("Quote-request client auto-responder failed: %s", exc)
     doc.pop("_id", None)
     return {"ok": True, "request_id": doc["id"]}
 

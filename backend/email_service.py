@@ -273,6 +273,46 @@ async def notify_admin_quote_request(client: dict, item: dict, message: str) -> 
     )
 
 
+async def notify_client_quote_received(client: dict, item: dict, message: str) -> None:
+    """Auto-responder: thank the client for their quote request so they know
+    we got it and don't feel ghosted while we draft a real reply."""
+    to_email = (client or {}).get("email") or ""
+    if not to_email:
+        return
+    name = (client or {}).get("name") or "there"
+    first_name = name.split()[0] if name else "there"
+    kind = "training program" if item.get("kind") == "program" else "service"
+    item_label = item.get("name") or "that"
+    rows = [
+        ("Interested in", item_label),
+    ]
+    if item.get("price"):
+        rows.append(("Listed price", f"${float(item['price']):.2f}"))
+    if message:
+        rows.append(("Your message", message))
+    intro = (
+        f"Hey {first_name}! 🐾 Thanks for asking about <strong>{item_label}</strong> — "
+        f"we got your request and someone will be in touch within <strong>24 hours</strong> "
+        f"with availability and any other details you need."
+        f"<br/><br/>"
+        f"In the meantime, feel free to browse the rest of our {kind}s in the portal — "
+        f"or reply to this email directly with any other questions."
+    )
+    html = _wrap(
+        title="We got it — talk soon!",
+        intro=intro,
+        rows=rows,
+        cta_text="Open Client Portal" if APP_PUBLIC_URL else None,
+        cta_url=APP_PUBLIC_URL or None,
+        show_install=False,
+    )
+    await _send(
+        to_email,
+        f"We got your request about {item_label} — Sit Happens",
+        html,
+    )
+
+
 
 async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     """A client logged a training note on their dog — notify the operator."""
