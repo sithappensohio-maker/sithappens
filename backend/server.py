@@ -225,7 +225,7 @@ class TrainingLogIn(BaseModel):
 class BookingIn(BaseModel):
     dog_id: str
     date: str  # YYYY-MM-DD
-    service_type: Literal["daycare", "boarding", "training", "grooming"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
     grooming_type: Optional[Literal["bath", "nail_trim"]] = None  # only relevant when service_type=grooming
     end_date: Optional[str] = None  # for boarding
     notes: Optional[str] = ""
@@ -315,6 +315,13 @@ class CheckoutIn(BaseModel):
     payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
     add_ons: List[CheckoutAddOn] = []
+    # ── Boarding stay extension ──
+    # Number of EXTRA nights the dog actually stayed beyond the original end_date.
+    # Defaults to 0 (no extension). Updates booking.end_date, optionally consumes
+    # additional boarding credits, and bills the difference at checkout.
+    extra_nights: int = Field(default=0, ge=0, le=60)
+    extra_nights_use_credits: bool = True  # if client has boarding credits, draw from them first
+    extra_nights_rate: Optional[float] = None  # per-night rate override; if not provided + credits exhausted, uses booking_rules.boarding_rate
 
 
 # -------- Auth --------
@@ -1503,6 +1510,60 @@ async def check_out(
     elif booking.get("actual_price"):
         base_price = float(booking["actual_price"])
 
+    # ── Boarding stay extension: dog stayed past their original end_date.
+    # Update booking.end_date, optionally consume extra boarding credits, and
+    # bill the difference. Only meaningful for boarding bookings.
+    extra_nights = int(body.extra_nights or 0)
+    extra_charge_total = 0.0
+    extra_nights_billed = 0
+    extra_credits_used = 0
+    if extra_nights > 0 and booking.get("service_type") == "boarding":
+        # Extend end_date by N days from the existing end_date (or date if no end_date).
+        try:
+            base_end = booking.get("end_date") or booking.get("date")
+            new_end = (date.fromisoformat(base_end) + timedelta(days=extra_nights)).isoformat()
+            update["end_date"] = new_end
+        except Exception:
+            pass
+        # First, try to draw from remaining boarding credits if the client opted in.
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        if body.extra_nights_use_credits and client_doc:
+            available = int(client_doc.get("boarding_credits") or 0)
+            extra_credits_used = min(extra_nights, available)
+            if extra_credits_used > 0:
+                extra_credit_value, extra_lot_ids = await _consume_credit_lots(
+                    booking["client_id"], extra_credits_used, "boarding"
+                )
+                await db.clients.update_one(
+                    {"id": booking["client_id"]}, {"$inc": {"boarding_credits": -extra_credits_used}}
+                )
+                # Stack onto whatever credit_value already existed on the booking.
+                prev_credit_value = float(booking.get("credit_value") or 0)
+                update["credit_value"] = round(prev_credit_value + float(extra_credit_value), 2)
+                update["credits_deducted"] = int(booking.get("credits_deducted") or 0) + extra_credits_used
+                # Track lots for refund-on-cancel safety.
+                update["credit_lot_ids"] = list(booking.get("credit_lot_ids") or []) + list(extra_lot_ids or [])
+        # Whatever nights weren't covered by credits get billed.
+        extra_nights_billed = extra_nights - extra_credits_used
+        if extra_nights_billed > 0:
+            settings = await get_settings()
+            rules = (settings.get("booking_rules") or {})
+            per_night = body.extra_nights_rate if body.extra_nights_rate is not None else float(rules.get("boarding_rate") or 0)
+            extra_charge_total = round(extra_nights_billed * float(per_night), 2)
+            if extra_charge_total > 0:
+                # Add this charge to actual_price (will be combined with base + add-ons below).
+                prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
+                update["actual_price"] = round(prev_price + extra_charge_total, 2)
+        # Audit trail on the booking so income reporting can reflect the extension.
+        update["extra_nights"] = {
+            "count": extra_nights,
+            "credits_used": extra_credits_used,
+            "billed_nights": extra_nights_billed,
+            "per_night_rate": float(body.extra_nights_rate) if body.extra_nights_rate is not None else None,
+            "charge": extra_charge_total,
+            "added_at": ts,
+        }
+
     # ── Add-ons: sum prices, persist line items, fold into actual_price.
     add_on_total = 0.0
     add_on_rows: List[Dict[str, Any]] = []
@@ -1743,6 +1804,7 @@ def _default_settings() -> dict:
             "boarding": "Overnight stays in our climate-controlled kennels with daily playtime.",
             "training": "1-on-1 sessions with your trainer working through your dog's training program.",
             "grooming": "Bath services and nail trims — keep your pup looking sharp.",
+            "photography": "Professional pet photography sessions. Capture your pup's personality with a custom shoot.",
         },
         # External links shown on the client portal. Blank = button hidden.
         "client_portal_links": {
@@ -3976,7 +4038,7 @@ class ServiceIn(BaseModel):
     slug: Optional[str] = ""
     name: str = Field(min_length=1)
     base_price: float = 0.0
-    service_type: Optional[Literal["daycare", "boarding", "training", "grooming", "other"]] = "other"
+    service_type: Optional[Literal["daycare", "boarding", "training", "grooming", "photography", "other"]] = "other"
     color: Optional[str] = "#64748b"
     icon: Optional[str] = "fa-tag"
     active: bool = True

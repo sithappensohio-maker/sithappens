@@ -11,6 +11,7 @@ const SERVICE_TYPES = [
   { key: "boarding", label: "Boarding", color: "#8cc63f" },
   { key: "training", label: "Training", color: "#a855f7" },
   { key: "grooming", label: "Grooming", color: "#06b6d4" },
+  { key: "photography", label: "Photography", color: "#f97316" },
   { key: "other", label: "Other", color: "#64748b" },
 ];
 

@@ -467,6 +467,15 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const [useCredits, setUseCredits] = useState(hadCredit); // default keep credits if they exist
   const [payMethod, setPayMethod] = useState("cash");
   const [basePrice, setBasePrice] = useState(""); // empty = use service default
+  // Boarding-only: extra nights beyond the original booking
+  const [extraNights, setExtraNights] = useState(0);
+  const [extraUseCredits, setExtraUseCredits] = useState(true);
+  const [extraRate, setExtraRate] = useState(""); // empty = use settings boarding_rate
+  const boardingRate = (services || []).find(s => s.service_type === "boarding" && s.is_default && s.active)?.base_price || 0;
+  const extraRateEffective = extraRate !== "" ? Number(extraRate) || 0 : Number(boardingRate || 0);
+  // How many extra-night credits CAN be drawn? Min of (extraNights, currentBoardingCredits).
+  // We approximate boarding balance from the original booking — exact balance is server-side.
+  const isBoarding = booking.service_type === "boarding";
   // Add-ons are NOT the same service-type as the booking (those would just bump the base).
   // Show the rest of the active services as quick-add chips.
   const addOnCandidates = (services || []).filter(s => s.active && s.service_type !== booking.service_type);
@@ -495,8 +504,12 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
     basePreview = defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0);
   }
-  const chargedToday = (useCredits ? 0 : basePreview) + addOnTotal;
-  const grandLine = basePreview + addOnTotal;
+  // Estimate extra-nights charge for preview purposes (server is source of truth).
+  const extraNightsCharge = isBoarding && extraNights > 0 && !extraUseCredits
+    ? Math.round(extraNights * extraRateEffective * 100) / 100
+    : 0;
+  const chargedToday = (useCredits ? 0 : basePreview) + addOnTotal + extraNightsCharge;
+  const grandLine = basePreview + addOnTotal + extraNightsCharge;
 
   const submit = async () => {
     setBusy(true); setErr("");
@@ -508,10 +521,19 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           price: Number(it.service.base_price || 0), qty: it.qty,
         })),
       };
+      if (isBoarding && extraNights > 0) {
+        body.extra_nights = Number(extraNights);
+        body.extra_nights_use_credits = extraUseCredits;
+        if (extraRate !== "") body.extra_nights_rate = Number(extraRate);
+      }
       if (!useCredits || !hadCredit) {
         body.payment_method = payMethod;
         body.payment_status = "paid"; // operator typing payment method means they're collecting now
         if (basePrice !== "") body.base_price = Number(basePrice);
+      } else if (extraNightsCharge > 0) {
+        // Owner is keeping main-stay credits, but the extra nights still need to be billed
+        body.payment_method = payMethod;
+        body.payment_status = "paid";
       }
       await api.post(`/bookings/${booking.id}/check-out`, body);
       onClose();
@@ -556,6 +578,47 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             <p className="text-[13px] text-gray-300">No credits on file for this booking — collecting payment today.</p>
           )}
         </div>
+
+        {/* Section 1b — Boarding stay extension (extra nights) */}
+        {isBoarding && (
+          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
+              {booking.end_date && <span className="text-[10px] text-gray-500">Original end: {booking.end_date}</span>}
+            </div>
+            <div className="flex items-center gap-2 mb-3">
+              <button type="button" onClick={()=>setExtraNights(Math.max(0, Number(extraNights)-1))} data-testid="extra-nights-minus"
+                      className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-red-500/30">−</button>
+              <input type="number" min="0" max="60" value={extraNights} onChange={(e)=>setExtraNights(Math.max(0, parseInt(e.target.value)||0))} data-testid="extra-nights-input"
+                     className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center font-black"/>
+              <button type="button" onClick={()=>setExtraNights(Number(extraNights)+1)} data-testid="extra-nights-plus"
+                      className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-shGreen/30">+</button>
+              <span className="text-[12px] text-gray-400 ml-2">extra night{extraNights === 1 ? "" : "s"}</span>
+            </div>
+            {extraNights > 0 && (
+              <div className="space-y-3 animate-slide-in">
+                <label className="flex items-center gap-2 text-[13px] text-gray-300">
+                  <input type="checkbox" checked={extraUseCredits} onChange={(e)=>setExtraUseCredits(e.target.checked)} data-testid="extra-nights-use-credits"/>
+                  Use remaining boarding credits first (any leftover gets billed)
+                </label>
+                {!extraUseCredits && (
+                  <div>
+                    <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
+                    <input type="number" step="0.01" value={extraRate} onChange={(e)=>setExtraRate(e.target.value)} data-testid="extra-nights-rate"
+                           placeholder={boardingRate ? `$${Number(boardingRate).toFixed(2)}` : "$0.00"}
+                           className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                  </div>
+                )}
+                <div className="text-[12px] bg-bgPanel rounded p-2 text-gray-300">
+                  <i className="fas fa-circle-info text-shBlue mr-1"/>
+                  {extraUseCredits
+                    ? `Will draw up to ${extraNights} credit${extraNights===1?"":"s"} from boarding pack; any uncovered nights will be billed at $${extraRateEffective.toFixed(2)}/night.`
+                    : `Charging ${extraNights} × $${extraRateEffective.toFixed(2)} = $${(extraNights * extraRateEffective).toFixed(2)} for the extension.`}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Section 2 — Add-ons */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">

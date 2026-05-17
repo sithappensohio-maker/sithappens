@@ -523,12 +523,14 @@ function ServiceInfoPanel({ s, save, saving }) {
     boarding: defaults.boarding || "",
     training: defaults.training || "",
     grooming: defaults.grooming || "",
+    photography: defaults.photography || "",
   });
   const services = [
     { k: "daycare", label: "Daycare", icon: "fa-sun", color: "text-shBlue" },
     { k: "boarding", label: "Boarding", icon: "fa-moon", color: "text-shGreen" },
     { k: "training", label: "Training", icon: "fa-graduation-cap", color: "text-purple-400" },
     { k: "grooming", label: "Grooming", icon: "fa-bath", color: "text-pink-400" },
+    { k: "photography", label: "Photography", icon: "fa-camera-retro", color: "text-shOrange" },
   ];
   return (
     <div className="space-y-5" data-testid="service-info-panel">

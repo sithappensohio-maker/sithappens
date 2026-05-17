@@ -417,7 +417,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 36 — Digital Trophies / Gamification (2026-02)
+## Sprint 37 — Photography Service + Per-Client Galleries + Boarding Extensions (2026-02)
+- ✅ **Per-client photo gallery URL**: new `photo_gallery_url` field on Client doc; admin Clients form has a labeled input; Portal renders a prominent "SEE YOUR PUP IN ACTION · ORDER PRINTS" gradient card linking to the client's private gallery. Global Settings field demoted to "Fallback Only".
+- ✅ **Portal "Services & Pricing" section**: dedicated card at the top of the portal listing all active services from `/api/services` with name, FontAwesome icon (or service color), description, base price, service type, and "Credit-eligible" vs "Pay-on-the-day" tags. Footer note nudges clients toward Credit Packs.
+- ✅ **Photography as a first-class service type**: added to all `Literal` enums (`BookingIn.service_type`, `ServiceIn.service_type`), to AdminBookingModal + Portal booking pickers, to ServicesSettings admin chip, to ServiceInfoModal default description ("Professional pet photography sessions…"), and to Settings → Service Descriptions panel. Photography is pay-on-the-day (no credit pool) — handled automatically by existing `_service_cost` returning 0 + `_credit_balance_field` returning None.
+- ✅ **Boarding stay extension at checkout**:
+  - `CheckoutIn` extended with `extra_nights` (0–60), `extra_nights_use_credits` (bool), `extra_nights_rate` (optional float override).
+  - `check_out` endpoint extends `booking.end_date` by N days, optionally FIFO-consumes additional boarding credits, then bills uncovered nights at the per-night rate. Writes `extra_nights` audit dict on the booking for income reporting.
+  - **Dashboard CheckoutModal**: new "🌙 STAYED EXTRA NIGHTS?" panel (boarding bookings only) with ± stepper, "Use remaining boarding credits first" toggle, per-night rate override, and live charge preview.
+- ✅ **End-to-end verified**: photography service created/listed/booked, portal renders all 8 services beautifully, boarding extension test confirmed `end_date: 2026-05-18 → 2026-05-20` with `actual_price: $165` ($55 base + 2 × $55) and audit row written.
+
+
 - ✅ **New collections:** `trophies` (catalog) + `awarded_trophies` (instances). 15 defaults seeded on startup (6 dog + 9 client), all idempotent via `seed_trophies_if_empty()` so admin edits are never overwritten.
 - ✅ **Backend `/app/backend/trophy_service.py`** — central engine: `award_trophy()` (idempotent per `recipient_id`+`code`), `check_dog_trophies()`, `check_client_trophies()`, `render_share_card_png()` (Pillow, 1200×630 social-card).
 - ✅ **Auto-award hooks wired into existing endpoints:**

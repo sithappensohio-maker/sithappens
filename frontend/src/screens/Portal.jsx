@@ -156,6 +156,18 @@ const SERVICE_INFO = {
       "Mention any sensitive spots when you arrive",
     ],
   },
+  photography: {
+    label: "Photography",
+    icon: "fa-camera-retro",
+    color: "text-shOrange",
+    summary: "Professional pet photography sessions. Capture your pup's personality with a custom shoot.",
+    bullets: [
+      "Pick a date that works for you",
+      "Pay-on-the-day at the session",
+      "Edited images delivered in your private gallery within 1–2 weeks",
+      "Order prints, canvases & gifts straight from your gallery",
+    ],
+  },
 };
 
 function ServiceInfoModal({ type, onClose, customDescriptions }) {
@@ -219,21 +231,24 @@ export default function Portal() {
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
+  const [publicServices, setPublicServices] = useState([]);
 
   const loadAll = useCallback(async () => {
     try {
-      const [dRes, bRes, wRes, sRes, hRes] = await Promise.all([
+      const [dRes, bRes, wRes, sRes, hRes, svcRes] = await Promise.all([
         api.get("/dogs"),
         api.get("/bookings"),
         api.get("/waivers/me"),
         api.get("/settings/public"),
         api.get("/homework"),
+        api.get("/services").catch(()=>({data:[]})),
       ]);
       setDogs(dRes.data);
       setBookings(bRes.data);
       setWaiver(wRes.data);
       setPubSettings(sRes.data);
       setHomework(hRes.data);
+      setPublicServices((svcRes.data || []).filter(s => s.active));
       if (dRes.data.length > 0 && !bookDogId) setBookDogId(dRes.data[0].id);
       // Only auto-open the waiver modal AFTER the user has added at least one dog
       // (otherwise the onboarding banner takes them through profile → dog → waiver in order).
@@ -442,6 +457,43 @@ export default function Portal() {
             )}
           </div>
 
+          {publicServices.length > 0 && (
+            <div className="bg-bgPanel p-4 sm:p-5 rounded-xl border border-bgHover shadow-lg" data-testid="portal-services-section">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-lg font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
+                <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{publicServices.length} offered</span>
+              </div>
+              <p className="text-[12px] text-gray-500 mb-4">Everything we offer at Sit Happens. Tap a service to learn more.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {publicServices.map(svc => {
+                  const usesCredits = svc.service_type === "daycare" || svc.service_type === "training" || svc.service_type === "boarding";
+                  return (
+                    <div key={svc.id} data-testid={`portal-service-${svc.id}`}
+                         className="bg-bgBase rounded-lg p-4 border border-bgHover hover:border-shGreen/40 transition flex flex-col">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 className="text-[15px] font-black text-white uppercase italic tracking-tight flex items-center gap-2">
+                          <i className={`fas ${svc.icon || "fa-tag"} text-shGreen`} style={{ color: svc.color || undefined }}/>
+                          {svc.name}
+                        </h3>
+                        <span className="text-shGreen font-black text-[15px] whitespace-nowrap">${Number(svc.base_price || 0).toFixed(2)}</span>
+                      </div>
+                      {svc.description && <p className="text-[12px] text-gray-300 leading-relaxed flex-1">{svc.description}</p>}
+                      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-bgHover">
+                        <span className="text-[10px] uppercase tracking-widest font-black px-2 py-0.5 rounded bg-bgPanel text-gray-400">{svc.service_type}</span>
+                        {usesCredits ? (
+                          <span className="text-[10px] uppercase tracking-widest font-black text-shBlue">Credit-eligible</span>
+                        ) : (
+                          <span className="text-[10px] uppercase tracking-widest font-black text-shOrange">Pay-on-the-day</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-4 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
+            </div>
+          )}
+
           {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
             <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
               <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
@@ -496,7 +548,7 @@ export default function Portal() {
 
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
             <div className="grid grid-cols-2 gap-2 mt-1 mb-3" data-testid="portal-service-grid">
-              {["daycare","boarding","training","grooming"].map(t => (
+              {["daycare","boarding","training","grooming","photography"].map(t => (
                 <div key={t} className="relative">
                   <button onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); if(t==="grooming") setIsRecurring(false); }} data-testid={`book-service-${t}`}
                           className={`w-full py-2 pr-7 rounded text-[14px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
