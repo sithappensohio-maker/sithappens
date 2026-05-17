@@ -2819,6 +2819,7 @@ class ProgramIn(BaseModel):
     prereq_slugs: List[str] = []
     modules: List[ModuleIn] = []
     completion_rule: Dict = Field(default_factory=_default_completion_rule)
+    price: float = 0  # client-facing price for this program (whole package)
     active: bool = True
 
 
@@ -2860,13 +2861,27 @@ async def programs_meta(user: dict = Depends(get_current_user)):
 async def list_programs(user: dict = Depends(get_current_user), include_custom: bool = True):
     await _seed_programs_if_empty()
     query = {"active": True}
-    if user.get("role") != "admin":
-        # Clients don't browse programs directly
-        raise HTTPException(status_code=403, detail="Admin only")
     progs = await db.programs.find(query, {"_id": 0}).to_list(500)
     if not include_custom:
         progs = [p for p in progs if p.get("type") != "custom"]
     progs.sort(key=lambda p: (p.get("type", ""), p.get("name", "")))
+    # Clients get a slimmer view — they don't need to see internal modules/goals.
+    if user.get("role") != "admin":
+        slim = []
+        for p in progs:
+            slim.append({
+                "id": p.get("id"),
+                "name": p.get("name"),
+                "slug": p.get("slug"),
+                "type": p.get("type"),
+                "description": p.get("description", ""),
+                "focus": p.get("focus", ""),
+                "format": p.get("format") or {"count": 0, "unit": "sessions"},
+                "min_age_months": p.get("min_age_months", 0),
+                "price": float(p.get("price") or 0),
+                "module_count": len(p.get("modules") or []),
+            })
+        return slim
     return progs
 
 

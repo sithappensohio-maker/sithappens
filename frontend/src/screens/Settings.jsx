@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/useConfirm";
-import { ProgramsPanel } from "../components/Programs";
 import ServicesSettings from "../components/ServicesSettings";
 import CreditPacksSettings from "../components/CreditPacksSettings";
 
@@ -62,8 +61,7 @@ export default function Settings() {
     { id: "service_info", label: "Service Info", icon: "fa-circle-info" },
     { id: "portal_links", label: "Portal Links", icon: "fa-link" },
     { id: "marketing_qr", label: "Marketing QR", icon: "fa-qrcode" },
-    { id: "programs", label: "Programs", icon: "fa-list-check" },
-    { id: "services", label: "Services & Prices", icon: "fa-dollar-sign" },
+    { id: "services", label: "Services & Programs", icon: "fa-dollar-sign" },
     { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
     { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
@@ -97,7 +95,6 @@ export default function Settings() {
           {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
           {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
           {tab === "marketing_qr" && <MarketingQRPanel />}
-          {tab === "programs" && <ProgramsPanel />}
           {tab === "services" && <ServicesSettings />}
           {tab === "credit_packs" && <CreditPacksSettings />}
           {tab === "commands" && <CommandsPanel />}

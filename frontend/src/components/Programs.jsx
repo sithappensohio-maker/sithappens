@@ -23,7 +23,7 @@ export function ProgramsPanel() {
   const startNew = (type = "private_lessons") => setEdit({
     name: "", slug: "", type, description: "", focus: "",
     format: { count: 1, unit: "sessions" }, min_age_months: 0,
-    prereq_slugs: [], modules: [], active: true,
+    prereq_slugs: [], modules: [], price: 0, active: true,
   });
 
   const save = async () => {
@@ -70,6 +70,7 @@ export function ProgramsPanel() {
                   <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[11px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>}</p>
                   <p className="text-[13px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
                 </div>
+                <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
                 <button onClick={()=>setEdit({...p})} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
                 <button onClick={()=>remove(p.id)} className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
               </div>
@@ -131,6 +132,14 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
             </Field>
             <Field label="Min age (months)"><input type="number" min="0" value={program.min_age_months||0} onChange={(e)=>set({min_age_months: parseInt(e.target.value)||0})} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
           </div>
+
+          <Field label="Price (USD)">
+            <input type="number" min="0" step="0.01" value={program.price ?? 0}
+                   onChange={(e)=>set({price: parseFloat(e.target.value)||0})} data-testid="prog-price"
+                   placeholder="e.g. 450.00"
+                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            <p className="text-[11px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
+          </Field>
 
           {allPrograms.length > 0 && !hideTypePicker && (
             <Field label="Prerequisites (any of these)">

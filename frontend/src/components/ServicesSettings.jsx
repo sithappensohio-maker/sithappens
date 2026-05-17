@@ -1,18 +1,19 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { ProgramsPanel } from "./Programs";
 
 /**
  * Admin-managed catalog of services with prices.
- * Lives in Settings → Services tab.
+ * Lives in Settings → Services tab. Includes Training Programs as a final category.
  */
 const SERVICE_TYPES = [
-  { key: "daycare", label: "Daycare", color: "#00a9e0" },
-  { key: "boarding", label: "Boarding", color: "#8cc63f" },
-  { key: "training", label: "Training", color: "#a855f7" },
-  { key: "grooming", label: "Grooming", color: "#06b6d4" },
-  { key: "photography", label: "Photography", color: "#f97316" },
-  { key: "other", label: "Other", color: "#64748b" },
+  { key: "daycare", label: "Daycare", color: "#00a9e0", icon: "fa-sun" },
+  { key: "boarding", label: "Boarding", color: "#8cc63f", icon: "fa-moon" },
+  { key: "training", label: "Training", color: "#a855f7", icon: "fa-graduation-cap" },
+  { key: "grooming", label: "Grooming", color: "#06b6d4", icon: "fa-bath" },
+  { key: "photography", label: "Photography", color: "#f97316", icon: "fa-camera-retro" },
+  { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
 const emptyService = { name: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", active: true };
@@ -59,11 +60,11 @@ export default function ServicesSettings() {
   };
 
   return (
-    <div className="space-y-5" data-testid="services-settings">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6" data-testid="services-settings">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services Catalog</h4>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">Define what you offer + the base price for each.</p>
+          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services & Programs Catalog</h4>
+          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
         </div>
         <div className="flex gap-2">
           {services.length === 0 && (
@@ -79,30 +80,44 @@ export default function ServicesSettings() {
         </div>
       </div>
 
-      <div className="space-y-2" data-testid="services-list">
-        {services.length === 0 && (
-          <div className="bg-bgBase border border-bgHover rounded-lg p-8 text-center text-[13px] text-gray-500 uppercase font-black tracking-widest">
-            No services yet — seed the standard 7 or add your own.
-          </div>
-        )}
-        {services.map(s => (
-          <div key={s.id} className={`bg-bgBase border rounded-lg p-3 flex items-center gap-3 ${s.active ? "border-bgHover" : "border-bgHover/30 opacity-50"}`} data-testid={`service-row-${s.id}`}>
-            <div className="w-10 h-10 rounded flex items-center justify-center" style={{ backgroundColor: `${s.color}20`, color: s.color }}>
-              <i className={`fas ${s.icon || "fa-tag"}`} />
+      {services.length === 0 && (
+        <div className="bg-bgBase border border-bgHover rounded-lg p-8 text-center text-[13px] text-gray-500 uppercase font-black tracking-widest">
+          No services yet — seed the standard 7 or add your own.
+        </div>
+      )}
+
+      {SERVICE_TYPES.map(cat => {
+        const list = services.filter(s => s.service_type === cat.key);
+        if (list.length === 0) return null;
+        return (
+          <div key={cat.key} className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid={`services-category-${cat.key}`}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: `linear-gradient(90deg, ${cat.color}1f, transparent 60%)` }}>
+              <i className={`fas ${cat.icon}`} style={{ color: cat.color }}/>
+              <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">{cat.label}</h5>
+              <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">· {list.length}</span>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-white font-black text-[14px] tracking-tight">{s.name}</p>
-              <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{s.service_type}{s.is_default ? " · default" : ""}{!s.active ? " · inactive" : ""}</p>
+            <div className="divide-y divide-bgHover/40">
+              {list.map(s => (
+                <div key={s.id} className={`p-3 flex items-center gap-3 ${s.active ? "" : "opacity-50"}`} data-testid={`service-row-${s.id}`}>
+                  <div className="w-10 h-10 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: `${s.color}20`, color: s.color }}>
+                    <i className={`fas ${s.icon || "fa-tag"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-black text-[14px] tracking-tight truncate">{s.name}</p>
+                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{s.is_default ? "default" : "custom"}{!s.active ? " · inactive" : ""}</p>
+                  </div>
+                  <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${s.base_price?.toFixed(2)}</p>
+                  <button onClick={()=>openEdit(s)} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
+                  <button onClick={()=>remove(s)} className="text-red-400 text-[12px] font-black uppercase tracking-widest hover:underline px-2">Remove</button>
+                </div>
+              ))}
             </div>
-            <p className="text-shGreen font-black text-[18px]">${s.base_price?.toFixed(2)}</p>
-            <button onClick={()=>openEdit(s)} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
-            <button onClick={()=>remove(s)} className="text-red-400 text-[12px] font-black uppercase tracking-widest hover:underline px-2">Remove</button>
           </div>
-        ))}
-      </div>
+        );
+      })}
 
       {/* New / Edit form */}
-      <div className="bg-bgBase border border-bgHover rounded-lg p-4">
+      <div className="bg-bgBase border border-bgHover rounded-lg p-4" data-testid="service-form-panel">
         <h5 className="text-white font-black text-[14px] uppercase tracking-tight mb-3">{editing ? `Edit · ${editing.name}` : "New Service"}</h5>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
@@ -141,6 +156,18 @@ export default function ServicesSettings() {
           </button>
         </div>
         {seeded && <p className="text-shGreen text-[12px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
+      </div>
+
+      {/* Training Programs — surfaced as a sixth category inside the unified catalog. */}
+      <div className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid="services-category-programs">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: "linear-gradient(90deg, #a855f71f, transparent 60%)" }}>
+          <i className="fas fa-list-check" style={{ color: "#a855f7" }}/>
+          <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">Training Programs</h5>
+          <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals & sessions</span>
+        </div>
+        <div className="p-4">
+          <ProgramsPanel />
+        </div>
       </div>
     </div>
   );
