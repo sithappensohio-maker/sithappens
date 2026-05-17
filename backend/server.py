@@ -1576,8 +1576,8 @@ async def check_out(
                             "adjusted_by": "system",
                             "adjusted_at": now,
                         })
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Referral auto-credit hook failed: %s", exc)
 
     return booking
 
