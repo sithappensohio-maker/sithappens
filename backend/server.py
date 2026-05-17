@@ -150,6 +150,7 @@ class ClientIn(BaseModel):
     referred_by_code: Optional[str] = None  # set on creation if referred by another client
     photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
     photo_gallery_pin: Optional[str] = ""  # per-client PIN required to download photos from the gallery
+    photo_gallery_has_new: bool = False  # admin-set nudge: pulses a "NEW" badge on the portal gallery CTA
 
 class ClientOut(ClientIn):
     id: str
@@ -1409,6 +1410,14 @@ async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_curre
     await db.users.update_one({"id": user["id"]}, {"$set": {"name": body.name}})
     client = await db.clients.find_one({"id": cid}, {"_id": 0})
     return {"client": client}
+
+@api.post("/portal/gallery/mark-seen")
+async def portal_gallery_mark_seen(user: dict = Depends(get_current_user)):
+    """Client opened their photo gallery — clear the admin-set 'new photos available' nudge.
+    Idempotent. Best-effort; never blocks the client from reaching the gallery."""
+    cid = await _require_client_with_record(user)
+    await db.clients.update_one({"id": cid}, {"$set": {"photo_gallery_has_new": False}})
+    return {"ok": True}
 
 @api.post("/portal/dogs", response_model=DogOut)
 async def portal_create_dog(body: PortalDogIn, user: dict = Depends(get_current_user)):

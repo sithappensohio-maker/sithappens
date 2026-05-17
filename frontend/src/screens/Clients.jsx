@@ -5,7 +5,7 @@ import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import { startImpersonation } from "../lib/impersonation";
 
-const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"" };
+const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -274,6 +274,28 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                      onChange={(v)=>setForm({...form, photo_gallery_pin: v.trim()})}
                      testId="client-photo-gallery-pin-input" />
               <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under "See your pup in action" with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
+            </div>
+            <div>
+              <button type="button" onClick={()=>setForm(f => ({...f, photo_gallery_has_new: !f.photo_gallery_has_new}))}
+                      data-testid="client-photo-gallery-new-toggle"
+                      className={`w-full flex items-center justify-between gap-3 rounded border px-3 py-2.5 transition ${form.photo_gallery_has_new
+                          ? "bg-shOrange/15 border-shOrange/60 hover:bg-shOrange/25"
+                          : "bg-bgBase border-bgHover hover:border-shOrange/40"}`}>
+                <div className="flex items-center gap-3 text-left">
+                  <i className={`fas fa-bell ${form.photo_gallery_has_new ? "text-shOrange" : "text-gray-500"} text-lg w-6 text-center`}/>
+                  <div>
+                    <p className={`text-[13px] font-black uppercase tracking-widest ${form.photo_gallery_has_new ? "text-shOrange" : "text-white"}`}>
+                      {form.photo_gallery_has_new ? "New photos badge: ON" : "Notify of New Photos"}
+                    </p>
+                    <p className="text-[11px] text-gray-500 normal-case tracking-normal">{form.photo_gallery_has_new
+                      ? "Client sees a pulsing NEW badge on their gallery link. Clears when they open it."
+                      : "Flip on after uploading a fresh batch to nudge the client to visit their gallery."}</p>
+                  </div>
+                </div>
+                <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${form.photo_gallery_has_new ? "bg-shOrange/30 text-shOrange" : "bg-bgHover text-gray-400"}`}>
+                  {form.photo_gallery_has_new ? "On" : "Off"}
+                </span>
+              </button>
             </div>
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">

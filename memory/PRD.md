@@ -507,6 +507,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ End-to-end verified via Playwright: logged in as admin and successfully navigated all 8 affected screens with zero page errors / zero console errors.
 
 ## Sprint 39 — Credit Pack Crash Fix + Per-Client Photo Gallery PIN (2026-02)
+
+## Sprint 40 — "New Photos Available" Nudge (2026-02)
+- ✅ Added `photo_gallery_has_new: bool = False` to `ClientIn`. Admin can flip per-client via a new toggle row in the Clients edit modal ("Notify of New Photos" → "New photos badge: ON").
+- ✅ Portal CTA "See Your Pup In Action" gets a pulsing orange "NEW" pill, an orange glow shadow, and switched copy ("Fresh photos just dropped!") whenever the flag is set.
+- ✅ New endpoint `POST /api/portal/gallery/mark-seen` auto-clears the flag the moment the client clicks the gallery link (fire-and-forget on the client; optimistically clears the badge locally without a reload). Idempotent.
+
 - ✅ **Fixed Credit Pack "Add" crash**: FastAPI 422 returns `detail` as an array of error objects; `CreditPacksSettings.jsx` was rendering it raw inside `<p>`, tripping the ErrorBoundary. Added client-side guards (name/qty/price) and routed all server errors through `formatErr` to flatten arrays. Verified empty-name now shows inline "Pack name is required." with the UI staying alive.
 - ✅ **Per-client Photo Gallery Download PIN**: Added `photo_gallery_pin` field to `ClientIn` (backend) and to the Clients admin edit form (next to gallery URL). Portal renders a compact PIN card under "See Your Pup In Action" with monospace-spaced PIN value and a one-click Copy button (`<GalleryPinRow>` in `Portal.jsx`). Blank PIN = row hidden. Shown only when the client also has a gallery URL.
 
