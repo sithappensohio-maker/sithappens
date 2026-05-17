@@ -149,6 +149,7 @@ class ClientIn(BaseModel):
     boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
     referred_by_code: Optional[str] = None  # set on creation if referred by another client
     photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
+    photo_gallery_pin: Optional[str] = ""  # per-client PIN required to download photos from the gallery
 
 class ClientOut(ClientIn):
     id: str

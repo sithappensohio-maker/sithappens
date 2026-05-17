@@ -506,6 +506,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Critical fix:** `ConfirmProvider` was imported in `App.js` but never mounted, so every screen using the `useConfirm` hook (Clients, Dogs, Bookings, Homework, Income, Incidents, Pipeline) threw `useConfirm must be used inside <ConfirmProvider />` and was caught by ErrorBoundary as "Something tripped up." Wrapped `<Gate />` + `<InstallPrompt />` inside `<ConfirmProvider>`.
 - ✅ End-to-end verified via Playwright: logged in as admin and successfully navigated all 8 affected screens with zero page errors / zero console errors.
 
+## Sprint 39 — Credit Pack Crash Fix + Per-Client Photo Gallery PIN (2026-02)
+- ✅ **Fixed Credit Pack "Add" crash**: FastAPI 422 returns `detail` as an array of error objects; `CreditPacksSettings.jsx` was rendering it raw inside `<p>`, tripping the ErrorBoundary. Added client-side guards (name/qty/price) and routed all server errors through `formatErr` to flatten arrays. Verified empty-name now shows inline "Pack name is required." with the UI staying alive.
+- ✅ **Per-client Photo Gallery Download PIN**: Added `photo_gallery_pin` field to `ClientIn` (backend) and to the Clients admin edit form (next to gallery URL). Portal renders a compact PIN card under "See Your Pup In Action" with monospace-spaced PIN value and a one-click Copy button (`<GalleryPinRow>` in `Portal.jsx`). Blank PIN = row hidden. Shown only when the client also has a gallery URL.
+
+
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY

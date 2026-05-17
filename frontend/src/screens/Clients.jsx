@@ -5,7 +5,7 @@ import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import { startImpersonation } from "../lib/impersonation";
 
-const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"" };
+const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -267,6 +267,13 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                      onChange={(v)=>setForm({...form, photo_gallery_url: v.trim()})}
                      testId="client-photo-gallery-input" />
               <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as "See your pup in action — order prints". Leave blank if no gallery yet.</p>
+            </div>
+            <div>
+              <Input label="Photo Gallery Download PIN" color="text-shOrange"
+                     value={form.photo_gallery_pin || ""}
+                     onChange={(v)=>setForm({...form, photo_gallery_pin: v.trim()})}
+                     testId="client-photo-gallery-pin-input" />
+              <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under "See your pup in action" with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
             </div>
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">

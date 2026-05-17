@@ -18,6 +18,33 @@ import { compressImage } from "../lib/imageCompress";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
+/**
+ * Compact PIN row shown right under the "See your pup in action" CTA in the
+ * portal. Admin sets the per-client PIN (used to unlock photo downloads on
+ * services like PicTime / Pixieset). Hidden entirely if no PIN is set.
+ */
+function GalleryPinRow({ pin }) {
+  const [copied, setCopied] = useState(false);
+  if (!pin) return null;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(pin); setCopied(true); setTimeout(()=>setCopied(false), 1800); } catch {}
+  };
+  return (
+    <div data-testid="portal-gallery-pin"
+         className="flex items-center gap-3 bg-bgBase border border-shOrange/30 rounded px-3 py-2 -mt-1">
+      <i className="fas fa-key text-shOrange text-base w-6 text-center"/>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest leading-none">Download PIN</p>
+        <p className="text-white font-black text-[15px] tracking-[0.25em] mt-1 truncate" data-testid="portal-gallery-pin-value">{pin}</p>
+      </div>
+      <button type="button" onClick={copy} data-testid="portal-gallery-pin-copy"
+              className="text-[11px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded bg-shOrange/15 text-shOrange hover:bg-shOrange/25 transition whitespace-nowrap">
+        <i className={`fas ${copied ? "fa-check" : "fa-copy"} mr-1`}/>{copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function ReferFriendModal({ code, onClose }) {
   const [copied, setCopied] = useState(false);
   const shareUrl = `${window.location.origin}/?ref=${code}`;
@@ -504,6 +531,9 @@ export default function Portal() {
                     </div>
                     <i className="fas fa-arrow-up-right-from-square text-shGreen group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition text-xs mt-1"/>
                   </a>
+                )}
+                {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
+                  <GalleryPinRow pin={client?.photo_gallery_pin} />
                 )}
                 {referralCode && (
                   <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
