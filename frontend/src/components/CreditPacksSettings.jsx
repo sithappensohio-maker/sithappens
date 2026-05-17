@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 
 /**
@@ -23,13 +23,20 @@ export default function CreditPacksSettings() {
 
   const save = async () => {
     setErr("");
+    // Client-side guard so we surface a friendly inline message instead of a
+    // 422 from FastAPI (whose `detail` is an array of objects React can't render).
+    if (!form.name?.trim()) { setErr("Pack name is required."); return; }
+    if (!Number.isFinite(form.qty) || form.qty < 1) { setErr("Credits per pack must be at least 1."); return; }
+    if (!Number.isFinite(form.price) || form.price < 0) { setErr("Price must be 0 or higher."); return; }
     try {
       if (editing) await api.put(`/credit-packs/${editing.id}`, form);
       else await api.post("/credit-packs", form);
       setEditing(null); setForm(empty);
       load();
     } catch (e) {
-      setErr(e.response?.data?.detail || "Save failed");
+      // FastAPI 422 detail can be an array of error objects — formatErr
+      // flattens it so we never try to render a raw object inside <p>.
+      setErr(formatErr(e.response?.data?.detail) || "Save failed");
     }
   };
 
