@@ -13,6 +13,7 @@ from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -30,6 +31,15 @@ from email_service import (
     notify_client_pack_receipt,
     send_account_claim,
 )
+
+from trophy_service import (
+    seed_trophies_if_empty,
+    award_trophy,
+    check_dog_trophies,
+    check_client_trophies,
+    render_share_card_png,
+)
+from trophies_data import TIER_COLORS
 
 # -------- Config --------
 JWT_SECRET = os.environ["JWT_SECRET"]
@@ -1579,6 +1589,23 @@ async def check_out(
     except Exception as exc:
         logger.warning("Referral auto-credit hook failed: %s", exc)
 
+    # 🏆 Re-evaluate client trophies for the dog's owner (visit count tiers)
+    # AND for the referrer (successful-referrals tiers, if a referral row was
+    # just inserted above).
+    try:
+        owner_id = booking.get("client_id")
+        if owner_id:
+            await check_client_trophies(db, owner_id)
+        if ref_credit_referrer_id := await db.referrals.find_one(
+            {"referred_id": booking.get("client_id"), "trigger_booking_id": booking_id},
+            {"_id": 0, "referrer_id": 1},
+        ):
+            rid = ref_credit_referrer_id.get("referrer_id")
+            if rid:
+                await check_client_trophies(db, rid)
+    except Exception as exc:
+        logger.warning("Trophy check on checkout failed: %s", exc)
+
     return booking
 
 @api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
@@ -2106,6 +2133,12 @@ async def complete_homework(homework_id: str, body: HomeworkCompleteIn, user: di
             await notify_admin_homework_completed(hw, client, dog)
         except Exception:
             pass
+    # 🏆 Re-evaluate trophy eligibility for the client (streak + completed counts).
+    try:
+        if hw.get("client_id"):
+            await check_client_trophies(db, hw["client_id"])
+    except Exception as exc:
+        logger.warning("Client trophy check failed: %s", exc)
     return hw
 
 
@@ -3039,6 +3072,11 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
     enrollment["goal_progress"] = progress
     # Auto-complete the enrollment if the configured completion_rule is now satisfied.
     enrollment = await _auto_complete_if_satisfied(enrollment)
+    # 🏆 Re-evaluate trophy eligibility for this dog (skill mastery + program completion).
+    try:
+        await check_dog_trophies(db, dog_id)
+    except Exception as exc:
+        logger.warning("Dog trophy check failed for %s: %s", dog_id, exc)
     return _enrollment_summary(enrollment)
 
 
@@ -3622,6 +3660,245 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
     return {"ok": True, "summary": summary, "restored_at": now_iso()}
 
 
+# ───────────────────────── Trophies ─────────────────────────────
+
+class TrophyIn(BaseModel):
+    code: str = Field(min_length=2, max_length=64)
+    name: str = Field(min_length=1)
+    description: Optional[str] = ""
+    category: Literal["dog", "client"]
+    tier: Literal["bronze", "silver", "gold", "platinum"] = "bronze"
+    icon: Optional[str] = "fa-trophy"
+    custom_image: Optional[str] = ""  # base64 data URL
+    trigger_type: Literal["auto", "manual"] = "manual"
+    trigger_kind: Optional[str] = ""
+    threshold: int = 0
+    active: bool = True
+
+
+class TrophyPatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tier: Optional[Literal["bronze", "silver", "gold", "platinum"]] = None
+    icon: Optional[str] = None
+    custom_image: Optional[str] = None
+    threshold: Optional[int] = None
+    active: Optional[bool] = None
+
+
+class ManualAwardIn(BaseModel):
+    note: Optional[str] = ""
+
+
+@api.get("/trophies/catalog")
+async def list_trophy_catalog(_: dict = Depends(get_current_user)):
+    """Return all trophy definitions. Tier color palette returned alongside."""
+    items = await db.trophies.find({}, {"_id": 0}).to_list(500)
+    items.sort(key=lambda t: (t.get("category", ""), t.get("trigger_type", ""), int(t.get("threshold") or 0)))
+    return {"trophies": items, "tier_colors": TIER_COLORS}
+
+
+@api.post("/trophies/catalog")
+async def create_custom_trophy(body: TrophyIn, _: dict = Depends(require_admin)):
+    if await db.trophies.find_one({"code": body.code}):
+        raise HTTPException(status_code=400, detail="A trophy with that code already exists")
+    doc = body.model_dump()
+    doc.update({"id": str(uuid.uuid4()), "is_default": False, "created_at": now_iso()})
+    await db.trophies.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/trophies/catalog/{code}")
+async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_admin)):
+    existing = await db.trophies.find_one({"code": code}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Trophy not found")
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if patch:
+        await db.trophies.update_one({"code": code}, {"$set": patch})
+        existing.update(patch)
+    return existing
+
+
+@api.delete("/trophies/catalog/{code}")
+async def delete_trophy(code: str, _: dict = Depends(require_admin)):
+    existing = await db.trophies.find_one({"code": code}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Trophy not found")
+    if existing.get("is_default"):
+        # Soft-disable defaults rather than deleting (keeps history valid).
+        await db.trophies.update_one({"code": code}, {"$set": {"active": False}})
+        return {"ok": True, "deactivated": True}
+    await db.trophies.delete_one({"code": code})
+    return {"ok": True, "deleted": True}
+
+
+def _serialize_awarded(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out = []
+    for r in rows:
+        r = {k: v for k, v in r.items() if k != "_id"}
+        out.append(r)
+    return out
+
+
+@api.get("/dogs/{dog_id}/trophies")
+async def list_dog_trophies(dog_id: str, user: dict = Depends(get_current_user)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "owner_id": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    rows = await db.awarded_trophies.find(
+        {"recipient_type": "dog", "recipient_id": dog_id, "revoked": {"$ne": True}},
+        {"_id": 0},
+    ).sort("awarded_at", -1).to_list(200)
+    return _serialize_awarded(rows)
+
+
+@api.get("/clients/{client_id}/trophies")
+async def list_client_trophies(client_id: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin" and user.get("client_id") != client_id:
+        raise HTTPException(status_code=403, detail="Not allowed")
+    rows = await db.awarded_trophies.find(
+        {"recipient_type": "client", "recipient_id": client_id, "revoked": {"$ne": True}},
+        {"_id": 0},
+    ).sort("awarded_at", -1).to_list(200)
+    return _serialize_awarded(rows)
+
+
+@api.post("/dogs/{dog_id}/trophies/{code}/award")
+async def manual_award_dog(dog_id: str, code: str, body: ManualAwardIn, user: dict = Depends(require_admin)):
+    row = await award_trophy(
+        db, recipient_type="dog", recipient_id=dog_id, trophy_code=code,
+        awarded_by=user.get("name") or "Admin", note=body.note or "",
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="Dog already has this trophy (or trophy/code invalid)")
+    return row
+
+
+@api.post("/clients/{client_id}/trophies/{code}/award")
+async def manual_award_client(client_id: str, code: str, body: ManualAwardIn, user: dict = Depends(require_admin)):
+    row = await award_trophy(
+        db, recipient_type="client", recipient_id=client_id, trophy_code=code,
+        awarded_by=user.get("name") or "Admin", note=body.note or "",
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="Client already has this trophy (or trophy/code invalid)")
+    return row
+
+
+@api.delete("/awarded-trophies/{awarded_id}")
+async def revoke_awarded_trophy(awarded_id: str, _: dict = Depends(require_admin)):
+    res = await db.awarded_trophies.update_one({"id": awarded_id}, {"$set": {"revoked": True, "revoked_at": now_iso()}})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Trophy award not found")
+    return {"ok": True}
+
+
+@api.post("/awarded-trophies/{awarded_id}/seen")
+async def mark_awarded_seen(awarded_id: str, user: dict = Depends(get_current_user)):
+    """Client portal calls this after showing the new-trophy celebration toast."""
+    row = await db.awarded_trophies.find_one({"id": awarded_id}, {"_id": 0, "client_id": 1})
+    if not row:
+        raise HTTPException(status_code=404, detail="Award not found")
+    if user.get("role") != "admin" and user.get("client_id") != row.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    await db.awarded_trophies.update_one({"id": awarded_id}, {"$set": {"seen_by_client": True}})
+    return {"ok": True}
+
+
+@api.get("/portal/trophies")
+async def portal_trophies(user: dict = Depends(get_current_user)):
+    """Returns trophies for the current client + their dogs, plus an
+    `unseen` list for the celebration toast."""
+    cid = user.get("client_id")
+    if user.get("role") != "client" or not cid:
+        return {"client_trophies": [], "dog_trophies": [], "unseen": []}
+    client_rows = await db.awarded_trophies.find(
+        {"recipient_type": "client", "recipient_id": cid, "revoked": {"$ne": True}},
+        {"_id": 0},
+    ).sort("awarded_at", -1).to_list(200)
+    dogs = await db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(50)
+    dog_ids = [d["id"] for d in dogs]
+    dog_rows = []
+    if dog_ids:
+        dog_rows = await db.awarded_trophies.find(
+            {"recipient_type": "dog", "recipient_id": {"$in": dog_ids}, "revoked": {"$ne": True}},
+            {"_id": 0},
+        ).sort("awarded_at", -1).to_list(500)
+    unseen = [r for r in (client_rows + dog_rows) if not r.get("seen_by_client")]
+    return {
+        "client_trophies": _serialize_awarded(client_rows),
+        "dog_trophies": _serialize_awarded(dog_rows),
+        "unseen": _serialize_awarded(unseen),
+    }
+
+
+@api.get("/trophies/share-card/{awarded_id}.png")
+async def trophy_share_card(awarded_id: str):
+    """Public PNG share card. Anyone with the awarded_id (uuid) can fetch — safe
+    since IDs are unguessable and the image only shows public info."""
+    row = await db.awarded_trophies.find_one({"id": awarded_id, "revoked": {"$ne": True}}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Award not found")
+    try:
+        png = render_share_card_png(row)
+    except Exception as exc:
+        logger.warning("Share card render failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to render share card")
+    return Response(content=png, media_type="image/png")
+
+
+@api.get("/trophies/leaderboard")
+async def trophies_leaderboard(_: dict = Depends(require_admin), limit: int = 5):
+    """Top dogs and top clients by trophy count (excluding revoked)."""
+    pipeline_dog = [
+        {"$match": {"recipient_type": "dog", "revoked": {"$ne": True}}},
+        {"$group": {"_id": "$recipient_id", "count": {"$sum": 1}, "last": {"$max": "$awarded_at"}}},
+        {"$sort": {"count": -1, "last": -1}},
+        {"$limit": limit},
+    ]
+    pipeline_client = [
+        {"$match": {"recipient_type": "client", "revoked": {"$ne": True}}},
+        {"$group": {"_id": "$recipient_id", "count": {"$sum": 1}, "last": {"$max": "$awarded_at"}}},
+        {"$sort": {"count": -1, "last": -1}},
+        {"$limit": limit},
+    ]
+    dog_rows = await db.awarded_trophies.aggregate(pipeline_dog).to_list(limit)
+    client_rows = await db.awarded_trophies.aggregate(pipeline_client).to_list(limit)
+    dog_ids = [r["_id"] for r in dog_rows]
+    client_ids = [r["_id"] for r in client_rows]
+    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1, "photo": 1}).to_list(50)}
+    owner_ids = [d.get("owner_id") for d in dogs.values() if d.get("owner_id")]
+    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids + owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(100)}
+    return {
+        "top_dogs": [
+            {
+                "dog_id": r["_id"],
+                "dog_name": (dogs.get(r["_id"]) or {}).get("name", "—"),
+                "breed": (dogs.get(r["_id"]) or {}).get("breed", ""),
+                "photo": (dogs.get(r["_id"]) or {}).get("photo", ""),
+                "owner_id": (dogs.get(r["_id"]) or {}).get("owner_id"),
+                "owner_name": (clients.get((dogs.get(r["_id"]) or {}).get("owner_id")) or {}).get("name", ""),
+                "trophy_count": r["count"],
+            }
+            for r in dog_rows
+        ],
+        "top_clients": [
+            {
+                "client_id": r["_id"],
+                "client_name": (clients.get(r["_id"]) or {}).get("name", "—"),
+                "trophy_count": r["count"],
+            }
+            for r in client_rows
+        ],
+    }
+
+
+
+
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():
@@ -3648,6 +3925,10 @@ async def startup():
         (db.credit_lots, [("client_id", 1), ("service_type", 1), ("qty_remaining", 1)], {}),
         (db.incidents, [("date", -1), ("dog_id", 1)], {}),
         (db.vaccine_dismissals, "dog_id", {}),
+        (db.awarded_trophies, [("recipient_type", 1), ("recipient_id", 1), ("trophy_code", 1)], {}),
+        (db.awarded_trophies, "client_id", {}),
+        (db.awarded_trophies, "dog_id", {}),
+        (db.trophies, "code", {"unique": True}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -3674,6 +3955,11 @@ async def startup():
         logger.info("Updated admin password")
     # Seed settings (idempotent)
     await get_settings()
+    # Seed trophies catalog (idempotent)
+    try:
+        await seed_trophies_if_empty(db)
+    except Exception as exc:
+        logger.warning("Trophy seeding failed: %s", exc)
 
 
 @app.on_event("shutdown")

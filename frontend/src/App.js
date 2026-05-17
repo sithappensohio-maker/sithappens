@@ -13,6 +13,7 @@ import RunSheet from "./screens/RunSheet";
 import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
+import Trophies from "./screens/Trophies";
 import Tutorials from "./screens/Tutorials";
 import Claim from "./screens/Claim";
 import GlobalSearch from "./components/GlobalSearch";
@@ -55,6 +56,7 @@ function AdminShell() {
     { id: "dogs", label: "Dogs", icon: "fa-paw" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
+    { id: "trophies", label: "Trophies", icon: "fa-trophy" },
     { id: "income", label: "Income", icon: "fa-dollar-sign" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
@@ -132,6 +134,7 @@ function AdminShell() {
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
           {tab === "homework" && <Homework />}
+          {tab === "trophies" && <Trophies />}
           {tab === "income" && <Income />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}

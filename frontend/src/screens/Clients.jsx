@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import ClientPortalPreview from "../components/ClientPortalPreview";
+import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0 };
 
@@ -20,11 +21,28 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
   const [previewId, setPreviewId] = useState(null); // client id whose portal we're previewing
+  const [trophyMap, setTrophyMap] = useState({});  // client_id -> awarded[]
+  const [awardPicker, setAwardPicker] = useState(null);  // client object
+
+  const loadTrophies = async (clientList) => {
+    try {
+      const entries = await Promise.all(
+        clientList.map(async c => {
+          try { const { data } = await api.get(`/clients/${c.id}/trophies`); return [c.id, data]; }
+          catch { return [c.id, []]; }
+        })
+      );
+      const map = {};
+      entries.forEach(([id, list]) => { map[id] = list; });
+      setTrophyMap(map);
+    } catch {}
+  };
 
   const load = async () => {
     const [c, p] = await Promise.all([api.get("/clients"), api.get("/credit-packs").catch(()=>({data:[]}))]);
     setClients(c.data);
     setPacks(p.data || []);
+    loadTrophies(c.data);
   };
   useEffect(() => { load(); }, []);
 
@@ -195,9 +213,30 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                     className="mt-2 w-full bg-bgHover/40 text-gray-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgHover/70 hover:text-white">
               <i className="fas fa-receipt mr-1"/>Receipts
             </button>
+            <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
+                <button onClick={()=>setAwardPicker(c)} data-testid={`award-trophy-${c.id}`}
+                        className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
+              </div>
+              {(trophyMap[c.id]||[]).length > 0 ? (
+                <TrophyWall awards={trophyMap[c.id]} testIdPrefix={`client-trophies-${c.id}`}/>
+              ) : (
+                <p className="text-[11px] text-gray-500 italic">No trophies yet.</p>
+              )}
+            </div>
           </div>
         ))}
       </div>
+
+      {awardPicker && (
+        <ManualAwardPicker
+          recipientType="client"
+          recipientId={awardPicker.id}
+          onClose={()=>setAwardPicker(null)}
+          onAwarded={()=>{ loadTrophies(clients); }}
+        />
+      )}
 
       {open && (
         <Modal title={editing?"Edit Client":"New Client"} onClose={()=>setOpen(false)}>

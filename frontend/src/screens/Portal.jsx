@@ -9,6 +9,8 @@ import PortalTrainingCard from "../components/PortalTrainingCard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
+import TrophyWall from "../components/TrophyWall";
+import TrophyCelebration from "../components/TrophyCelebration";
 import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
@@ -250,6 +252,16 @@ export default function Portal() {
   const [referralCode, setReferralCode] = useState(null);
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
+  const [trophies, setTrophies] = useState({ client_trophies: [], dog_trophies: [], unseen: [] });
+  const [celebrating, setCelebrating] = useState([]);
+  const loadTrophies = useCallback(async () => {
+    try {
+      const { data } = await api.get("/portal/trophies");
+      setTrophies(data);
+      if ((data.unseen || []).length) setCelebrating(data.unseen);
+    } catch {}
+  }, []);
+  useEffect(() => { loadTrophies(); }, [loadTrophies, bookings]);
   useEffect(() => {
     (async () => {
       try {
@@ -648,6 +660,31 @@ export default function Portal() {
             </div>
           )}
 
+          {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
+            <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4 flex items-center gap-2">
+                <i className="fas fa-trophy text-shOrange"/> Trophy Wall
+                <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
+              </h2>
+              {trophies.client_trophies.length > 0 && (
+                <div className="mb-5">
+                  <div className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
+                  <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
+                </div>
+              )}
+              {trophies.dog_trophies.length > 0 && dogs.map(d => {
+                const mine = trophies.dog_trophies.filter(t => t.recipient_id === d.id);
+                if (!mine.length) return null;
+                return (
+                  <div key={d.id} className="mb-4 last:mb-0">
+                    <div className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
+                    <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {homework.length > 0 && (
             <div data-testid="portal-homework">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
@@ -817,6 +854,9 @@ export default function Portal() {
 
       <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}
+      {celebrating.length > 0 && (
+        <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
+      )}
       {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); }} />}
     </div>
   );

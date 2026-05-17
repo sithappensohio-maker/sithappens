@@ -27,17 +27,19 @@ export default function Dashboard() {
   const [programs, setPrograms] = useState(null);
   const [pendingVax, setPendingVax] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
+  const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const confirm = useConfirm();
 
   const load = async () => {
     try {
-      const [s, a, st, pg, sv, vx] = await Promise.all([
+      const [s, a, st, pg, sv, vx, lb] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
+        api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
@@ -45,6 +47,7 @@ export default function Dashboard() {
       setPrograms(pg.data);
       setServices(sv.data || []);
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
+      setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
     } catch {}
   };
   useEffect(() => { load(); }, []);
@@ -288,6 +291,50 @@ export default function Dashboard() {
           })}
         </div>
       </div>
+
+      {(leaderboard.top_dogs.length > 0 || leaderboard.top_clients.length > 0) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6" data-testid="leaderboard-section">
+          {leaderboard.top_dogs.length > 0 && (
+            <div className="bg-bgPanel rounded-xl p-5 border-t-4 border-shOrange shadow-lg" data-testid="top-dogs-leaderboard">
+              <h3 className="text-xs font-black text-shOrange uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fas fa-trophy"/>Top Dogs · Most Trophies</h3>
+              <div className="space-y-2">
+                {leaderboard.top_dogs.map((d, i) => (
+                  <div key={d.dog_id} className="flex items-center gap-3 bg-bgBase/50 rounded p-2" data-testid={`top-dog-${d.dog_id}`}>
+                    <span className={`text-lg font-black w-7 text-center ${i===0?"text-yellow-400":i===1?"text-slate-300":i===2?"text-amber-600":"text-gray-500"}`}>#{i+1}</span>
+                    {d.photo ? (
+                      <img src={d.photo} alt={d.dog_name} className="w-10 h-10 rounded-full object-cover ring-1 ring-bgHover"/>
+                    ) : (
+                      <div className="w-10 h-10 rounded-full bg-bgHover grid place-items-center text-shGreen"><i className="fas fa-paw"/></div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-black text-white uppercase truncate">{d.dog_name}</div>
+                      <div className="text-[11px] text-gray-500">{d.breed || "—"} · {d.owner_name || ""}</div>
+                    </div>
+                    <span className="bg-shOrange/15 text-shOrange font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{d.trophy_count} 🏆</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {leaderboard.top_clients.length > 0 && (
+            <div className="bg-bgPanel rounded-xl p-5 border-t-4 border-shBlue shadow-lg" data-testid="top-clients-leaderboard">
+              <h3 className="text-xs font-black text-shBlue uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fas fa-medal"/>Top Clients · Most Trophies</h3>
+              <div className="space-y-2">
+                {leaderboard.top_clients.map((c, i) => (
+                  <div key={c.client_id} className="flex items-center gap-3 bg-bgBase/50 rounded p-2" data-testid={`top-client-${c.client_id}`}>
+                    <span className={`text-lg font-black w-7 text-center ${i===0?"text-yellow-400":i===1?"text-slate-300":i===2?"text-amber-600":"text-gray-500"}`}>#{i+1}</span>
+                    <div className="w-10 h-10 rounded-full bg-bgHover grid place-items-center text-shBlue"><i className="fas fa-user"/></div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-black text-white uppercase truncate">{c.client_name}</div>
+                    </div>
+                    <span className="bg-shBlue/15 text-shBlue font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{c.trophy_count} 🏆</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}

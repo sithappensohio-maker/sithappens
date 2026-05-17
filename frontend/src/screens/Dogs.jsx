@@ -5,6 +5,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
+import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -96,6 +97,22 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const [trainForm, setTrainForm] = useState({ date: todayISO(), note: "", tags: [] });
   const [stats, setStats] = useState(null);
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
+  const [dogTrophies, setDogTrophies] = useState({});  // dog_id -> awarded[]
+  const [awardPicker, setAwardPicker] = useState(null); // dog object
+
+  const loadTrophies = async (dogList) => {
+    try {
+      const entries = await Promise.all(
+        dogList.map(async d => {
+          try { const { data } = await api.get(`/dogs/${d.id}/trophies`); return [d.id, data]; }
+          catch { return [d.id, []]; }
+        })
+      );
+      const map = {};
+      entries.forEach(([id, list]) => { map[id] = list; });
+      setDogTrophies(map);
+    } catch {}
+  };
 
   const load = async () => {
     const [d, c, p] = await Promise.all([
@@ -111,6 +128,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       (map[e.dog_id] = map[e.dog_id] || []).push(e);
     });
     setEnrollmentsByDog(map);
+    loadTrophies(d.data);
   };
   useEffect(() => { load(); }, []);
 
@@ -306,11 +324,32 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                     ))}
                   </div>
                 )}
+                <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`dog-trophy-section-${d.id}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(dogTrophies[d.id]||[]).length}</div>
+                    <button onClick={()=>setAwardPicker(d)} data-testid={`award-trophy-dog-${d.id}`}
+                            className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
+                  </div>
+                  {(dogTrophies[d.id]||[]).length > 0 ? (
+                    <TrophyWall awards={dogTrophies[d.id]} testIdPrefix={`dog-trophies-${d.id}`}/>
+                  ) : (
+                    <p className="text-[11px] text-gray-500 italic">No trophies yet.</p>
+                  )}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
+
+      {awardPicker && (
+        <ManualAwardPicker
+          recipientType="dog"
+          recipientId={awardPicker.id}
+          onClose={()=>setAwardPicker(null)}
+          onAwarded={()=>{ loadTrophies(dogs); }}
+        />
+      )}
 
       {open && (
         <Modal title={editing?`Edit · ${form.name||"Dog"}`:"New Dog"} onClose={()=>setOpen(false)} maxWidth="max-w-2xl">
