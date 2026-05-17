@@ -293,6 +293,10 @@ class BookingOut(BaseModel):
     # Sprint 29 — add-ons logged at check-out (bath, nail trim, etc.). Each
     # row contributes to `actual_price` and the weekly income tally.
     add_ons: Optional[List[Dict[str, Any]]] = None
+    # Sprint 37 — boarding stay extensions logged at check-out. Carries the
+    # count, credits used, billed nights, per-night rate and total charge so
+    # admin UI / income reports can render the extension cleanly.
+    extra_nights: Optional[Dict[str, Any]] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []

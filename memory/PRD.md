@@ -417,7 +417,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 39 — Bottom-aligned Full-Width Services + Request-a-Quote (2026-02)
+## Sprint 39.5 — Auto-Responder Email + Full Regression (2026-02)
+- ✅ **`notify_client_quote_received`** Resend template: friendly "Hey {first_name}! Thanks for asking about {item} — someone will be in touch within 24 hours" auto-responder fires on `POST /api/portal/quote-request`. Echoes their listed price + their own message back. CTA returns to portal.
+- ✅ **BookingOut model** extended with `extra_nights: Optional[Dict[str, Any]]` so the audit dict written at check-out (count, credits_used, billed_nights, per_night_rate, charge, added_at) round-trips back through the API — addresses the only minor finding from iteration 17.
+- ✅ **Full regression**: 51/51 backend tests pass (19 iter15 + 21 iter16 + 11 NEW iter17 covering Sprints 37/38/39/39.5). Frontend smoke confirms Quote Requests panel, vaccine alerts, first-booking celebration, leaderboards, unified Settings (no separate Programs nav), portal services-at-bottom + 15 Request Info buttons + gallery CTA. Zero critical bugs. Zero frontend bugs.
+
+
 - ✅ **Portal layout**: moved the Services & Pricing section out of the left sidebar and below the main 3-column grid so it now spans the **full width** of the screen and sits **at the bottom** — clients see their personal info first, then browse the catalog. 3-column tile grid on desktop, 2-column on tablet, 1-column on mobile.
 - ✅ **"Request Info" button** on every service + program tile. Opens a modal with auto-filled name/email/phone (no manual entry) + optional message (500 chars). Submit fires `POST /api/portal/quote-request` → writes `quote_requests` Mongo row → emails the admin via the new `notify_admin_quote_request` Resend template.
 - ✅ **Admin Quote Requests panel** on the Dashboard — new "QUOTE REQUESTS · N" card lists open requests with client name, requested item, listed price, timestamp, clickable email/phone, custom message, and "Mark Handled" button (`POST /admin/quote-requests/{id}/close` flips status to `closed`).
