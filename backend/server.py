@@ -108,6 +108,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str
+    referred_by_code: Optional[str] = None  # optional referral code from another client
 
 class LoginIn(BaseModel):
     email: EmailStr
@@ -314,6 +315,13 @@ async def register(body: RegisterIn):
         raise HTTPException(status_code=400, detail="Email already registered")
     # Auto-create a linked client record so they can self-manage profile + dogs
     client_id = str(uuid.uuid4())
+    # Validate referral code (if any) — uppercase, must match an existing client's referral_code
+    ref_code: Optional[str] = None
+    raw_ref = (body.referred_by_code or "").upper().strip()
+    if raw_ref:
+        ref = await db.clients.find_one({"referral_code": raw_ref}, {"_id": 0, "id": 1})
+        if ref:
+            ref_code = raw_ref
     client_doc = {
         "id": client_id,
         "name": body.name,
@@ -323,6 +331,7 @@ async def register(body: RegisterIn):
         "emerg": "",
         "credits": 0,
         "waiver": False,
+        "referred_by_code": ref_code,
         "created_at": now_iso(),
     }
     await db.clients.insert_one(client_doc)
@@ -870,68 +879,6 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             await notify_admin_first_booking(doc, client)
             ref_code = (client.get("referred_by_code") or "").upper().strip()
             if ref_code:
-
-
-@api.get("/admin/vaccine-cert-uploads")
-async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
-    """List recent client-uploaded vaccine certificates. Unreviewed first."""
-    dogs = await db.dogs.find(
-        {"vaccine_certs": {"$exists": True, "$ne": {}}},
-        {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccine_certs": 1},
-    ).to_list(500)
-    out = []
-    for d in dogs:
-        certs = d.get("vaccine_certs") or {}
-        for vacc, info in certs.items():
-            if not info or not isinstance(info, dict):
-                continue
-            reviewed = bool(info.get("reviewed_at"))
-            if reviewed and not include_reviewed:
-                continue
-            out.append({
-                "dog_id": d["id"],
-                "dog_name": d.get("name", ""),
-                "owner_id": d.get("owner_id"),
-                "vaccine": vacc,
-                "expires_on": info.get("expires_on"),
-                "photo": info.get("photo"),
-                "uploaded_at": info.get("uploaded_at"),
-                "uploaded_by": info.get("uploaded_by", ""),
-                "reviewed_at": info.get("reviewed_at"),
-                "reviewed_by": info.get("reviewed_by", ""),
-            })
-    # Owner names
-    owner_ids = list({x["owner_id"] for x in out if x.get("owner_id")})
-    if owner_ids:
-        owners = await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
-        omap = {o["id"]: o["name"] for o in owners}
-        for x in out:
-            x["client_name"] = omap.get(x.get("owner_id"), "")
-    out.sort(key=lambda x: (bool(x.get("reviewed_at")), x.get("uploaded_at", "")), reverse=False)
-    out.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
-    return out
-
-
-@api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
-async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
-    """Mark a client-uploaded vaccine cert as reviewed. Doesn't change the expiry —
-    the expiry was already set when the client uploaded it (so they could keep booking).
-    To reject/correct the expiry, edit the dog from the Dogs screen."""
-    if vaccine not in ("rabies", "bordetella", "dhpp"):
-        raise HTTPException(status_code=400, detail="Invalid vaccine type")
-    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
-    if not dog:
-        raise HTTPException(status_code=404, detail="Dog not found")
-    certs = dict(dog.get("vaccine_certs") or {})
-    if vaccine not in certs:
-        raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
-    certs[vaccine] = dict(certs[vaccine])
-    certs[vaccine]["reviewed_at"] = now_iso()
-    certs[vaccine]["reviewed_by"] = user.get("name", "Admin")
-    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs}})
-    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine}
-
-
                 referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
                 # Don't credit self-referrals
                 if referrer and referrer.get("id") != client["id"]:
@@ -973,6 +920,88 @@ async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depe
         except Exception:
             pass
     return doc
+
+
+@api.get("/admin/vaccine-cert-uploads")
+async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = Depends(require_admin)):
+    """List recent client-uploaded vaccine certificates. Unreviewed first."""
+    dogs = await db.dogs.find(
+        {"vaccine_certs": {"$exists": True, "$ne": {}}},
+        {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccine_certs": 1, "vaccines": 1},
+    ).to_list(500)
+    out = []
+    for d in dogs:
+        certs = d.get("vaccine_certs") or {}
+        vaccines = d.get("vaccines") or {}
+        for vacc, info in certs.items():
+            if not info or not isinstance(info, dict):
+                continue
+            reviewed = bool(info.get("reviewed_at"))
+            if reviewed and not include_reviewed:
+                continue
+            out.append({
+                "dog_id": d["id"],
+                "dog_name": d.get("name", ""),
+                "owner_id": d.get("owner_id"),
+                "vaccine": vacc,
+                "expires_on": info.get("expires_on") or vaccines.get(vacc, ""),
+                "photo": info.get("photo"),
+                "uploaded_at": info.get("uploaded_at"),
+                "uploaded_by": info.get("uploaded_by", ""),
+                "reviewed_at": info.get("reviewed_at"),
+                "reviewed_by": info.get("reviewed_by", ""),
+            })
+    # Owner names
+    owner_ids = list({x["owner_id"] for x in out if x.get("owner_id")})
+    if owner_ids:
+        owners = await db.clients.find({"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        omap = {o["id"]: o["name"] for o in owners}
+        for x in out:
+            x["client_name"] = omap.get(x.get("owner_id"), "")
+    out.sort(key=lambda x: x.get("uploaded_at", ""), reverse=True)
+    return out
+
+
+@api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
+async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
+    """Mark a client-uploaded vaccine cert as reviewed/approved. Doesn't change the
+    expiry — the client already set the expiry when uploading so they could keep
+    booking. To reject/correct, edit the dog from the Dogs screen."""
+    if vaccine not in ("rabies", "bordetella", "dhpp"):
+        raise HTTPException(status_code=400, detail="Invalid vaccine type")
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    certs = dict(dog.get("vaccine_certs") or {})
+    if vaccine not in certs:
+        raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
+    certs[vaccine] = dict(certs[vaccine])
+    certs[vaccine]["reviewed_at"] = now_iso()
+    certs[vaccine]["reviewed_by"] = user.get("name", "Admin")
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs}})
+    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine}
+
+
+@api.delete("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}")
+async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends(require_admin)):
+    """Reject a client-uploaded vaccine cert: removes the cert image AND clears the
+    associated vaccine expiry so the dog can no longer book until reuploaded."""
+    if vaccine not in ("rabies", "bordetella", "dhpp"):
+        raise HTTPException(status_code=400, detail="Invalid vaccine type")
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1, "vaccines": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    certs = dict(dog.get("vaccine_certs") or {})
+    vaccines = dict(dog.get("vaccines") or {})
+    certs.pop(vaccine, None)
+    vaccines[vaccine] = ""  # clear expiry to block future bookings
+    await db.dogs.update_one(
+        {"id": dog_id},
+        {"$set": {"vaccine_certs": certs, "vaccines": vaccines}},
+    )
+    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "rejected": True}
+
+
 
 
 async def _booking_days_count_filtered(target_date: str, service_type: str) -> int:

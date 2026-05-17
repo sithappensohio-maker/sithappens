@@ -35,10 +35,12 @@ export function AuthProvider({ children }) {
     }
   };
 
-  const register = async (email, password, name) => {
+  const register = async (email, password, name, referredByCode) => {
     setError("");
     try {
-      const { data } = await api.post("/auth/register", { email, password, name });
+      const payload = { email, password, name };
+      if (referredByCode) payload.referred_by_code = referredByCode;
+      const { data } = await api.post("/auth/register", payload);
       localStorage.setItem("sh_token", data.token);
       setUser(data.user);
       return true;

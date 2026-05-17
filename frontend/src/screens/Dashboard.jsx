@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
+import { useConfirm } from "../lib/useConfirm";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -24,27 +25,52 @@ export default function Dashboard() {
   const [services, setServices] = useState([]);
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
+  const [pendingVax, setPendingVax] = useState([]);
+  const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
+  const confirm = useConfirm();
 
   const load = async () => {
     try {
-      const [s, a, st, pg, sv] = await Promise.all([
+      const [s, a, st, pg, sv, vx] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
         api.get("/services").catch(()=>({data:[]})),
+        api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
       setPrograms(pg.data);
       setServices(sv.data || []);
+      setPendingVax(Array.isArray(vx.data) ? vx.data : []);
     } catch {}
   };
   useEffect(() => { load(); }, []);
 
   const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
+
+  const approveVax = async (v) => {
+    try {
+      await api.post(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}/review`);
+      setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
+    } catch {}
+  };
+  const rejectVax = async (v) => {
+    const ok = await confirm({
+      title: `Reject ${v.vaccine.toUpperCase()} cert?`,
+      body: `This will remove the upload AND clear ${v.dog_name}'s ${v.vaccine} expiry. The client will need to reupload before they can book.`,
+      confirmText: "Reject",
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}`);
+      setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
+    } catch {}
+  };
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
 
@@ -69,6 +95,64 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <button onClick={()=>dismiss(a.dog_id)} data-testid={`dismiss-${a.dog_id}`} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:text-white">Dismiss 30d</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingVax.length > 0 && (
+        <div className="bg-gradient-to-r from-shBlue/20 to-shGreen/10 border border-shBlue/40 rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-xs font-black text-shBlue uppercase tracking-widest flex items-center gap-2">
+              <i className="fas fa-file-medical"/> Pending Vaccine Reviews · {pendingVax.length}
+            </h3>
+            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Client uploads awaiting approval</span>
+          </div>
+          <div className="space-y-2">
+            {pendingVax.map(v => (
+              <div key={`${v.dog_id}-${v.vaccine}`} className="flex items-center justify-between gap-3 bg-bgBase/50 rounded p-3 flex-wrap" data-testid={`pending-vax-${v.dog_id}-${v.vaccine}`}>
+                <div className="flex items-center gap-3 min-w-0">
+                  {v.photo ? (
+                    <button
+                      type="button"
+                      onClick={()=>setVaxPhoto(v)}
+                      className="w-14 h-14 rounded overflow-hidden ring-1 ring-shBlue/40 shrink-0 hover:ring-shBlue transition"
+                      data-testid={`view-vax-photo-${v.dog_id}-${v.vaccine}`}
+                      title="Click to view full"
+                    >
+                      <img src={v.photo} alt={`${v.vaccine} cert`} className="w-full h-full object-cover"/>
+                    </button>
+                  ) : (
+                    <div className="w-14 h-14 rounded bg-bgBase/80 ring-1 ring-gray-700 grid place-items-center text-gray-500 shrink-0">
+                      <i className="fas fa-image"/>
+                    </div>
+                  )}
+                  <div className="text-xs min-w-0">
+                    <div className="font-black text-white uppercase truncate">{v.dog_name} <span className="text-gray-500 font-normal normal-case">· {v.client_name || "—"}</span></div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="font-black uppercase px-2 py-0.5 rounded bg-shBlue/20 text-shBlue text-[11px] tracking-widest">{v.vaccine}</span>
+                      {v.expires_on && <span className="text-gray-400">Expires <span className="font-black text-white">{v.expires_on}</span></span>}
+                      {v.uploaded_at && <span className="text-gray-500">· uploaded {new Date(v.uploaded_at).toLocaleDateString()}</span>}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={()=>rejectVax(v)}
+                    data-testid={`reject-vax-${v.dog_id}-${v.vaccine}`}
+                    className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition"
+                  >
+                    <i className="fas fa-times mr-1"/> Reject
+                  </button>
+                  <button
+                    onClick={()=>approveVax(v)}
+                    data-testid={`approve-vax-${v.dog_id}-${v.vaccine}`}
+                    className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition"
+                  >
+                    <i className="fas fa-check mr-1"/> Approve
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -211,6 +295,22 @@ export default function Dashboard() {
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
       {cancelFor && <CancelBookingModal booking={cancelFor} onClose={()=>{ setCancelFor(null); load(); }} />}
       {showQuick && <AdminBookingModal defaultCheckIn={true} onClose={()=>setShowQuick(false)} onCreated={load} />}
+      {vaxPhoto && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur grid place-items-center p-6" onClick={()=>setVaxPhoto(null)} data-testid="vax-photo-lightbox">
+          <div className="max-w-3xl w-full bg-bgPanel rounded-xl overflow-hidden shadow-2xl" onClick={(e)=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-bgHover">
+              <div className="text-xs font-black uppercase tracking-widest text-white">
+                {vaxPhoto.dog_name} · <span className="text-shBlue">{vaxPhoto.vaccine}</span>
+                {vaxPhoto.expires_on && <span className="text-gray-400 normal-case font-normal"> · expires {vaxPhoto.expires_on}</span>}
+              </div>
+              <button onClick={()=>setVaxPhoto(null)} data-testid="vax-photo-close" className="text-gray-400 hover:text-white text-lg"><i className="fas fa-times"/></button>
+            </div>
+            <div className="bg-black p-3 flex justify-center">
+              <img src={vaxPhoto.photo} alt="vaccine cert" className="max-h-[75vh] object-contain"/>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

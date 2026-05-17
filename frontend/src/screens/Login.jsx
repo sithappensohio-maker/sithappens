@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 
 export default function Login() {
@@ -7,13 +7,23 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [refCode, setRefCode] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Auto-detect ?ref=CODE on first load → flip to register tab and prefill code.
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const ref = (params.get("ref") || "").toUpperCase().trim();
+      if (ref) { setRefCode(ref); setMode("register"); }
+    } catch {}
+  }, []);
 
   const onSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
     if (mode === "login") await login(email, password);
-    else await register(email, password, name);
+    else await register(email, password, name, refCode || undefined);
     setLoading(false);
   };
 
@@ -38,6 +48,15 @@ export default function Login() {
               <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Full Name</label>
               <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none" />
+            </div>
+          )}
+          {mode === "register" && (
+            <div>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
+              <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
+                     placeholder="e.g. 7KTUMQ"
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono uppercase focus:border-shBlue outline-none" />
+              {refCode && <p className="text-[11px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day on your first booking!</p>}
             </div>
           )}
           <div>
