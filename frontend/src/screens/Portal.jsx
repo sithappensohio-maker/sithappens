@@ -234,6 +234,7 @@ export default function Portal() {
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
   const [publicServices, setPublicServices] = useState([]);
   const [publicPrograms, setPublicPrograms] = useState([]);
+  const [showServicesModal, setShowServicesModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -461,10 +462,21 @@ export default function Portal() {
             )}
           </div>
 
-          {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode) && (
+          {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
             <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
               <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
               <div className="grid grid-cols-1 gap-2">
+                {(publicServices.length > 0 || publicPrograms.length > 0) && (
+                  <button onClick={()=>setShowServicesModal(true)} data-testid="portal-open-services-btn"
+                          className="flex items-start gap-3 bg-gradient-to-br from-shGreen/15 to-shBlue/10 hover:from-shGreen/25 hover:to-shBlue/20 border border-shGreen/40 hover:border-shGreen/60 rounded-lg px-3 py-3 transition group text-left w-full">
+                    <i className="fas fa-list-check text-shGreen text-2xl w-7 text-center mt-0.5"/>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[14px] font-black text-white uppercase tracking-widest">Services & Pricing</div>
+                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">{publicServices.length + publicPrograms.length} services & programs offered · request a quote</p>
+                    </div>
+                    <i className="fas fa-arrow-right text-shGreen group-hover:translate-x-0.5 transition text-xs mt-1"/>
+                  </button>
+                )}
                 {pubSettings?.client_portal_links?.website_url && (
                   <a href={pubSettings.client_portal_links.website_url} target="_blank" rel="noopener noreferrer"
                      data-testid="portal-link-website"
@@ -796,18 +808,6 @@ export default function Portal() {
         </div>
       </div>
 
-      {(publicServices.length > 0 || publicPrograms.length > 0) && (
-        <div className="bg-bgPanel p-4 sm:p-6 rounded-xl border border-bgHover shadow-lg" data-testid="portal-services-section">
-          <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-            <h2 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
-            <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{publicServices.length + publicPrograms.length} offered · tap any tile to request info</span>
-          </div>
-          <p className="text-[13px] text-gray-400 mb-5">Everything we offer at Sit Happens, grouped by category. See something you love? Tap "Request Info" and we'll get back to you.</p>
-          <ServicesByCategory services={publicServices} programs={publicPrograms}/>
-          <p className="text-[11px] text-gray-500 mt-4 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
-        </div>
-      )}
-
       {showWaiver && pubSettings?.waiver_text && (
         <WaiverModal
           waiverText={pubSettings.waiver_text}
@@ -891,6 +891,26 @@ export default function Portal() {
 
       <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}
+      {showServicesModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-3 sm:p-6 animate-fade-in" onClick={()=>setShowServicesModal(false)} data-testid="services-modal">
+          <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto shadow-2xl animate-slide-in">
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover">
+              <div className="min-w-0">
+                <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
+                <p className="text-[12px] text-gray-400 truncate">{publicServices.length + publicPrograms.length} offered · tap any tile to request info</p>
+              </div>
+              <button onClick={()=>setShowServicesModal(false)} data-testid="services-modal-close"
+                      className="shrink-0 text-gray-400 hover:text-white p-2 rounded hover:bg-bgHover transition">
+                <i className="fas fa-times text-xl"/>
+              </button>
+            </div>
+            <div className="p-4 sm:p-6">
+              <ServicesByCategory services={publicServices} programs={publicPrograms}/>
+              <p className="text-[11px] text-gray-500 mt-5 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
+            </div>
+          </div>
+        </div>
+      )}
       {celebrating.length > 0 && (
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
