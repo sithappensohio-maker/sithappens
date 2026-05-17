@@ -417,7 +417,24 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Backend** (`server.py`): added a single `count_documents({"client_id": ...}) == 1` check right after `db.bookings.insert_one(doc)` in `POST /api/bookings`. Fires for both client-portal and admin-created bookings. Best-effort (try/except so an email hiccup never breaks booking creation).
 - ✅ Verified end-to-end via Resend: first booking → email sent to `sithappensohio@gmail.com` (Resend ID `70ed90c2-...`). Second booking for the same client → no additional email. Detection is correct.
 
-## Sprint 35 — Pending Vaccine Reviews + Referral Auto-Credit on First Checkout (2026-02)
+## Sprint 36 — Digital Trophies / Gamification (2026-02)
+- ✅ **New collections:** `trophies` (catalog) + `awarded_trophies` (instances). 15 defaults seeded on startup (6 dog + 9 client), all idempotent via `seed_trophies_if_empty()` so admin edits are never overwritten.
+- ✅ **Backend `/app/backend/trophy_service.py`** — central engine: `award_trophy()` (idempotent per `recipient_id`+`code`), `check_dog_trophies()`, `check_client_trophies()`, `render_share_card_png()` (Pillow, 1200×630 social-card).
+- ✅ **Auto-award hooks wired into existing endpoints:**
+  - `update_goal` (training goal score 5) → re-evaluates Dog trophies (`Quick Learner` / `Skill Master` / `Top Dog` / `Sit Happens Graduate`).
+  - `complete_homework` → re-evaluates Client trophies (`Homework Hero` 7-day streak, `Dedicated Owner` / `Coach of the Year` count tiers).
+  - `check_out` → re-evaluates Client trophies for the dog's owner (`Regular` / `Loyal Pack Member` / `Sit Happens Legend` visit tiers) AND for the referrer if a referral row was just inserted (`Friend Bringer` / `Pack Builder` / `Ambassador`).
+- ✅ **12+ new endpoints** under `/api/trophies/...` + `/api/dogs|clients/{id}/trophies` + `/api/portal/trophies` + `/api/trophies/share-card/{awarded_id}.png` + `/api/trophies/leaderboard`. Admin auth on catalog CRUD + manual award + revoke + leaderboard. Defaults can be deactivated but not hard-deleted.
+- ✅ **Frontend:**
+  - New `<TrophyBadge>` + `<TrophyWall>` + `<TrophyCelebration>` components with tier-aware styling (bronze/silver/gold/platinum rings, Font Awesome glyphs OR admin-uploaded custom image).
+  - New admin **Trophies** nav tab (`/app/frontend/src/screens/Trophies.jsx`) — full catalog manager with live-preview editor, custom-image upload, tier picker, threshold editor, deactivate toggle.
+  - **Admin Clients & Dogs** screens — each card now shows a trophy strip + "+ Award" button opening `ManualAwardPicker`.
+  - **Admin Dashboard** — new "Top Dogs" + "Top Clients" leaderboard widgets (#1 yellow, #2 silver, #3 bronze ranking).
+  - **Client Portal** — new "TROPHY WALL" section between Training Progress and Homework, plus a celebratory modal queue on portal load that shows `NEW TROPHY EARNED!` for every unseen award (auto-marked seen via `/awarded-trophies/{id}/seen`).
+  - **Share card PNG** is generated server-side on demand; portal/admin trophy detail modal renders it inline with Download + Copy-share-link buttons.
+- ✅ **Testing:** 21/21 backend pytest (`/app/backend/tests/test_iter16_trophies.py`) + frontend smoke via Playwright. Covers seeding, idempotent awards, admin CRUD, auth gating, share-card PNG dimensions, seen-flag, revoke, auto-award on 10th checkout and on 7-day homework streak. Zero bugs found.
+
+
 - ✅ **Backend** (`server.py`):
   - `GET /api/admin/vaccine-cert-uploads?include_reviewed=false` — lists client-uploaded certs with photo, expiry, owner, uploaded_at, reviewed_at. Defaults to unreviewed-only.
   - `POST /api/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review` — approves a cert (stamps reviewed_at + reviewed_by). Vaccine expiry untouched.
