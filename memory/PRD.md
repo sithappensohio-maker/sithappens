@@ -321,6 +321,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ The Check-out modal's "Cancel booking instead" link now requests the parent component to swap modals: `setCheckoutFor(null); setCancelFor(b);` so the user gets the same confirm UX from either entry point.
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
+## Sprint 47 — Boarding pack UI + seed defaults (2026-02)
+- ✅ **Seed data** (`credit_packs_data.py`): added 3 boarding packs to `SEED_CREDIT_PACKS` — single $55, 5-night $250, 10-night $475.
+- ✅ **Settings → Credit Packs** (`CreditPacksSettings.jsx`): new "Boarding nights" option in the pool dropdown; chip color uses `text-shOrange` to match the rest of the app. Seed button now shows always (label flips to "Add Missing Defaults" when packs already exist) so existing installs get the 3 new boarding packs idempotently.
+- ✅ **Sell Pack modal** (`Clients.jsx`): added "Boarding" filter chip, refactored pack-row color/unit logic to support 3 pools (sessions / nights / credits), cart summary expanded from 3 to 4 columns (Daycare / Training / Boarding / Charge).
+- ✅ **Receipt** (`ReceiptModal`): per-line unit label now branches on boarding ("boarding nights"); totals grid shows the third pool when present.
+- ✅ Verified end-to-end: seed endpoint added 3 boarding packs, Sell modal filters/cart/totals all render correctly with boarding pool.
+
 ## Sprint 46 — Boarding credits + manual credit adjustments (2026-02)
 - ✅ **Boarding now uses the credit pool**: new `boarding_credits` field on the client doc (1 credit = 1 night). Helper `_credit_balance_field(service_type)` centralises the daycare/training/boarding → field mapping. Every existing call site (booking create, approve-booking, cancel-with-refund, check-out toggle, single sell-pack, bulk sell-pack) routed through the helper so boarding behaves exactly like daycare for FIFO consumption + refunds.
 - ✅ **Bulk sell-packs** (`sell_credit_packs_bulk`): generalised to a 3-pool increment dict (`daycare`/`training`/`boarding`) — packs with `service_type: "boarding"` now mint proper lots and bump the right balance.

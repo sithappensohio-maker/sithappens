@@ -370,6 +370,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   const totalCredits = cartItems.reduce((sum, it) => sum + (it.pack.qty * it.qty), 0);
   const totalDaycare = cartItems.filter(it => (it.pack.service_type || "daycare") === "daycare").reduce((s, it) => s + it.pack.qty * it.qty, 0);
   const totalTraining = cartItems.filter(it => it.pack.service_type === "training").reduce((s, it) => s + it.pack.qty * it.qty, 0);
+  const totalBoarding = cartItems.filter(it => it.pack.service_type === "boarding").reduce((s, it) => s + it.pack.qty * it.qty, 0);
   const totalCharge = cartItems.reduce((sum, it) => sum + (it.pack.price * it.qty), 0);
 
   const sell = async () => {
@@ -389,11 +390,12 @@ function SellPackModal({ client, packs, onClose, onSold }) {
         <p className="text-[14px] text-gray-400">No packs configured. Set them up in <span className="text-shBlue">Settings → Credit Packs</span> first.</p>
       ) : (
         <div className="space-y-4" data-testid="sell-pack-modal">
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {[
               {k:"all", label:"All"},
               {k:"daycare", label:"Daycare", color:"text-shGreen"},
               {k:"training", label:"Training", color:"text-purple-400"},
+              {k:"boarding", label:"Boarding", color:"text-shOrange"},
             ].map(p => (
               <button key={p.k} onClick={()=>setPoolFilter(p.k)} data-testid={`pool-filter-${p.k}`}
                       className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-bgBase border-shBlue text-shBlue":"border-bgHover text-gray-400 hover:text-shBlue"}`}>
@@ -407,14 +409,17 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             <div className="mt-2 space-y-1.5 max-h-56 overflow-auto pr-1">
               {active.map(p => {
                 const isTr = p.service_type === "training";
+                const isBd = p.service_type === "boarding";
+                const color = isTr ? "text-purple-400" : isBd ? "text-shOrange" : "text-shGreen";
+                const unit = isTr ? "sessions" : isBd ? "nights" : "credits";
                 const inCart = cart[p.id] || 0;
                 return (
                   <button key={p.id} onClick={()=>addToCart(p.id)} data-testid={`add-pack-${p.id}`}
                           className={`w-full text-left flex items-center justify-between bg-bgBase border rounded p-2.5 hover:border-shBlue transition ${inCart > 0 ? "border-shBlue" : "border-bgHover"}`}>
                     <div className="min-w-0 flex-1">
                       <p className="text-[14px] font-black text-white truncate">{p.name}</p>
-                      <p className={`text-[11px] uppercase tracking-widest font-bold ${isTr ? "text-purple-400" : "text-shGreen"}`}>
-                        {p.qty} {isTr ? "sessions" : "credits"} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
+                      <p className={`text-[11px] uppercase tracking-widest font-bold ${color}`}>
+                        {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -433,12 +438,15 @@ function SellPackModal({ client, packs, onClose, onSold }) {
               <p className="text-[11px] uppercase tracking-widest text-shGreen font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
               {cartItems.map(({ pack, qty }) => {
                 const isTr = pack.service_type === "training";
+                const isBd = pack.service_type === "boarding";
+                const color = isTr ? "text-purple-400" : isBd ? "text-shOrange" : "text-shGreen";
+                const unit = isTr ? "sessions" : isBd ? "nights" : "credits";
                 return (
                   <div key={pack.id} className="flex items-center justify-between gap-2 bg-bgBase rounded px-2 py-1.5" data-testid={`cart-row-${pack.id}`}>
                     <div className="min-w-0 flex-1">
                       <p className="text-[13px] text-white font-bold truncate">{pack.name}</p>
-                      <p className={`text-[10px] uppercase tracking-widest font-bold ${isTr ? "text-purple-400" : "text-shGreen"}`}>
-                        {pack.qty * qty} {isTr ? "sessions" : "credits"} · ${(pack.price * qty).toFixed(2)}
+                      <p className={`text-[10px] uppercase tracking-widest font-bold ${color}`}>
+                        {pack.qty * qty} {unit} · ${(pack.price * qty).toFixed(2)}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
@@ -452,9 +460,10 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                   </div>
                 );
               })}
-              <div className="grid grid-cols-3 gap-2 pt-2 text-center">
+              <div className="grid grid-cols-4 gap-2 pt-2 text-center">
                 <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Daycare</p><p className="text-shGreen text-lg font-black">+{totalDaycare}</p></div>
                 <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
+                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Boarding</p><p className="text-shOrange text-lg font-black">+{totalBoarding}</p></div>
                 <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-white text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
               </div>
             </div>
@@ -563,6 +572,7 @@ function ReceiptModal({ data, onClose }) {
   const { client, lines = [], totals = {}, total_price = 0, payment_method = "cash", note = "", sold_by = "", sold_at = "" } = data || {};
   const dc = totals.daycare?.qty || 0;
   const tr = totals.training?.qty || 0;
+  const bd = totals.boarding?.qty || 0;
   const dateStr = sold_at ? new Date(sold_at).toLocaleString() : new Date().toLocaleString();
   const print = () => window.print();
 
@@ -600,7 +610,7 @@ function ReceiptModal({ data, onClose }) {
                   <td className="py-2.5 font-bold">
                     {l.name}
                     <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-bold">
-                      {(l.pack_qty || 0) * l.qty} {l.service_type === "training" ? "training sessions" : "daycare credits"}
+                      {(l.pack_qty || 0) * l.qty} {l.service_type === "training" ? "training sessions" : l.service_type === "boarding" ? "boarding nights" : "daycare credits"}
                     </p>
                   </td>
                   <td className="text-right py-2.5 font-bold">{l.qty}</td>
@@ -611,7 +621,7 @@ function ReceiptModal({ data, onClose }) {
             </tbody>
           </table>
 
-          <div className="mt-4 grid grid-cols-2 gap-3 text-[13px]">
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[13px]">
             {dc > 0 && (
               <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
                 <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Daycare credits added</p>
@@ -622,6 +632,12 @@ function ReceiptModal({ data, onClose }) {
               <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
                 <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Training sessions added</p>
                 <p className="text-purple-400 text-2xl font-black print:text-black">+{tr}</p>
+              </div>
+            )}
+            {bd > 0 && (
+              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Boarding nights added</p>
+                <p className="text-shOrange text-2xl font-black print:text-black">+{bd}</p>
               </div>
             )}
           </div>

@@ -40,8 +40,12 @@ export default function CreditPacksSettings() {
   };
 
   const seed = async () => {
-    await api.post("/credit-packs/seed-standard");
+    const r = await api.post("/credit-packs/seed-standard");
     load();
+    if ((r?.data?.seeded ?? 0) === 0) {
+      // gentle inline hint via err (it shows in the form area)
+      setErr(""); // clear stale error if any
+    }
   };
 
   return (
@@ -49,15 +53,13 @@ export default function CreditPacksSettings() {
       <div className="flex items-center justify-between">
         <div>
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Credit Packs</h4>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">Bulk pricing for daycare credits. Income is recognized when each credit is redeemed at check-out, not when the pack is sold.</p>
+          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">Bulk pricing for daycare, training, and boarding credits. Income is recognized when each credit is redeemed at check-out, not when the pack is sold.</p>
         </div>
         <div className="flex gap-2">
-          {packs.length === 0 && (
-            <button onClick={seed} data-testid="seed-packs-btn"
-                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/25">
-              <i className="fas fa-magic-wand-sparkles mr-1"/>Seed Standard 4
-            </button>
-          )}
+          <button onClick={seed} data-testid="seed-packs-btn"
+                  className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+            <i className="fas fa-magic-wand-sparkles mr-1"/>{packs.length === 0 ? "Seed Standard Packs" : "Add Missing Defaults"}
+          </button>
         </div>
       </div>
 
@@ -72,7 +74,7 @@ export default function CreditPacksSettings() {
             <div className="col-span-5 min-w-0">
               <p className="text-white font-black text-[14px] tracking-tight">{p.name}</p>
               <p className="text-[12px] font-black uppercase tracking-widest mt-0.5">
-                <span className={p.service_type === "training" ? "text-purple-400" : "text-shGreen"}>{p.service_type}</span>
+                <span className={p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}>{p.service_type}</span>
                 <span className="text-gray-500">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
               </p>
             </div>
@@ -107,9 +109,11 @@ export default function CreditPacksSettings() {
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pool</label>
             <select value={form.service_type} onChange={(e)=>setForm({...form, service_type: e.target.value})}
+                    data-testid="pack-pool-select"
                     className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
               <option value="daycare">Daycare credits</option>
               <option value="training">Training credits</option>
+              <option value="boarding">Boarding nights</option>
             </select>
           </div>
           <div>

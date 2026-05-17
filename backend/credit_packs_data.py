@@ -15,4 +15,8 @@ SEED_CREDIT_PACKS = [
     {"slug": "training_3pack",  "name": "3-Session Training Pack","qty": 3,  "price": 250.0, "service_type": "training"},
     {"slug": "training_5pack",  "name": "5-Session Training Pack","qty": 5,  "price": 400.0, "service_type": "training"},
     {"slug": "training_10pack", "name": "10-Session Training Pack","qty": 10,"price": 750.0, "service_type": "training"},
+    # Boarding packs (1 credit = 1 night)
+    {"slug": "boarding_single", "name": "Single Boarding Night",  "qty": 1,  "price": 55.0,  "service_type": "boarding"},
+    {"slug": "boarding_5pack",  "name": "5-Night Boarding Pack",  "qty": 5,  "price": 250.0, "service_type": "boarding"},
+    {"slug": "boarding_10pack", "name": "10-Night Boarding Pack", "qty": 10, "price": 475.0, "service_type": "boarding"},
 ]
