@@ -308,6 +308,10 @@ export default function Portal() {
 
   const book = async () => {
     setErr(""); setSuccess("");
+    if (bookType === "training") {
+      setErr("Training sessions require a free evaluation first. Tap \"Request Info\" below to get in touch and we'll set you up.");
+      return;
+    }
     try {
       if (isMultiDate && bookType !== "boarding") {
         if (multiDates.length === 0) { setErr("Pick at least one date"); return; }
@@ -359,7 +363,7 @@ export default function Portal() {
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
-  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
+  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded && bookType !== "training";
 
   // Onboarding checklist — show until all complete
   const profileComplete = !!(client?.phone && client?.address);
@@ -539,6 +543,28 @@ export default function Portal() {
                 </div>
               ))}
             </div>
+
+            {bookType === "training" && (
+              <div className="mb-3 bg-gradient-to-br from-purple-500/10 to-shBlue/10 border border-purple-500/40 rounded-lg p-4" data-testid="training-eval-notice">
+                <div className="flex items-start gap-3">
+                  <i className="fas fa-graduation-cap text-purple-400 text-xl mt-0.5"/>
+                  <div className="flex-1">
+                    <p className="text-[13px] font-black text-white uppercase tracking-widest">Free Evaluation First</p>
+                    <p className="text-[12px] text-gray-300 mt-1 leading-relaxed">
+                      Training sessions can't be self-booked online — every dog gets a <strong className="text-shGreen">free evaluation</strong> with the trainer so we can recommend the right program. Tap below and we'll be in touch within 24 hours.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={()=>setShowServicesModal(true)}
+                      data-testid="training-eval-cta"
+                      className="mt-3 bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shGreen/90 shadow-lg"
+                    >
+                      <i className="fas fa-envelope mr-1.5"/>Browse Training & Request Info
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {bookType === "grooming" && (
               <div className="mb-3" data-testid="book-grooming-types">
