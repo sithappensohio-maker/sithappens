@@ -83,13 +83,11 @@ def test_enroll_buddy_auto_completes(hdr):
     goal_ids = [g["id"] for m in modules for g in (m.get("goals") or [])]
     assert len(goal_ids) >= 1
 
-    last_resp = None
     for gid in goal_ids:
         r2 = requests.put(
             f"{API}/dogs/{BUDDY_ID}/programs/{enr_id}/goals/{gid}",
             headers=hdr, json={"score": 5}, timeout=15)
         assert r2.status_code == 200, r2.text
-        last_resp = r2.json()
 
     # After the LAST goal is set to 5, status should be completed
     listing = requests.get(f"{API}/dogs/{BUDDY_ID}/programs", headers=hdr, timeout=15).json()

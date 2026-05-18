@@ -90,7 +90,6 @@ def compute_badges(curriculum: Dict[str, Dict], commands_by_id: Dict[str, Dict],
 
     badges = []
     basics_pct = (pct("engagement") + pct("obedience")) / 2
-    public_pct = pct("public_access")
     task_pct = pct("task")
     overall_pct = (pct("engagement") + pct("obedience") + pct("public_access") + pct("task")) / 4
 

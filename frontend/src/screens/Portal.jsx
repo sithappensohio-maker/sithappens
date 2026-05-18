@@ -80,7 +80,7 @@ function MyRecurringModal({ dogs, onClose }) {
 
   const remove = async (r) => {
     if (!window.confirm(`Delete "${r.label}"? Already-booked sessions remain on the calendar.`)) return;
-    try { await api.delete(`/recurring-templates/${r.id}`); load(); } catch {}
+    try { await api.delete(`/recurring-templates/${r.id}`); load(); } catch (e) { console.warn("recurring delete failed", e); }
   };
 
   const toggleDay = (d) => setForm(f => ({ ...f, weekdays: f.weekdays.includes(d) ? f.weekdays.filter(x => x !== d) : [...f.weekdays, d].sort() }));
@@ -650,7 +650,7 @@ export default function Portal() {
       const needsSign = !wRes.data?.signed || wRes.data?.needs_resign;
       if (needsSign && sRes.data?.waiver_required_for_booking && dRes.data.length > 0) setShowWaiver(true);
       await reloadUser();
-    } catch {}
+    } catch (e) { console.warn("portal loadAll failed", e); }
   }, [bookDogId, reloadUser]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -699,7 +699,7 @@ export default function Portal() {
       const { data } = await api.get("/portal/trophies");
       setTrophies(data);
       if ((data.unseen || []).length) setCelebrating(data.unseen);
-    } catch {}
+    } catch (e) { console.warn("loadTrophies failed", e); }
   }, []);
   useEffect(() => { loadTrophies(); }, [loadTrophies, bookings]);
   useEffect(() => {
@@ -709,7 +709,7 @@ export default function Portal() {
         setClient(data.client); setCredits(data.client.credits);
         setVisitCounts(data.visit_counts || {});
         setReferralCode(data.referral_code || null);
-      } catch {}
+      } catch (e) { console.warn("portal/me load failed", e); }
     })();
   }, [bookings]);
 

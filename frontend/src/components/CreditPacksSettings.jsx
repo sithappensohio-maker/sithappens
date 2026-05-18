@@ -19,12 +19,18 @@ export default function CreditPacksSettings() {
   const [form, setForm] = useState(empty);
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
+  const [open, setOpen] = useState(false); // controls the New/Edit modal
 
   const load = async () => {
-    const { data } = await api.get("/credit-packs", { params: { include_inactive: true } });
+    // include_inactive=false (default) so soft-deleted default packs disappear from the list.
+    const { data } = await api.get("/credit-packs");
     setPacks(data);
   };
   useEffect(() => { load(); }, []);
+
+  const openNew = () => { setEditing(null); setForm(empty); setErr(""); setOpen(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ ...empty, ...p }); setErr(""); setOpen(true); };
+  const closeModal = () => { setOpen(false); setEditing(null); setForm(empty); setErr(""); };
 
   const save = async () => {
     setErr("");
@@ -36,7 +42,7 @@ export default function CreditPacksSettings() {
     try {
       if (editing) await api.put(`/credit-packs/${editing.id}`, form);
       else await api.post("/credit-packs", form);
-      setEditing(null); setForm(empty);
+      closeModal();
       load();
     } catch (e) {
       // FastAPI 422 detail can be an array of error objects — formatErr
@@ -71,6 +77,10 @@ export default function CreditPacksSettings() {
           <button onClick={seed} data-testid="seed-packs-btn"
                   className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/25">
             <i className="fas fa-magic-wand-sparkles mr-1"/>{packs.length === 0 ? "Seed Standard Packs" : "Add Missing Defaults"}
+          </button>
+          <button onClick={openNew} data-testid="new-pack-btn"
+                  className="bg-shGreen text-black px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80">
+            + New Pack
           </button>
         </div>
       </div>
@@ -111,7 +121,7 @@ export default function CreditPacksSettings() {
               <p className="text-[10px] text-gray-500 uppercase tracking-widest">per credit</p>
             </div>
             <div className="col-span-1 text-right">
-              <button onClick={()=>{setEditing(p); setForm({ ...empty, ...p });}} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline px-1">Edit</button>
+              <button onClick={()=>openEdit(p)} data-testid={`edit-pack-${p.id}`} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline px-1">Edit</button>
               <button onClick={()=>remove(p)} className="text-red-400 text-[12px] font-black uppercase tracking-widest hover:underline px-1">Remove</button>
             </div>
           </div>
@@ -119,84 +129,99 @@ export default function CreditPacksSettings() {
         })}
       </div>
 
-      <div className="bg-bgBase border border-bgHover rounded-lg p-4">
-        <h5 className="text-white font-black text-[14px] uppercase tracking-tight mb-3">{editing ? `Edit · ${editing.name}` : "New Pack"}</h5>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack name</label>
-            <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} placeholder="e.g., 50-Day Daycare Pack"
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pool</label>
-            <select value={form.service_type} onChange={(e)=>{
-                       const t = e.target.value;
-                       // Auto-suggest icon for the pool only when the admin hasn't picked
-                       // one explicitly (i.e. still on a previous pool's default).
-                       const pooledDefaults = Object.values(DEFAULT_ICON_BY_POOL);
-                       const nextIcon = (!form.icon || pooledDefaults.includes(form.icon)) ? (DEFAULT_ICON_BY_POOL[t] || form.icon) : form.icon;
-                       setForm({...form, service_type: t, icon: nextIcon});
-                     }}
-                    data-testid="pack-pool-select"
-                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
-              <option value="daycare">Daycare credits</option>
-              <option value="training">Training credits</option>
-              <option value="boarding">Boarding nights</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Credits per pack</label>
-            <input type="number" min="1" value={form.qty} onChange={(e)=>setForm({...form, qty: parseInt(e.target.value) || 1})}
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Price (USD)</label>
-            <input type="number" step="0.01" min="0" value={form.price} onChange={(e)=>setForm({...form, price: parseFloat(e.target.value) || 0})}
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon</label>
-            <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
-          </div>
-          <div className="md:col-span-2">
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Color</label>
-            <div className="mt-2">
-              <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="pack-color-row" />
-              <p className="text-[11px] text-gray-500 mt-1.5">Leave blank to use the pool default ({form.service_type === "training" ? "purple" : form.service_type === "boarding" ? "orange" : "green"}).</p>
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm grid place-items-center p-3 sm:p-6 animate-fade-in"
+             onClick={closeModal}
+             data-testid="pack-form-modal">
+          <div onClick={(e)=>e.stopPropagation()}
+               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
+              <h5 className="text-white font-black text-[16px] uppercase italic tracking-tight">{editing ? `Edit · ${editing.name}` : "New Pack"}</h5>
+              <button onClick={closeModal} className="text-gray-500 hover:text-white" data-testid="pack-form-close">
+                <i className="fas fa-xmark text-xl"/>
+              </button>
+            </div>
+            <div className="p-5">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="md:col-span-2">
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pack name</label>
+                  <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} placeholder="e.g., 50-Day Daycare Pack"
+                         data-testid="pack-name-input"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pool</label>
+                  <select value={form.service_type} onChange={(e)=>{
+                             const t = e.target.value;
+                             const pooledDefaults = Object.values(DEFAULT_ICON_BY_POOL);
+                             const nextIcon = (!form.icon || pooledDefaults.includes(form.icon)) ? (DEFAULT_ICON_BY_POOL[t] || form.icon) : form.icon;
+                             setForm({...form, service_type: t, icon: nextIcon});
+                           }}
+                          data-testid="pack-pool-select"
+                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    <option value="daycare">Daycare credits</option>
+                    <option value="training">Training credits</option>
+                    <option value="boarding">Boarding nights</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Credits per pack</label>
+                  <input type="number" min="1" value={form.qty} onChange={(e)=>setForm({...form, qty: parseInt(e.target.value) || 1})}
+                         data-testid="pack-qty-input"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Price (USD)</label>
+                  <input type="number" step="0.01" min="0" value={form.price} onChange={(e)=>setForm({...form, price: parseFloat(e.target.value) || 0})}
+                         data-testid="pack-price-input"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon</label>
+                  <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Color</label>
+                  <div className="mt-2">
+                    <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="pack-color-row" />
+                    <p className="text-[11px] text-gray-500 mt-1.5">Leave blank to use the pool default ({form.service_type === "training" ? "purple" : form.service_type === "boarding" ? "orange" : "green"}).</p>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[12px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
+              {/* Live preview — exactly how this pack will render in the catalog list. */}
+              <div className="mt-4">
+                <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
+                {(() => {
+                  const accent = form.color || DEFAULT_COLOR_BY_POOL[form.service_type] || "#94a3b8";
+                  const unit = form.service_type === "training" ? "sessions" : form.service_type === "boarding" ? "nights" : "credits";
+                  return (
+                    <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="pack-preview">
+                      <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                           style={{ backgroundColor: `${accent}26` }}>
+                        <i className={`fas ${form.icon || DEFAULT_ICON_BY_POOL[form.service_type] || "fa-tag"}`} style={{ color: accent }}/>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled pack"}</p>
+                        <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: accent }}>{form.service_type} · {form.qty} {unit}</p>
+                      </div>
+                      <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.price || 0).toFixed(2)}</p>
+                    </div>
+                  );
+                })()}
+              </div>
+              {err && <p className="text-red-400 text-[13px] mt-3">{err}</p>}
+              <div className="flex justify-end gap-2 mt-4">
+                <button onClick={closeModal} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>
+                <button onClick={save} data-testid="save-pack-btn"
+                        className="bg-shGreen text-black px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80">
+                  {editing ? "Save Changes" : "Add Pack"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
-        <p className="text-[12px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
-        {/* Live preview — exactly how this pack will render in the catalog list. */}
-        <div className="mt-4">
-          <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
-          {(() => {
-            const accent = form.color || DEFAULT_COLOR_BY_POOL[form.service_type] || "#94a3b8";
-            const unit = form.service_type === "training" ? "sessions" : form.service_type === "boarding" ? "nights" : "credits";
-            return (
-              <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="pack-preview">
-                <div className="w-10 h-10 rounded grid place-items-center shrink-0"
-                     style={{ backgroundColor: `${accent}26` }}>
-                  <i className={`fas ${form.icon || DEFAULT_ICON_BY_POOL[form.service_type] || "fa-tag"}`} style={{ color: accent }}/>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled pack"}</p>
-                  <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: accent }}>{form.service_type} · {form.qty} {unit}</p>
-                </div>
-                <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.price || 0).toFixed(2)}</p>
-              </div>
-            );
-          })()}
-        </div>
-        {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
-        <div className="flex justify-end gap-2 mt-3">
-          {editing && <button onClick={()=>{setEditing(null); setForm(empty);}} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-2">Cancel</button>}
-          <button onClick={save} data-testid="save-pack-btn"
-                  className="bg-shGreen text-black px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80">
-            {editing ? "Save Changes" : "Add Pack"}
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

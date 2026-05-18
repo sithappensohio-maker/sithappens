@@ -618,3 +618,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Credit Packs form**: new "Preview" row above the Save button shows the pack as it'll appear in the catalog list — colored icon chip + name + pool · qty unit (sessions/nights/credits) + price. Falls back to pool-default color when admin leaves color blank.
 - ✅ Mood Tags already render live previews (the tag pill itself is the preview).
 - ✅ Lint clean. Smoke-tested in preview — "Behavioral Consult" service shows purple icon preview, "Holiday Special Pack" shows pink icon preview, both updating in real time as inputs change.
+
+
+## Sprint 54 — Code Review Quick Wins (2026-02)
+- ✅ **`PortalTrainingCard.printCertificate` hardened** — replaced `win.document.write(...)` (linter XSS warning) with a Blob URL + `window.open`. All template interpolations (`dog.name`, `snap.name`, `tm.label`, etc.) now flow through an `escHtml()` helper. Blob URLs auto-revoked after 30s. Behavior identical for users; XSS surface eliminated.
+- ✅ **Empty catch blocks → `console.warn`** on API-load failures: Portal `loadAll` / `loadTrophies` / `portal/me` and Schedule `events` / `dogs` loaders now log to the browser console so production issues surface in DevTools. Kept intentional fire-and-forget catches (`navigator.clipboard`, `sessionStorage`) silent — those are UX-only and fail in private browsing without consequence.
+- ✅ **Python unused-variable cleanup** — removed dead `public_pct` in `training_data.py` and dead `last_resp` in `test_iter13_sprint17.py`. ruff F841 clean.
+- ✅ Deferred (per user agreement): hook-dependency warnings, index-as-key warnings, localStorage→httpOnly migration, `Portal.jsx` / `create_booking()` / `AdminBookingModal` refactor (P2 — working in production, refactor risk vs. value not justified for a solo CRM).
+
+
+## Sprint 55 — Credit Packs: Edit modal + remove actually hides (2026-02)
+- ✅ **Edit was silently failing visually** (same root cause as the earlier "+ New Service" bug): clicking Edit on a pack row only updated the inline form that lived below a long list. Converted New/Edit into a proper centered modal — instant visual feedback, sticky header with × close, name/qty/price/icon/color all pre-filled when entering edit mode. New "+ New Pack" header button added; row Edit buttons now wire to `openEdit(p)`.
+- ✅ **Removed packs now disappear**: dropped `include_inactive: true` from the list fetch. Custom packs (hard-deleted) and default packs (soft-deleted → `active=false`) both stop showing on the catalog. Lots already issued from removed packs still redeem normally — only the catalog row hides.
+- ✅ Smoke-tested in preview: row count went 16 → 14 after dropping inactive; Edit modal opens with "Single Day Drop-In" pre-filled and `fa-sun` icon preview showing live.

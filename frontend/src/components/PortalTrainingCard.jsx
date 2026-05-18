@@ -145,14 +145,22 @@ function GoalChip({ score }) {
   );
 }
 
+// Escape user-controlled text before interpolating into HTML so a malicious
+// dog/program name can't execute script in the new tab.
+function escHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
 function printCertificate(dog, enrollment, typeByKey) {
   const snap = enrollment.program_snapshot;
   const tm = typeByKey[snap.type] || { color: "#8cc63f", label: snap.type };
-  const win = window.open("", "_blank", "noopener");
-  if (!win) return;
   const today = new Date().toLocaleDateString();
   const completed = (enrollment.completed_at || "").slice(0,10) || today;
-  win.document.write(`<!doctype html><html><head><title>${dog.name} · ${snap.name}</title>
+  // Use a Blob URL rather than document.write — avoids the XSS-prone API entirely.
+  // All interpolations are HTML-escaped above the line.
+  const html = `<!doctype html><html><head><title>${escHtml(dog.name)} · ${escHtml(snap.name)}</title>
     <style>
       @page { size: landscape; margin: 0.5in; }
       body { font-family: Georgia, serif; background:#fff; color:#0f172a; text-align:center; padding:48px 32px; }
@@ -165,17 +173,25 @@ function printCertificate(dog, enrollment, typeByKey) {
       .footer { display:flex; justify-content:space-between; margin-top: 40px; padding-top: 14px; border-top: 1px solid #cbd5e1; font-size:14px; color:#64748b; }
     </style></head><body>
     <div class="frame">
-      <h2>Sit Happens Dog Training · ${tm.label}</h2>
+      <h2>Sit Happens Dog Training · ${escHtml(tm.label)}</h2>
       <h1>Certificate of Completion</h1>
       <p class="desc">This certifies that</p>
-      <p class="name">${dog.name}</p>
+      <p class="name">${escHtml(dog.name)}</p>
       <p class="desc">has successfully completed</p>
-      <p class="program">${snap.name}</p>
-      <p class="desc">${snap.focus || snap.description || ""}</p>
-      <p>Mastered <strong>${enrollment.mastered_goals}</strong> of <strong>${enrollment.total_goals}</strong> program goals.</p>
-      <div class="footer"><span>Issued ${today}</span><span>Completed ${completed}</span></div>
+      <p class="program">${escHtml(snap.name)}</p>
+      <p class="desc">${escHtml(snap.focus || snap.description || "")}</p>
+      <p>Mastered <strong>${escHtml(enrollment.mastered_goals)}</strong> of <strong>${escHtml(enrollment.total_goals)}</strong> program goals.</p>
+      <div class="footer"><span>Issued ${escHtml(today)}</span><span>Completed ${escHtml(completed)}</span></div>
     </div>
     <script>window.onload=()=>setTimeout(()=>window.print(),200);</script>
-    </body></html>`);
-  win.document.close();
+    </body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank", "noopener");
+  if (!win) {
+    URL.revokeObjectURL(url);
+    return;
+  }
+  // Release the blob URL after the new tab has had time to load.
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
 }

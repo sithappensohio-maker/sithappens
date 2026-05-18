@@ -46,10 +46,10 @@ export default function Schedule() {
   }, []);
 
   const load = async () => {
-    try { const { data } = await api.get("/events"); setEvents(data); } catch {}
+    try { const { data } = await api.get("/events"); setEvents(data); } catch (e) { console.warn("events load failed", e); }
   };
   const loadDogs = async () => {
-    try { const { data } = await api.get("/dogs"); setDogs(data); } catch {}
+    try { const { data } = await api.get("/dogs"); setDogs(data); } catch (e) { console.warn("dogs load failed", e); }
   };
   useEffect(() => { load(); loadDogs(); }, []);
   // Auto-refresh on tab focus so bookings created elsewhere appear right away.
