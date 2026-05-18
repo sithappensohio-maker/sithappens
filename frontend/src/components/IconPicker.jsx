@@ -105,8 +105,8 @@ export const ICON_LIBRARY = [
   { name: "fa-circle-question", keywords: "question help" },
 ];
 
-export default function IconPicker({ value, onChange, testid = "icon-picker" }) {
-  const [open, setOpen] = useState(false);
+export default function IconPicker({ value, onChange, testid = "icon-picker", autoOpen = false }) {
+  const [open, setOpen] = useState(autoOpen);
   const [q, setQ] = useState("");
   const filtered = ICON_LIBRARY.filter(i => {
     const term = q.trim().toLowerCase();

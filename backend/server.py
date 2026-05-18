@@ -2080,7 +2080,7 @@ class SettingsIn(BaseModel):
     booking_rules: Optional[dict] = None
     required_vaccines: Optional[List[str]] = None
     vaccine_warning_days: Optional[int] = None
-    mood_tags: Optional[List[str]] = None
+    mood_tags: Optional[List[Any]] = None  # accepts legacy List[str] OR new List[{label, icon}]
     waiver_text: Optional[str] = None
     waiver_required_for_booking: Optional[bool] = None
     waiver_version: Optional[int] = None
@@ -4814,6 +4814,7 @@ class CreditPackIn(BaseModel):
     qty: int = Field(ge=1)
     price: float = Field(ge=0)
     service_type: Optional[str] = "daycare"
+    icon: Optional[str] = ""
     active: bool = True
 
 
@@ -4957,14 +4958,20 @@ async def list_credit_adjustments(client_id: str, _: dict = Depends(require_admi
 @api.post("/credit-packs/seed-standard")
 async def seed_credit_packs(_: dict = Depends(require_admin)):
     seeded = 0
+    backfilled = 0
     for pack in SEED_CREDIT_PACKS:
-        if await db.credit_packs.find_one({"slug": pack["slug"]}, {"_id": 0}):
+        existing = await db.credit_packs.find_one({"slug": pack["slug"]}, {"_id": 0})
+        if existing:
+            # Backfill icon onto pre-existing default packs (one-time, idempotent).
+            if not existing.get("icon") and pack.get("icon"):
+                await db.credit_packs.update_one({"id": existing["id"]}, {"$set": {"icon": pack["icon"]}})
+                backfilled += 1
             continue
         doc = {**pack, "id": str(uuid.uuid4()), "is_default": True, "active": True, "created_at": now_iso()}
         await db.credit_packs.insert_one(doc)
         seeded += 1
     total = await db.credit_packs.count_documents({"active": True})
-    return {"seeded": seeded, "total_active": total}
+    return {"seeded": seeded, "icon_backfilled": backfilled, "total_active": total}
 
 
 @api.post("/clients/{client_id}/sell-pack")

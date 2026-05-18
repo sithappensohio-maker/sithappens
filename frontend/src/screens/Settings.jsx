@@ -4,6 +4,7 @@ import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/useConfirm";
 import ServicesSettings from "../components/ServicesSettings";
 import CreditPacksSettings from "../components/CreditPacksSettings";
+import IconPicker from "../components/IconPicker";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -277,28 +278,44 @@ function VaccinesPanel({ s, save, saving }) {
 }
 
 function TagsPanel({ s, save, saving }) {
-  const [tags, setTags] = useState(s.mood_tags || []);
+  // mood_tags can be legacy List[str] OR new List[{label, icon}]. Normalize.
+  const toObj = (t) => (typeof t === "string" ? { label: t, icon: "" } : { label: t?.label || "", icon: t?.icon || "" });
+  const [tags, setTags] = useState(() => (s.mood_tags || []).map(toObj));
   const [newT, setNewT] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(-1); // index of tag whose picker is open
   return (
     <div className="space-y-4" data-testid="tags-panel">
-      <Section title="Pup Report Card Mood Tags" subtitle="These appear as pill buttons on the report card modal.">
+      <Section title="Pup Report Card Mood Tags" subtitle="These appear as pill buttons on the report card modal. Pick an optional icon for each one.">
         <div className="flex flex-wrap gap-2">
           {tags.map((t,i)=>(
-            <div key={i} className="flex items-center gap-2 bg-shGreen/15 text-shGreen border border-shGreen/40 rounded-full pl-3 pr-1 py-1">
-              <input value={t} onChange={(e)=>{const c=[...tags]; c[i]=e.target.value; setTags(c);}}
+            <div key={i} className="relative flex items-center gap-1.5 bg-shGreen/15 text-shGreen border border-shGreen/40 rounded-full pl-2 pr-1 py-1">
+              <button type="button" onClick={()=>setPickerOpen(pickerOpen === i ? -1 : i)}
+                      data-testid={`tag-icon-toggle-${i}`}
+                      className="w-7 h-7 rounded-full grid place-items-center bg-bgBase border border-shGreen/30 hover:border-shGreen text-shGreen">
+                <i className={`fas ${t.icon || "fa-plus"} text-xs`}/>
+              </button>
+              <input value={t.label} onChange={(e)=>{const c=[...tags]; c[i]={...c[i], label:e.target.value}; setTags(c);}}
                      className="bg-transparent text-[15px] font-black uppercase tracking-widest outline-none w-32" data-testid={`tag-${i}`} />
-              <button onClick={()=>setTags(tags.filter((_,j)=>j!==i))} className="text-shGreen/70 hover:text-red-400 px-1">×</button>
+              <button onClick={()=>{setTags(tags.filter((_,j)=>j!==i)); setPickerOpen(-1);}} className="text-shGreen/70 hover:text-red-400 px-1">×</button>
+              {pickerOpen === i && (
+                <div className="absolute z-30 top-full left-0 mt-1 w-72">
+                  <IconPicker value={t.icon}
+                              autoOpen={true}
+                              onChange={(v)=>{const c=[...tags]; c[i]={...c[i], icon:v}; setTags(c); setPickerOpen(-1);}}
+                              testid={`tag-${i}-icon-picker`}/>
+                </div>
+              )}
             </div>
           ))}
         </div>
         <div className="flex gap-2 mt-4">
           <input value={newT} onChange={(e)=>setNewT(e.target.value)} placeholder="Add a tag (e.g. Loves the Hose)"
                  className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-sm text-white" data-testid="new-tag-input" />
-          <button onClick={()=>{ if(newT.trim()){ setTags([...tags, newT.trim()]); setNewT(""); } }} data-testid="add-tag"
+          <button onClick={()=>{ if(newT.trim()){ setTags([...tags, { label: newT.trim(), icon: "" }]); setNewT(""); } }} data-testid="add-tag"
                   className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest">+ Add Tag</button>
         </div>
       </Section>
-      <SaveBar onSave={()=>save({ mood_tags: tags })} saving={saving} />
+      <SaveBar onSave={()=>save({ mood_tags: tags.filter(t=>t.label.trim()).map(t=>({ label: t.label.trim(), icon: t.icon || "" })) })} saving={saving} />
     </div>
   );
 }

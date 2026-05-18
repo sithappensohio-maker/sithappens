@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import IconPicker from "./IconPicker";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
  * Each pack stores qty + price; per-credit value is computed on the fly.
  */
-const empty = { name: "", qty: 10, price: 300, service_type: "daycare", active: true };
+const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", active: true };
+
+const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
 
 export default function CreditPacksSettings() {
   const confirm = useConfirm();
@@ -78,12 +81,18 @@ export default function CreditPacksSettings() {
         )}
         {packs.map(p => (
           <div key={p.id} className={`bg-bgBase border rounded-lg p-3 grid grid-cols-12 items-center gap-2 ${p.active ? "border-bgHover" : "border-bgHover/30 opacity-50"}`}>
-            <div className="col-span-5 min-w-0">
-              <p className="text-white font-black text-[14px] tracking-tight">{p.name}</p>
-              <p className="text-[12px] font-black uppercase tracking-widest mt-0.5">
-                <span className={p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}>{p.service_type}</span>
-                <span className="text-gray-500">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
-              </p>
+            <div className="col-span-5 min-w-0 flex items-center gap-3">
+              <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                   style={{ backgroundColor: (p.service_type === "training" ? "rgba(168,85,247,0.15)" : p.service_type === "boarding" ? "rgba(242,101,34,0.15)" : "rgba(140,198,63,0.15)") }}>
+                <i className={`fas ${p.icon || DEFAULT_ICON_BY_POOL[p.service_type] || "fa-tag"} ${p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}`}/>
+              </div>
+              <div className="min-w-0">
+                <p className="text-white font-black text-[14px] tracking-tight truncate">{p.name}</p>
+                <p className="text-[12px] font-black uppercase tracking-widest mt-0.5">
+                  <span className={p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}>{p.service_type}</span>
+                  <span className="text-gray-500">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
+                </p>
+              </div>
             </div>
             <div className="col-span-2 text-center">
               <p className="text-shBlue font-black text-[18px]">{p.qty}</p>
@@ -115,7 +124,14 @@ export default function CreditPacksSettings() {
           </div>
           <div>
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Pool</label>
-            <select value={form.service_type} onChange={(e)=>setForm({...form, service_type: e.target.value})}
+            <select value={form.service_type} onChange={(e)=>{
+                       const t = e.target.value;
+                       // Auto-suggest icon for the pool only when the admin hasn't picked
+                       // one explicitly (i.e. still on a previous pool's default).
+                       const pooledDefaults = Object.values(DEFAULT_ICON_BY_POOL);
+                       const nextIcon = (!form.icon || pooledDefaults.includes(form.icon)) ? (DEFAULT_ICON_BY_POOL[t] || form.icon) : form.icon;
+                       setForm({...form, service_type: t, icon: nextIcon});
+                     }}
                     data-testid="pack-pool-select"
                     className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
               <option value="daycare">Daycare credits</option>
@@ -132,6 +148,10 @@ export default function CreditPacksSettings() {
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Price (USD)</label>
             <input type="number" step="0.01" min="0" value={form.price} onChange={(e)=>setForm({...form, price: parseFloat(e.target.value) || 0})}
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon</label>
+            <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
           </div>
         </div>
         <p className="text-[12px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>

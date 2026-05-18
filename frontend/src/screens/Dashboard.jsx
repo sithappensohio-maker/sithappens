@@ -418,9 +418,13 @@ function StatCard({ label, value, accent, textColor, testId }) {
 function ReportCardModal({ booking, moodTags, onClose }) {
   const existing = booking.report_card || { photos: [], mood_tags: [], note: "" };
   const [photos, setPhotos] = useState(existing.photos || []);
+  // Saved report-card moods are plain label strings (legacy compatible).
   const [moods, setMoods] = useState(existing.mood_tags || []);
   const [note, setNote] = useState(existing.note || "");
   const [saving, setSaving] = useState(false);
+  // Normalize the tag catalog so each entry has {label, icon}, regardless
+  // of whether settings stored it as a string (legacy) or object (new).
+  const tagDefs = (moodTags || []).map(t => (typeof t === "string" ? { label: t, icon: "" } : { label: t?.label || "", icon: t?.icon || "" })).filter(t => t.label);
 
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 3 - photos.length);
@@ -470,10 +474,11 @@ function ReportCardModal({ booking, moodTags, onClose }) {
           <div>
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Mood / Highlights</label>
             <div className="mt-2 flex flex-wrap gap-2">
-              {(moodTags || []).map(m => (
-                <button key={m} onClick={()=>toggleMood(m)} data-testid={`mood-${m.replace(/\s/g,'-')}`}
-                        className={`px-3 py-2 rounded-full text-[14px] font-black uppercase tracking-widest border transition ${moods.includes(m)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
-                  {m}
+              {tagDefs.map(({ label, icon }) => (
+                <button key={label} onClick={()=>toggleMood(label)} data-testid={`mood-${label.replace(/\s/g,'-')}`}
+                        className={`px-3 py-2 rounded-full text-[14px] font-black uppercase tracking-widest border transition flex items-center gap-2 ${moods.includes(label)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
+                  {icon && <i className={`fas ${icon}`}/>}
+                  <span>{label}</span>
                 </button>
               ))}
             </div>

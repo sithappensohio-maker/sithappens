@@ -588,3 +588,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Lint clean, smoke-tested in preview (modal opens, picker grid opens, "paw" search filters correctly).
 
 
+
+
+## Sprint 50 — IconPicker on Credit Packs + Mood Tags (2026-02)
+- ✅ **`IconPicker` extracted** to `/app/frontend/src/components/IconPicker.jsx` as a reusable component with an `autoOpen` prop so callers can have the grid visible immediately when mounted. ServicesSettings now imports it (deduped from the inline copy).
+- ✅ **Credit Packs**: added `icon: Optional[str]` to `CreditPackIn` Pydantic model. Seed defaults (`credit_packs_data.py`) now carry icons (daycare → `fa-sun`, training → `fa-graduation-cap`, boarding → `fa-moon`). Seed-standard endpoint also **backfills the icon onto pre-existing default packs** (one-time idempotent — verified: 11 packs backfilled on first run). Settings → Credit Packs form has the picker; list rows show the chosen icon in a pool-colored chip; Sell-Pack modal also renders the icon next to each pack name so admins recognize their packs at a glance.
+- ✅ **Mood Tags**: `SettingsIn.mood_tags` relaxed to `Optional[List[Any]]` so both legacy `List[str]` AND new `List[{label, icon}]` round-trip cleanly through Pydantic. Backend verified accepting both shapes. Settings → Mood Tags now shows each tag as a pill with an icon-toggle button → clicking it opens an inline IconPicker grid (auto-open). Saving persists the `{label, icon}` shape; legacy string tags are normalized on first render. Dashboard ReportCardModal renders the icon next to each selectable tag pill. Portal report-card history looks up the icon from `pubSettings.mood_tags` and renders it inline.
+- ✅ Backward compatible: report-card storage still saves `mood_tags: List[str]` (label-only); the icon is metadata on the *catalog*, not on each saved record.
+- ✅ Lint clean. Smoke-tested in preview: 16 pack icons rendered on the Credit Packs list, all 8 default mood tags rendered with icons, picker grid auto-opens on click, selecting `fa-heart` updates a tag successfully.

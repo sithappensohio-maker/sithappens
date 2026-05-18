@@ -1272,9 +1272,17 @@ export default function Portal() {
                       )}
                       {b.report_card.mood_tags?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mb-3">
-                          {b.report_card.mood_tags.map(m => (
-                            <span key={m} className="text-[15px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded-full">{m}</span>
-                          ))}
+                          {b.report_card.mood_tags.map(m => {
+                            // Look up icon from public settings catalog. Tags can be legacy strings or {label, icon}.
+                            const def = (pubSettings?.mood_tags || []).find(t => (typeof t === "string" ? t === m : t?.label === m));
+                            const icon = (def && typeof def === "object") ? def.icon : "";
+                            return (
+                              <span key={m} className="text-[15px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded-full inline-flex items-center gap-1.5">
+                                {icon && <i className={`fas ${icon}`}/>}
+                                <span>{m}</span>
+                              </span>
+                            );
+                          })}
                         </div>
                       )}
                       {b.report_card.note && <p className="text-xs text-gray-300 italic">"{b.report_card.note}"</p>}

@@ -622,11 +622,14 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                 return (
                   <button key={p.id} onClick={()=>addToCart(p.id)} data-testid={`add-pack-${p.id}`}
                           className={`w-full text-left flex items-center justify-between bg-bgBase border rounded p-2.5 hover:border-shBlue transition ${inCart > 0 ? "border-shBlue" : "border-bgHover"}`}>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[14px] font-black text-white truncate">{p.name}</p>
-                      <p className={`text-[11px] uppercase tracking-widest font-bold ${color}`}>
-                        {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
-                      </p>
+                    <div className="min-w-0 flex-1 flex items-center gap-2.5">
+                      <i className={`fas ${p.icon || (isTr ? "fa-graduation-cap" : isBd ? "fa-moon" : "fa-sun")} ${color} shrink-0`}/>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] font-black text-white truncate">{p.name}</p>
+                        <p className={`text-[11px] uppercase tracking-widest font-bold ${color}`}>
+                          {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
+                        </p>
+                      </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {inCart > 0 && <span className="bg-shBlue text-bgHeader px-2 py-0.5 rounded text-[12px] font-black">×{inCart}</span>}
