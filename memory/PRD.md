@@ -553,3 +553,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 - `/app/frontend/src/screens/` — Login, Dashboard, Schedule, Bookings, Clients, Dogs, Portal
 - `/app/memory/test_credentials.md` — Login credentials
+
+
+## Sprint 45 — Trophy Share PNG Reads the Uploaded Image (2026-02)
+- ✅ Fixed the long-standing bug where every shared trophy showed the same hard-coded `★` glyph — the renderer (`trophy_service.py::render_share_card_png`) now reads `trophy_custom_image` and pastes it into the centre of the tier ring with a circular mask. Falls back to the star glyph cleanly when no image is uploaded.
+- ✅ Snapshots `trophy_custom_image` onto every new award record so historical shares keep their visual even if the admin later edits or removes the catalog image.
+- ✅ The public `/api/trophies/share-card/{awarded_id}.png` endpoint backfills the image from the live catalog for awards minted before the snapshot existed, so existing trophies start showing the right image the moment an admin uploads one.
+- ✅ Fixed a related call-site bug in `Trophies.jsx` where `compressImage(f, 256, 0.85)` was passing positional args to an options-based API — now uses `{maxWidth: 512, maxHeight: 512, quality: 0.85}` for a sharper trophy thumbnail.
+- ✅ End-to-end verified: uploaded a solid-red test image → awarded → share PNG centre pixel was `(220, 30, 30)`. With no image → centre showed the tier ring fill colour with the ★ glyph (fallback works).

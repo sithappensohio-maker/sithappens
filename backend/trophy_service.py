@@ -2,8 +2,10 @@
 relevant write hooks, and a Pillow-based share-card PNG renderer."""
 from __future__ import annotations
 
+import base64
 import io
 import logging
+import re
 import uuid
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -87,6 +89,9 @@ async def award_trophy(
         "trophy_name": trophy.get("name", trophy_code),
         "trophy_tier": trophy.get("tier", "bronze"),
         "trophy_icon": trophy.get("icon", "fa-trophy"),
+        # Snapshot the custom image at award-time so historical shares keep
+        # their visual even if the admin later edits/removes the catalog image.
+        "trophy_custom_image": trophy.get("custom_image", "") or "",
         "trophy_description": trophy.get("description", ""),
         "recipient_type": recipient_type,
         "recipient_id": recipient_id,
@@ -298,15 +303,42 @@ def render_share_card_png(awarded: Dict[str, Any]) -> bytes:
     # Inner highlight ring
     draw.ellipse((cx - radius + 24, cy - radius + 24, cx + radius - 24, cy + radius - 24), outline=ring_color, width=4)
 
-    # Big star/letter in the centre of the ring (font glyph fallback for icon)
-    big = _font(200, bold=True)
-    glyph = "★"
-    try:
-        bbox = draw.textbbox((0, 0), glyph, font=big)
-        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    except Exception:
-        tw, th = big.getsize(glyph)
-    draw.text((cx - tw // 2, cy - th // 2 - 20), glyph, fill=ring_color, font=big)
+    # Centerpiece: admin-uploaded image (preferred) circular-masked inside the
+    # ring, falling back to the universal ★ glyph if no image is on the trophy.
+    custom_image = awarded.get("trophy_custom_image") or ""
+    pasted = False
+    if custom_image:
+        try:
+            # Accept both "data:image/...;base64,XXXX" and raw base64 payloads.
+            payload = custom_image.split(",", 1)[1] if custom_image.startswith("data:") else custom_image
+            payload = re.sub(r"\s+", "", payload)
+            raw = base64.b64decode(payload)
+            tile = Image.open(io.BytesIO(raw)).convert("RGBA")
+            inner = radius - 36  # leave room for the inner highlight ring
+            size = inner * 2
+            # Cover-fit (crop to square then scale to size)
+            w, h = tile.size
+            short = min(w, h)
+            left = (w - short) // 2
+            top = (h - short) // 2
+            tile = tile.crop((left, top, left + short, top + short)).resize((size, size), Image.LANCZOS)
+            # Circular mask
+            mask = Image.new("L", (size, size), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+            img.paste(tile, (cx - inner, cy - inner), mask)
+            pasted = True
+        except Exception as exc:
+            logger.warning("trophy share-card image paste failed (%s); falling back to glyph", exc)
+
+    if not pasted:
+        big = _font(200, bold=True)
+        glyph = "★"
+        try:
+            bbox = draw.textbbox((0, 0), glyph, font=big)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except Exception:
+            tw, th = big.getsize(glyph)
+        draw.text((cx - tw // 2, cy - th // 2 - 20), glyph, fill=ring_color, font=big)
 
     # Right side text block
     text_x = 580

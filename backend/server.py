@@ -4228,6 +4228,13 @@ async def trophy_share_card(awarded_id: str):
     row = await db.awarded_trophies.find_one({"id": awarded_id, "revoked": {"$ne": True}}, {"_id": 0})
     if not row:
         raise HTTPException(status_code=404, detail="Award not found")
+    # Backfill the trophy image for awards minted before we started snapshotting
+    # it (so the share PNG always reflects the *current* catalog image when the
+    # award doesn't have its own).
+    if not row.get("trophy_custom_image"):
+        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "custom_image": 1})
+        if trophy and trophy.get("custom_image"):
+            row["trophy_custom_image"] = trophy["custom_image"]
     try:
         png = render_share_card_png(row)
     except Exception as exc:

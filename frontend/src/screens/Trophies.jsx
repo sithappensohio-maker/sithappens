@@ -122,7 +122,9 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
   const onFile = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const compressed = await compressImage(f, 256, 0.85);
+    // 512px is plenty for the in-app badge AND for the 1200×630 share PNG
+    // (we paste it into a 328px circle on the share card).
+    const compressed = await compressImage(f, { maxWidth: 512, maxHeight: 512, quality: 0.85 });
     setForm(s => ({ ...s, custom_image: compressed }));
   };
 
