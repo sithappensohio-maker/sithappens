@@ -574,3 +574,9 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Training restriction respected**: clients attempting to create or move a template onto `service_type=training` get a 403 with the same "request a free evaluation" copy used elsewhere in the portal.
 - ✅ **`MyRecurringModal` on the Portal**: new Quick Link → "My Recurring Schedules" opens a focused modal with list ↔ form steps. Mirrors the admin Recurring screen: dog dropdown, weekday picker, default-extend-window input, notes, Extend button with progress toast. Hidden when the client has no dogs yet.
 - ✅ **Schedule.jsx auto-refresh**: added `visibilitychange` + window `focus` listeners that re-fetch `/events` whenever the user returns to the calendar — defends against the "I just created bookings and they don't show up" problem regardless of which screen created them.
+
+
+## Sprint 48 — Recurring Start-Date + Day Roster + Timed Training Events (2026-02)
+- ✅ **Start-on date** added to `RecurringTemplateIn`. First extend honors it (if in the future); subsequent extends advance from `last_booked_through` as before. Both admin and client recurring UIs have the new date picker with the "leave blank to start today" hint.
+- ✅ **Day Roster modal** on the Schedule: clicking any day opens an overlay listing every booking that day (with service color chips and the assigned time for training/grooming), plus a "+ New Appointment for this day" CTA that opens an inline quick-add form (dog / service / time / notes / boarding end-date / grooming type).
+- ✅ **Training & grooming bookings now timed** — `BookingIn` accepts `time` (HH:MM), `create_booking` persists it, and the `/events` endpoint promotes timed bookings to ISO datetime events with `allDay:false`. Title prefixed with the time. Training defaults to 1-hour duration, grooming 1.5 hours. FullCalendar config: `displayEventTime`, 12-hour meridiem format.

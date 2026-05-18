@@ -233,6 +233,7 @@ class BookingIn(BaseModel):
     service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
     grooming_type: Optional[Literal["bath", "nail_trim"]] = None  # only relevant when service_type=grooming
     end_date: Optional[str] = None  # for boarding
+    time: Optional[str] = ""  # HH:MM appointment time — used for training/grooming/photography
     notes: Optional[str] = ""
     kennel: Optional[str] = ""
     dropoff_time: Optional[str] = ""
@@ -856,6 +857,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "status": status_val,
         "notes": body.notes or "",
         "kennel": body.kennel or "",
+        "time": body.time or "",
         "dropoff_time": body.dropoff_time or "",
         "pickup_time": body.pickup_time or "",
         "created_at": now_iso(),
@@ -1075,6 +1077,10 @@ class RecurringTemplateIn(BaseModel):
     weekdays: List[int] = Field(min_length=1, max_length=7)  # 0=Mon..6=Sun
     notes: Optional[str] = ""
     default_horizon_weeks: int = Field(default=12, ge=1, le=52)
+    # When the schedule should first kick in. Empty/missing = "today on save".
+    # The Extend endpoint honors this until the schedule has been booked
+    # through at least once, after which it advances normally.
+    start_date: Optional[str] = ""
     active: bool = True
 
 
@@ -1183,7 +1189,15 @@ async def extend_recurring_template(
     today = date.today()
     last = t.get("last_booked_through")
     start_candidate = today
-    if last:
+    # First extend: honor the template's preferred start_date (if any future date)
+    if not last and t.get("start_date"):
+        try:
+            preferred = datetime.fromisoformat(t["start_date"]).date()
+            if preferred > today:
+                start_candidate = preferred
+        except ValueError:
+            pass
+    elif last:
         try:
             start_candidate = max(today, datetime.fromisoformat(last).date() + timedelta(days=1))
         except ValueError:
@@ -3813,11 +3827,16 @@ async def calendar_events(_: dict = Depends(require_admin)):
         if b["service_type"] == "grooming" and b.get("grooming_type"):
             gt = "bath" if b["grooming_type"] == "bath" else "nail trim"
             svc_label = f"grooming · {gt}"
-        events.append({
+        # Training (and grooming) have appointment times — show them on the
+        # calendar by promoting the event from all-day to timed when a time is set.
+        appt_time = (b.get("time") or "").strip()
+        is_timed = bool(appt_time) and b["service_type"] in ("training", "grooming")
+        title = f"{b['dog_name']} ({svc_label})"
+        if is_timed:
+            title = f"{appt_time} · {title}"
+        event = {
             "id": b["id"],
-            "title": f"{b['dog_name']} ({svc_label})",
-            "start": b["date"],
-            "end": end_excl,
+            "title": title,
             "backgroundColor": color,
             "borderColor": color,
             "extendedProps": {
@@ -3825,8 +3844,26 @@ async def calendar_events(_: dict = Depends(require_admin)):
                 "client_name": b["client_name"],
                 "service_type": b["service_type"],
                 "grooming_type": b.get("grooming_type"),
+                "time": appt_time,
             },
-        })
+        }
+        if is_timed:
+            # FullCalendar prefers ISO datetime for timed events
+            try:
+                hh, mm = appt_time.split(":")[0:2]
+                event["start"] = f"{b['date']}T{int(hh):02d}:{int(mm):02d}:00"
+                # Training sessions default to 1 hour, grooming to 1.5 hours.
+                dur = timedelta(hours=1 if b["service_type"] == "training" else 1, minutes=30 if b["service_type"] == "grooming" else 0)
+                end_dt = datetime.fromisoformat(event["start"]) + dur
+                event["end"] = end_dt.isoformat()
+                event["allDay"] = False
+            except Exception:
+                event["start"] = b["date"]
+                event["end"] = end_excl
+        else:
+            event["start"] = b["date"]
+            event["end"] = end_excl
+        events.append(event)
     return events
 
 

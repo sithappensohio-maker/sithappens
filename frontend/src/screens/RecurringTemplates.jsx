@@ -10,7 +10,7 @@ import { useConfirm } from "../lib/useConfirm";
  * extends start the day AFTER the previously booked window.
  */
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const emptyForm = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "" };
+const emptyForm = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
 
 export default function RecurringTemplates() {
   const confirm = useConfirm();
@@ -39,7 +39,7 @@ export default function RecurringTemplates() {
     setForm({
       dog_id: r.dog_id, service_type: r.service_type, weekdays: r.weekdays || [],
       notes: r.notes || "", default_horizon_weeks: r.default_horizon_weeks || 12,
-      active: r.active !== false, label: r.label || "",
+      active: r.active !== false, label: r.label || "", start_date: r.start_date || "",
     });
     setErr(""); setOpen(true);
   };
@@ -182,6 +182,15 @@ export default function RecurringTemplates() {
                     </button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Start on</label>
+                <input type="date" value={form.start_date}
+                       onChange={(e)=>setForm({...form, start_date: e.target.value})}
+                       data-testid="template-start-date"
+                       style={{colorScheme:"dark"}}
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                <p className="text-[11px] text-gray-500 normal-case mt-1">Leave blank to start today. Useful for "starts next month" patterns. After the first extend, future ones pick up where the last one left off automatically.</p>
               </div>
               <div>
                 <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Default extend horizon (weeks)</label>
