@@ -185,6 +185,30 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
         </div>
 
         <div className="p-5 sm:p-6 space-y-4">
+          <div className="grid grid-cols-3 gap-2 text-center" data-testid="onboarding-how-it-works">
+            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+              <div className="w-9 h-9 mx-auto rounded-full bg-shGreen/15 text-shGreen flex items-center justify-center">
+                <i className="fas fa-camera text-base"/>
+              </div>
+              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">1. Upload Cert</p>
+              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Snap a photo + type the expiry date</p>
+            </div>
+            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+              <div className="w-9 h-9 mx-auto rounded-full bg-shBlue/15 text-shBlue flex items-center justify-center">
+                <i className="fas fa-check-double text-base"/>
+              </div>
+              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">2. We Verify</p>
+              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Quick admin check — usually within a few hours</p>
+            </div>
+            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+              <div className="w-9 h-9 mx-auto rounded-full bg-shOrange/15 text-shOrange flex items-center justify-center">
+                <i className="fas fa-calendar-check text-base"/>
+              </div>
+              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">3. Book Stays</p>
+              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Daycare, boarding & training open up</p>
+            </div>
+          </div>
+
           {hasNoDogs ? (
             <div className="bg-bgBase border border-bgHover rounded-lg p-4">
               <div className="flex items-start gap-3">
