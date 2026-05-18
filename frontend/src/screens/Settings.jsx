@@ -277,26 +277,62 @@ function VaccinesPanel({ s, save, saving }) {
   );
 }
 
+// Palette of brand-friendly tag colors. Each entry has bg + border + text classes
+// plus an inline hex so we can build a pill that matches the chosen color.
+const TAG_COLORS = [
+  { key: "green",  hex: "#8cc63f" },
+  { key: "blue",   hex: "#00a9e0" },
+  { key: "orange", hex: "#f26522" },
+  { key: "purple", hex: "#a855f7" },
+  { key: "pink",   hex: "#ec4899" },
+  { key: "red",    hex: "#ef4444" },
+  { key: "yellow", hex: "#facc15" },
+  { key: "slate",  hex: "#94a3b8" },
+];
+const DEFAULT_TAG_COLOR = "#8cc63f";
+
 function TagsPanel({ s, save, saving }) {
-  // mood_tags can be legacy List[str] OR new List[{label, icon}]. Normalize.
-  const toObj = (t) => (typeof t === "string" ? { label: t, icon: "" } : { label: t?.label || "", icon: t?.icon || "" });
+  // mood_tags can be legacy List[str] OR new List[{label, icon, color}]. Normalize.
+  const toObj = (t) => (typeof t === "string"
+    ? { label: t, icon: "", color: "" }
+    : { label: t?.label || "", icon: t?.icon || "", color: t?.color || "" });
   const [tags, setTags] = useState(() => (s.mood_tags || []).map(toObj));
   const [newT, setNewT] = useState("");
-  const [pickerOpen, setPickerOpen] = useState(-1); // index of tag whose picker is open
+  const [pickerOpen, setPickerOpen] = useState(-1); // index of tag whose icon picker is open
   return (
     <div className="space-y-4" data-testid="tags-panel">
-      <Section title="Pup Report Card Mood Tags" subtitle="These appear as pill buttons on the report card modal. Pick an optional icon for each one.">
+      <Section title="Pup Report Card Mood Tags" subtitle="These appear as pill buttons on the report card modal. Pick an optional icon AND color for each one.">
         <div className="flex flex-wrap gap-2">
-          {tags.map((t,i)=>(
-            <div key={i} className="relative flex items-center gap-1.5 bg-shGreen/15 text-shGreen border border-shGreen/40 rounded-full pl-2 pr-1 py-1">
+          {tags.map((t,i)=>{
+            const color = t.color || DEFAULT_TAG_COLOR;
+            return (
+            <div key={i}
+                 className="relative flex items-center gap-1.5 rounded-full pl-2 pr-1 py-1 border"
+                 style={{ backgroundColor: `${color}26`, borderColor: `${color}66`, color }}>
               <button type="button" onClick={()=>setPickerOpen(pickerOpen === i ? -1 : i)}
                       data-testid={`tag-icon-toggle-${i}`}
-                      className="w-7 h-7 rounded-full grid place-items-center bg-bgBase border border-shGreen/30 hover:border-shGreen text-shGreen">
+                      className="w-7 h-7 rounded-full grid place-items-center bg-bgBase border hover:opacity-80"
+                      style={{ borderColor: `${color}55`, color }}>
                 <i className={`fas ${t.icon || "fa-plus"} text-xs`}/>
               </button>
               <input value={t.label} onChange={(e)=>{const c=[...tags]; c[i]={...c[i], label:e.target.value}; setTags(c);}}
-                     className="bg-transparent text-[15px] font-black uppercase tracking-widest outline-none w-32" data-testid={`tag-${i}`} />
-              <button onClick={()=>{setTags(tags.filter((_,j)=>j!==i)); setPickerOpen(-1);}} className="text-shGreen/70 hover:text-red-400 px-1">×</button>
+                     className="bg-transparent text-[15px] font-black uppercase tracking-widest outline-none w-32"
+                     style={{ color }}
+                     data-testid={`tag-${i}`} />
+              {/* Inline color swatch row */}
+              <div className="flex items-center gap-0.5 px-1" data-testid={`tag-color-row-${i}`}>
+                {TAG_COLORS.map(c => (
+                  <button key={c.key} type="button"
+                          onClick={()=>{const arr=[...tags]; arr[i]={...arr[i], color:c.hex}; setTags(arr);}}
+                          title={c.key}
+                          data-testid={`tag-${i}-color-${c.key}`}
+                          className={`w-4 h-4 rounded-full border ${color === c.hex ? "ring-2 ring-white/70 ring-offset-1 ring-offset-bgPanel" : "border-white/20"}`}
+                          style={{ backgroundColor: c.hex }}/>
+                ))}
+              </div>
+              <button onClick={()=>{setTags(tags.filter((_,j)=>j!==i)); setPickerOpen(-1);}}
+                      className="hover:text-red-400 px-1"
+                      style={{ color: `${color}b3` }}>×</button>
               {pickerOpen === i && (
                 <div className="absolute z-30 top-full left-0 mt-1 w-72">
                   <IconPicker value={t.icon}
@@ -306,16 +342,17 @@ function TagsPanel({ s, save, saving }) {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
         <div className="flex gap-2 mt-4">
           <input value={newT} onChange={(e)=>setNewT(e.target.value)} placeholder="Add a tag (e.g. Loves the Hose)"
                  className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-sm text-white" data-testid="new-tag-input" />
-          <button onClick={()=>{ if(newT.trim()){ setTags([...tags, { label: newT.trim(), icon: "" }]); setNewT(""); } }} data-testid="add-tag"
+          <button onClick={()=>{ if(newT.trim()){ setTags([...tags, { label: newT.trim(), icon: "", color: "" }]); setNewT(""); } }} data-testid="add-tag"
                   className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest">+ Add Tag</button>
         </div>
       </Section>
-      <SaveBar onSave={()=>save({ mood_tags: tags.filter(t=>t.label.trim()).map(t=>({ label: t.label.trim(), icon: t.icon || "" })) })} saving={saving} />
+      <SaveBar onSave={()=>save({ mood_tags: tags.filter(t=>t.label.trim()).map(t=>({ label: t.label.trim(), icon: t.icon || "", color: t.color || "" })) })} saving={saving} />
     </div>
   );
 }

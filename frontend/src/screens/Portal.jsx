@@ -1273,11 +1273,13 @@ export default function Portal() {
                       {b.report_card.mood_tags?.length > 0 && (
                         <div className="flex flex-wrap gap-1 mb-3">
                           {b.report_card.mood_tags.map(m => {
-                            // Look up icon from public settings catalog. Tags can be legacy strings or {label, icon}.
+                            // Look up icon + color from public settings catalog. Tags can be legacy strings or {label, icon, color}.
                             const def = (pubSettings?.mood_tags || []).find(t => (typeof t === "string" ? t === m : t?.label === m));
                             const icon = (def && typeof def === "object") ? def.icon : "";
+                            const hex = (def && typeof def === "object" && def.color) ? def.color : "#8cc63f";
                             return (
-                              <span key={m} className="text-[15px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-1 rounded-full inline-flex items-center gap-1.5">
+                              <span key={m} className="text-[15px] font-black uppercase tracking-widest px-2 py-1 rounded-full inline-flex items-center gap-1.5 border"
+                                    style={{ backgroundColor: `${hex}26`, borderColor: `${hex}55`, color: hex }}>
                                 {icon && <i className={`fas ${icon}`}/>}
                                 <span>{m}</span>
                               </span>

@@ -422,9 +422,11 @@ function ReportCardModal({ booking, moodTags, onClose }) {
   const [moods, setMoods] = useState(existing.mood_tags || []);
   const [note, setNote] = useState(existing.note || "");
   const [saving, setSaving] = useState(false);
-  // Normalize the tag catalog so each entry has {label, icon}, regardless
+  // Normalize the tag catalog so each entry has {label, icon, color}, regardless
   // of whether settings stored it as a string (legacy) or object (new).
-  const tagDefs = (moodTags || []).map(t => (typeof t === "string" ? { label: t, icon: "" } : { label: t?.label || "", icon: t?.icon || "" })).filter(t => t.label);
+  const tagDefs = (moodTags || []).map(t => (typeof t === "string"
+    ? { label: t, icon: "", color: "" }
+    : { label: t?.label || "", icon: t?.icon || "", color: t?.color || "" })).filter(t => t.label);
 
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 3 - photos.length);
@@ -474,13 +476,20 @@ function ReportCardModal({ booking, moodTags, onClose }) {
           <div>
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Mood / Highlights</label>
             <div className="mt-2 flex flex-wrap gap-2">
-              {tagDefs.map(({ label, icon }) => (
-                <button key={label} onClick={()=>toggleMood(label)} data-testid={`mood-${label.replace(/\s/g,'-')}`}
-                        className={`px-3 py-2 rounded-full text-[14px] font-black uppercase tracking-widest border transition flex items-center gap-2 ${moods.includes(label)?"bg-shGreen text-bgHeader border-shGreen":"bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/50"}`}>
-                  {icon && <i className={`fas ${icon}`}/>}
-                  <span>{label}</span>
-                </button>
-              ))}
+              {tagDefs.map(({ label, icon, color }) => {
+                const hex = color || "#8cc63f";
+                const selected = moods.includes(label);
+                return (
+                  <button key={label} onClick={()=>toggleMood(label)} data-testid={`mood-${label.replace(/\s/g,'-')}`}
+                          className="px-3 py-2 rounded-full text-[14px] font-black uppercase tracking-widest border transition flex items-center gap-2"
+                          style={selected
+                            ? { backgroundColor: hex, color: "#0f172a", borderColor: hex }
+                            : { backgroundColor: "transparent", color: hex, borderColor: `${hex}55` }}>
+                    {icon && <i className={`fas ${icon}`}/>}
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 

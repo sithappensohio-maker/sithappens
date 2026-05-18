@@ -596,3 +596,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Mood Tags**: `SettingsIn.mood_tags` relaxed to `Optional[List[Any]]` so both legacy `List[str]` AND new `List[{label, icon}]` round-trip cleanly through Pydantic. Backend verified accepting both shapes. Settings → Mood Tags now shows each tag as a pill with an icon-toggle button → clicking it opens an inline IconPicker grid (auto-open). Saving persists the `{label, icon}` shape; legacy string tags are normalized on first render. Dashboard ReportCardModal renders the icon next to each selectable tag pill. Portal report-card history looks up the icon from `pubSettings.mood_tags` and renders it inline.
 - ✅ Backward compatible: report-card storage still saves `mood_tags: List[str]` (label-only); the icon is metadata on the *catalog*, not on each saved record.
 - ✅ Lint clean. Smoke-tested in preview: 16 pack icons rendered on the Credit Packs list, all 8 default mood tags rendered with icons, picker grid auto-opens on click, selecting `fa-heart` updates a tag successfully.
+
+
+## Sprint 51 — Per-Mood-Tag Color (2026-02)
+- ✅ **Tag shape extended** to `{label, icon, color}` (color is an optional hex). Pydantic `Optional[List[Any]]` covers it without further schema changes.
+- ✅ **Settings → Mood Tags**: each tag pill now renders an inline **8-color swatch row** (green / blue / orange / purple / pink / red / yellow / slate). Selected swatch gets a white ring; pill background + border + label color all derive from the chosen hex. Default = shGreen if not set.
+- ✅ **Dashboard ReportCardModal**: selectable mood pills now render with each tag's own color (inverts to filled bg + dark text when selected).
+- ✅ **Portal report-card history**: saved mood tags look up their icon + color from `pubSettings.mood_tags` and render with matching tint.
+- ✅ End-to-end verified: set Playful=purple / Calm=orange / Napped Well=blue, saved, full page reload — colors persisted and re-rendered correctly. Lint clean.
