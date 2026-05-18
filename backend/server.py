@@ -459,6 +459,17 @@ async def update_client(client_id: str, body: ClientIn, _: dict = Depends(requir
     existing["portal_email"] = u["email"] if u else None
     return existing
 
+@api.get("/clients/{client_id}", response_model=ClientOut)
+async def get_client(client_id: str, _: dict = Depends(require_admin)):
+    """Fetch a single client doc. Used by the checkout modal to read live
+    credit balances when deciding whether to offer 'pay with credits'."""
+    existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Client not found")
+    u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
+    existing["portal_email"] = u["email"] if u else None
+    return existing
+
 @api.delete("/clients/{client_id}")
 async def delete_client(client_id: str, _: dict = Depends(require_admin)):
     await db.clients.delete_one({"id": client_id})
@@ -1735,6 +1746,42 @@ async def check_out(
         update["credit_service_type"] = None
         update["credits_deducted"] = 0
         # Fall through to base-price logic below.
+
+    # ── Case C: NEW — booking had NO pre-deduction (e.g. client had no credits when
+    # they booked, OR admin created the booking) BUT now the admin wants to settle
+    # it from credits at checkout. Consume from the client's available pool.
+    elif not had_credit and use_credits and not booking.get("actual_price"):
+        svc_type = booking.get("service_type") or "daycare"
+        # Boarding consumes one credit per night; everything else is 1 credit.
+        nights = 1
+        if svc_type == "boarding":
+            try:
+                start_d = date.fromisoformat(booking.get("date"))
+                end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
+                nights = max(1, (end_d - start_d).days or 1)
+            except Exception:
+                nights = 1
+        balance_field = _credit_balance_field(svc_type) or "credits"
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        available = int((client_doc or {}).get(balance_field) or 0)
+        if available < nights:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Client only has {available} {svc_type} credit(s) — need {nights}. Uncheck 'Pay with credits' to charge instead.",
+            )
+        credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
+        await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
+        update["credit_value"] = round(float(credit_value), 2)
+        update["credit_lot_ids"] = lot_ids
+        update["credit_service_type"] = svc_type
+        update["credits_deducted"] = nights
+        update["actual_price"] = round(float(credit_value), 2)
+        update["payment_status"] = "paid"
+        update["payment_method"] = "credits"
+        update["paid_at"] = ts
+        # Skip the "will_charge" branch below — we're done settling this booking.
+        had_credit = True
+        use_credits = True
 
     # Determine base price / service tag for paid-today bookings (no credits, or credits refunded).
     will_charge = use_credits is False or not had_credit

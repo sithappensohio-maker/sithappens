@@ -656,3 +656,15 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Root cause #1**: `TrophyBadge.jsx` only checked `t.custom_image` (the catalog field). Awarded rows snapshot the same image under `trophy_custom_image` (different field). Fixed: badge now checks `trophy_custom_image || custom_image`.
 - ✅ **Root cause #2**: when admin uploaded a custom image AFTER the trophy was already awarded, prior awards stayed stuck on the icon. Fixed: `PUT /trophies/catalog/{code}` now propagates the `custom_image` change to ALL existing `awarded_trophies` for that code in one update_many. Also ran a one-time backfill in preview to fix historical data (4 awards updated).
 - ✅ Smoke-tested in preview: 5 trophy badges now display their uploaded images on the Clients list (Friend Bringer, Pack Builder visible on Alex Owner + other cards). Placeholder icon still shows for trophies where the admin hasn't uploaded an image — exactly the requested behavior.
+
+
+## Sprint 59 — "Deduct credits at checkout" option (2026-02)
+- ✅ **Gap**: prior flow auto-deducted credits at booking time. If a client booked WITHOUT credits then bought a pack later (or admin created the booking), there was no way to settle the booking from credits at checkout — admin was stuck collecting cash.
+- ✅ **Backend** (`server.py` `check_out`): added "Case C" — when `use_credits=True` AND no pre-deduction existed AND no `actual_price` is set, consume credits from the client's matching pool (daycare/training/boarding) at checkout. Boarding deducts one credit per night (from `end_date - date`); others deduct 1. Uses the existing FIFO `_consume_credit_lots`, sets `payment_method="credits"`, marks booking paid.
+- ✅ **Backend**: also added the missing `GET /clients/{client_id}` endpoint (was implicit gap — only PUT/DELETE existed).
+- ✅ **Frontend** (`Dashboard.jsx` `CheckoutModal`):
+  - Fetches the client's live balance on mount.
+  - When booking has NO pre-deduction AND client has enough credits in the matching pool, shows two new radio options under "Base service": **"Deduct N credits now"** (with "Client has X available · FIFO from oldest pack") vs **"Charge as regular service"**. Default = charge (so admin actively opts into using credits).
+  - If client has SOME but not enough credits (e.g. 2 boarding credits but a 3-night booking), the existing "no credits on file" copy now also includes an inline orange notice explaining the gap.
+  - Submit logic no longer overrides `payment_method` when settling from credits at checkout (was leaking `cash` over Case C).
+- ✅ End-to-end verified: created a no-credit booking for Alex Owner, called `/check-out` with `use_credits=true` → his daycare balance went 14 → 13, booking marked paid via credits, FIFO lot consumed. UI screenshot confirms both radio options render on the checkout modal with the live balance ("13 available").

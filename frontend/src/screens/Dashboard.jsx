@@ -522,7 +522,43 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const creditPool = booking.credit_service_type || booking.service_type || "daycare";
   const creditsDeducted = booking.credits_deducted || 0;
 
-  const [useCredits, setUseCredits] = useState(hadCredit); // default keep credits if they exist
+  // For boarding: how many nights this booking covers (1 if no end_date).
+  const nightsNeeded = (() => {
+    if (booking.service_type !== "boarding") return 1;
+    try {
+      const s = new Date(booking.date), e = new Date(booking.end_date || booking.date);
+      const n = Math.round((e - s) / (1000 * 60 * 60 * 24)) || 1;
+      return Math.max(1, n);
+    } catch { return 1; }
+  })();
+  // Fetch client balance so we can offer "pay with credits" at checkout when
+  // the booking was made without any pre-deduction (e.g. client had no credits
+  // at booking time, then bought a pack later). Without this admins were stuck
+  // having to take cash even though the client now had credits.
+  const [clientBal, setClientBal] = useState(null); // { credits, training_credits, boarding_credits }
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/clients/${booking.client_id}`);
+        if (alive) setClientBal({
+          credits: data.credits || 0,
+          training_credits: data.training_credits || 0,
+          boarding_credits: data.boarding_credits || 0,
+        });
+      } catch (e) { console.warn("client balance fetch failed", e); }
+    })();
+    return () => { alive = false; };
+  }, [booking.client_id]);
+
+  const balField = booking.service_type === "training" ? "training_credits"
+                  : booking.service_type === "boarding" ? "boarding_credits"
+                  : "credits";
+  const available = clientBal ? (clientBal[balField] || 0) : 0;
+  // Can the admin opt to settle this booking from credits NOW?
+  const canPayWithCredits = !hadCredit && !booking.actual_price && available >= nightsNeeded;
+
+  const [useCredits, setUseCredits] = useState(hadCredit); // default: keep credits if pre-deducted
   const [payMethod, setPayMethod] = useState("cash");
   const [basePrice, setBasePrice] = useState(""); // empty = use service default
   // Boarding-only: extra nights beyond the original booking
@@ -584,10 +620,17 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         body.extra_nights_use_credits = extraUseCredits;
         if (extraRate !== "") body.extra_nights_rate = Number(extraRate);
       }
-      if (!useCredits || !hadCredit) {
+      if (!useCredits) {
+        // Paying today (no credits). Fold operator's chosen payment method.
         body.payment_method = payMethod;
-        body.payment_status = "paid"; // operator typing payment method means they're collecting now
+        body.payment_status = "paid";
         if (basePrice !== "") body.base_price = Number(basePrice);
+      } else if (!hadCredit) {
+        // Settling from credits AT CHECKOUT (Case C on the backend). The server
+        // will consume credits + flag payment_method="credits" itself. Don't
+        // pass payment_method/payment_status here — that would override Case C
+        // and (worse) leave the booking flagged as cash-paid with no credit
+        // consumption.
       } else if (extraNightsCharge > 0) {
         // Owner is keeping main-stay credits, but the extra nights still need to be billed
         body.payment_method = payMethod;
@@ -632,8 +675,32 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 </div>
               </label>
             </div>
+          ) : canPayWithCredits ? (
+            <div className="space-y-2">
+              <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-credit-at-checkout">
+                <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
+                <div className="flex-1">
+                  <p className="text-sm font-black text-white">Deduct {nightsNeeded} {booking.service_type} credit{nightsNeeded === 1 ? "" : "s"} now</p>
+                  <p className="text-[12px] text-gray-400">Client has <span className="text-shGreen font-black">{available}</span> available · FIFO from oldest pack</p>
+                </div>
+              </label>
+              <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${!useCredits ? "border-shBlue bg-shBlue/10" : "border-bgHover hover:border-shBlue/50"}`} data-testid="opt-no-credit-at-checkout">
+                <input type="radio" checked={!useCredits} onChange={()=>setUseCredits(false)} className="mt-1 accent-shBlue" />
+                <div className="flex-1">
+                  <p className="text-sm font-black text-white">Charge as regular service</p>
+                  <p className="text-[12px] text-gray-400">Collect payment today. Credits stay untouched.</p>
+                </div>
+              </label>
+            </div>
           ) : (
-            <p className="text-[13px] text-gray-300">No credits on file for this booking — collecting payment today.</p>
+            <p className="text-[13px] text-gray-300">
+              No credits on file for this booking — collecting payment today.
+              {clientBal && available > 0 && available < nightsNeeded && (
+                <span className="block mt-1 text-[12px] text-shOrange">
+                  Client has {available} {booking.service_type} credit{available === 1 ? "" : "s"} but {nightsNeeded} {nightsNeeded === 1 ? "is" : "are"} needed.
+                </span>
+              )}
+            </p>
           )}
         </div>
 
