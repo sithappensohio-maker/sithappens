@@ -10,6 +10,7 @@ import { ProgramEditor } from "./Programs";
  *  Shows active enrollment, history, and enroll/custom controls.
  * ============================================================ */
 export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
+  const confirm = useConfirm();
   const [meta, setMeta] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [programs, setPrograms] = useState([]);
@@ -48,6 +49,21 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
+  // Soft-withdraw an active enrollment. Confirms first because this clears
+  // the dog's run-sheet pointer; the record stays in History and can be
+  // resumed later with the existing "Resume" button.
+  const unenroll = async (enrollment) => {
+    const snap = enrollment.program_snapshot || {};
+    const ok = await confirm({
+      title: `Unenroll ${dogName} from ${snap.name || "this program"}?`,
+      body: `Progress (${enrollment.mastered_goals}/${enrollment.total_goals} mastered) and trainer notes are preserved in History. You can resume this enrollment any time.`,
+      confirmText: "Unenroll",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await updateStatus(enrollment.id, "withdrawn");
+  };
+
   const updateTarget = async (eid, target_completion_date) => {
     try { await api.put(`/dogs/${dogId}/programs/${eid}`, { target_completion_date }); load(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -82,6 +98,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
         active.map(e => (
           <EnrollmentCard key={e.id} enrollment={e} typeMeta={typeByKey[e.program_snapshot.type]} dogId={dogId}
                           onStatus={(s)=>updateStatus(e.id, s)}
+                          onUnenroll={()=>unenroll(e)}
                           onTargetDate={(d)=>updateTarget(e.id, d)}
                           onGoal={(gid, patch)=>setGoal(e.id, gid, patch)} />
         ))
@@ -133,7 +150,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onTargetDate, onGoal }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onGoal }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
@@ -153,6 +170,8 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onTargetDate, o
                     className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[11px] sm:text-[12px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
             <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
                     className="text-gray-400 hover:text-white text-[11px] sm:text-[12px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
+            <button onClick={onUnenroll} data-testid={`unenroll-${enrollment.id}`}
+                    className="text-red-400 hover:text-red-300 text-[11px] sm:text-[12px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
           </div>
         </div>
         {snap.focus && (

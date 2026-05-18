@@ -30,8 +30,28 @@ export function ProgramsPanel() {
     setErr("");
     try {
       const payload = { ...edit };
-      if (edit.id) await api.put(`/programs/${edit.id}`, payload);
-      else await api.post("/programs", payload);
+      if (edit.id) {
+        // Editing existing program: ask whether to push changes to dogs already
+        // enrolled. Cascading preserves goal scores for surviving goal IDs and
+        // drops progress for any removed goals.
+        let cascade = false;
+        try {
+          const { data } = await api.get(`/programs/${edit.id}/active-enrollments-count`);
+          if ((data?.count || 0) > 0) {
+            cascade = await confirm({
+              title: `Apply changes to ${data.count} enrolled dog${data.count > 1 ? "s" : ""}?`,
+              body: "Yes: every active enrollment updates to the new program. Trainer scores and notes for goals that still exist are preserved; progress on any removed goals is dropped.\n\nNo: only future enrollments use the new version. Currently-enrolled dogs keep their existing program snapshot.",
+              confirmText: "Yes, update enrolled dogs",
+              cancelText: "No, only future enrollments",
+              tone: "warning",
+            });
+          }
+        } catch { /* count endpoint failure isn't fatal — just skip cascade */ }
+        const url = `/programs/${edit.id}${cascade ? "?cascade=true" : ""}`;
+        await api.put(url, payload);
+      } else {
+        await api.post("/programs", payload);
+      }
       setEdit(null); load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
   };

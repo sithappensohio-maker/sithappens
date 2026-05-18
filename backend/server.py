@@ -815,8 +815,9 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if not (is_admin and body.override_vaccines):
         await _validate_dog_vaccines(dog, required)
 
-    # Advance-booking limit (clients only)
-    if user.get("role") != "admin":
+    # Advance-booking limit (clients only) — exempt daycare so regulars can
+    # set up long-running recurring schedules without bumping the global cap.
+    if user.get("role") != "admin" and body.service_type != "daycare":
         max_adv = int(rules.get("max_advance_days", 60))
         if max_adv > 0:
             limit_date = (date.today() + timedelta(days=max_adv)).isoformat()
@@ -3072,9 +3073,25 @@ async def create_program(body: ProgramIn, _: dict = Depends(require_admin)):
     doc.pop("_id", None)
     return doc
 
+@api.get("/programs/{program_id}/active-enrollments-count")
+async def program_active_enrollments_count(program_id: str, _: dict = Depends(require_admin)):
+    """Lightweight count used by the program editor to ask the admin whether to
+    cascade an edit onto currently-enrolled dogs."""
+    count = await db.dog_programs.count_documents({"program_id": program_id, "status": "active"})
+    return {"count": count}
+
+
+
 
 @api.put("/programs/{program_id}")
-async def update_program(program_id: str, body: ProgramIn, _: dict = Depends(require_admin)):
+async def update_program(program_id: str, body: ProgramIn, cascade: bool = False, _: dict = Depends(require_admin)):
+    """Edit a program. When `cascade=true`, also pushes the updated snapshot to
+    every **active** enrollment of this program:
+      • Goals that still exist keep their score / notes / status.
+      • New goals start at "not_started".
+      • Removed goals have their progress dropped (per user choice).
+    Completed / withdrawn / on-hold enrollments are left untouched so trainer
+    history stays trustworthy."""
     existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -3082,6 +3099,37 @@ async def update_program(program_id: str, body: ProgramIn, _: dict = Depends(req
     update["modules"] = _stamp_ids(update.get("modules") or [])
     await db.programs.update_one({"id": program_id}, {"$set": update})
     existing.update(update)
+
+    cascaded = 0
+    if cascade:
+        new_modules = update.get("modules") or []
+        # All goal IDs still present in the updated program
+        surviving_goal_ids = {g.get("id") for m in new_modules for g in (m.get("goals") or []) if g.get("id")}
+        new_snapshot_base = {
+            "name": update["name"],
+            "type": update["type"],
+            "slug": update.get("slug"),
+            "description": update.get("description", ""),
+            "focus": update.get("focus", ""),
+            "format": update.get("format"),
+            "modules": new_modules,
+            "completion_rule": update.get("completion_rule") or _default_completion_rule(),
+        }
+        cursor = db.dog_programs.find({"program_id": program_id, "status": "active"}, {"_id": 0})
+        async for enr in cursor:
+            old_progress = enr.get("goal_progress") or {}
+            # Drop progress entries for goals that no longer exist; init new goals.
+            merged = _empty_progress(new_modules)
+            for gid, prog in old_progress.items():
+                if gid in surviving_goal_ids and gid in merged:
+                    merged[gid] = prog
+            await db.dog_programs.update_one(
+                {"id": enr["id"]},
+                {"$set": {"program_snapshot": new_snapshot_base, "goal_progress": merged}},
+            )
+            cascaded += 1
+
+    existing["_cascaded_enrollments"] = cascaded
     return existing
 
 
