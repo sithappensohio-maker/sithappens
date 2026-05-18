@@ -172,6 +172,59 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_bulk_booking(
+    bookings: list,
+    client: dict,
+    *,
+    service_type: str = "",
+    skipped: list | None = None,
+    kind: str = "multi-dates",
+) -> None:
+    """A client just created multiple bookings in one shot (recurring schedule
+    or pick-specific-days). Send ONE summary email instead of N spammy alerts.
+    `kind` is a short label like 'recurring' or 'multi-dates' that shows in the
+    subject so the operator knows at a glance what flow triggered it.
+    """
+    if not ADMIN_NOTIFICATION_EMAIL or not bookings:
+        return
+    svc_label = _service_label(service_type or bookings[0].get("service_type", "")) if bookings else "—"
+    dog_name = bookings[0].get("dog_name", "—") if bookings else "—"
+    # Up to 10 dates inline; rest summarized.
+    dates = [b.get("date") for b in bookings if b.get("date")]
+    dates_preview = ", ".join(dates[:10])
+    if len(dates) > 10:
+        dates_preview += f" … (+{len(dates) - 10} more)"
+    rows = [
+        ("Client", client.get("name") or bookings[0].get("client_name", "—")),
+        ("Dog", dog_name),
+        ("Service", svc_label),
+        ("Created", str(len(bookings))),
+        ("Dates", dates_preview or "—"),
+        ("Phone", client.get("phone") or "—"),
+        ("Email", client.get("email") or "—"),
+    ]
+    if skipped:
+        skipped_lines = [f"{s.get('date','?')} — {s.get('reason','?')}" for s in skipped[:6]]
+        if len(skipped) > 6:
+            skipped_lines.append(f"… (+{len(skipped) - 6} more)")
+        rows.append(("Skipped", "<br/>".join(skipped_lines)))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    kind_label = "recurring schedule" if kind == "recurring" else "multi-date booking"
+    html = _wrap(
+        title=f"🐾 {len(bookings)} New Bookings · {dog_name}",
+        intro=f"<strong>{client.get('name') or 'A client'}</strong> just created a {kind_label} for <strong>{dog_name}</strong>. All bookings are pending your approval.",
+        rows=rows,
+        cta_text="Open Bookings" if cta_url else None,
+        cta_url=cta_url,
+        show_install=False,
+    )
+    await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        f"{len(bookings)} new bookings · {dog_name} · {svc_label}",
+        html,
+    )
+
+
 async def notify_admin_new_client(user: dict, client: dict) -> None:
     """A new client just self-registered — let the operator know."""
     if not ADMIN_NOTIFICATION_EMAIL:

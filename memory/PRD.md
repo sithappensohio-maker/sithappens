@@ -631,3 +631,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Edit was silently failing visually** (same root cause as the earlier "+ New Service" bug): clicking Edit on a pack row only updated the inline form that lived below a long list. Converted New/Edit into a proper centered modal — instant visual feedback, sticky header with × close, name/qty/price/icon/color all pre-filled when entering edit mode. New "+ New Pack" header button added; row Edit buttons now wire to `openEdit(p)`.
 - ✅ **Removed packs now disappear**: dropped `include_inactive: true` from the list fetch. Custom packs (hard-deleted) and default packs (soft-deleted → `active=false`) both stop showing on the catalog. Lots already issued from removed packs still redeem normally — only the catalog row hides.
 - ✅ Smoke-tested in preview: row count went 16 → 14 after dropping inactive; Edit modal opens with "Single Day Drop-In" pre-filled and `fa-sun` icon preview showing live.
+
+
+## Sprint 56 — Bulk booking = ONE admin email (2026-02)
+- ✅ **Bug**: client-driven multi-date and recurring booking flows fired `notify_admin_new_booking` for every single generated date. A "M/W/F · 4 weeks" recurring would spam the operator with 12 emails in a row.
+- ✅ **Fix**: introduced a `_suppress_admin_booking_email` `contextvars.ContextVar` flag. `create_booking` checks the flag and skips the per-booking admin alert when set. Both `/bookings/recurring` and `/bookings/multi-dates` now wrap their loop in `set(True)` / `finally reset`, then send ONE summary email (`notify_admin_bulk_booking`) after the loop.
+- ✅ **New email template** (`email_service.notify_admin_bulk_booking`) — branded summary listing client, dog, service, dates (first 10 inline + "(+N more)"), and any skipped dates with reasons. Subject prefixed `N new bookings · Dog · Service`.
+- ✅ Verified end-to-end via curl + log inspection: multi-dates with 3 dates → 1 email; recurring M/W/F × 2 weeks creating 6 bookings → 1 email. Prior to the fix the same calls produced 3-4 emails in 700ms.
+- ✅ Admin-created bulk bookings (Quick Check-in, etc.) still trigger zero emails (the suppression is on top of the existing "skip self-triggered admin actions" guard). Client first-booking celebration unchanged — fires at most once per client lifetime.

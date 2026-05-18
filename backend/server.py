@@ -8,6 +8,7 @@ import uuid
 import asyncio
 import secrets
 import logging
+import contextvars
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
@@ -22,6 +23,7 @@ from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from email_service import (
     notify_admin_new_booking,
+    notify_admin_bulk_booking,
     notify_admin_new_client,
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
@@ -84,6 +86,15 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Context-var flag used by bulk-booking endpoints (recurring, multi-dates) to
+# suppress the per-booking admin notification. After the bulk loop completes,
+# the bulk endpoint sends a SINGLE summary email instead — so the admin gets
+# one alert per bulk action, not one per generated date.
+_suppress_admin_booking_email: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "suppress_admin_booking_email", default=False
+)
 
 
 async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
@@ -897,7 +908,9 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     doc.pop("_id", None)
     # Best-effort notification: tell admin when a client books from the portal.
     # Admin-created bookings (via Quick Check-in etc.) don't trigger an alert to themselves.
-    if not is_admin:
+    # In bulk-create flows (recurring / multi-dates), this is suppressed and the
+    # bulk endpoint sends ONE summary email after the loop.
+    if not is_admin and not _suppress_admin_booking_email.get():
         try:
             await notify_admin_new_booking(doc, client)
         except Exception:
@@ -1038,18 +1051,33 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
 
     created = []
     skipped = []
-    cur = start
-    while cur <= end:
-        if cur.weekday() in weekdays:
-            try:
-                bk = await create_booking(
-                    BookingIn(dog_id=body.dog_id, date=cur.isoformat(), service_type=body.service_type, notes=body.notes or ""),
-                    user,
-                )
-                created.append(bk)
-            except HTTPException as e:
-                skipped.append({"date": cur.isoformat(), "reason": e.detail})
-        cur += timedelta(days=1)
+    # Suppress per-booking admin email so the operator doesn't get N alerts in a row;
+    # we send a single summary email below after the loop completes.
+    token = _suppress_admin_booking_email.set(True)
+    try:
+        cur = start
+        while cur <= end:
+            if cur.weekday() in weekdays:
+                try:
+                    bk = await create_booking(
+                        BookingIn(dog_id=body.dog_id, date=cur.isoformat(), service_type=body.service_type, notes=body.notes or ""),
+                        user,
+                    )
+                    created.append(bk)
+                except HTTPException as e:
+                    skipped.append({"date": cur.isoformat(), "reason": e.detail})
+            cur += timedelta(days=1)
+    finally:
+        _suppress_admin_booking_email.reset(token)
+    # ONE summary email — only for non-admin (client portal) actions.
+    if user.get("role") != "admin" and created:
+        try:
+            client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
+            await notify_admin_bulk_booking(
+                created, client, service_type=body.service_type, skipped=skipped, kind="recurring"
+            )
+        except Exception:
+            pass
     return {"created": created, "skipped": skipped}
 
 
@@ -5221,7 +5249,11 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
     {created: [...], skipped: [{date, reason}]} so the UI can show exactly
     which days made it and which were rejected (capacity, vaccine, etc).
     Each booking goes through the standard create_booking validations, so
-    capacity + vaccines + waiver still apply."""
+    capacity + vaccines + waiver still apply.
+
+    Per-booking admin notifications are suppressed; a single summary email
+    fires after the loop so the operator gets ONE alert per multi-date action.
+    """
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -5230,22 +5262,35 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
 
     created: List[Dict] = []
     skipped: List[Dict] = []
-    for d in sorted(set(body.dates)):
+    token = _suppress_admin_booking_email.set(True)
+    try:
+        for d in sorted(set(body.dates)):
+            try:
+                inn = BookingIn(
+                    dog_id=body.dog_id,
+                    date=d,
+                    service_type=body.service_type,
+                    notes=body.notes or "",
+                    override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
+                    override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
+                )
+                booking = await create_booking(inn, user)
+                created.append(booking)
+            except HTTPException as e:
+                skipped.append({"date": d, "reason": e.detail})
+            except Exception as e:
+                skipped.append({"date": d, "reason": str(e)[:200]})
+    finally:
+        _suppress_admin_booking_email.reset(token)
+    # ONE summary email — only for non-admin (client portal) actions.
+    if user.get("role") != "admin" and created:
         try:
-            inn = BookingIn(
-                dog_id=body.dog_id,
-                date=d,
-                service_type=body.service_type,
-                notes=body.notes or "",
-                override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
-                override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
+            client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
+            await notify_admin_bulk_booking(
+                created, client, service_type=body.service_type, skipped=skipped, kind="multi-dates"
             )
-            booking = await create_booking(inn, user)
-            created.append(booking)
-        except HTTPException as e:
-            skipped.append({"date": d, "reason": e.detail})
-        except Exception as e:
-            skipped.append({"date": d, "reason": str(e)[:200]})
+        except Exception:
+            pass
     return {"created": created, "skipped": skipped, "summary": f"{len(created)} booked, {len(skipped)} skipped"}
 
 
