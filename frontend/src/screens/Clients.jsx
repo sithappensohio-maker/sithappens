@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { compressImage } from "../lib/imageCompress";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import { startImpersonation } from "../lib/impersonation";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
-const emptyDog = { name:"", breed:"", age_y:0, age_m:0, sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"" };
+const emptyDog = { name:"", breed:"", age_y:0, age_m:0, sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -78,7 +79,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         let dogWarning = "";
         if (addDog && dog.name?.trim()) {
           try {
-            await api.post("/dogs", {
+            const dogResp = await api.post("/dogs", {
               owner_id: data.id,
               name: dog.name.trim(),
               breed: dog.breed || "",
@@ -93,6 +94,21 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               },
               notes: dog.notes || "",
             });
+            // Attach any cert photos the admin pasted/uploaded in the modal.
+            // Each cert is its own POST so a single failure doesn't break the
+            // whole new-client flow.
+            const dogId = dogResp.data?.id;
+            if (dogId) {
+              for (const v of ["rabies", "bordetella", "dhpp"]) {
+                const photo = dog[`${v}_photo`];
+                const expires_on = dog[v];
+                if (photo && expires_on) {
+                  try {
+                    await api.post(`/dogs/${dogId}/vaccine-cert`, { vaccine: v, expires_on, photo });
+                  } catch { /* surfaced below if all certs fail; harmless if just one fails */ }
+                }
+              }
+            }
           } catch (e) {
             dogWarning = formatErr(e.response?.data?.detail) || "Dog couldn't be added — add it from the Dogs screen.";
           }
@@ -385,28 +401,13 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                       </div>
                     </div>
                     <div>
-                      <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates</p>
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div>
-                          <label className="text-[11px] text-gray-500 normal-case">Rabies</label>
-                          <input type="date" value={dog.rabies} onChange={(e)=>setDog({...dog, rabies:e.target.value})}
-                                 data-testid="quick-dog-rabies-input" style={{colorScheme:"dark"}}
-                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-gray-500 normal-case">Bordetella</label>
-                          <input type="date" value={dog.bordetella} onChange={(e)=>setDog({...dog, bordetella:e.target.value})}
-                                 style={{colorScheme:"dark"}}
-                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-gray-500 normal-case">DHPP</label>
-                          <input type="date" value={dog.dhpp} onChange={(e)=>setDog({...dog, dhpp:e.target.value})}
-                                 style={{colorScheme:"dark"}}
-                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-                        </div>
+                      <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates + Optional Cert Photos</p>
+                      <div className="space-y-2">
+                        <VaccineCertRow vaccine="rabies" label="Rabies" dog={dog} setDog={setDog} testIdBase="quick-dog-rabies"/>
+                        <VaccineCertRow vaccine="bordetella" label="Bordetella" dog={dog} setDog={setDog} testIdBase="quick-dog-bordetella"/>
+                        <VaccineCertRow vaccine="dhpp" label="DHPP" dog={dog} setDog={setDog} testIdBase="quick-dog-dhpp"/>
                       </div>
-                      <p className="text-[11px] text-gray-500 normal-case mt-1.5">Leave blank if you don't have them yet — the client will be prompted to upload through their portal.</p>
+                      <p className="text-[11px] text-gray-500 normal-case mt-1.5"><i className="fas fa-keyboard text-shBlue mr-1"/>Tip: copy a cert photo from your phone/email then press <kbd className="bg-bgPanel border border-bgHover rounded px-1.5 py-0.5 text-[10px] mx-0.5">Ctrl/Cmd + V</kbd> to drop it on the next empty cert. Leave blank to skip — the client will be prompted on their portal.</p>
                     </div>
                     <Input label="Notes (optional)" value={dog.notes} onChange={(v)=>setDog({...dog, notes:v})}
                            testId="quick-dog-notes-input" />
@@ -890,3 +891,80 @@ export function Input({ label, value, onChange, type="text", color="text-gray-50
 }
 
 export { Modal };
+
+/** Vaccine row inside the quick-add-dog section: date input + optional cert
+ *  photo with file-picker, drag-drop, and clipboard paste (Cmd/Ctrl+V) entry
+ *  points. Used during the New Client flow so the admin can attach the cert
+ *  the moment the client texts/emails it during sign-up. */
+function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
+  const photoKey = `${vaccine}_photo`;
+  const photo = dog[photoKey] || "";
+  const date = dog[vaccine] || "";
+  const [err, setErr] = useState("");
+
+  const ingest = async (file) => {
+    if (!file) return;
+    setErr("");
+    try {
+      const compressed = await compressImage(file, { maxWidth: 1400, maxHeight: 1400, quality: 0.78 });
+      setDog((d) => ({ ...d, [photoKey]: compressed }));
+    } catch {
+      setErr("Couldn't read that image.");
+    }
+  };
+
+  const onFile = (e) => ingest(e.target.files?.[0]);
+  const onDrop = (e) => {
+    e.preventDefault();
+    const f = e.dataTransfer.files?.[0];
+    if (f) ingest(f);
+  };
+  const onPasteRow = async (e) => {
+    const items = e.clipboardData?.items || [];
+    for (const it of items) {
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        e.preventDefault();
+        ingest(it.getAsFile());
+        return;
+      }
+    }
+  };
+
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded p-2"
+         onPaste={onPasteRow} onDragOver={(e)=>e.preventDefault()} onDrop={onDrop}
+         data-testid={`${testIdBase}-row`}>
+      <div className="grid grid-cols-12 gap-2 items-center">
+        <div className="col-span-4">
+          <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
+        </div>
+        <div className="col-span-5">
+          <input type="date" value={date}
+                 onChange={(e)=>setDog({...dog, [vaccine]: e.target.value})}
+                 data-testid={`${testIdBase}-input`} style={{colorScheme:"dark"}}
+                 className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+        </div>
+        <div className="col-span-3 flex justify-end gap-1.5">
+          {photo ? (
+            <>
+              <img src={photo} alt={`${label} cert`} className="h-8 w-8 object-cover rounded border border-shGreen/40"
+                   data-testid={`${testIdBase}-preview`} title="Cert attached"/>
+              <button type="button" onClick={()=>setDog((d)=>({...d, [photoKey]: ""}))}
+                      data-testid={`${testIdBase}-photo-clear`}
+                      className="text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 px-1">Clear</button>
+            </>
+          ) : (
+            <label className="bg-bgBase border border-bgHover rounded px-2 py-1 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-shGreen hover:border-shGreen/40 cursor-pointer"
+                   data-testid={`${testIdBase}-photo-label`}>
+              <i className="fas fa-paperclip mr-1"/>Cert
+              <input type="file" accept="image/*" className="hidden" onChange={onFile}
+                     data-testid={`${testIdBase}-photo-input`}/>
+            </label>
+          )}
+        </div>
+      </div>
+      {err && <p className="text-[11px] text-red-400 mt-1 normal-case">{err}</p>}
+    </div>
+  );
+}
+

@@ -544,5 +544,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY
 - `/app/frontend/src/App.js` — Role-based gate
 - `/app/frontend/src/lib/{api,auth}.js` — Axios + AuthContext
+
+## Sprint 44 — Vaccine Cert Attach in New-Client Modal (2026-02)
+- ✅ New admin endpoint `POST /dogs/{dog_id}/vaccine-cert` mirrors the portal cert-upload endpoint. Admin-uploaded certs are auto-marked `reviewed_at` so they skip the Pending Vaccine Reviews queue.
+- ✅ The quick-add-dog vaccine section now uses a per-row `<VaccineCertRow>` with three entry methods for the cert image: file picker, drag-and-drop onto the row, **or paste from clipboard** (`Cmd/Ctrl+V` while focus is on the row). Thumbnail + Clear button preview after upload.
+- ✅ Save flow chains 4 calls automatically: `POST /clients` → `POST /dogs` → up to 3 `POST /dogs/{id}/vaccine-cert` (one per attached cert) → claim email. A failed cert attach doesn't block the rest.
+- ✅ Cert photos compressed via `compressImage` before transmission to keep payloads small.
+
 - `/app/frontend/src/screens/` — Login, Dashboard, Schedule, Bookings, Clients, Dogs, Portal
 - `/app/memory/test_credentials.md` — Login credentials

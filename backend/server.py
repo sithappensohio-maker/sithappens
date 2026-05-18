@@ -1495,6 +1495,40 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
 
 
+@api.post("/dogs/{dog_id}/vaccine-cert")
+async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(require_admin)):
+    """Admin counterpart to `portal_update_vaccine` — attach a cert photo +
+    expiry the admin already has (e.g. emailed/texted by the client at sign-up).
+    Marked as admin-uploaded so it's considered pre-verified and skips the
+    Pending Vaccine Reviews queue."""
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    try:
+        date.fromisoformat(body.expires_on)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid expiry date")
+    vaccines = dict(dog.get("vaccines") or {})
+    vaccines[body.vaccine] = body.expires_on
+    update_doc: Dict[str, Any] = {"vaccines": vaccines}
+    if body.photo:
+        certs = dict(dog.get("vaccine_certs") or {})
+        certs[body.vaccine] = {
+            "photo": body.photo,
+            "uploaded_at": now_iso(),
+            "uploaded_by": user.get("name", "admin"),
+            "uploaded_by_admin": True,
+            "expires_on": body.expires_on,
+            # Admin-uploaded certs are pre-verified — skip the pending review queue.
+            "reviewed_at": now_iso(),
+            "reviewed_by": user.get("name", "admin"),
+        }
+        update_doc["vaccine_certs"] = certs
+    await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
+    return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
+
+
+
 # -------- Portal self-service: profile + dogs --------
 class PortalProfileIn(BaseModel):
     name: str = Field(min_length=1)
