@@ -581,7 +581,10 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Day Roster modal** on the Schedule: clicking any day opens an overlay listing every booking that day (with service color chips and the assigned time for training/grooming), plus a "+ New Appointment for this day" CTA that opens an inline quick-add form (dog / service / time / notes / boarding end-date / grooming type).
 - ✅ **Training & grooming bookings now timed** — `BookingIn` accepts `time` (HH:MM), `create_booking` persists it, and the `/events` endpoint promotes timed bookings to ISO datetime events with `allDay:false`. Title prefixed with the time. Training defaults to 1-hour duration, grooming 1.5 hours. FullCalendar config: `displayEventTime`, 12-hour meridiem format.
 
-## Sprint 49 — Fix: "+ New Service" button silent (2026-02)
+## Sprint 49 — Fix: "+ New Service" button silent + Icon Picker (2026-02)
 - ✅ **Bug**: in Settings → Services & Programs, clicking the green "+ New Service" button appeared to do nothing — `openNew()` only reset an inline form rendered below a long catalog list, so admins on a mid-height viewport got zero visual feedback.
-- ✅ **Fix** (`ServicesSettings.jsx`): the New/Edit form is now a proper centered modal with overlay, sticky header + close button, and a Cancel CTA. Both "+ New Service" and per-row "Edit" links toggle `open=true`. Save and close both reset state and close the modal. Lint clean, smoke-tested in preview (modal element + name input verified to exist after click).
+- ✅ **Fix** (`ServicesSettings.jsx`): the New/Edit form is now a proper centered modal with overlay, sticky header + close button, and a Cancel CTA. Both "+ New Service" and per-row "Edit" links toggle `open=true`. Save and close both reset state and close the modal.
+- ✅ **Visual Icon Picker**: replaced the raw "fa-tag" text input with an `<IconPicker>` component. Tapping the live icon preview opens a searchable popover grid of ~85 curated FontAwesome icons relevant to dog daycare/training/grooming/payments. Search filters by name and keywords (e.g. "paw", "bath", "training"). Click an icon to set the field value + close the popover.
+- ✅ Lint clean, smoke-tested in preview (modal opens, picker grid opens, "paw" search filters correctly).
+
 
