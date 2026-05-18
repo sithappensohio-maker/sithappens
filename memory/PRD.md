@@ -534,6 +534,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 ## Key Files
 - `/app/backend/server.py` — All endpoints + models
+
+## Sprint 43 — Add Client + Dog in One Modal (2026-02)
+- ✅ The admin **New Client** modal now has an **"Also add a dog"** toggle (default ON) that reveals a compact dog quick-add form: name, breed, age (yrs + mos), sex, fixed status, vaccine expiry dates (rabies/bordetella/dhpp), and notes.
+- ✅ Save flow does it in one shot: `POST /clients` → `POST /dogs` with the new owner_id → claim email → load. If the dog POST fails (e.g. malformed vaccine date), the client still saves and a warn toast surfaces the message so the admin can finish the dog from the Dogs screen.
+- ✅ Section is hidden when **editing** an existing client (keeps the edit modal lean) and only appears on **New Client** creation.
+- ✅ Helper copy under vaccine inputs: "Leave blank if you don't have them yet — the client will be prompted to upload through their portal" — ties cleanly into Sprint 42's onboarding modal.
+
 - `/app/backend/.env` — JWT_SECRET, ADMIN creds, DAYCARE_CAPACITY
 - `/app/frontend/src/App.js` — Role-based gate
 - `/app/frontend/src/lib/{api,auth}.js` — Axios + AuthContext

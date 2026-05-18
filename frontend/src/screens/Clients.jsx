@@ -6,6 +6,7 @@ import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import { startImpersonation } from "../lib/impersonation";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
+const emptyDog = { name:"", breed:"", age_y:0, age_m:0, sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -13,6 +14,11 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
+  // Quick-add dog inside the "New Client" modal so the admin doesn't have to
+  // bounce over to the Dogs screen for every new sign-up. Only relevant when
+  // creating a brand-new client.
+  const [addDog, setAddDog] = useState(true);
+  const [dog, setDog] = useState(emptyDog);
   const [portalOpen, setPortalOpen] = useState(null); // client id
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
   const [sellOpen, setSellOpen] = useState(null); // client object
@@ -47,8 +53,8 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm(empty); setOpen(true); setErr(""); };
-  const openEdit = (c) => { setEditing(c); setForm({...empty, ...c}); setOpen(true); setErr(""); };
+  const openNew = () => { setEditing(null); setForm(empty); setDog(emptyDog); setAddDog(true); setOpen(true); setErr(""); };
+  const openEdit = (c) => { setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr(""); };
 
   useEffect(() => {
     if (!focusId || clients.length === 0) return;
@@ -64,17 +70,54 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         setOpen(false); load();
       } else {
         const { data } = await api.post("/clients", form);
+
+        // Quick-add dog: if the admin filled in a dog name, create the dog
+        // record using the new client's id. We swallow this error inline so the
+        // client still gets saved even if (say) a vaccine date is malformed —
+        // the dog can always be added from the Dogs screen.
+        let dogWarning = "";
+        if (addDog && dog.name?.trim()) {
+          try {
+            await api.post("/dogs", {
+              owner_id: data.id,
+              name: dog.name.trim(),
+              breed: dog.breed || "",
+              age_y: parseInt(dog.age_y) || 0,
+              age_m: parseInt(dog.age_m) || 0,
+              sex: dog.sex || "Male",
+              fixed: dog.fixed || "No",
+              vaccines: {
+                rabies: dog.rabies || "",
+                bordetella: dog.bordetella || "",
+                dhpp: dog.dhpp || "",
+              },
+              notes: dog.notes || "",
+            });
+          } catch (e) {
+            dogWarning = formatErr(e.response?.data?.detail) || "Dog couldn't be added — add it from the Dogs screen.";
+          }
+        }
+
         setOpen(false);
         // If the new client has an email, auto-send a claim-your-account email.
         if (form.email) {
           try {
             await api.post(`/clients/${data.id}/send-claim-email`);
-            setClaimToast({ clientId: data.id, msg: `Claim email sent to ${form.email}`, tone: "ok" });
+            const msg = dogWarning
+              ? `Client + claim email sent. ${dogWarning}`
+              : `Claim email sent to ${form.email}` + (addDog && dog.name?.trim() ? ` · ${dog.name.trim()} added` : "");
+            setClaimToast({ clientId: data.id, msg, tone: dogWarning ? "warn" : "ok" });
             setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 5000);
           } catch (e) {
             // Don't block client creation if email fails — surface a warning instead.
             setClaimToast({ clientId: data.id, msg: "Client saved, but the claim email couldn't be sent. Use the button to retry.", tone: "warn" });
           }
+        } else if (dogWarning) {
+          setClaimToast({ clientId: data.id, msg: dogWarning, tone: "warn" });
+          setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 5000);
+        } else if (addDog && dog.name?.trim()) {
+          setClaimToast({ clientId: data.id, msg: `${dog.name.trim()} added`, tone: "ok" });
+          setTimeout(() => setClaimToast(t => t && t.clientId === data.id ? null : t), 4000);
         }
         load();
       }
@@ -297,6 +340,81 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 </span>
               </button>
             </div>
+            {!editing && (
+              <div className="border-t border-bgHover pt-4 -mx-1" data-testid="quick-add-dog-section">
+                <button type="button" onClick={()=>setAddDog(v=>!v)} data-testid="quick-add-dog-toggle"
+                        className={`w-full flex items-center justify-between gap-3 rounded border px-3 py-2.5 transition ${addDog ? "bg-shGreen/10 border-shGreen/50" : "bg-bgBase border-bgHover hover:border-shGreen/40"}`}>
+                  <div className="flex items-center gap-3 text-left">
+                    <i className={`fas fa-paw text-lg w-6 text-center ${addDog ? "text-shGreen" : "text-gray-500"}`}/>
+                    <div>
+                      <p className={`text-[13px] font-black uppercase tracking-widest ${addDog ? "text-shGreen" : "text-white"}`}>Also add a dog</p>
+                      <p className="text-[11px] text-gray-500 normal-case tracking-normal">Saves a trip to the Dogs screen for new sign-ups.</p>
+                    </div>
+                  </div>
+                  <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${addDog ? "bg-shGreen/30 text-shGreen" : "bg-bgHover text-gray-400"}`}>{addDog ? "On" : "Off"}</span>
+                </button>
+
+                {addDog && (
+                  <div className="mt-3 space-y-3 bg-bgBase border border-bgHover rounded-lg p-4">
+                    <Input label="Dog Name" color="text-shGreen" value={dog.name}
+                           onChange={(v)=>setDog({...dog, name:v})} testId="quick-dog-name-input" />
+                    <div className="grid grid-cols-2 gap-3">
+                      <Input label="Breed" value={dog.breed} onChange={(v)=>setDog({...dog, breed:v})} testId="quick-dog-breed-input" />
+                      <div className="grid grid-cols-2 gap-2">
+                        <Input label="Age (yrs)" type="number" value={dog.age_y} onChange={(v)=>setDog({...dog, age_y:parseInt(v)||0})} />
+                        <Input label="Age (mos)" type="number" value={dog.age_m} onChange={(v)=>setDog({...dog, age_m:parseInt(v)||0})} />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
+                        <select value={dog.sex} onChange={(e)=>setDog({...dog, sex:e.target.value})}
+                                data-testid="quick-dog-sex-select"
+                                className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Fixed / Altered</label>
+                        <select value={dog.fixed} onChange={(e)=>setDog({...dog, fixed:e.target.value})}
+                                className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                          <option value="No">No</option>
+                          <option value="Yes">Yes</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-[11px] text-gray-500 normal-case">Rabies</label>
+                          <input type="date" value={dog.rabies} onChange={(e)=>setDog({...dog, rabies:e.target.value})}
+                                 data-testid="quick-dog-rabies-input" style={{colorScheme:"dark"}}
+                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500 normal-case">Bordetella</label>
+                          <input type="date" value={dog.bordetella} onChange={(e)=>setDog({...dog, bordetella:e.target.value})}
+                                 style={{colorScheme:"dark"}}
+                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] text-gray-500 normal-case">DHPP</label>
+                          <input type="date" value={dog.dhpp} onChange={(e)=>setDog({...dog, dhpp:e.target.value})}
+                                 style={{colorScheme:"dark"}}
+                                 className="w-full mt-0.5 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-gray-500 normal-case mt-1.5">Leave blank if you don't have them yet — the client will be prompted to upload through their portal.</p>
+                    </div>
+                    <Input label="Notes (optional)" value={dog.notes} onChange={(v)=>setDog({...dog, notes:v})}
+                           testId="quick-dog-notes-input" />
+                    <p className="text-[11px] text-gray-500 normal-case"><i className="fas fa-circle-info text-shBlue mr-1"/>Feeding, medications, training skills, and photos can be added from the Dogs screen after save.</p>
+                  </div>
+                )}
+              </div>
+            )}
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
               <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
