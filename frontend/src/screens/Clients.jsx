@@ -4,9 +4,10 @@ import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
+import Avatar from "../components/Avatar";
 import { startImpersonation } from "../lib/impersonation";
 
-const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
+const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
@@ -198,7 +199,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               <button onClick={()=>openEdit(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
               <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
             </div>
-            <h4 className="text-lg font-black text-white uppercase tracking-tight pr-16">{c.name}</h4>
+            <div className="flex items-center gap-3 pr-16">
+              <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shBlue/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
+              <h4 className="text-lg font-black text-white uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+            </div>
             <div className="mt-2 space-y-1 text-xs text-gray-400">
               {c.phone && <p><i className="fas fa-phone w-4 text-shBlue" /> {c.phone}</p>}
               {c.email && <p><i className="fas fa-envelope w-4 text-shBlue" /> {c.email}</p>}
@@ -313,6 +317,28 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         <Modal title={editing?"Edit Client":"New Client"} onClose={()=>setOpen(false)}>
           <div className="space-y-4">
             <Input label="Name" value={form.name} onChange={(v)=>setForm({...form, name:v})} testId="client-name-input" />
+            {/* Profile photo — shown as an avatar on the Clients list card. */}
+            <div className="flex items-center gap-3">
+              <Avatar src={form.photo} icon="fa-user" size="lg" ring="border-shBlue/40" testid="client-photo-preview"/>
+              <div className="flex-1">
+                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Profile Photo</label>
+                <div className="flex items-center gap-2 mt-1">
+                  <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="client-photo-upload-btn">
+                    <i className="fas fa-upload mr-1"/>{form.photo ? "Replace" : "Upload"}
+                    <input type="file" accept="image/*" className="hidden" data-testid="client-photo-input"
+                           onChange={async (e) => {
+                             const f = e.target.files?.[0];
+                             if (!f) return;
+                             const dataUrl = await compressImage(f, { maxWidth: 600, quality: 0.8 });
+                             setForm((s) => ({ ...s, photo: dataUrl }));
+                             e.target.value = "";
+                           }}/>
+                  </label>
+                  {form.photo && <button type="button" onClick={()=>setForm({...form, photo:""})} className="text-red-400 text-xs font-black uppercase">Remove</button>}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1 normal-case">Optional. Auto-compressed. Falls back to a placeholder icon if empty.</p>
+              </div>
+            </div>
             <Input label="Address" value={form.address} onChange={(v)=>setForm({...form, address:v})} />
             <div className="grid grid-cols-2 gap-4">
               <Input label="Phone" value={form.phone} onChange={(v)=>setForm({...form, phone:v})} />

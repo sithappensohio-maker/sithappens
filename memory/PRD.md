@@ -639,3 +639,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **New email template** (`email_service.notify_admin_bulk_booking`) — branded summary listing client, dog, service, dates (first 10 inline + "(+N more)"), and any skipped dates with reasons. Subject prefixed `N new bookings · Dog · Service`.
 - ✅ Verified end-to-end via curl + log inspection: multi-dates with 3 dates → 1 email; recurring M/W/F × 2 weeks creating 6 bookings → 1 email. Prior to the fix the same calls produced 3-4 emails in 700ms.
 - ✅ Admin-created bulk bookings (Quick Check-in, etc.) still trigger zero emails (the suppression is on top of the existing "skip self-triggered admin actions" guard). Client first-booking celebration unchanged — fires at most once per client lifetime.
+
+
+## Sprint 57 — Client Profile Avatars (2026-02)
+- ✅ **Avatar component extracted** to `/components/Avatar.jsx` (round, 3 sizes, configurable ring color, icon fallback). Reusable for any "user-ish" UI later.
+- ✅ **Backend**: added `photo: Optional[str] = ""` to `ClientIn` (base64 data URL). Stored on the client doc and round-tripped via `PUT /api/clients/{id}` and `POST /api/clients`.
+- ✅ **Frontend**:
+  - Clients list now shows a round avatar next to each client's name (shBlue ring). Falls back to `fa-user` placeholder when no photo is uploaded.
+  - Edit Client modal got a "Profile Photo" row directly under Name: live avatar preview + Upload/Replace + Remove buttons. Uses the existing `compressImage` helper (max 600px, quality 0.8) so payloads stay small.
+- ✅ Dogs already had per-dog `photo` rendering on cards — unchanged.
+- ✅ Lint clean. Smoke-tested in preview: 47 client avatars render as placeholders; edit modal shows the upload field with helper text.

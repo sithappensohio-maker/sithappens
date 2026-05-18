@@ -160,6 +160,7 @@ class ClientIn(BaseModel):
     training_credits: int = 0  # 1-on-1 / lesson credits
     boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
     referred_by_code: Optional[str] = None  # set on creation if referred by another client
+    photo: Optional[str] = ""  # base64 data URL of the client's profile photo (small avatar). Optional.
     photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
     photo_gallery_pin: Optional[str] = ""  # per-client PIN required to download photos from the gallery
     photo_gallery_has_new: bool = False  # admin-set nudge: pulses a "NEW" badge on the portal gallery CTA
