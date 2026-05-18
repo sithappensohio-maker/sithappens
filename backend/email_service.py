@@ -625,3 +625,83 @@ async def send_account_claim(
         cta_url=claim_url,
     )
     await _send(to_email, subject, html)
+
+
+
+async def notify_client_dog_birthday(client: dict, dog: dict) -> None:
+    """Wish the owner a happy birthday for their dog. Uses the dog's first
+    photo (if any) as a hero image. No discount code — just a card."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    dog_name = (dog.get("name") or "your pup").strip()
+    breed = (dog.get("breed") or "").strip()
+    first_name = (client.get("name") or "there").split(" ")[0]
+    photos = dog.get("photos") or []
+    hero_html = ""
+    if photos and isinstance(photos[0], str) and photos[0]:
+        hero_html = (
+            f'<div style="margin:-28px -32px 20px -32px;background:#0f172a;">'
+            f'<img src="{photos[0]}" alt="{dog_name}" '
+            f'style="display:block;width:100%;max-height:300px;object-fit:cover;" />'
+            f"</div>"
+        )
+    intro = (
+        f"{hero_html}"
+        f"Hi {first_name} — it's a special day! 🎂<br/><br/>"
+        f"All of us at Sit Happens want to wish <strong>{dog_name}</strong> "
+        f"the happiest birthday. Whether it's their 1st or their 15th, every "
+        f"birthday with a great pup is one worth celebrating."
+    )
+    rows = [
+        ("Birthday Pup", dog_name + (f" · {breed}" if breed else "")),
+        ("From", "The Sit Happens crew 🐾"),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"🎉 Happy birthday, {dog_name}!",
+        intro=intro,
+        rows=rows,
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        to_email,
+        f"🎂 Happy birthday, {dog_name}!",
+        html,
+    )
+
+
+async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expiring: list) -> None:
+    """Heads-up that one or more of a dog's vaccines expires in ~30 days.
+    `vaccines_expiring` is [{"name": "Rabies", "expires_on": "2026-06-15"}, ...]."""
+    to_email = client.get("email", "")
+    if not to_email or not vaccines_expiring:
+        return
+    dog_name = (dog.get("name") or "your dog").strip()
+    first_name = (client.get("name") or "there").split(" ")[0]
+    list_html = "".join(
+        f'<li style="margin:4px 0;color:#0f172a;"><strong>{v["name"]}</strong> — expires {v["expires_on"]}</li>'
+        for v in vaccines_expiring
+    )
+    intro = (
+        f"Hi {first_name}, a quick heads-up — <strong>{dog_name}</strong>'s "
+        f"vaccines are coming up for renewal in the next 30 days. Please book "
+        f"your vet visit and upload the updated record through your portal so "
+        f"we never have to turn {dog_name} away at drop-off."
+        f'<ul style="margin:14px 0 0 18px;padding:0;">{list_html}</ul>'
+    )
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    rows = [("Dog", dog_name), ("Renewals due", str(len(vaccines_expiring)))]
+    html = _wrap(
+        title=f"📋 Vaccine renewal coming up for {dog_name}",
+        intro=intro,
+        rows=rows,
+        cta_text="Upload Updated Record" if cta_url else None,
+        cta_url=cta_url,
+    )
+    await _send(
+        to_email,
+        f"📋 {dog_name}: vaccine renewal in 30 days",
+        html,
+    )

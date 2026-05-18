@@ -513,6 +513,15 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Portal CTA "See Your Pup In Action" gets a pulsing orange "NEW" pill, an orange glow shadow, and switched copy ("Fresh photos just dropped!") whenever the flag is set.
 - ✅ New endpoint `POST /api/portal/gallery/mark-seen` auto-clears the flag the moment the client clicks the gallery link (fire-and-forget on the client; optimistically clears the badge locally without a reload). Idempotent.
 
+## Sprint 41 — Recurring Schedules + Daily Automation (2026-02)
+- ✅ **Recurring Schedule Templates** (#4): new admin sidebar entry **"Recurring"** lets you save per-dog weekly cadences (Daisy · M/W/F daycare) and roll the schedule forward N weeks with one click. Reuses the existing `/bookings/recurring` engine; tracks `last_booked_through` so successive extends start the day after the previously booked window. New endpoints: `GET/POST/PUT/DELETE /api/recurring-templates` + `POST /api/recurring-templates/{id}/extend`.
+- ✅ **Daily Jobs runner** (`daily_jobs.py`): lightweight lazy scheduler — triggered the first time the admin loads `/dashboard/stats` each UTC day, gated by `system_runs` so it fires at most once per day. Idempotent per-target via `notification_log` collection. No external scheduler process needed.
+- ✅ **Dog Birthday Cards** (#7): on the dog's birthday (MM-DD match), owner gets a celebratory email featuring the dog's first photo as a hero image. De-duped per dog per year.
+- ✅ **Vaccine Renewal Nudge** (#6): when any of `rabies / bordetella / dhpp` expires exactly 30 days from today, the owner gets one consolidated email listing every renewal due, with a CTA to upload the new record. De-duped per (dog, target-date).
+- ✅ **Settings → Email Automation panel**: shows which jobs are on, plus a "Run Daily Jobs Now" button that bypasses the once-per-day gate and shows sent/skipped counts (handy for testing).
+- 🟡 **Parked — S3 photo migration (#10)**: user will set up a Cloudflare R2 account before next session.
+
+
 - ✅ **Fixed Credit Pack "Add" crash**: FastAPI 422 returns `detail` as an array of error objects; `CreditPacksSettings.jsx` was rendering it raw inside `<p>`, tripping the ErrorBoundary. Added client-side guards (name/qty/price) and routed all server errors through `formatErr` to flatten arrays. Verified empty-name now shows inline "Pack name is required." with the UI staying alive.
 - ✅ **Per-client Photo Gallery Download PIN**: Added `photo_gallery_pin` field to `ClientIn` (backend) and to the Clients admin edit form (next to gallery URL). Portal renders a compact PIN card under "See Your Pup In Action" with monospace-spaced PIN value and a one-click Copy button (`<GalleryPinRow>` in `Portal.jsx`). Blank PIN = row hidden. Shown only when the client also has a gallery URL.
 

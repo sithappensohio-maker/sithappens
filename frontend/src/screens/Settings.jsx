@@ -65,6 +65,7 @@ export default function Settings() {
     { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
     { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
+    { id: "automation", label: "Email Automation", icon: "fa-paper-plane" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
 
@@ -99,6 +100,7 @@ export default function Settings() {
           {tab === "credit_packs" && <CreditPacksSettings />}
           {tab === "commands" && <CommandsPanel />}
           {tab === "backup" && <BackupPanel />}
+          {tab === "automation" && <AutomationPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>
@@ -918,6 +920,73 @@ function CommandsPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+
+function AutomationPanel() {
+  const [busy, setBusy] = useState(false);
+  const [last, setLast] = useState(null);
+  const [err, setErr] = useState("");
+  const run = async () => {
+    setBusy(true); setErr(""); setLast(null);
+    try {
+      const { data } = await api.post("/admin/daily-jobs/run-now");
+      setLast(data?.result || {});
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Run failed");
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-5 max-w-2xl" data-testid="automation-panel">
+      <div>
+        <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Email Automation</h4>
+        <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1 normal-case">Background jobs that run automatically at most once per day, triggered the first time the admin dashboard loads each morning.</p>
+      </div>
+
+      <div className="space-y-3">
+        <div className="bg-bgBase border border-bgHover rounded-lg p-4 flex items-start gap-3">
+          <i className="fas fa-cake-candles text-shGreen text-xl mt-1 w-7 text-center"/>
+          <div className="flex-1">
+            <p className="text-white font-black text-[14px] uppercase tracking-widest">Dog Birthday Cards</p>
+            <p className="text-[12px] text-gray-500 normal-case mt-1">Emails the owner a celebratory card with their dog's photo on the dog's birthday. De-duped per dog per year.</p>
+          </div>
+          <span className="bg-shGreen/15 text-shGreen text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+        </div>
+        <div className="bg-bgBase border border-bgHover rounded-lg p-4 flex items-start gap-3">
+          <i className="fas fa-syringe text-shOrange text-xl mt-1 w-7 text-center"/>
+          <div className="flex-1">
+            <p className="text-white font-black text-[14px] uppercase tracking-widest">Vaccine Renewal Nudge</p>
+            <p className="text-[12px] text-gray-500 normal-case mt-1">30 days before any vaccine expires, the owner gets a single email listing which renewals are due with a link to upload the updated record.</p>
+          </div>
+          <span className="bg-shOrange/15 text-shOrange text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+        </div>
+      </div>
+
+      <div className="bg-bgBase border border-bgHover rounded-lg p-4">
+        <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Manual trigger</p>
+        <p className="text-[12px] text-gray-500 normal-case mt-1">Force-runs all daily jobs right now (clears today's "already ran" flag). Useful for testing.</p>
+        <button onClick={run} disabled={busy} data-testid="run-daily-jobs-btn"
+                className="mt-3 bg-shBlue text-white px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+          {busy ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Running…</> : <><i className="fas fa-play mr-2"/>Run Daily Jobs Now</>}
+        </button>
+        {err && <p className="text-red-400 text-[12px] mt-2 normal-case">{err}</p>}
+        {last && (
+          <div className="mt-3 grid grid-cols-2 gap-3 text-[12px] font-black uppercase tracking-widest">
+            <div className="bg-bgPanel rounded p-3">
+              <p className="text-gray-500">Birthdays</p>
+              <p className="text-shGreen text-[20px]">{last.birthdays?.sent ?? 0}<span className="text-gray-500 text-[12px] ml-1">sent</span></p>
+              <p className="text-gray-600 text-[11px]">{last.birthdays?.skipped ?? 0} skipped</p>
+            </div>
+            <div className="bg-bgPanel rounded p-3">
+              <p className="text-gray-500">Vaccine Renewals</p>
+              <p className="text-shOrange text-[20px]">{last.vaccine_expiry?.sent ?? 0}<span className="text-gray-500 text-[12px] ml-1">sent</span></p>
+              <p className="text-gray-600 text-[11px]">{last.vaccine_expiry?.skipped ?? 0} skipped</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

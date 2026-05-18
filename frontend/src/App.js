@@ -14,6 +14,7 @@ import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Trophies from "./screens/Trophies";
+import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import Claim from "./screens/Claim";
 import GlobalSearch from "./components/GlobalSearch";
@@ -53,6 +54,7 @@ function AdminShell() {
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
+    { id: "recurring", label: "Recurring", icon: "fa-rotate" },
     { id: "clients", label: "Clients", icon: "fa-users" },
     { id: "dogs", label: "Dogs", icon: "fa-paw" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
@@ -131,6 +133,7 @@ function AdminShell() {
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}
+          {tab === "recurring" && <RecurringTemplates />}
           {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}

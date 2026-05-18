@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import uuid
+import asyncio
 import secrets
 import logging
 import bcrypt
@@ -1057,6 +1058,129 @@ async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depe
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
     return booking
+
+
+
+# ────────────────────── Recurring Schedule Templates ──────────────────────
+# Saved presets that bind a dog to a weekly cadence (e.g. Daisy · M/W/F daycare)
+# so the admin can roll the schedule forward N weeks with one click instead of
+# re-entering weekdays + service every quarter. Each "extend" reuses the
+# already-tested `/bookings/recurring` engine under the hood.
+
+class RecurringTemplateIn(BaseModel):
+    dog_id: str
+    label: Optional[str] = ""  # admin-facing nickname, e.g. "Daisy · M/W/F"
+    service_type: Literal["daycare", "training"] = "daycare"
+    weekdays: List[int] = Field(min_length=1, max_length=7)  # 0=Mon..6=Sun
+    notes: Optional[str] = ""
+    default_horizon_weeks: int = Field(default=12, ge=1, le=52)
+    active: bool = True
+
+
+class ExtendTemplateIn(BaseModel):
+    weeks: Optional[int] = None  # if omitted, uses template's default_horizon_weeks
+
+
+@api.get("/recurring-templates")
+async def list_recurring_templates(_: dict = Depends(require_admin)):
+    """All saved recurring schedules across every dog. Each row is enriched
+    with the dog's name + owner so the admin can extend-all from one page."""
+    rows = await db.recurring_templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    dog_ids = list({r["dog_id"] for r in rows if r.get("dog_id")})
+    dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1}).to_list(500)}
+    client_ids = list({d.get("owner_id") for d in dogs.values() if d.get("owner_id")})
+    clients = {c["id"]: c for c in await db.clients.find({"id": {"$in": client_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(500)}
+    for r in rows:
+        dog = dogs.get(r.get("dog_id")) or {}
+        r["dog_name"] = dog.get("name") or "(unknown dog)"
+        r["client_name"] = clients.get(dog.get("owner_id"), {}).get("name") or ""
+    return rows
+
+
+@api.post("/recurring-templates")
+async def create_recurring_template(body: RecurringTemplateIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "id": 1, "name": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["weekdays"] = sorted(set(int(w) for w in doc["weekdays"] if 0 <= int(w) <= 6))
+    if not doc.get("label"):
+        wd_short = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        days = "/".join(wd_short[w] for w in doc["weekdays"])
+        doc["label"] = f"{dog['name']} · {days} {doc['service_type']}"
+    doc["last_booked_through"] = None  # last ISO end-date we extended through
+    doc["created_at"] = now_iso()
+    await db.recurring_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/recurring-templates/{template_id}")
+async def update_recurring_template(template_id: str, body: RecurringTemplateIn, _: dict = Depends(require_admin)):
+    existing = await db.recurring_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    update = body.model_dump()
+    update["weekdays"] = sorted(set(int(w) for w in update["weekdays"] if 0 <= int(w) <= 6))
+    await db.recurring_templates.update_one({"id": template_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+
+@api.delete("/recurring-templates/{template_id}")
+async def delete_recurring_template(template_id: str, _: dict = Depends(require_admin)):
+    await db.recurring_templates.delete_one({"id": template_id})
+    return {"ok": True}
+
+
+@api.post("/recurring-templates/{template_id}/extend")
+async def extend_recurring_template(
+    template_id: str, body: ExtendTemplateIn, user: dict = Depends(require_admin)
+):
+    """Create bookings for this template starting from max(today, last_booked_through+1)
+    forward through `weeks` weeks (default = template.default_horizon_weeks).
+    Idempotent in practice: the underlying `/bookings/recurring` engine refuses
+    to double-book a slot, returning each clash as a `skipped` entry."""
+    t = await db.recurring_templates.find_one({"id": template_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if not t.get("active", True):
+        raise HTTPException(status_code=400, detail="Template is inactive")
+    weeks = int(body.weeks or t.get("default_horizon_weeks") or 12)
+    weeks = max(1, min(weeks, 52))
+    today = date.today()
+    last = t.get("last_booked_through")
+    start_candidate = today
+    if last:
+        try:
+            start_candidate = max(today, datetime.fromisoformat(last).date() + timedelta(days=1))
+        except ValueError:
+            start_candidate = today
+    end = start_candidate + timedelta(weeks=weeks)
+    result = await create_recurring(
+        RecurringBookingIn(
+            dog_id=t["dog_id"],
+            start_date=start_candidate.isoformat(),
+            end_date=end.isoformat(),
+            service_type=t["service_type"],
+            weekdays=t["weekdays"],
+            notes=t.get("notes") or "",
+        ),
+        user,
+    )
+    await db.recurring_templates.update_one(
+        {"id": template_id},
+        {"$set": {"last_booked_through": end.isoformat(), "last_extended_at": now_iso()}},
+    )
+    return {
+        "template_id": template_id,
+        "window": {"from": start_candidate.isoformat(), "to": end.isoformat(), "weeks": weeks},
+        "created": len(result.get("created", [])),
+        "skipped": result.get("skipped", []),
+    }
+
+
 
 
 
@@ -3366,8 +3490,30 @@ async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = 
 
 
 # -------- Dashboard --------
+@api.post("/admin/daily-jobs/run-now")
+async def admin_run_daily_jobs(_: dict = Depends(require_admin)):
+    """Manually trigger the daily-jobs runner (bypasses the once-per-day gate).
+    Useful for testing birthday/vaccine emails on demand. Force-clears today's
+    `last_run` flag so the runner actually fires."""
+    from daily_jobs import maybe_run_daily
+    await db.system_runs.update_one(
+        {"id": "daily"}, {"$set": {"last_run": None}}, upsert=True,
+    )
+    result = await maybe_run_daily(db)
+    return {"ok": True, "result": result}
+
+
+
 @api.get("/dashboard/stats")
 async def dashboard_stats(_: dict = Depends(require_admin)):
+    # Lazy daily-jobs trigger — at most one run per UTC day, fully non-blocking.
+    # Birthday + vaccine-renewal emails fire from here so we don't need
+    # a separate scheduler process for a solo-operator deploy.
+    try:
+        from daily_jobs import maybe_run_daily
+        asyncio.create_task(maybe_run_daily(db))
+    except Exception as e:
+        logger.warning("daily_jobs trigger failed (non-fatal): %s", e)
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
