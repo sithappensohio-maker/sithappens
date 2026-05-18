@@ -580,3 +580,8 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Start-on date** added to `RecurringTemplateIn`. First extend honors it (if in the future); subsequent extends advance from `last_booked_through` as before. Both admin and client recurring UIs have the new date picker with the "leave blank to start today" hint.
 - ✅ **Day Roster modal** on the Schedule: clicking any day opens an overlay listing every booking that day (with service color chips and the assigned time for training/grooming), plus a "+ New Appointment for this day" CTA that opens an inline quick-add form (dog / service / time / notes / boarding end-date / grooming type).
 - ✅ **Training & grooming bookings now timed** — `BookingIn` accepts `time` (HH:MM), `create_booking` persists it, and the `/events` endpoint promotes timed bookings to ISO datetime events with `allDay:false`. Title prefixed with the time. Training defaults to 1-hour duration, grooming 1.5 hours. FullCalendar config: `displayEventTime`, 12-hour meridiem format.
+
+## Sprint 49 — Fix: "+ New Service" button silent (2026-02)
+- ✅ **Bug**: in Settings → Services & Programs, clicking the green "+ New Service" button appeared to do nothing — `openNew()` only reset an inline form rendered below a long catalog list, so admins on a mid-height viewport got zero visual feedback.
+- ✅ **Fix** (`ServicesSettings.jsx`): the New/Edit form is now a proper centered modal with overlay, sticky header + close button, and a Cancel CTA. Both "+ New Service" and per-row "Edit" links toggle `open=true`. Save and close both reset state and close the modal. Lint clean, smoke-tested in preview (modal element + name input verified to exist after click).
+

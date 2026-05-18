@@ -25,6 +25,7 @@ export default function ServicesSettings() {
   const [form, setForm] = useState(emptyService);
   const [err, setErr] = useState("");
   const [seeded, setSeeded] = useState(false);
+  const [open, setOpen] = useState(false); // controls the New/Edit modal
 
   const load = async () => {
     const { data } = await api.get("/services", { params: { include_inactive: true } });
@@ -32,15 +33,16 @@ export default function ServicesSettings() {
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm(emptyService); setErr(""); };
-  const openEdit = (s) => { setEditing(s); setForm({ ...emptyService, ...s }); setErr(""); };
+  const openNew = () => { setEditing(null); setForm(emptyService); setErr(""); setOpen(true); };
+  const openEdit = (s) => { setEditing(s); setForm({ ...emptyService, ...s }); setErr(""); setOpen(true); };
+  const closeModal = () => { setOpen(false); setEditing(null); setForm(emptyService); setErr(""); };
 
   const save = async () => {
     setErr("");
     try {
       if (editing) await api.put(`/services/${editing.id}`, form);
       else await api.post("/services", form);
-      setEditing(null); setForm(emptyService);
+      closeModal();
       load();
     } catch (e) {
       setErr(e.response?.data?.detail || "Save failed");
@@ -116,47 +118,61 @@ export default function ServicesSettings() {
         );
       })}
 
-      {/* New / Edit form */}
-      <div className="bg-bgBase border border-bgHover rounded-lg p-4" data-testid="service-form-panel">
-        <h5 className="text-white font-black text-[14px] uppercase tracking-tight mb-3">{editing ? `Edit · ${editing.name}` : "New Service"}</h5>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Name</label>
-            <input value={form.name} onChange={(e)=>setForm({...form, name:e.target.value})} placeholder="e.g., Private Behavioral Consultation" data-testid="service-name-input"
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Base price (USD)</label>
-            <input type="number" step="0.01" value={form.base_price} onChange={(e)=>setForm({...form, base_price: parseFloat(e.target.value) || 0})} data-testid="service-price-input"
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Category</label>
-            <select value={form.service_type} onChange={(e)=>{
-                       const t = e.target.value;
-                       const meta = SERVICE_TYPES.find(x=>x.key===t);
-                       setForm({...form, service_type: t, color: meta?.color || form.color});
-                     }}
-                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
-              {SERVICE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
-            <input value={form.icon} onChange={(e)=>setForm({...form, icon: e.target.value})} placeholder="fa-tag"
-                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+      {/* New / Edit modal */}
+      {open && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm grid place-items-center p-3 sm:p-6 animate-fade-in"
+             onClick={closeModal}
+             data-testid="service-form-modal">
+          <div onClick={(e)=>e.stopPropagation()}
+               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
+              <h5 className="text-white font-black text-[16px] uppercase italic tracking-tight">{editing ? `Edit · ${editing.name}` : "New Service"}</h5>
+              <button onClick={closeModal} className="text-gray-500 hover:text-white" data-testid="service-form-close">
+                <i className="fas fa-xmark text-xl"/>
+              </button>
+            </div>
+            <div className="p-5" data-testid="service-form-panel">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Name</label>
+                  <input value={form.name} onChange={(e)=>setForm({...form, name:e.target.value})} placeholder="e.g., Private Behavioral Consultation" data-testid="service-name-input"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Base price (USD)</label>
+                  <input type="number" step="0.01" value={form.base_price} onChange={(e)=>setForm({...form, base_price: parseFloat(e.target.value) || 0})} data-testid="service-price-input"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Category</label>
+                  <select value={form.service_type} onChange={(e)=>{
+                             const t = e.target.value;
+                             const meta = SERVICE_TYPES.find(x=>x.key===t);
+                             setForm({...form, service_type: t, color: meta?.color || form.color});
+                           }}
+                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    {SERVICE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
+                  <input value={form.icon} onChange={(e)=>setForm({...form, icon: e.target.value})} placeholder="fa-tag"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </div>
+              </div>
+              {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
+              <div className="flex justify-end gap-2 mt-4">
+                <button onClick={closeModal} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>
+                <button onClick={save} data-testid="save-service-btn"
+                        className="bg-shGreen text-black px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80">
+                  {editing ? "Save Changes" : "Add Service"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-        {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
-        <div className="flex justify-end gap-2 mt-3">
-          {editing && <button onClick={()=>{setEditing(null); setForm(emptyService);}} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-2">Cancel</button>}
-          <button onClick={save} data-testid="save-service-btn"
-                  className="bg-shGreen text-black px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80">
-            {editing ? "Save Changes" : "Add Service"}
-          </button>
-        </div>
-        {seeded && <p className="text-shGreen text-[12px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
-      </div>
+      )}
+      {seeded && <p className="text-shGreen text-[12px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
 
       {/* Training Programs — surfaced as a sixth category inside the unified catalog. */}
       <div className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid="services-category-programs">
