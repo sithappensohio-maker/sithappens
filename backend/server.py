@@ -1083,10 +1083,15 @@ class ExtendTemplateIn(BaseModel):
 
 
 @api.get("/recurring-templates")
-async def list_recurring_templates(_: dict = Depends(require_admin)):
-    """All saved recurring schedules across every dog. Each row is enriched
-    with the dog's name + owner so the admin can extend-all from one page."""
-    rows = await db.recurring_templates.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def list_recurring_templates(user: dict = Depends(get_current_user)):
+    """All saved recurring schedules. Admin sees every dog's; clients see only
+    their own dogs' schedules."""
+    query: Dict[str, Any] = {}
+    is_admin = user.get("role") == "admin"
+    if not is_admin:
+        my_dogs = await db.dogs.find({"owner_id": user.get("client_id")}, {"_id": 0, "id": 1}).to_list(200)
+        query["dog_id"] = {"$in": [d["id"] for d in my_dogs]}
+    rows = await db.recurring_templates.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
     dog_ids = list({r["dog_id"] for r in rows if r.get("dog_id")})
     dogs = {d["id"]: d for d in await db.dogs.find({"id": {"$in": dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1}).to_list(500)}
     client_ids = list({d.get("owner_id") for d in dogs.values() if d.get("owner_id")})
@@ -1098,11 +1103,23 @@ async def list_recurring_templates(_: dict = Depends(require_admin)):
     return rows
 
 
-@api.post("/recurring-templates")
-async def create_recurring_template(body: RecurringTemplateIn, _: dict = Depends(require_admin)):
-    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "id": 1, "name": 1})
+async def _assert_dog_owned_by_client(dog_id: str, user: dict) -> dict:
+    """Returns the dog if the caller is admin or the dog's owner; else 403/404."""
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+    return dog
+
+
+@api.post("/recurring-templates")
+async def create_recurring_template(body: RecurringTemplateIn, user: dict = Depends(get_current_user)):
+    dog = await _assert_dog_owned_by_client(body.dog_id, user)
+    # Clients can't self-book training — recurring training is locked to admin too,
+    # matching the existing portal training-booking restriction.
+    if user.get("role") != "admin" and body.service_type == "training":
+        raise HTTPException(status_code=403, detail="Training schedules are set up by the team — please request a free evaluation.")
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["weekdays"] = sorted(set(int(w) for w in doc["weekdays"] if 0 <= int(w) <= 6))
@@ -1112,16 +1129,30 @@ async def create_recurring_template(body: RecurringTemplateIn, _: dict = Depends
         doc["label"] = f"{dog['name']} · {days} {doc['service_type']}"
     doc["last_booked_through"] = None  # last ISO end-date we extended through
     doc["created_at"] = now_iso()
+    doc["created_by"] = user.get("role") or "client"
     await db.recurring_templates.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
-@api.put("/recurring-templates/{template_id}")
-async def update_recurring_template(template_id: str, body: RecurringTemplateIn, _: dict = Depends(require_admin)):
-    existing = await db.recurring_templates.find_one({"id": template_id}, {"_id": 0})
-    if not existing:
+async def _load_owned_template(template_id: str, user: dict) -> dict:
+    t = await db.recurring_templates.find_one({"id": template_id}, {"_id": 0})
+    if not t:
         raise HTTPException(status_code=404, detail="Template not found")
+    if user.get("role") != "admin":
+        # Ensure the template's dog belongs to this client
+        await _assert_dog_owned_by_client(t["dog_id"], user)
+    return t
+
+
+@api.put("/recurring-templates/{template_id}")
+async def update_recurring_template(template_id: str, body: RecurringTemplateIn, user: dict = Depends(get_current_user)):
+    existing = await _load_owned_template(template_id, user)
+    if user.get("role") != "admin" and body.service_type == "training":
+        raise HTTPException(status_code=403, detail="Training schedules are set up by the team.")
+    # Client can't move a template onto a dog they don't own
+    if body.dog_id != existing["dog_id"]:
+        await _assert_dog_owned_by_client(body.dog_id, user)
     update = body.model_dump()
     update["weekdays"] = sorted(set(int(w) for w in update["weekdays"] if 0 <= int(w) <= 6))
     await db.recurring_templates.update_one({"id": template_id}, {"$set": update})
@@ -1130,22 +1161,21 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
 
 
 @api.delete("/recurring-templates/{template_id}")
-async def delete_recurring_template(template_id: str, _: dict = Depends(require_admin)):
+async def delete_recurring_template(template_id: str, user: dict = Depends(get_current_user)):
+    await _load_owned_template(template_id, user)
     await db.recurring_templates.delete_one({"id": template_id})
     return {"ok": True}
 
 
 @api.post("/recurring-templates/{template_id}/extend")
 async def extend_recurring_template(
-    template_id: str, body: ExtendTemplateIn, user: dict = Depends(require_admin)
+    template_id: str, body: ExtendTemplateIn, user: dict = Depends(get_current_user)
 ):
     """Create bookings for this template starting from max(today, last_booked_through+1)
     forward through `weeks` weeks (default = template.default_horizon_weeks).
     Idempotent in practice: the underlying `/bookings/recurring` engine refuses
     to double-book a slot, returning each clash as a `skipped` entry."""
-    t = await db.recurring_templates.find_one({"id": template_id}, {"_id": 0})
-    if not t:
-        raise HTTPException(status_code=404, detail="Template not found")
+    t = await _load_owned_template(template_id, user)
     if not t.get("active", True):
         raise HTTPException(status_code=400, detail="Template is inactive")
     weeks = int(body.weeks or t.get("default_horizon_weeks") or 12)

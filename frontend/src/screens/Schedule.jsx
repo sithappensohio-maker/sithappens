@@ -27,6 +27,18 @@ export default function Schedule() {
     try { const { data } = await api.get("/events"); setEvents(data); } catch {}
   };
   useEffect(() => { load(); }, []);
+  // Auto-refresh when the user comes back to this tab — covers the case where
+  // they just created bookings on the Recurring screen and switched here.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    const onFocus = () => load();
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   const onDrop = async (info) => {
     const newStart = isoOnly(info.event.start);

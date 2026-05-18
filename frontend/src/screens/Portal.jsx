@@ -18,6 +18,191 @@ import { compressImage } from "../lib/imageCompress";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
+const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const _emptyRecurring = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "" };
+
+/**
+ * Client-facing "My Recurring Schedules" — same model as the admin Recurring
+ * screen, scoped server-side to the calling client's dogs.
+ *
+ * Why a modal: keeps the Portal compact and lets us open it from a Quick Link
+ * without occupying screen real-estate when the client isn't using it.
+ */
+function MyRecurringModal({ dogs, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(_emptyRecurring);
+  const [busy, setBusy] = useState(null);
+  const [toast, setToast] = useState(null);
+  const [err, setErr] = useState("");
+  const [step, setStep] = useState("list"); // "list" | "form"
+
+  const load = async () => {
+    try { const { data } = await api.get("/recurring-templates"); setRows(data); } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Load failed"); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const openNew = () => { setEditing(null); setForm({ ..._emptyRecurring, dog_id: dogs[0]?.id || "" }); setStep("form"); setErr(""); };
+  const openEdit = (r) => {
+    setEditing(r);
+    setForm({
+      dog_id: r.dog_id, service_type: r.service_type,
+      weekdays: r.weekdays || [], notes: r.notes || "",
+      default_horizon_weeks: r.default_horizon_weeks || 12,
+      active: r.active !== false, label: r.label || "",
+    });
+    setStep("form"); setErr("");
+  };
+
+  const save = async () => {
+    setErr("");
+    if (!form.dog_id) { setErr("Pick a dog."); return; }
+    if (!form.weekdays.length) { setErr("Pick at least one weekday."); return; }
+    try {
+      if (editing) await api.put(`/recurring-templates/${editing.id}`, form);
+      else await api.post("/recurring-templates", form);
+      await load(); setStep("list");
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
+  };
+
+  const extend = async (r) => {
+    setBusy(r.id); setToast(null);
+    try {
+      const { data } = await api.post(`/recurring-templates/${r.id}/extend`, {});
+      const skipped = (data.skipped || []).length;
+      setToast({ ok: true, msg: `Booked ${data.created} day${data.created !== 1 ? "s" : ""} through ${data.window?.to}.${skipped ? ` ${skipped} skipped (already booked).` : ""}` });
+      load();
+    } catch (e) {
+      setToast({ ok: false, msg: formatErr(e.response?.data?.detail) || "Extend failed" });
+    } finally { setBusy(null); }
+  };
+
+  const remove = async (r) => {
+    if (!window.confirm(`Delete "${r.label}"? Already-booked sessions remain on the calendar.`)) return;
+    try { await api.delete(`/recurring-templates/${r.id}`); load(); } catch {}
+  };
+
+  const toggleDay = (d) => setForm(f => ({ ...f, weekdays: f.weekdays.includes(d) ? f.weekdays.filter(x => x !== d) : [...f.weekdays, d].sort() }));
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-3 sm:p-6" onClick={onClose} data-testid="my-recurring-modal">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg shadow-2xl max-h-[92vh] overflow-y-auto">
+        <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
+          <div className="flex items-center gap-2 min-w-0">
+            {step === "form" && <button onClick={()=>setStep("list")} className="text-gray-400 hover:text-white"><i className="fas fa-arrow-left"/></button>}
+            <h2 className="text-lg font-black uppercase italic text-white tracking-tight truncate"><i className="fas fa-rotate text-shGreen mr-2"/>{step === "form" ? (editing ? "Edit Schedule" : "New Schedule") : "My Recurring Schedules"}</h2>
+          </div>
+          <button onClick={onClose} data-testid="my-recurring-close" className="text-gray-500 hover:text-white"><i className="fas fa-xmark text-xl"/></button>
+        </div>
+
+        <div className="p-5 space-y-3">
+          {toast && (
+            <div className={`rounded-lg p-3 text-[13px] ${toast.ok ? "bg-shGreen/15 text-shGreen border border-shGreen/40" : "bg-red-500/15 text-red-400 border border-red-500/40"}`}>
+              <i className={`fas ${toast.ok ? "fa-check-circle" : "fa-triangle-exclamation"} mr-2`}/>{toast.msg}
+            </div>
+          )}
+
+          {step === "list" && (
+            <>
+              <p className="text-[12px] text-gray-400 normal-case leading-relaxed">Set up a weekly daycare pattern once (e.g. M/W/F), then tap <strong className="text-white">Extend</strong> any time to roll the next batch of bookings forward.</p>
+              {rows.length === 0 ? (
+                <div className="bg-bgBase border border-dashed border-bgHover rounded-lg p-6 text-center" data-testid="my-recurring-empty">
+                  <i className="fas fa-calendar-week text-gray-600 text-3xl mb-2"/>
+                  <p className="text-white font-black text-[14px] uppercase tracking-widest">No saved schedules yet</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {rows.map(r => (
+                    <div key={r.id} className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid={`my-recurring-row-${r.id}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-white font-black text-[14px] truncate">{r.label}</p>
+                          <div className="flex flex-wrap gap-1 mt-1.5">
+                            {_WD.map((d, i) => (
+                              <span key={i} className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? "bg-shBlue/25 text-shBlue" : "bg-bgHover text-gray-600"}`}>{d}</span>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1.5">
+                            {r.last_booked_through ? <>Booked through <span className="text-white">{r.last_booked_through}</span></> : "Never extended"}
+                          </p>
+                        </div>
+                        <button onClick={()=>extend(r)} disabled={busy === r.id} data-testid={`my-extend-${r.id}`}
+                                className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-40 whitespace-nowrap shrink-0">
+                          {busy === r.id ? <><i className="fas fa-circle-notch fa-spin mr-1"/>…</> : <><i className="fas fa-forward mr-1"/>Extend</>}
+                        </button>
+                      </div>
+                      <div className="flex gap-3 mt-2 text-[11px] font-black uppercase tracking-widest">
+                        <button onClick={()=>openEdit(r)} className="text-shBlue hover:underline">Edit</button>
+                        <button onClick={()=>remove(r)} className="text-red-400 hover:underline">Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={openNew} data-testid="my-recurring-new-btn"
+                      className="w-full bg-shBlue text-white px-4 py-3 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90">
+                <i className="fas fa-plus mr-2"/>New Schedule
+              </button>
+            </>
+          )}
+
+          {step === "form" && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})}
+                        data-testid="my-recurring-dog-select"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  <option value="">— pick a dog —</option>
+                  {dogs.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
+                <div className="flex gap-1 mt-1.5">
+                  {_WD.map((d, i) => (
+                    <button key={i} type="button" onClick={()=>toggleDay(i)}
+                            data-testid={`my-recurring-day-${i}`}
+                            className={`flex-1 py-2 rounded text-[11px] font-black uppercase tracking-widest transition ${form.weekdays.includes(i) ? "bg-shBlue text-white" : "bg-bgBase text-gray-500 hover:bg-bgHover"}`}>
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Default extend window (weeks)</label>
+                <input type="number" min="1" max="52" value={form.default_horizon_weeks}
+                       onChange={(e)=>setForm({...form, default_horizon_weeks: parseInt(e.target.value) || 12})}
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1">How far forward each "Extend" tap should book at once. Default 12 weeks (~3 months).</p>
+              </div>
+              <div>
+                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+                <input value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})}
+                       placeholder="e.g. drop-off after 8am"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+              </div>
+              {err && <p className="text-red-400 text-[12px] normal-case">{err}</p>}
+              <div className="bg-shBlue/10 border border-shBlue/30 rounded p-2.5 text-[11px] text-gray-300 normal-case leading-snug">
+                <i className="fas fa-circle-info text-shBlue mr-1"/>Daycare schedules only. For training schedules, request a free evaluation and our team will set it up for you.
+              </div>
+              <div className="flex justify-end gap-3 pt-1">
+                <button onClick={()=>setStep("list")} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+                <button onClick={save} data-testid="my-recurring-save-btn"
+                        className="bg-shBlue text-white px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90">
+                  {editing ? "Save" : "Create"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
 /**
  * Inner "Download PIN" strip that sits inside the gallery card (below the
  * clickable link), making the relationship between the PIN and the gallery
@@ -429,6 +614,7 @@ export default function Portal() {
   const [publicServices, setPublicServices] = useState([]);
   const [publicPrograms, setPublicPrograms] = useState([]);
   const [showServicesModal, setShowServicesModal] = useState(false);
+  const [showRecurringModal, setShowRecurringModal] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -704,6 +890,17 @@ export default function Portal() {
                       <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">{publicServices.length + publicPrograms.length} services & programs offered · request a quote</p>
                     </div>
                     <i className="fas fa-arrow-right text-shGreen group-hover:translate-x-0.5 transition text-xs mt-1"/>
+                  </button>
+                )}
+                {dogs.length > 0 && (
+                  <button onClick={()=>setShowRecurringModal(true)} data-testid="portal-open-recurring-btn"
+                          className="flex items-start gap-3 bg-gradient-to-br from-shBlue/15 to-purple-500/10 hover:from-shBlue/25 hover:to-purple-500/20 border border-shBlue/40 hover:border-shBlue/60 rounded-lg px-3 py-3 transition group text-left w-full">
+                    <i className="fas fa-rotate text-shBlue text-2xl w-7 text-center mt-0.5"/>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[14px] font-black text-white uppercase tracking-widest">My Recurring Schedules</div>
+                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">Set up M/W/F daycare once · extend 12 weeks in one tap</p>
+                    </div>
+                    <i className="fas fa-arrow-right text-shBlue group-hover:translate-x-0.5 transition text-xs mt-1"/>
                   </button>
                 )}
                 {pubSettings?.client_portal_links?.website_url && (
@@ -1188,6 +1385,7 @@ export default function Portal() {
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
       {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); }} />}
+      {showRecurringModal && <MyRecurringModal dogs={dogs} onClose={()=>setShowRecurringModal(false)} />}
       {onboardingNeeded && !onboardingDismissed && (
         <OnboardingChecklist
           dogs={dogs}
