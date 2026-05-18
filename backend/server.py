@@ -279,6 +279,7 @@ class BookingOut(BaseModel):
     kennel: Optional[str] = ""
     dropoff_time: Optional[str] = ""
     pickup_time: Optional[str] = ""
+    time: Optional[str] = ""  # appointment time slot for training/grooming/photography
     cost: Optional[int] = 0
     grooming_type: Optional[str] = None
     # Income tracking (Sprint 16) — populated when the booking is logged as
@@ -2263,6 +2264,7 @@ class BookingPatchIn(BaseModel):
     kennel: Optional[str] = None
     dropoff_time: Optional[str] = None
     pickup_time: Optional[str] = None
+    time: Optional[str] = None  # appointment time for training/grooming/photography
 
 @api.patch("/bookings/{booking_id}", response_model=BookingOut)
 async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends(require_admin)):

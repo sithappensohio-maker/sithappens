@@ -15,6 +15,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [kennel, setKennel] = useState(existing?.kennel || "");
   const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "");
   const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "");
+  // Distinct appointment time for training/grooming/photography — these are
+  // scheduled SLOTS, not drop-off windows. Persisted on the booking as `time`.
+  const [appointmentTime, setAppointmentTime] = useState(existing?.time || "");
   const [groomingType, setGroomingType] = useState(existing?.grooming_type || "bath");
   const [notes, setNotes] = useState(existing?.notes || "");
   const [checkInNow, setCheckInNow] = useState(defaultCheckIn);
@@ -74,6 +77,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
+          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
         });
       } else {
         const body = {
@@ -85,6 +89,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
+          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
           notes,
           override_vaccines: overrideVaccines,
           override_capacity: overrideCapacity,
@@ -197,18 +202,32 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          {["training", "grooming", "photography"].includes(serviceType) ? (
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
-              <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+              <label className="text-[14px] font-black text-shOrange uppercase tracking-widest">
+                <i className="fas fa-clock mr-2"/>Appointment Time
+              </label>
+              <input type="time" value={appointmentTime}
+                     onChange={(e)=>setAppointmentTime(e.target.value)}
+                     data-testid="ab-appointment-time"
+                     className="w-full mt-1 bg-bgBase border border-shOrange/40 rounded p-2 text-white text-xs focus:border-shOrange outline-none"
+                     style={{colorScheme:"dark"}} />
+              <p className="text-[11px] text-gray-500 normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
             </div>
-            <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
-              <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
+                <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+              </div>
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
+                <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+              </div>
             </div>
-          </div>
+          )}
 
           <div>
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>

@@ -55,7 +55,10 @@ export default function Bookings() {
                 <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}</td>
                 <td className="px-6 py-4 text-gray-300 text-xs">{b.client_name}</td>
                 <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</td>
-                <td className="px-6 py-4 text-xs text-gray-300">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</td>
+                <td className="px-6 py-4 text-xs text-gray-300">
+                  {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}
+                  {b.time && <span className="ml-2 text-shOrange font-black tracking-widest">@ {b.time}</span>}
+                </td>
                 <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
                   <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shBlue hover:underline">Edit</button>
@@ -84,7 +87,7 @@ export default function Bookings() {
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
                 <span className="font-black uppercase tracking-widest text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>
-                <span className="text-gray-400">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</span>
+                <span className="text-gray-400">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}</span>
               </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
                 <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-m`} className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
