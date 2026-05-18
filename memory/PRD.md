@@ -611,3 +611,10 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Services & Programs**: New/Edit Service modal now has a "Color" swatch row under the Icon picker. Replaces the silent auto-color-from-category behavior (category still suggests one, but admin can override).
 - ✅ **Credit Packs**: new `color: Optional[str]` field on `CreditPackIn`. Settings form has a Color swatch row with helper text "Leave blank to use the pool default ({green/purple/orange})". List rows + Sell-Pack modal in `Clients.jsx` render the pack icon in the chosen color (falls back to pool default when empty).
 - ✅ Lint clean. Smoke-tested in preview — both modals show the swatch row, picking pink updates the New-Pack form state correctly. Existing data backward-compatible (empty color → pool default).
+
+
+## Sprint 53 — Live Preview Chips on Edit Forms (2026-02)
+- ✅ **Services form**: new "Preview" row under the Color picker shows exactly how the service will render in the catalog (icon chip in the chosen color, name, category label, price). Updates as the admin types / picks icon / picks color.
+- ✅ **Credit Packs form**: new "Preview" row above the Save button shows the pack as it'll appear in the catalog list — colored icon chip + name + pool · qty unit (sessions/nights/credits) + price. Falls back to pool-default color when admin leaves color blank.
+- ✅ Mood Tags already render live previews (the tag pill itself is the preview).
+- ✅ Lint clean. Smoke-tested in preview — "Behavioral Consult" service shows purple icon preview, "Holiday Special Pack" shows pink icon preview, both updating in real time as inputs change.

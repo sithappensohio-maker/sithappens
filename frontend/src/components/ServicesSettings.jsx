@@ -168,6 +168,21 @@ export default function ServicesSettings() {
                   </div>
                 </div>
               </div>
+              {/* Live preview — exactly how this row will render in the catalog. */}
+              <div className="mt-4">
+                <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
+                <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="service-preview">
+                  <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                       style={{ backgroundColor: `${form.color || "#64748b"}20`, color: form.color || "#64748b" }}>
+                    <i className={`fas ${form.icon || "fa-tag"}`}/>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled service"}</p>
+                    <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{form.service_type}</p>
+                  </div>
+                  <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.base_price || 0).toFixed(2)}</p>
+                </div>
+              </div>
               {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
               <div className="flex justify-end gap-2 mt-4">
                 <button onClick={closeModal} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>

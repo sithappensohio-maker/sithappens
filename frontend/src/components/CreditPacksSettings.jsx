@@ -167,6 +167,27 @@ export default function CreditPacksSettings() {
           </div>
         </div>
         <p className="text-[12px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
+        {/* Live preview — exactly how this pack will render in the catalog list. */}
+        <div className="mt-4">
+          <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
+          {(() => {
+            const accent = form.color || DEFAULT_COLOR_BY_POOL[form.service_type] || "#94a3b8";
+            const unit = form.service_type === "training" ? "sessions" : form.service_type === "boarding" ? "nights" : "credits";
+            return (
+              <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="pack-preview">
+                <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                     style={{ backgroundColor: `${accent}26` }}>
+                  <i className={`fas ${form.icon || DEFAULT_ICON_BY_POOL[form.service_type] || "fa-tag"}`} style={{ color: accent }}/>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled pack"}</p>
+                  <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: accent }}>{form.service_type} · {form.qty} {unit}</p>
+                </div>
+                <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.price || 0).toFixed(2)}</p>
+              </div>
+            );
+          })()}
+        </div>
         {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
         <div className="flex justify-end gap-2 mt-3">
           {editing && <button onClick={()=>{setEditing(null); setForm(empty);}} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-2">Cancel</button>}
