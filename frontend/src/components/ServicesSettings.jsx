@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { ProgramsPanel } from "./Programs";
 import IconPicker from "./IconPicker";
+import ColorSwatchRow from "./ColorSwatchRow";
 
 /**
  * Admin-managed catalog of services with prices.
@@ -159,6 +160,12 @@ export default function ServicesSettings() {
                 <div>
                   <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
                   <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Color</label>
+                  <div className="mt-2">
+                    <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="service-color-row" />
+                  </div>
                 </div>
               </div>
               {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}

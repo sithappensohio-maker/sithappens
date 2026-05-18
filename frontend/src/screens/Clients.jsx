@@ -617,13 +617,14 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                 const isTr = p.service_type === "training";
                 const isBd = p.service_type === "boarding";
                 const color = isTr ? "text-purple-400" : isBd ? "text-shOrange" : "text-shGreen";
+                const iconHex = p.color || (isTr ? "#a855f7" : isBd ? "#f26522" : "#8cc63f");
                 const unit = isTr ? "sessions" : isBd ? "nights" : "credits";
                 const inCart = cart[p.id] || 0;
                 return (
                   <button key={p.id} onClick={()=>addToCart(p.id)} data-testid={`add-pack-${p.id}`}
                           className={`w-full text-left flex items-center justify-between bg-bgBase border rounded p-2.5 hover:border-shBlue transition ${inCart > 0 ? "border-shBlue" : "border-bgHover"}`}>
                     <div className="min-w-0 flex-1 flex items-center gap-2.5">
-                      <i className={`fas ${p.icon || (isTr ? "fa-graduation-cap" : isBd ? "fa-moon" : "fa-sun")} ${color} shrink-0`}/>
+                      <i className={`fas ${p.icon || (isTr ? "fa-graduation-cap" : isBd ? "fa-moon" : "fa-sun")} shrink-0`} style={{ color: iconHex }}/>
                       <div className="min-w-0 flex-1">
                         <p className="text-[14px] font-black text-white truncate">{p.name}</p>
                         <p className={`text-[11px] uppercase tracking-widest font-bold ${color}`}>

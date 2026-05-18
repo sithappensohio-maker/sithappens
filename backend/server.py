@@ -4815,6 +4815,7 @@ class CreditPackIn(BaseModel):
     price: float = Field(ge=0)
     service_type: Optional[str] = "daycare"
     icon: Optional[str] = ""
+    color: Optional[str] = ""
     active: bool = True
 
 

@@ -604,3 +604,10 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Dashboard ReportCardModal**: selectable mood pills now render with each tag's own color (inverts to filled bg + dark text when selected).
 - ✅ **Portal report-card history**: saved mood tags look up their icon + color from `pubSettings.mood_tags` and render with matching tint.
 - ✅ End-to-end verified: set Playful=purple / Calm=orange / Napped Well=blue, saved, full page reload — colors persisted and re-rendered correctly. Lint clean.
+
+
+## Sprint 52 — Color Picker Everywhere IconPicker Exists (2026-02)
+- ✅ **`ColorSwatchRow` extracted** to `/app/frontend/src/components/ColorSwatchRow.jsx` — reusable 8-color brand palette (green / blue / orange / purple / pink / red / yellow / slate). Same palette used by Mood Tags.
+- ✅ **Services & Programs**: New/Edit Service modal now has a "Color" swatch row under the Icon picker. Replaces the silent auto-color-from-category behavior (category still suggests one, but admin can override).
+- ✅ **Credit Packs**: new `color: Optional[str]` field on `CreditPackIn`. Settings form has a Color swatch row with helper text "Leave blank to use the pool default ({green/purple/orange})". List rows + Sell-Pack modal in `Clients.jsx` render the pack icon in the chosen color (falls back to pool default when empty).
+- ✅ Lint clean. Smoke-tested in preview — both modals show the swatch row, picking pink updates the New-Pack form state correctly. Existing data backward-compatible (empty color → pool default).

@@ -2,14 +2,16 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import IconPicker from "./IconPicker";
+import ColorSwatchRow from "./ColorSwatchRow";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
  * Each pack stores qty + price; per-credit value is computed on the fly.
  */
-const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", active: true };
+const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
+const DEFAULT_COLOR_BY_POOL = { daycare: "#8cc63f", training: "#a855f7", boarding: "#f26522" };
 
 export default function CreditPacksSettings() {
   const confirm = useConfirm();
@@ -79,17 +81,19 @@ export default function CreditPacksSettings() {
             No packs yet — seed the standard 4 or add your own.
           </div>
         )}
-        {packs.map(p => (
+        {packs.map(p => {
+          const accent = p.color || DEFAULT_COLOR_BY_POOL[p.service_type] || "#94a3b8";
+          return (
           <div key={p.id} className={`bg-bgBase border rounded-lg p-3 grid grid-cols-12 items-center gap-2 ${p.active ? "border-bgHover" : "border-bgHover/30 opacity-50"}`}>
             <div className="col-span-5 min-w-0 flex items-center gap-3">
               <div className="w-10 h-10 rounded grid place-items-center shrink-0"
-                   style={{ backgroundColor: (p.service_type === "training" ? "rgba(168,85,247,0.15)" : p.service_type === "boarding" ? "rgba(242,101,34,0.15)" : "rgba(140,198,63,0.15)") }}>
-                <i className={`fas ${p.icon || DEFAULT_ICON_BY_POOL[p.service_type] || "fa-tag"} ${p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}`}/>
+                   style={{ backgroundColor: `${accent}26` }}>
+                <i className={`fas ${p.icon || DEFAULT_ICON_BY_POOL[p.service_type] || "fa-tag"}`} style={{ color: accent }}/>
               </div>
               <div className="min-w-0">
                 <p className="text-white font-black text-[14px] tracking-tight truncate">{p.name}</p>
                 <p className="text-[12px] font-black uppercase tracking-widest mt-0.5">
-                  <span className={p.service_type === "training" ? "text-purple-400" : p.service_type === "boarding" ? "text-shOrange" : "text-shGreen"}>{p.service_type}</span>
+                  <span style={{ color: accent }}>{p.service_type}</span>
                   <span className="text-gray-500">{p.is_default ? " · default" : ""}{!p.active ? " · inactive" : ""}</span>
                 </p>
               </div>
@@ -111,7 +115,8 @@ export default function CreditPacksSettings() {
               <button onClick={()=>remove(p)} className="text-red-400 text-[12px] font-black uppercase tracking-widest hover:underline px-1">Remove</button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="bg-bgBase border border-bgHover rounded-lg p-4">
@@ -152,6 +157,13 @@ export default function CreditPacksSettings() {
           <div className="md:col-span-2">
             <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon</label>
             <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Color</label>
+            <div className="mt-2">
+              <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="pack-color-row" />
+              <p className="text-[11px] text-gray-500 mt-1.5">Leave blank to use the pool default ({form.service_type === "training" ? "purple" : form.service_type === "boarding" ? "orange" : "green"}).</p>
+            </div>
           </div>
         </div>
         <p className="text-[12px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
