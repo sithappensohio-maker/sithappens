@@ -24,7 +24,11 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
   const tier = t.trophy_tier || t.tier || "bronze";
   const icon = t.trophy_icon || t.icon || "fa-trophy";
   const name = t.trophy_name || t.name || "Trophy";
-  const image = t.custom_image || ""; // optional admin-uploaded override
+  // Awarded trophies snapshot the catalog image as `trophy_custom_image` at
+  // award-time (see trophy_service.award_trophy). Definitions store it as
+  // `custom_image`. Check both so the badge shows the uploaded picture on
+  // dog/client cards instead of falling back to the icon placeholder.
+  const image = t.trophy_custom_image || t.custom_image || "";
   const dim = size === "sm" ? "w-12 h-12 text-xl" : size === "lg" ? "w-28 h-28 text-5xl" : "w-20 h-20 text-3xl";
   const ring = TIER_RING[tier] || TIER_RING.bronze;
   const txt = TIER_TEXT[tier] || TIER_TEXT.bronze;

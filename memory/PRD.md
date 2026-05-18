@@ -649,3 +649,10 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
   - Edit Client modal got a "Profile Photo" row directly under Name: live avatar preview + Upload/Replace + Remove buttons. Uses the existing `compressImage` helper (max 600px, quality 0.8) so payloads stay small.
 - ✅ Dogs already had per-dog `photo` rendering on cards — unchanged.
 - ✅ Lint clean. Smoke-tested in preview: 47 client avatars render as placeholders; edit modal shows the upload field with helper text.
+
+
+## Sprint 58 — Trophy custom images render on dog/client cards (2026-02)
+- ✅ **Bug**: admin-uploaded custom trophy images only showed up in the catalog preview and on freshly-awarded badges. On already-issued awards, the badge fell back to the FontAwesome icon placeholder.
+- ✅ **Root cause #1**: `TrophyBadge.jsx` only checked `t.custom_image` (the catalog field). Awarded rows snapshot the same image under `trophy_custom_image` (different field). Fixed: badge now checks `trophy_custom_image || custom_image`.
+- ✅ **Root cause #2**: when admin uploaded a custom image AFTER the trophy was already awarded, prior awards stayed stuck on the icon. Fixed: `PUT /trophies/catalog/{code}` now propagates the `custom_image` change to ALL existing `awarded_trophies` for that code in one update_many. Also ran a one-time backfill in preview to fix historical data (4 awards updated).
+- ✅ Smoke-tested in preview: 5 trophy badges now display their uploaded images on the Clients list (Friend Bringer, Pack Builder visible on Alex Owner + other cards). Placeholder icon still shows for trophies where the admin hasn't uploaded an image — exactly the requested behavior.

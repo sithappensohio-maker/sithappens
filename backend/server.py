@@ -4173,6 +4173,16 @@ async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_
     if patch:
         await db.trophies.update_one({"code": code}, {"$set": patch})
         existing.update(patch)
+        # If the admin changed the custom image (uploaded one or cleared it),
+        # propagate it onto ALL previously-awarded rows for this trophy so the
+        # new picture immediately shows up on dog/client cards, share-cards, etc.
+        # Without this, awards made before the upload would stay stuck on the
+        # icon placeholder.
+        if "custom_image" in patch:
+            await db.awarded_trophies.update_many(
+                {"trophy_code": code},
+                {"$set": {"trophy_custom_image": patch["custom_image"] or ""}},
+            )
     return existing
 
 
