@@ -138,6 +138,146 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
   );
 }
 
+/**
+ * Get-started checklist surfaced on every portal load until the client has at
+ * least one dog AND every required vaccine has a non-expired date on file.
+ * The whole reason this exists: new clients were missing the (subtle) vaccine
+ * alerts buried in the dog list and showing up to drop-off with an expired
+ * rabies cert. This makes the action item the first thing they see.
+ *
+ * Dismissible per browser session (`sessionStorage`), so it pops again on
+ * next login if anything is still incomplete.
+ */
+function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismiss }) {
+  const today = todayISO();
+  const REQ = [
+    { key: "rabies", label: "Rabies" },
+    { key: "bordetella", label: "Bordetella" },
+    { key: "dhpp", label: "DHPP" },
+  ];
+
+  const dogRows = dogs.map((d) => {
+    const missing = REQ.filter((r) => {
+      const v = d.vaccines?.[r.key] || "";
+      return !v || v < today;
+    });
+    return { dog: d, missing };
+  });
+  const incompleteDogs = dogRows.filter((r) => r.missing.length > 0);
+  const totalMissing = incompleteDogs.reduce((n, r) => n + r.missing.length, 0);
+  const hasNoDogs = dogs.length === 0;
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+         data-testid="vaccine-onboarding-modal">
+      <div className="bg-bgPanel border border-shOrange/60 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl animate-slide-in max-h-[92vh] overflow-y-auto"
+           onClick={(e)=>e.stopPropagation()}>
+        <div className="bg-gradient-to-br from-shOrange/25 to-shBlue/10 p-5 sm:p-6 border-b border-shOrange/30">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[10px] font-black uppercase tracking-widest bg-shOrange text-bgHeader px-2 py-0.5 rounded-full">Action Required</span>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-black italic text-white uppercase tracking-tight">
+            Welcome{client?.name ? `, ${client.name.split(" ")[0]}` : ""}!
+          </h2>
+          <p className="text-[14px] text-gray-300 normal-case mt-2 leading-relaxed">
+            Before we can host your pup, we need their vaccine records on file. <strong className="text-white">It only takes 2 minutes</strong> — snap a photo of each cert and type in the expiry date.
+          </p>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-4">
+          {hasNoDogs ? (
+            <div className="bg-bgBase border border-bgHover rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-full bg-shBlue/20 text-shBlue font-black flex items-center justify-center shrink-0">1</div>
+                <div className="flex-1">
+                  <p className="text-white font-black text-[15px] uppercase tracking-widest">Add your dog</p>
+                  <p className="text-[12px] text-gray-400 normal-case mt-1">Tell us their name, breed, age, and any feeding or medication notes.</p>
+                  <button onClick={onAddDog} data-testid="onboarding-add-dog-btn"
+                          className="mt-3 bg-shBlue text-white px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90">
+                    <i className="fas fa-plus mr-1.5"/>Add Dog
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between bg-bgBase rounded-lg px-4 py-3 border border-bgHover">
+                <div>
+                  <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Vaccines still needed</p>
+                  <p className="text-shOrange font-black text-[26px] leading-none mt-1" data-testid="onboarding-missing-count">{totalMissing}</p>
+                </div>
+                <i className="fas fa-shield-virus text-shOrange/40 text-4xl"/>
+              </div>
+
+              <div className="space-y-3">
+                {incompleteDogs.map((row) => (
+                  <div key={row.dog.id} className="bg-bgBase border border-bgHover rounded-lg p-4">
+                    <p className="text-white font-black text-[15px] uppercase tracking-widest">{row.dog.name}{row.dog.breed ? <span className="text-gray-500"> · {row.dog.breed}</span> : null}</p>
+                    <div className="mt-3 space-y-2">
+                      {row.missing.map((r) => (
+                        <div key={r.key} className="flex items-center justify-between gap-3 bg-bgPanel rounded p-2.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <i className="fas fa-circle-exclamation text-shOrange text-sm"/>
+                            <span className="text-[13px] font-black text-white uppercase tracking-widest truncate">{r.label}</span>
+                            <span className="text-[11px] text-gray-500 normal-case tracking-normal truncate">
+                              {row.dog.vaccines?.[r.key] ? `expired ${row.dog.vaccines[r.key]}` : "no date on file"}
+                            </span>
+                          </div>
+                          <button onClick={() => onUploadVaccine(row.dog, r.key)}
+                                  data-testid={`onboarding-upload-${row.dog.id}-${r.key}`}
+                                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[11px] uppercase tracking-widest hover:bg-shGreen/80 whitespace-nowrap">
+                            <i className="fas fa-camera mr-1"/>Upload
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-shBlue/10 border border-shBlue/30 rounded-lg p-3 flex gap-3">
+                <i className="fas fa-circle-info text-shBlue text-base mt-0.5"/>
+                <p className="text-[12px] text-gray-300 normal-case leading-snug">
+                  Don't have a clear photo handy? Just type the <strong className="text-white">expiry date</strong> your vet wrote on the certificate — you can upload the photo later. We'll review and approve each upload before it goes live.
+                </p>
+              </div>
+            </>
+          )}
+
+          <button onClick={onDismiss} data-testid="onboarding-dismiss-btn"
+                  className="w-full text-gray-500 hover:text-gray-300 text-[12px] font-black uppercase tracking-widest py-3">
+            Remind me later <span className="opacity-60">(this stays out of your way until next login)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Persistent slim banner at the top of the portal when vaccines are
+ *  incomplete. Always visible (not dismissible) because the action is
+ *  blocking — they literally can't book daycare without it. */
+function OnboardingBanner({ missingCount, onOpen }) {
+  if (!missingCount) return null;
+  return (
+    <button onClick={onOpen} data-testid="vaccine-onboarding-banner"
+            className="w-full bg-gradient-to-r from-shOrange/25 to-shOrange/10 border-b border-shOrange/50 px-4 py-3 flex items-center gap-3 hover:from-shOrange/35 transition text-left">
+      <i className="fas fa-shield-virus text-shOrange text-lg shrink-0"/>
+      <div className="flex-1 min-w-0">
+        <p className="text-white font-black text-[13px] uppercase tracking-widest">
+          {missingCount} vaccine{missingCount > 1 ? "s" : ""} need uploading before you can book
+        </p>
+        <p className="text-[11px] text-gray-300 normal-case tracking-normal">Tap to finish setting up your account</p>
+      </div>
+      <span className="bg-shOrange text-bgHeader text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded shrink-0">
+        Finish setup <i className="fas fa-arrow-right ml-1 text-[10px]"/>
+      </span>
+    </button>
+  );
+}
+
+
+
 const SERVICE_INFO = {
   daycare: {
     label: "Daycare",
@@ -295,6 +435,30 @@ export default function Portal() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // ── Onboarding state — compute total missing/expired required vaccines.
+  // Anything > 0 here keeps the orange "finish setup" banner pinned.
+  const onboardingMissing = (() => {
+    const today = todayISO();
+    const REQ = ["rabies", "bordetella", "dhpp"];
+    let total = 0;
+    for (const d of dogs) {
+      for (const v of REQ) {
+        const exp = d.vaccines?.[v] || "";
+        if (!exp || exp < today) total += 1;
+      }
+    }
+    return total;
+  })();
+  const onboardingNeeded = dogs.length === 0 || onboardingMissing > 0;
+  const dismissOnboarding = () => {
+    try { sessionStorage.setItem("sh_onboarding_dismissed", "1"); } catch {}
+    setOnboardingDismissed(true);
+  };
+  const reopenOnboarding = () => {
+    try { sessionStorage.removeItem("sh_onboarding_dismissed"); } catch {}
+    setOnboardingDismissed(false);
+  };
+
   // Fetch credits separately via a small endpoint - we'll use the user from useAuth but credits live on client doc.
   // Use a helper: fetch own client info via portal endpoint
   const [credits, setCredits] = useState(0);
@@ -302,6 +466,12 @@ export default function Portal() {
   const [referralCode, setReferralCode] = useState(null);
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
+  // Onboarding checklist — auto-pops on portal load when any required vaccine
+  // is missing/expired (or the client has no dog yet). Dismissed-this-session
+  // is tracked in sessionStorage so it reappears next login until resolved.
+  const [onboardingDismissed, setOnboardingDismissed] = useState(
+    () => typeof window !== "undefined" && sessionStorage.getItem("sh_onboarding_dismissed") === "1"
+  );
   const [trophies, setTrophies] = useState({ client_trophies: [], dog_trophies: [], unseen: [] });
   const [celebrating, setCelebrating] = useState([]);
   const loadTrophies = useCallback(async () => {
@@ -404,6 +574,7 @@ export default function Portal() {
 
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
+      <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
       <header className="bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-24">
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-16 shrink-0" data-testid="portal-logo" />
@@ -993,6 +1164,15 @@ export default function Portal() {
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
       {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); }} />}
+      {onboardingNeeded && !onboardingDismissed && (
+        <OnboardingChecklist
+          dogs={dogs}
+          client={client}
+          onAddDog={() => { setOnboardingDismissed(true); setDogModal({ open: true, dog: null }); }}
+          onUploadVaccine={(dog, vaccine) => { setOnboardingDismissed(true); setVaccineModal({ dog, vaccine }); }}
+          onDismiss={dismissOnboarding}
+        />
+      )}
     </div>
   );
 }

@@ -523,6 +523,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 - ✅ **Fixed Credit Pack "Add" crash**: FastAPI 422 returns `detail` as an array of error objects; `CreditPacksSettings.jsx` was rendering it raw inside `<p>`, tripping the ErrorBoundary. Added client-side guards (name/qty/price) and routed all server errors through `formatErr` to flatten arrays. Verified empty-name now shows inline "Pack name is required." with the UI staying alive.
+
+## Sprint 42 — Vaccine-First Onboarding Modal (2026-02)
+- ✅ **OnboardingChecklist modal** auto-pops on every portal load when the client either has no dog yet OR any required vaccine (`rabies`/`bordetella`/`dhpp`) is missing or already expired. Big orange "Action Required" header, friendly welcome, per-dog list of missing vaccines with one-click Upload buttons that hand off to the existing `VaccineUploadModal`. Has an explicit "Remind me later" dismiss that persists for the browser session via `sessionStorage`.
+- ✅ **OnboardingBanner** — a sticky orange strip pinned ABOVE the portal header that's always visible while vaccines are incomplete: "N vaccines need uploading before you can book · FINISH SETUP". Tapping reopens the modal even after dismissal.
+- ✅ Designed to coexist with the existing 3-step "Welcome to Sit Happens" banner (profile/dog/waiver) — the modal handles the *specific* vaccine action gap, the existing banner handles initial profile setup.
+
 - ✅ **Per-client Photo Gallery Download PIN**: Added `photo_gallery_pin` field to `ClientIn` (backend) and to the Clients admin edit form (next to gallery URL). Portal renders a compact PIN card under "See Your Pup In Action" with monospace-spaced PIN value and a one-click Copy button (`<GalleryPinRow>` in `Portal.jsx`). Blank PIN = row hidden. Shown only when the client also has a gallery URL.
 
 
