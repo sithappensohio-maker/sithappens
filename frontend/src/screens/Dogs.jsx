@@ -111,7 +111,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
       const map = {};
       entries.forEach(([id, list]) => { map[id] = list; });
       setDogTrophies(map);
-    } catch {}
+    } catch (e) { console.warn("Dogs trophy load failed:", e); }
   };
 
   const load = async () => {

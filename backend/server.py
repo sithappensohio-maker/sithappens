@@ -64,6 +64,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("sithappens")
 
 
+# -------- Global exception handler --------
+# Logs the full traceback for any unexpected error so issues surface in logs
+# instead of being silently returned as opaque 500s.
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc):
+    from fastapi.responses import JSONResponse
+    from fastapi import HTTPException as _HTTPExc
+    if isinstance(exc, _HTTPExc):
+        # Let FastAPI handle expected HTTP errors normally.
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
+
 # -------- Health check (no auth) --------
 @api.get("/health")
 async def health():

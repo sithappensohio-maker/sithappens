@@ -75,7 +75,7 @@ export default function Dashboard() {
     try {
       await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}`);
       setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
-    } catch {}
+    } catch (e) { console.warn("rejectVax failed:", e); }
   };
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);

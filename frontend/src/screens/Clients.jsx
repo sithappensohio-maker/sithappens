@@ -44,7 +44,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
       const map = {};
       entries.forEach(([id, list]) => { map[id] = list; });
       setTrophyMap(map);
-    } catch {}
+    } catch (e) { console.warn("Clients trophy load failed:", e); }
   };
 
   const load = async () => {
