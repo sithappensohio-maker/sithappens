@@ -411,6 +411,19 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                       </>
                     )}
                   </div>
+                  {!form.birthday && ((parseInt(form.age_y)||0) > 0 || (parseInt(form.age_m)||0) > 0) && (
+                    <button type="button" data-testid="suggest-birthday-btn"
+                            onClick={() => {
+                              const months = (parseInt(form.age_y)||0) * 12 + (parseInt(form.age_m)||0);
+                              const now = new Date();
+                              const guess = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
+                              const iso = guess.toISOString().slice(0,10);
+                              setForm({ ...form, birthday: iso });
+                            }}
+                            className="text-[12px] text-shBlue hover:text-shGreen underline decoration-dotted font-black uppercase tracking-widest">
+                      <i className="fas fa-wand-magic-sparkles mr-1"/>Suggest birthday from current age
+                    </button>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
