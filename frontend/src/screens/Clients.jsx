@@ -8,7 +8,7 @@ import Avatar from "../components/Avatar";
 import { startImpersonation } from "../lib/impersonation";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
-const emptyDog = { name:"", breed:"", age_y:0, age_m:0, sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
+const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
 export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
@@ -86,6 +86,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               breed: dog.breed || "",
               age_y: parseInt(dog.age_y) || 0,
               age_m: parseInt(dog.age_m) || 0,
+              birthday: dog.birthday || "",
               sex: dog.sex || "Male",
               fixed: dog.fixed || "No",
               vaccines: {
@@ -407,6 +408,8 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                         <Input label="Age (mos)" type="number" value={dog.age_m} onChange={(v)=>setDog({...dog, age_m:parseInt(v)||0})} />
                       </div>
                     </div>
+                    <Input label="Birthday (optional)" type="date" value={dog.birthday}
+                           onChange={(v)=>setDog({...dog, birthday:v})} testId="quick-dog-birthday-input" />
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Sex</label>

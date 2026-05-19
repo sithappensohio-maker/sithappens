@@ -699,3 +699,9 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Backup endpoint **already existed** (`/backup/export`) — verified via inspection. Removed my duplicate.
 - ✅ Vet info fields **already existed** on Dog model + both admin and portal Add Dog forms — nothing to add.
 - ✅ End-to-end verified via curl: closed-day block returns 400 "Sit Happens is closed on 2027-12-25" for a client booking; CSV export returns 23 rows incl. "2026 TOTAL: $1,740.00" trailer. UI screenshots show both new sections rendered correctly.
+
+
+## Sprint 65 — Calendar time fix + birthday on one-shot Client+Dog (2026-02)
+- ✅ **Schedule calendar duplicate time fix** (`server.py` `/events`): training/grooming events were rendering as `"2:16pm 14:16 · Buddy (training)"` because the backend prepended the time to the title while FullCalendar also rendered its own native time prefix. Removed the redundant title prefix so events now render cleanly as `"2:16pm Buddy (training)"`.
+- ✅ **Birthday field on one-shot Client+Dog modal** (`Clients.jsx`): added a `Birthday (optional)` date input to the quick-add-dog section so admins get feature parity with the standalone Dog form. `birthday` is now part of `emptyDog` and is included in the `POST /api/dogs` payload when the modal is submitted. Backend already accepts `birthday` on the Dog model — no server changes needed.
+- ✅ Verified both fixes via screenshot tool: birthday input visible between Age and Sex; May 2026 calendar shows the clean `2:16pm Buddy (training)` chip.

@@ -3942,13 +3942,12 @@ async def calendar_events(_: dict = Depends(require_admin)):
         if b["service_type"] == "grooming" and b.get("grooming_type"):
             gt = "bath" if b["grooming_type"] == "bath" else "nail trim"
             svc_label = f"grooming · {gt}"
-        # Training (and grooming) have appointment times — show them on the
-        # calendar by promoting the event from all-day to timed when a time is set.
+        # Training (and grooming) have appointment times — promote the event
+        # from all-day to a timed event so FullCalendar renders the time prefix
+        # automatically (e.g. "2:16pm Buddy (training)").
         appt_time = (b.get("time") or "").strip()
         is_timed = bool(appt_time) and b["service_type"] in ("training", "grooming")
         title = f"{b['dog_name']} ({svc_label})"
-        if is_timed:
-            title = f"{appt_time} · {title}"
         event = {
             "id": b["id"],
             "title": title,
