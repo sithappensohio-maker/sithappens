@@ -627,6 +627,8 @@ export default function Portal() {
   const [showRecurringModal, setShowRecurringModal] = useState(false);
   // Client-portal bookings tab: "upcoming" (pending+approved+today) | "past" (completed+cancelled+rejected) | "all"
   const [bookingsTab, setBookingsTab] = useState("upcoming");
+  // Optional month filter for the "All" tab — "YYYY-MM" or "" for no filter.
+  const [bookingsMonth, setBookingsMonth] = useState("");
 
   const loadAll = useCallback(async () => {
     try {
@@ -1281,7 +1283,7 @@ export default function Portal() {
                       const active = bookingsTab === t.key;
                       return (
                         <button key={t.key}
-                                onClick={()=>setBookingsTab(t.key)}
+                                onClick={()=>{ setBookingsTab(t.key); if (t.key !== "all") setBookingsMonth(""); }}
                                 data-testid={`bookings-tab-${t.key}`}
                                 className={`px-3 py-1.5 rounded transition flex items-center gap-1.5 ${active ? "bg-bgBase text-white" : "text-gray-500 hover:text-white"}`}>
                           <span>{t.label}</span>
@@ -1300,24 +1302,51 @@ export default function Portal() {
                 const terminal = ["completed","cancelled","rejected"].includes(b.status);
                 return terminal || (dt && dt < todayIso);
               };
-              const filtered = bookingsTab === "upcoming" ? bookings.filter(b => !isPast(b))
+              let filtered = bookingsTab === "upcoming" ? bookings.filter(b => !isPast(b))
                               : bookingsTab === "past"   ? bookings.filter(b => isPast(b))
                               : bookings;
+              // Build a unique sorted list of YYYY-MM stamps for the dropdown.
+              const monthsAvailable = Array.from(new Set(
+                bookings.map(b => (b.date || "").slice(0, 7)).filter(Boolean)
+              )).sort((a, b) => b.localeCompare(a));
+              if (bookingsTab === "all" && bookingsMonth) {
+                filtered = filtered.filter(b => (b.date || "").startsWith(bookingsMonth));
+              }
               // Past first feels backward to clients — sort upcoming ascending, past descending.
               const sorted = [...filtered].sort((a, b) => {
                 const ad = a.date || ""; const bd = b.date || "";
                 return bookingsTab === "past" ? bd.localeCompare(ad) : ad.localeCompare(bd);
               });
+              const monthDropdown = (bookingsTab === "all" && monthsAvailable.length > 1) ? (
+                <div className="mb-3" data-testid="bookings-month-filter-wrap">
+                  <select value={bookingsMonth}
+                          onChange={(e)=>setBookingsMonth(e.target.value)}
+                          data-testid="bookings-month-filter"
+                          className="bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-white text-[12px] font-black uppercase tracking-widest">
+                    <option value="">All months</option>
+                    {monthsAvailable.map(m => {
+                      const [y, mm] = m.split("-");
+                      const label = new Date(parseInt(y), parseInt(mm) - 1, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+                      return <option key={m} value={m}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+              ) : null;
               if (sorted.length === 0) {
                 return (
-                  <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs" data-testid="bookings-empty">
-                    {bookingsTab === "upcoming" ? "No upcoming bookings — book a service above." : bookingsTab === "past" ? "No past bookings yet." : "No bookings yet."}
-                  </div>
+                  <>
+                    {monthDropdown}
+                    <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs" data-testid="bookings-empty">
+                      {bookingsTab === "upcoming" ? "No upcoming bookings — book a service above." : bookingsTab === "past" ? "No past bookings yet." : bookingsMonth ? "No bookings that month." : "No bookings yet."}
+                    </div>
+                  </>
                 );
               }
               return (
-                <div className="space-y-3" data-testid="portal-bookings">
-                  {sorted.map(b => (
+                <>
+                  {monthDropdown}
+                  <div className="space-y-3" data-testid="portal-bookings">
+                    {sorted.map(b => (
                 <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between p-4">
                     <div>
@@ -1364,6 +1393,7 @@ export default function Portal() {
                 </div>
                   ))}
                 </div>
+                </>
               );
             })()}
           </div>

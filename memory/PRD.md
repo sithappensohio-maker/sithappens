@@ -674,3 +674,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **My Bookings tabs** (`Portal.jsx`): the long flat list is now segmented into **Upcoming / Past / All** with live counts. "Past" = terminal status (completed/cancelled/rejected) OR date already in the past. Upcoming sorted ascending; Past sorted descending (most recent first). Empty-state copy differs per tab. Default tab = Upcoming so clients land on what matters.
 - ✅ **Quick-jump button** under "My Profile" in the credits side card: a "My Bookings · N" button that smooth-scrolls to the bookings section. Saves the long page scroll on mobile.
 - ✅ Lint clean. Smoke-tested in preview as Test Client (41 bookings: 9 upcoming, 32 past). Tabs and counts render correctly, scroll-jump works.
+
+
+## Sprint 61 — Admin Schedule: clickable events + booking detail modal (2026-02)
+- ✅ **`GET /api/bookings/{id}`** primitive added (admin or owning client). Returns the full booking doc — used by the detail modal to load notes, payment status, etc. without paging the full /bookings list.
+- ✅ **`Schedule.jsx` `eventClick`**: clicking any FullCalendar event chip now opens a `BookingDetailModal` showing service badge + status + payment badge, client, date(s)/time/kennel, charged amount or credit value, notes (highlighted card), report-card note (green tinted), and a Cancel action that hits `DELETE /bookings/{id}` (auto-refunds credits via the existing flow).
+- ✅ **Day-roster rows clickable**: each row in the day-roster modal is now a button that opens the booking detail layered on top. Two-deep modal works (z-50 vs z-60). Common workflow: click day → see roster → click a name → read notes.
+
+## Sprint 61b — Portal: Month filter on "All" tab (2026-02)
+- ✅ Added a month dropdown that appears only when the **All** tab is active AND the client has bookings spanning more than one month. Built from `bookings[].date.slice(0,7)` sorted descending. Empty months show a tailored empty state. Switching tabs clears the month filter so it doesn't leak across views.
+- ✅ Lint clean. Smoke-tested in preview as Test Client: dropdown shows "July 2026 / June 2026 / May 2026", picking July filters the list to 5 rows.

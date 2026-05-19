@@ -1419,6 +1419,18 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
     return {"ok": True}
 
+@api.get("/bookings/{booking_id}", response_model=BookingOut)
+async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
+    """Single-booking detail. Used by the admin Schedule's booking-detail
+    modal so we can show notes / payment / homework history without paging
+    through the full /bookings list."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if user.get("role") != "admin" and b.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your booking")
+    return b
+
 @api.get("/bookings/availability")
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})

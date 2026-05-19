@@ -86,6 +86,7 @@ export default function Schedule() {
   };
 
   // Bookings that fall on the selected day — boarding spans need range-check.
+  const [detailId, setDetailId] = useState(null); // booking-detail modal target
   const dayBookings = useMemo(() => {
     if (!dayOpen) return [];
     const rows = events.filter((e) => {
@@ -168,6 +169,9 @@ export default function Schedule() {
           eventDrop={onDrop}
           eventResize={onDrop}
           dateClick={onDateClick}
+          // Clicking an event chip opens the detail modal (notes, payment, etc.).
+          // Stop FullCalendar from also bubbling up to dateClick.
+          eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
           // Training/grooming events have specific times — display them
           displayEventTime={true}
           eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
@@ -177,6 +181,12 @@ export default function Schedule() {
           titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
         />
       </div>
+
+      {detailId && (
+        <BookingDetailModal id={detailId}
+                            onClose={()=>setDetailId(null)}
+                            onChanged={() => { load(); setDetailId(null); }} />
+      )}
 
       {dayOpen && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm grid place-items-center p-3 sm:p-6 animate-fade-in"
@@ -211,7 +221,8 @@ export default function Schedule() {
                         const meta = SVC_META[e.extendedProps?.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: e.extendedProps?.service_type };
                         const t = e.extendedProps?.time;
                         return (
-                          <div key={e.id} className="bg-bgBase border border-bgHover rounded-lg px-3 py-2.5 flex items-start gap-3" data-testid={`day-roster-row-${e.id}`}>
+                          <button key={e.id} onClick={()=>setDetailId(e.id)}
+                                  className="w-full text-left bg-bgBase border border-bgHover rounded-lg px-3 py-2.5 flex items-start gap-3 hover:border-shBlue/60 transition" data-testid={`day-roster-row-${e.id}`}>
                             <span className={`shrink-0 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-white font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
@@ -221,7 +232,7 @@ export default function Schedule() {
                             {e.extendedProps?.status === "pending" && (
                               <span className="shrink-0 text-[10px] font-black uppercase tracking-widest bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded">Pending</span>
                             )}
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
@@ -311,3 +322,107 @@ export default function Schedule() {
     </div>
   );
 }
+
+/**
+ * Booking detail modal — opens from the calendar event click or the day-roster
+ * row click. Shows everything the operator typically wants at a glance:
+ * dog/client, service, date(s), time, status, payment, notes, kennel.
+ * Lightweight quick actions: Cancel booking (admin only — refunds credit
+ * automatically via the existing cancel_booking flow).
+ */
+function BookingDetailModal({ id, onClose, onChanged }) {
+  const [b, setB] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/bookings/${id}`);
+        if (alive) setB(data);
+      } catch (e) {
+        if (alive) setErr(formatErr(e.response?.data?.detail) || "Couldn't load booking");
+      }
+    })();
+    return () => { alive = false; };
+  }, [id]);
+  const cancel = async () => {
+    if (!window.confirm("Cancel this booking? Any deducted credits will be refunded.")) return;
+    setBusy(true);
+    try {
+      await api.delete(`/bookings/${id}`);
+      onChanged?.();
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Cancel failed");
+      setBusy(false);
+    }
+  };
+  const meta = b && (SVC_META[b.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: b.service_type });
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm grid place-items-center p-3 sm:p-6 animate-fade-in"
+         onClick={onClose} data-testid="booking-detail-modal">
+      <div onClick={(e)=>e.stopPropagation()}
+           className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
+        <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Booking detail</p>
+            <h2 className="text-lg font-black uppercase italic text-white tracking-tight truncate">{b?.dog_name || "…"}</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="booking-detail-close">
+            <i className="fas fa-xmark text-xl"/>
+          </button>
+        </div>
+        <div className="p-5">
+          {err && <p className="text-red-400 text-[13px] mb-3" data-testid="booking-detail-error">{err}</p>}
+          {!b && !err && <p className="text-gray-500 text-[12px] uppercase tracking-widest"><i className="fas fa-circle-notch fa-spin mr-2"/>Loading…</p>}
+          {b && (
+            <div className="space-y-3 text-[14px]">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
+                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
+                {b.payment_status === "paid" && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shGreen/15 text-shGreen">Paid · {b.payment_method || "—"}</span>}
+              </div>
+              <Row label="Client" value={b.client_name}/>
+              <Row label="Date" value={`${b.date}${b.end_date && b.end_date!==b.date ? ` → ${b.end_date}` : ""}`}/>
+              {b.time && <Row label="Time" value={b.time}/>}
+              {b.grooming_type && <Row label="Type" value={b.grooming_type === "bath" ? "Bath" : "Nail Trim"}/>}
+              {b.kennel && <Row label="Kennel" value={b.kennel}/>}
+              {b.actual_price ? <Row label="Charged" value={`$${Number(b.actual_price).toFixed(2)}`}/> : null}
+              {b.credit_value ? <Row label="Credit value" value={`$${Number(b.credit_value).toFixed(2)} (${b.credits_deducted || 1} ${b.credit_service_type || "daycare"})`}/> : null}
+              {b.notes && (
+                <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid="booking-detail-notes">
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Notes</p>
+                  <p className="text-[13px] text-gray-200 whitespace-pre-wrap normal-case">{b.notes}</p>
+                </div>
+              )}
+              {b.report_card?.note && (
+                <div className="bg-shGreen/5 border border-shGreen/30 rounded-lg p-3">
+                  <p className="text-[10px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-paw mr-1"/>Report card</p>
+                  <p className="text-[13px] text-gray-200 italic normal-case">"{b.report_card.note}"</p>
+                </div>
+              )}
+              {(b.status === "approved" || b.status === "pending") && (
+                <div className="pt-2 flex justify-end">
+                  <button onClick={cancel} disabled={busy} data-testid="booking-detail-cancel"
+                          className="text-red-400 hover:text-red-300 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                    {busy ? "Cancelling…" : <><i className="fas fa-trash mr-1.5"/>Cancel booking</>}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+      <span className="text-white text-[14px] font-bold text-right break-words">{value || "—"}</span>
+    </div>
+  );
+}
+
