@@ -137,6 +137,10 @@ function Field({ label, value, onChange, type="text", testId }) {
 function HoursPanel({ s, save, saving }) {
   const [biz, setBiz] = useState(s.business_hours);
   const [svc, setSvc] = useState(s.service_hours);
+  // ISO yyyy-mm-dd dates the facility is fully closed (holidays, vacations).
+  // Client-side bookings on these dates are blocked at the API layer.
+  const [closedDates, setClosedDates] = useState(s.closed_dates || []);
+  const [newClosed, setNewClosed] = useState("");
 
   const setBizDay = (day, k, v) => setBiz({ ...biz, [day]: { ...biz[day], [k]: v } });
   const setSvcDay = (svcKey, day, k, v) => setSvc({ ...svc, [svcKey]: { ...svc[svcKey], [day]: { ...svc[svcKey][day], [k]: v } } });
@@ -162,7 +166,37 @@ function HoursPanel({ s, save, saving }) {
         <div className="text-[14px] font-black text-shGreen uppercase tracking-widest bg-shGreen/10 rounded p-3">24/7 — overnight stays allowed</div>
       </Section>
 
-      <SaveBar onSave={()=>save({ business_hours: biz, service_hours: svc })} saving={saving} />
+      <Section title="Closed Days" subtitle="Holidays / vacations. Clients can't self-book on these dates; admin overrides still work.">
+        <div className="space-y-2" data-testid="closed-dates-list">
+          {closedDates.length === 0 && <p className="text-[12px] text-gray-500 italic normal-case">No closed days configured.</p>}
+          {[...closedDates].sort().map((d) => (
+            <div key={d} className="flex items-center gap-2 bg-bgBase rounded p-2" data-testid={`closed-date-${d}`}>
+              <i className="fas fa-calendar-xmark text-shOrange text-xs"/>
+              <span className="flex-1 text-sm font-black text-white">{new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
+              <button onClick={()=>setClosedDates(closedDates.filter(x => x !== d))}
+                      className="text-red-400 hover:text-red-300 px-2" aria-label="Remove">
+                <i className="fas fa-trash text-xs"/>
+              </button>
+            </div>
+          ))}
+        </div>
+        <div className="flex gap-2 mt-3">
+          <input type="date" value={newClosed} onChange={(e)=>setNewClosed(e.target.value)}
+                 data-testid="closed-date-input"
+                 className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-sm text-white" style={{colorScheme:"dark"}}/>
+          <button onClick={()=>{
+                     if (!newClosed) return;
+                     if (closedDates.includes(newClosed)) { setNewClosed(""); return; }
+                     setClosedDates([...closedDates, newClosed]); setNewClosed("");
+                   }}
+                  data-testid="closed-date-add"
+                  className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shOrange/80">
+            + Add
+          </button>
+        </div>
+      </Section>
+
+      <SaveBar onSave={()=>save({ business_hours: biz, service_hours: svc, closed_dates: closedDates })} saving={saving} />
     </div>
   );
 }
@@ -654,6 +688,21 @@ function BackupPanel() {
     setBusy(false);
   };
 
+  const downloadIncomeCsv = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const year = new Date().getFullYear();
+      const resp = await api.get(`/admin/income/export.csv`, { params: { year }, responseType: "blob" });
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = `sit-happens-income-${year}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg(`Income CSV for ${year} downloaded ✓`);
+    } catch (e) { console.warn("income csv failed", e); setMsg("Income export failed"); }
+    setBusy(false);
+  };
+
   const onPickFile = (e) => {
     const f = e.target.files?.[0]; if (!f) return;
     setRestoreFile(f); setRestorePreview(null); setMsg("");
@@ -704,6 +753,17 @@ function BackupPanel() {
         <button onClick={download} disabled={busy} data-testid="backup-download"
                 className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
           <i className="fas fa-download mr-2"/>{busy ? "Working…" : "Download Backup (.json)"}
+        </button>
+      </div>
+
+      <div className="border-t border-bgHover pt-6">
+        <h4 className="text-sm font-black text-shBlue uppercase tracking-widest mb-2"><i className="fas fa-file-csv mr-2"/>Year-End Income Export</h4>
+        <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
+          Download every paid booking + credit-pack sale for the current year as a CSV — opens cleanly in Excel/Sheets. Perfect for handing your accountant in January.
+        </p>
+        <button onClick={downloadIncomeCsv} disabled={busy} data-testid="income-csv-download"
+                className="bg-shBlue text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+          <i className="fas fa-file-csv mr-2"/>{busy ? "Working…" : `Download ${new Date().getFullYear()} Income (.csv)`}
         </button>
       </div>
 

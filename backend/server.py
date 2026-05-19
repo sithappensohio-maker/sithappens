@@ -840,6 +840,17 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if not (is_admin and body.override_vaccines):
         await _validate_dog_vaccines(dog, required)
 
+    # Closed-day enforcement (clients only — admin can override by creating manually).
+    # Blocks any booking whose start date OR any day in its range falls on a closed date.
+    if not is_admin:
+        closed = set(settings.get("closed_dates") or [])
+        if closed:
+            booking_dates = _dates_in_range(body.date, body.end_date)
+            hit = [d for d in booking_dates if d in closed]
+            if hit:
+                pretty = ", ".join(hit[:3]) + ("…" if len(hit) > 3 else "")
+                raise HTTPException(status_code=400, detail=f"Sit Happens is closed on {pretty}. Please pick another date.")
+
     # Advance-booking limit (clients only) — exempt daycare so regulars can
     # set up long-running recurring schedules without bumping the global cap.
     if user.get("role") != "admin" and body.service_type != "daycare":
@@ -2174,6 +2185,7 @@ class SettingsIn(BaseModel):
     waiver_version: Optional[int] = None
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
+    closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -2194,6 +2206,7 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "waiver_required_for_booking": s.get("waiver_required_for_booking", True),
         "service_descriptions": s.get("service_descriptions") or {},
         "client_portal_links": s.get("client_portal_links") or {},
+        "closed_dates": s.get("closed_dates") or [],
     }
 
 @api.put("/settings")
@@ -3999,6 +4012,74 @@ async def backup_export(_: dict = Depends(require_admin)):
 
 
 
+@api.get("/admin/income/export.csv")
+async def admin_income_csv(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin),
+):
+    """Year-end income export as CSV — what the accountant wants in January.
+    Defaults to the current year. Rows are individual paid bookings + sold
+    credit packs, columns include date, client, dog, service, amount,
+    payment method, payment status. Designed to open clean in Excel/Sheets.
+    """
+    from fastapi.responses import Response
+    yr = year or date.today().year
+    start = f"{yr}-01-01"
+    end = f"{yr}-12-31"
+    # Paid / completed bookings within the year
+    paid_bookings = await db.bookings.find(
+        {
+            "date": {"$gte": start, "$lte": end},
+            "$or": [{"actual_price": {"$gt": 0}}, {"credit_value": {"$gt": 0}}],
+        },
+        {"_id": 0},
+    ).to_list(50000)
+    # Credit-pack sales (revenue is recognized at sell-time on these lots)
+    sold_packs = await db.credit_lots.find(
+        {"sold_at": {"$gte": f"{yr}-01-01T00:00:00", "$lte": f"{yr}-12-31T23:59:59"}},
+        {"_id": 0},
+    ).to_list(50000)
+
+    out_rows: List[List[str]] = [
+        ["Date", "Type", "Client", "Dog", "Service / Pack", "Amount (USD)", "Payment method", "Payment status", "Booking/Lot ID"]
+    ]
+    for b in paid_bookings:
+        amt = float(b.get("actual_price") or b.get("credit_value") or 0)
+        if amt <= 0:
+            continue
+        out_rows.append([
+            b.get("date", ""), "Service", b.get("client_name", ""), b.get("dog_name", ""),
+            b.get("service_type", ""), f"{amt:.2f}",
+            b.get("payment_method", "") or "", b.get("payment_status", "") or "", b.get("id", ""),
+        ])
+    for lot in sold_packs:
+        sold_at = (lot.get("sold_at") or "")[:10]
+        out_rows.append([
+            sold_at, "Credit Pack", lot.get("client_name", ""), "",
+            lot.get("pack_name", "") or lot.get("service_type", ""), f"{float(lot.get('paid_amount', 0)):.2f}",
+            lot.get("payment_method", "") or "", "paid", lot.get("id", ""),
+        ])
+
+    # Trailing summary row keeps the totals visible in Excel without a pivot.
+    total = sum(float(r[5]) for r in out_rows[1:])
+    out_rows.append([])
+    out_rows.append(["", "", "", "", f"{yr} TOTAL", f"{total:.2f}", "", "", ""])
+
+    # CSV escape — minimal but correct.
+    def esc(v: str) -> str:
+        s = str(v)
+        if any(ch in s for ch in [",", "\"", "\n"]):
+            return "\"" + s.replace("\"", "\"\"") + "\""
+        return s
+
+    csv_body = "\n".join(",".join(esc(c) for c in row) for row in out_rows)
+    return Response(
+        content=csv_body,
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="sit-happens-income-{yr}.csv"'},
+    )
+
+
 @api.get("/admin/marketing-qr")
 async def admin_marketing_qr(
     size: int = 1024,
@@ -4048,9 +4129,6 @@ async def admin_marketing_qr(
 
 
 
-@api.get("/admin/clients/{client_id}/portal-snapshot")
-
-
 @api.post("/admin/clients/{client_id}/impersonation-token")
 async def admin_impersonation_token(client_id: str, _: dict = Depends(require_admin)):
     """Mint a short-lived (15 min) access token for the user record linked to a
@@ -4084,6 +4162,7 @@ async def admin_impersonation_token(client_id: str, _: dict = Depends(require_ad
     }
 
 
+@api.get("/admin/clients/{client_id}/portal-snapshot")
 async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require_admin)):
     """Read-only snapshot of what a client would see in their portal — for admin testing/QA.
     No state changes, no impersonation token: just an aggregated payload."""

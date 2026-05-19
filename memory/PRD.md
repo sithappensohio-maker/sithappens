@@ -690,3 +690,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Inline notes editing**: notes section now always renders (with "Add" link when empty). Edit toggle reveals a 3-row textarea + Save/Cancel buttons. Save hits `PATCH /api/bookings/{id}` and shows a green "✓ NOTES SAVED" flash for 1.8s. Doesn't close the modal so admin can keep tweaking.
 - ✅ **"Add to today's roster" walk-in shortcut**: visible only when the booking is in the past (terminal status or date < today). Clicking it opens a confirm, then `POST /bookings { dog_id, date: today, service_type, check_in_now: true }` so the dog lands directly on the run-sheet. Closes the modal + triggers parent refresh. Saves the operator from re-entering the dog/service when a regular calls last-minute.
 - ✅ Lint clean. Smoke-tested in preview: edited Daisy's daycare notes, save flashes correctly, notes persist + re-render in read mode with Edit link, both action buttons visible.
+
+
+## Sprint 63 — Year-end CSV export + closed-day enforcement (2026-02)
+- ✅ **Year-end income export**: new `GET /api/admin/income/export.csv?year=YYYY` returns a CSV (paid bookings + sold credit packs) with date / type / client / dog / service / amount / payment method / payment status / id columns + a trailing total row. Defaults to current year. Wired a blue "Download YYYY Income (.csv)" button into Settings → Backup & Restore.
+- ✅ **Closed-day enforcement**: added `closed_dates: List[str]` to `SettingsIn` + exposed it on `/public/settings`. `create_booking` now blocks client-side bookings that fall on any closed date (single-day or any day in a boarding range) with a friendly message. Admin still bypasses (matches their override-everything philosophy).
+- ✅ **UI**: new "Closed Days" section in Settings → Hours tab — date picker + Add button + per-row delete, with each row rendered as a localized "Sat, Dec 25, 2027" pill (calendar-xmark icon).
+- ✅ Backup endpoint **already existed** (`/backup/export`) — verified via inspection. Removed my duplicate.
+- ✅ Vet info fields **already existed** on Dog model + both admin and portal Add Dog forms — nothing to add.
+- ✅ End-to-end verified via curl: closed-day block returns 400 "Sit Happens is closed on 2027-12-25" for a client booking; CSV export returns 23 rows incl. "2026 TOTAL: $1,740.00" trailer. UI screenshots show both new sections rendered correctly.
