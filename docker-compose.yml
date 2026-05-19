@@ -1,7 +1,7 @@
 # Sit Happens — self-hosted stack.
 # Two containers (frontend + backend) plus Mongo with a named volume for persistence.
 # Cloudflare Tunnel runs on the HOST (not in compose) so a tunnel restart
-# doesn't take the app down with it. See SELF_HOSTING.md.
+# doesn't take the app down with it. See BAZZITE_SETUP.md.
 
 services:
   mongo:
