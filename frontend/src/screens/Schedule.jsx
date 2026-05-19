@@ -334,12 +334,15 @@ function BookingDetailModal({ id, onClose, onChanged }) {
   const [b, setB] = useState(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editingNotes, setEditingNotes] = useState(false);
+  const [draftNotes, setDraftNotes] = useState("");
+  const [savedFlash, setSavedFlash] = useState("");
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const { data } = await api.get(`/bookings/${id}`);
-        if (alive) setB(data);
+        if (alive) { setB(data); setDraftNotes(data.notes || ""); }
       } catch (e) {
         if (alive) setErr(formatErr(e.response?.data?.detail) || "Couldn't load booking");
       }
@@ -357,7 +360,43 @@ function BookingDetailModal({ id, onClose, onChanged }) {
       setBusy(false);
     }
   };
+  // Inline-save notes. We don't auto-close on save so the operator can keep
+  // reading and tweak more.
+  const saveNotes = async () => {
+    setBusy(true); setErr("");
+    try {
+      const { data } = await api.patch(`/bookings/${id}`, { notes: draftNotes });
+      setB(data); setEditingNotes(false);
+      setSavedFlash("Notes saved");
+      setTimeout(() => setSavedFlash(""), 1800);
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Save failed");
+    } finally { setBusy(false); }
+  };
+  // Walk-in shortcut: create a NEW daycare booking for this dog dated today,
+  // marked checked-in. Closes the modal and tells the parent to refresh.
+  const quickBookToday = async () => {
+    if (!b) return;
+    const today = new Date().toISOString().slice(0,10);
+    if (!window.confirm(`Add ${b.dog_name} to today's roster as a checked-in ${b.service_type}?`)) return;
+    setBusy(true); setErr("");
+    try {
+      await api.post("/bookings", {
+        dog_id: b.dog_id,
+        date: today,
+        service_type: b.service_type,
+        notes: "",
+        check_in_now: true,
+      });
+      onChanged?.();
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Quick-book failed");
+      setBusy(false);
+    }
+  };
   const meta = b && (SVC_META[b.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: b.service_type });
+  const todayIso = new Date().toISOString().slice(0,10);
+  const isPast = b && (["completed","cancelled","rejected"].includes(b.status) || ((b.end_date || b.date) < todayIso));
   return (
     <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm grid place-items-center p-3 sm:p-6 animate-fade-in"
          onClick={onClose} data-testid="booking-detail-modal">
@@ -374,6 +413,7 @@ function BookingDetailModal({ id, onClose, onChanged }) {
         </div>
         <div className="p-5">
           {err && <p className="text-red-400 text-[13px] mb-3" data-testid="booking-detail-error">{err}</p>}
+          {savedFlash && <p className="text-shGreen text-[12px] font-black uppercase tracking-widest mb-3" data-testid="booking-detail-flash"><i className="fas fa-check mr-1"/>{savedFlash}</p>}
           {!b && !err && <p className="text-gray-500 text-[12px] uppercase tracking-widest"><i className="fas fa-circle-notch fa-spin mr-2"/>Loading…</p>}
           {b && (
             <div className="space-y-3 text-[14px]">
@@ -389,26 +429,61 @@ function BookingDetailModal({ id, onClose, onChanged }) {
               {b.kennel && <Row label="Kennel" value={b.kennel}/>}
               {b.actual_price ? <Row label="Charged" value={`$${Number(b.actual_price).toFixed(2)}`}/> : null}
               {b.credit_value ? <Row label="Credit value" value={`$${Number(b.credit_value).toFixed(2)} (${b.credits_deducted || 1} ${b.credit_service_type || "daycare"})`}/> : null}
-              {b.notes && (
-                <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid="booking-detail-notes">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Notes</p>
-                  <p className="text-[13px] text-gray-200 whitespace-pre-wrap normal-case">{b.notes}</p>
+              {/* Editable notes block — always shown so admin can ADD a note even when none exists. */}
+              <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid="booking-detail-notes">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Notes</p>
+                  {!editingNotes && <button onClick={()=>{ setDraftNotes(b.notes || ""); setEditingNotes(true); }}
+                                            data-testid="booking-detail-edit-notes"
+                                            className="text-[10px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                    <i className="fas fa-pen mr-1"/>{b.notes ? "Edit" : "Add"}
+                  </button>}
                 </div>
-              )}
+                {!editingNotes ? (
+                  b.notes
+                    ? <p className="text-[13px] text-gray-200 whitespace-pre-wrap normal-case">{b.notes}</p>
+                    : <p className="text-[12px] text-gray-500 italic normal-case">No notes on this booking.</p>
+                ) : (
+                  <div>
+                    <textarea value={draftNotes}
+                              onChange={(e)=>setDraftNotes(e.target.value)}
+                              data-testid="booking-detail-notes-input"
+                              rows={3}
+                              className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px] normal-case"/>
+                    <div className="flex justify-end gap-2 mt-2">
+                      <button onClick={()=>{ setEditingNotes(false); setDraftNotes(b.notes || ""); }}
+                              className="text-gray-400 hover:text-white text-[11px] font-black uppercase tracking-widest">Cancel</button>
+                      <button onClick={saveNotes} disabled={busy} data-testid="booking-detail-save-notes"
+                              className="bg-shGreen text-black px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
+                        {busy ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
               {b.report_card?.note && (
                 <div className="bg-shGreen/5 border border-shGreen/30 rounded-lg p-3">
                   <p className="text-[10px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-paw mr-1"/>Report card</p>
                   <p className="text-[13px] text-gray-200 italic normal-case">"{b.report_card.note}"</p>
                 </div>
               )}
-              {(b.status === "approved" || b.status === "pending") && (
-                <div className="pt-2 flex justify-end">
+              <div className="pt-2 flex flex-wrap justify-end gap-3">
+                {/* Walk-in shortcut: re-book this dog/service for today. Useful when
+                    a regular calls last-minute and you're already looking at their
+                    most recent booking. */}
+                {isPast && (
+                  <button onClick={quickBookToday} disabled={busy} data-testid="booking-detail-quick-book"
+                          className="text-shGreen hover:text-shGreen/80 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                    <i className="fas fa-bolt mr-1.5"/>Add to today's roster
+                  </button>
+                )}
+                {(b.status === "approved" || b.status === "pending") && (
                   <button onClick={cancel} disabled={busy} data-testid="booking-detail-cancel"
                           className="text-red-400 hover:text-red-300 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
                     {busy ? "Cancelling…" : <><i className="fas fa-trash mr-1.5"/>Cancel booking</>}
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
         </div>

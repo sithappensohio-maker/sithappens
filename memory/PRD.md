@@ -684,3 +684,9 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 ## Sprint 61b — Portal: Month filter on "All" tab (2026-02)
 - ✅ Added a month dropdown that appears only when the **All** tab is active AND the client has bookings spanning more than one month. Built from `bookings[].date.slice(0,7)` sorted descending. Empty months show a tailored empty state. Switching tabs clears the month filter so it doesn't leak across views.
 - ✅ Lint clean. Smoke-tested in preview as Test Client: dropdown shows "July 2026 / June 2026 / May 2026", picking July filters the list to 5 rows.
+
+
+## Sprint 62 — Schedule booking-detail: inline notes + walk-in shortcut (2026-02)
+- ✅ **Inline notes editing**: notes section now always renders (with "Add" link when empty). Edit toggle reveals a 3-row textarea + Save/Cancel buttons. Save hits `PATCH /api/bookings/{id}` and shows a green "✓ NOTES SAVED" flash for 1.8s. Doesn't close the modal so admin can keep tweaking.
+- ✅ **"Add to today's roster" walk-in shortcut**: visible only when the booking is in the past (terminal status or date < today). Clicking it opens a confirm, then `POST /bookings { dog_id, date: today, service_type, check_in_now: true }` so the dog lands directly on the run-sheet. Closes the modal + triggers parent refresh. Saves the operator from re-entering the dog/service when a regular calls last-minute.
+- ✅ Lint clean. Smoke-tested in preview: edited Daisy's daycare notes, save flashes correctly, notes persist + re-render in read mode with Edit link, both action buttons visible.
