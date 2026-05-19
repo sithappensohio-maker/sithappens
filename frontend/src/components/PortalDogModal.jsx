@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
 
 const empty = {
   name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -40,6 +41,12 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
         age_y: parseInt(form.age_y) || 0,
         age_m: parseInt(form.age_m) || 0,
       };
+      // Birthday wins — derive stored age fields so they stay accurate.
+      if (form.birthday) {
+        const months = dogAgeMonths({ birthday: form.birthday });
+        body.age_y = Math.floor(months / 12);
+        body.age_m = months % 12;
+      }
       if (isEdit) await api.put(`/portal/dogs/${dog.id}`, body);
       else await api.post("/portal/dogs", body);
       onSaved?.();
@@ -74,18 +81,39 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Years">
-              <input type="number" min="0" value={form.age_y} onChange={(e)=>set({age_y:e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-            </Field>
-            <Field label="Months">
-              <input type="number" min="0" max="11" value={form.age_m} onChange={(e)=>set({age_m:e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-            </Field>
-            <Field label="Birthday">
-              <input type="date" value={form.birthday} onChange={(e)=>set({birthday:e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-            </Field>
+            {form.birthday ? (
+              <>
+                <Field label="Age">
+                  <div className="w-full bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center gap-2">
+                    <i className="fas fa-magic-wand-sparkles text-shGreen text-[11px]"/>
+                    <span>{dogAgeLabel(form)}</span>
+                  </div>
+                </Field>
+                <Field label="Birthday">
+                  <input type="date" value={form.birthday} onChange={(e)=>set({birthday:e.target.value})}
+                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                </Field>
+                <Field label="">
+                  <button type="button" onClick={()=>set({birthday:""})}
+                          className="w-full mt-1 text-[11px] text-gray-500 hover:text-gray-300 underline">Clear birthday</button>
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="Years">
+                  <input type="number" min="0" value={form.age_y} onChange={(e)=>set({age_y:e.target.value})}
+                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </Field>
+                <Field label="Months">
+                  <input type="number" min="0" max="11" value={form.age_m} onChange={(e)=>set({age_m:e.target.value})}
+                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                </Field>
+                <Field label="Birthday">
+                  <input type="date" value={form.birthday} onChange={(e)=>set({birthday:e.target.value})}
+                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                </Field>
+              </>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

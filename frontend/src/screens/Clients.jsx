@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
+import { dogAgeMonths } from "../lib/dogAge";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import Avatar from "../components/Avatar";
@@ -80,12 +81,20 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         let dogWarning = "";
         if (addDog && dog.name?.trim()) {
           try {
+            // Birthday wins — derive age_y/age_m from it for consistency.
+            let ageY = parseInt(dog.age_y) || 0;
+            let ageM = parseInt(dog.age_m) || 0;
+            if (dog.birthday) {
+              const months = dogAgeMonths({ birthday: dog.birthday });
+              ageY = Math.floor(months / 12);
+              ageM = months % 12;
+            }
             const dogResp = await api.post("/dogs", {
               owner_id: data.id,
               name: dog.name.trim(),
               breed: dog.breed || "",
-              age_y: parseInt(dog.age_y) || 0,
-              age_m: parseInt(dog.age_m) || 0,
+              age_y: ageY,
+              age_m: ageM,
               birthday: dog.birthday || "",
               sex: dog.sex || "Male",
               fixed: dog.fixed || "No",

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useConfirm } from "../lib/useConfirm";
+import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
@@ -191,7 +192,14 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const save = async () => {
     setErr("");
     try {
+      // If a birthday is set, derive age_y/age_m from it so the stored fields
+      // stay in sync (useful for places that still read them directly).
       const body = { ...form, age_y: parseInt(form.age_y)||0, age_m: parseInt(form.age_m)||0 };
+      if (form.birthday) {
+        const a = dogAgeMonths({ birthday: form.birthday });
+        body.age_y = Math.floor(a / 12);
+        body.age_m = a % 12;
+      }
       if (editing) await api.put(`/dogs/${editing.id}`, body);
       else await api.post("/dogs", body);
       setOpen(false); load();
@@ -261,7 +269,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                 <p className="text-[15px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
                 <p className="text-[15px] text-gray-400 mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
                 <div className="mt-3 flex items-center justify-between text-[14px] uppercase font-black tracking-widest">
-                  <span className="text-gray-500">{d.sex} • {d.fixed==="Yes"?"Fixed":"Intact"} • {d.age_y}y {d.age_m}m</span>
+                  <span className="text-gray-500">{d.sex} • {d.fixed==="Yes"?"Fixed":"Intact"} • {dogAgeLabel(d)}</span>
                 </div>
                 <div className={`mt-3 ${v.bg} ${v.color} rounded p-2 text-[14px] font-black uppercase tracking-widest flex items-center justify-between`}>
                   <span><i className="fas fa-shield-virus mr-2"/>Rabies: {v.label}</span>
@@ -383,9 +391,25 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                   <Input label="Name" value={form.name} onChange={(v)=>setForm({...form, name:v})} testId="dog-name-input" />
                   <Input label="Breed" value={form.breed} onChange={(v)=>setForm({...form, breed:v})} />
                   <div className="grid grid-cols-3 gap-3">
-                    <Input label="Yrs" type="number" value={form.age_y} onChange={(v)=>setForm({...form, age_y:v})} />
-                    <Input label="Mos" type="number" value={form.age_m} onChange={(v)=>setForm({...form, age_m:v})} />
-                    <Input label="Birthday" type="date" value={form.birthday} onChange={(v)=>setForm({...form, birthday:v})} />
+                    {form.birthday ? (
+                      <>
+                        <div className="col-span-2">
+                          <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Age</label>
+                          <div className="w-full mt-1 bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center gap-2">
+                            <i className="fas fa-magic-wand-sparkles text-shGreen text-[12px]"/>
+                            <span data-testid="dog-age-computed">{dogAgeLabel(form)}</span>
+                            <span className="text-[11px] text-gray-500 ml-auto">auto from birthday</span>
+                          </div>
+                        </div>
+                        <Input label="Birthday" type="date" value={form.birthday} onChange={(v)=>setForm({...form, birthday:v})} />
+                      </>
+                    ) : (
+                      <>
+                        <Input label="Yrs" type="number" value={form.age_y} onChange={(v)=>setForm({...form, age_y:v})} />
+                        <Input label="Mos" type="number" value={form.age_m} onChange={(v)=>setForm({...form, age_m:v})} />
+                        <Input label="Birthday" type="date" value={form.birthday} onChange={(v)=>setForm({...form, birthday:v})} />
+                      </>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -478,7 +502,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               {tab === "training" && (
                 editing ? (
                   <DogTrainingTab dogId={editing.id} dogName={form.name}
-                                  dogAgeMonths={(parseInt(form.age_y)||0)*12 + (parseInt(form.age_m)||0)} />
+                                  dogAgeMonths={dogAgeMonths(form)} />
                 ) : (
                   <p className="text-[14px] text-gray-500 italic py-8 text-center">Save the dog first, then come back to enroll in a training program.</p>
                 )
