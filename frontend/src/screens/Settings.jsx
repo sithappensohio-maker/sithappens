@@ -66,6 +66,7 @@ export default function Settings() {
     { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
     { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
+    { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation" },
     { id: "automation", label: "Email Automation", icon: "fa-paper-plane" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
@@ -101,6 +102,7 @@ export default function Settings() {
           {tab === "credit_packs" && <CreditPacksSettings />}
           {tab === "commands" && <CommandsPanel />}
           {tab === "backup" && <BackupPanel />}
+          {tab === "errors" && <ErrorsPanel />}
           {tab === "automation" && <AutomationPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
@@ -662,6 +664,118 @@ function SaveBar({ onSave, saving }) {
     </div>
   );
 }
+
+
+function ErrorsPanel() {
+  const [errors, setErrors] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [expanded, setExpanded] = useState(null);
+
+  const load = async () => {
+    setLoading(true); setMsg("");
+    try {
+      const { data } = await api.get("/admin/recent-errors");
+      setErrors(Array.isArray(data?.errors) ? data.errors : []);
+    } catch (e) {
+      console.warn("Recent errors load failed:", e);
+      setMsg("Failed to load recent errors.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const clearAll = async () => {
+    if (!window.confirm("Clear all recent errors from the buffer?")) return;
+    try {
+      await api.post("/admin/recent-errors/clear");
+      setErrors([]);
+      setMsg("Cleared.");
+    } catch (e) {
+      console.warn("Clear errors failed:", e);
+      setMsg("Failed to clear.");
+    }
+  };
+
+  const fmtTs = (iso) => {
+    try {
+      const d = new Date(iso);
+      return d.toLocaleString();
+    } catch { return iso; }
+  };
+
+  return (
+    <div className="space-y-4 max-w-3xl" data-testid="errors-panel">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-1">
+            <i className="fas fa-triangle-exclamation mr-2"/>Recent Server Errors
+          </h4>
+          <p className="text-[13px] text-gray-400 leading-relaxed">
+            The last 20 unhandled API errors since the backend was started. Spot regressions before clients email you.
+            Cleared automatically when the server restarts.
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <button onClick={load} disabled={loading} data-testid="errors-refresh-btn"
+                  className="bg-bgHover text-gray-200 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-bgBase disabled:opacity-50">
+            <i className={`fas fa-rotate ${loading?"fa-spin":""} mr-1.5`}/>Refresh
+          </button>
+          <button onClick={clearAll} disabled={loading || errors.length===0} data-testid="errors-clear-btn"
+                  className="bg-red-500/20 text-red-300 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-40">
+            <i className="fas fa-trash mr-1.5"/>Clear
+          </button>
+        </div>
+      </div>
+
+      {msg && <p className="text-[13px] text-gray-400">{msg}</p>}
+
+      {errors.length === 0 && !loading ? (
+        <div className="bg-bgBase border border-bgHover rounded p-6 text-center">
+          <i className="fas fa-check-circle text-shGreen text-2xl mb-2 block"/>
+          <p className="text-[14px] font-black text-gray-300 uppercase tracking-widest">All clear</p>
+          <p className="text-[12px] text-gray-500 mt-1">No unhandled errors recorded.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {errors.map((er) => {
+            const isOpen = expanded === er.id;
+            return (
+              <div key={er.id} className="bg-bgBase border border-bgHover rounded overflow-hidden" data-testid={`error-row-${er.id}`}>
+                <button onClick={()=>setExpanded(isOpen ? null : er.id)}
+                        className="w-full text-left p-3 hover:bg-bgHover/40 transition">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[11px] font-black text-shOrange uppercase tracking-widest px-2 py-0.5 bg-shOrange/10 rounded">
+                          {er.type}
+                        </span>
+                        <span className="text-[11px] font-mono text-gray-500">{er.method} {er.path}</span>
+                      </div>
+                      <p className="text-[13px] text-gray-200 break-words">{er.message || "(no message)"}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[11px] text-gray-500">{fmtTs(er.ts)}</p>
+                      <i className={`fas fa-chevron-${isOpen?"up":"down"} text-gray-500 text-[11px] mt-1`}/>
+                    </div>
+                  </div>
+                </button>
+                {isOpen && (
+                  <pre className="text-[11px] text-gray-400 bg-black/40 p-3 overflow-x-auto whitespace-pre-wrap border-t border-bgHover">
+{er.traceback || "(no traceback)"}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 
 function BackupPanel() {

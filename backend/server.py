@@ -9,6 +9,8 @@ import asyncio
 import secrets
 import logging
 import contextvars
+import traceback
+from collections import deque
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
@@ -64,6 +66,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("sithappens")
 
 
+# -------- Recent errors ring buffer --------
+# In-memory rolling log of the last 20 unhandled errors so admins can see
+# problems on the Settings page without having to SSH into the server.
+# Survives nothing beyond a process restart — that's fine for a solo-op CRM.
+RECENT_ERRORS: deque = deque(maxlen=20)
+
+
 # -------- Global exception handler --------
 # Logs the full traceback for any unexpected error so issues surface in logs
 # instead of being silently returned as opaque 500s.
@@ -74,7 +83,17 @@ async def _unhandled_exception_handler(request, exc):
     if isinstance(exc, _HTTPExc):
         # Let FastAPI handle expected HTTP errors normally.
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    tb = traceback.format_exc()
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    RECENT_ERRORS.appendleft({
+        "id": str(uuid.uuid4()),
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "method": request.method,
+        "path": str(request.url.path),
+        "type": type(exc).__name__,
+        "message": str(exc)[:500],
+        "traceback": tb[-2000:],  # last 2KB is plenty for diagnosis
+    })
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -4034,6 +4053,23 @@ async def backup_export(_: dict = Depends(require_admin)):
         docs = await db[c].find({}, {"_id": 0}).to_list(50000)
         payload["collections"][c] = docs
     return payload
+
+
+
+# -------- Recent server errors (admin only) --------
+@api.get("/admin/recent-errors")
+async def admin_recent_errors(_: dict = Depends(require_admin)):
+    """Return the last 20 unhandled server errors from the in-memory ring
+    buffer. Useful for catching API regressions on the Settings page without
+    needing SSH access. Buffer survives only until the next backend restart."""
+    return {"errors": list(RECENT_ERRORS), "count": len(RECENT_ERRORS)}
+
+
+@api.post("/admin/recent-errors/clear")
+async def admin_recent_errors_clear(_: dict = Depends(require_admin)):
+    """Empty the recent-errors ring buffer."""
+    RECENT_ERRORS.clear()
+    return {"cleared": True}
 
 
 
