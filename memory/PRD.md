@@ -668,3 +668,9 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
   - If client has SOME but not enough credits (e.g. 2 boarding credits but a 3-night booking), the existing "no credits on file" copy now also includes an inline orange notice explaining the gap.
   - Submit logic no longer overrides `payment_method` when settling from credits at checkout (was leaking `cash` over Case C).
 - ✅ End-to-end verified: created a no-credit booking for Alex Owner, called `/check-out` with `use_credits=true` → his daycare balance went 14 → 13, booking marked paid via credits, FIFO lot consumed. UI screenshot confirms both radio options render on the checkout modal with the live balance ("13 available").
+
+
+## Sprint 60 — Portal: Bookings tabs + quick-jump button (2026-02)
+- ✅ **My Bookings tabs** (`Portal.jsx`): the long flat list is now segmented into **Upcoming / Past / All** with live counts. "Past" = terminal status (completed/cancelled/rejected) OR date already in the past. Upcoming sorted ascending; Past sorted descending (most recent first). Empty-state copy differs per tab. Default tab = Upcoming so clients land on what matters.
+- ✅ **Quick-jump button** under "My Profile" in the credits side card: a "My Bookings · N" button that smooth-scrolls to the bookings section. Saves the long page scroll on mobile.
+- ✅ Lint clean. Smoke-tested in preview as Test Client (41 bookings: 9 upcoming, 32 past). Tabs and counts render correctly, scroll-jump works.

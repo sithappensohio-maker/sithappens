@@ -625,6 +625,8 @@ export default function Portal() {
   const [publicPrograms, setPublicPrograms] = useState([]);
   const [showServicesModal, setShowServicesModal] = useState(false);
   const [showRecurringModal, setShowRecurringModal] = useState(false);
+  // Client-portal bookings tab: "upcoming" (pending+approved+today) | "past" (completed+cancelled+rejected) | "all"
+  const [bookingsTab, setBookingsTab] = useState("upcoming");
 
   const loadAll = useCallback(async () => {
     try {
@@ -864,6 +866,14 @@ export default function Portal() {
             <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
                     className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
               <i className="fas fa-user-pen mr-2"/>My Profile
+            </button>
+            <button onClick={()=>{
+                       const el = document.getElementById("portal-bookings-anchor");
+                       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                     }}
+                    data-testid="jump-to-bookings"
+                    className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
+              <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
             </button>
           </div>
 
@@ -1242,11 +1252,72 @@ export default function Portal() {
             </div>
           )}
 
-          <div>
-            <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">My Bookings</h2>
-            <div className="space-y-3" data-testid="portal-bookings">
-              {bookings.length === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs">No bookings yet.</div>}
-              {bookings.map(b => (
+          <div id="portal-bookings-anchor">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Bookings</h2>
+              {/* Tabbed filter — keeps the list short. Counts shown on each tab. */}
+              {(() => {
+                // Today is "upcoming". A booking is "past" iff its end_date (or date) is
+                // before today AND status is completed/cancelled/rejected, OR status is
+                // any terminal state regardless of date.
+                const todayIso = new Date().toISOString().slice(0,10);
+                const isPast = (b) => {
+                  const dt = b.end_date || b.date || "";
+                  const terminal = ["completed","cancelled","rejected"].includes(b.status);
+                  return terminal || (dt && dt < todayIso);
+                };
+                const counts = {
+                  upcoming: bookings.filter(b => !isPast(b)).length,
+                  past: bookings.filter(b => isPast(b)).length,
+                  all: bookings.length,
+                };
+                return (
+                  <div className="flex bg-bgPanel border border-bgHover rounded-lg p-1 text-[12px] font-black uppercase tracking-widest" data-testid="bookings-tabs">
+                    {[
+                      { key: "upcoming", label: "Upcoming", color: "shGreen" },
+                      { key: "past",     label: "Past",     color: "shBlue"  },
+                      { key: "all",      label: "All",      color: "white"   },
+                    ].map(t => {
+                      const active = bookingsTab === t.key;
+                      return (
+                        <button key={t.key}
+                                onClick={()=>setBookingsTab(t.key)}
+                                data-testid={`bookings-tab-${t.key}`}
+                                className={`px-3 py-1.5 rounded transition flex items-center gap-1.5 ${active ? "bg-bgBase text-white" : "text-gray-500 hover:text-white"}`}>
+                          <span>{t.label}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${active ? "bg-shGreen/20 text-shGreen" : "bg-bgHover text-gray-400"}`}>{counts[t.key]}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+            {(() => {
+              const todayIso = new Date().toISOString().slice(0,10);
+              const isPast = (b) => {
+                const dt = b.end_date || b.date || "";
+                const terminal = ["completed","cancelled","rejected"].includes(b.status);
+                return terminal || (dt && dt < todayIso);
+              };
+              const filtered = bookingsTab === "upcoming" ? bookings.filter(b => !isPast(b))
+                              : bookingsTab === "past"   ? bookings.filter(b => isPast(b))
+                              : bookings;
+              // Past first feels backward to clients — sort upcoming ascending, past descending.
+              const sorted = [...filtered].sort((a, b) => {
+                const ad = a.date || ""; const bd = b.date || "";
+                return bookingsTab === "past" ? bd.localeCompare(ad) : ad.localeCompare(bd);
+              });
+              if (sorted.length === 0) {
+                return (
+                  <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs" data-testid="bookings-empty">
+                    {bookingsTab === "upcoming" ? "No upcoming bookings — book a service above." : bookingsTab === "past" ? "No past bookings yet." : "No bookings yet."}
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-3" data-testid="portal-bookings">
+                  {sorted.map(b => (
                 <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between p-4">
                     <div>
@@ -1291,8 +1362,10 @@ export default function Portal() {
                     </div>
                   )}
                 </div>
-              ))}
-            </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         </div>
         </div>
