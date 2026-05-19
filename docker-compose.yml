@@ -1,0 +1,63 @@
+# Sit Happens — self-hosted stack.
+# Two containers (frontend + backend) plus Mongo with a named volume for persistence.
+# Cloudflare Tunnel runs on the HOST (not in compose) so a tunnel restart
+# doesn't take the app down with it. See SELF_HOSTING.md.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: sit-happens-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db          # named volume — survives container rebuilds
+      - ./backups:/backups            # bind mount so mongodump output lands on the host
+    # Bind to localhost only — never expose Mongo to your LAN, let alone the internet.
+    ports:
+      - "127.0.0.1:27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1}).ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: sit-happens-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      # The .env file inside backend/ is the source of truth; compose just forwards
+      # what's needed for connecting to mongo and any keys you set.
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "${DB_NAME:-sit_happens}"
+      # Pass-through everything else from the backend/.env file:
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
+      EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        # Leave blank for single-origin: axios will call relative /api/* and nginx
+        # routes those to the backend container. Override if you split domains.
+        REACT_APP_BACKEND_URL: "${REACT_APP_BACKEND_URL:-}"
+    container_name: sit-happens-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # Bind to localhost only — Cloudflare Tunnel terminates on the host and
+    # forwards to this port. Nothing on your LAN should hit nginx directly.
+    ports:
+      - "127.0.0.1:8080:80"
+
+volumes:
+  mongo_data:

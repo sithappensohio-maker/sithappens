@@ -64,6 +64,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("sithappens")
 
 
+# -------- Health check (no auth) --------
+@api.get("/health")
+async def health():
+    """Liveness probe for Docker / load balancers. Returns 200 if the API
+    process is up and Mongo is reachable."""
+    try:
+        await db.command("ping")
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"mongo unreachable: {e}")
+
+
 # -------- Helpers --------
 def hash_password(pw: str) -> str:
     return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()

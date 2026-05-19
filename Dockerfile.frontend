@@ -1,0 +1,23 @@
+# Sit Happens — React frontend (multi-stage)
+# Stage 1: build the production bundle.
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+# REACT_APP_BACKEND_URL is baked into the JS bundle at build time (CRA limitation).
+# For self-host single-origin, leave it empty so axios uses relative /api/* URLs
+# and nginx routes them to the backend container.
+ARG REACT_APP_BACKEND_URL=""
+ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile --network-timeout 600000
+
+COPY frontend/ ./
+RUN yarn build
+
+# Stage 2: serve static files + reverse-proxy /api to the backend container.
+FROM nginx:alpine
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/build /usr/share/nginx/html
+
+EXPOSE 80

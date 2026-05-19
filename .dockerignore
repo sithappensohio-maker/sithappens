@@ -1,0 +1,20 @@
+# Trim build context — keep image small, builds fast.
+# These get sent to the Docker daemon during `docker compose build`, so
+# excluding them speeds things up dramatically.
+
+.git
+.gitignore
+.env
+**/.env.local
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/node_modules
+frontend/build
+.emergent
+.vscode
+.idea
+*.log
+test_reports
+memory
+backups
