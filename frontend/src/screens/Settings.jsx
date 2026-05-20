@@ -1085,7 +1085,81 @@ function BackupPanel() {
         <p>Clients, dogs, bookings, incidents, homework, waiver signatures, and your settings. Admin login credentials are <span className="text-white font-black">not</span> included — your password stays in the database and is never exported. Backups are plain JSON and safe to email to yourself or store in cloud storage.</p>
       </div>
 
+      <BulkClaimEmailsSection />
+
       <PhotoCompressionPanel />
+    </div>
+  );
+}
+
+function BulkClaimEmailsSection() {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState("");
+
+  const send = async () => {
+    const ok = await confirm({
+      title: "Send claim emails to all clients?",
+      message: "Every client with an email and no portal login yet will receive a one-time link to set their password. Already-linked clients are skipped automatically. This may take a minute for large lists.",
+      confirmText: "Send claim emails",
+      tone: "primary",
+    });
+    if (!ok) return;
+    setBusy(true); setErr(""); setResult(null);
+    try {
+      const { data } = await api.post("/clients/send-claim-emails/bulk");
+      setResult(data);
+    } catch (e) {
+      setErr(formatErr(e.response?.data?.detail) || "Bulk send failed");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-3" data-testid="bulk-claim-section">
+      <div>
+        <p className="text-shBlue font-black uppercase tracking-widest text-[14px]"><i className="fas fa-paper-plane mr-2"/>Mass Claim Emails (Recovery)</p>
+        <p className="text-[14px] text-gray-400 mt-1 leading-relaxed">
+          One-shot tool for migrations: emails every client a link to set their password. Use this after restoring a backup that contained clients but not their login credentials.
+          Clients who already have a portal login are skipped automatically.
+        </p>
+      </div>
+      <button onClick={send} disabled={busy} data-testid="bulk-claim-btn"
+              className="bg-shBlue text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+        {busy ? <><i className="fas fa-spinner fa-spin mr-2"/>Sending…</> : <><i className="fas fa-envelopes-bulk mr-2"/>Send Claim Emails to All Clients</>}
+      </button>
+      {err && <div className="text-[14px] font-black uppercase tracking-widest p-2 rounded bg-red-500/15 text-red-400">{err}</div>}
+      {result && (
+        <div className="bg-bgPanel rounded p-3 space-y-2" data-testid="bulk-claim-result">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[14px]">
+            <StatChip label="Total Clients" value={result.total_clients} color="text-gray-300" />
+            <StatChip label="Sent ✓" value={result.sent_count} color="text-shGreen" />
+            <StatChip label="No Email" value={result.skipped_no_email_count} color="text-gray-400" />
+            <StatChip label="Already Linked" value={result.skipped_already_linked_count} color="text-gray-400" />
+          </div>
+          {result.errors_count > 0 && (
+            <div className="bg-red-500/10 border border-red-500/30 rounded p-2 text-[13px]">
+              <p className="text-red-400 font-black uppercase tracking-widest mb-1">{result.errors_count} error{result.errors_count===1?"":"s"}:</p>
+              <ul className="text-gray-300 space-y-0.5">
+                {result.errors.slice(0,5).map((e,i)=>(
+                  <li key={i}>· {e.name} ({e.email}): {e.error}</li>
+                ))}
+                {result.errors.length > 5 && <li className="text-gray-500">…and {result.errors.length-5} more</li>}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatChip({ label, value, color }) {
+  return (
+    <div className="bg-bgBase rounded px-2 py-2 flex flex-col items-center">
+      <span className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{label}</span>
+      <span className={`text-xl font-black ${color}`}>{value}</span>
     </div>
   );
 }

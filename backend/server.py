@@ -603,6 +603,75 @@ class ClaimSetIn(BaseModel):
     password: str = Field(min_length=6)
 
 
+@api.post("/clients/send-claim-emails/bulk")
+async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
+    """Send a claim email to EVERY client who has an email on file but no
+    portal user yet. Designed for one-shot recovery after a data migration
+    (e.g. moving off Emergent) where login credentials weren't preserved.
+
+    Returns a per-client breakdown so the admin can see exactly who got an
+    email, who was skipped (no email), and who errored."""
+    clients = await db.clients.find({}, {"_id": 0, "id": 1, "name": 1, "email": 1}).to_list(2000)
+    # Build the set of client_ids that already have a portal user — these get skipped
+    # (re-sending a reset to them would still work, but the intent of this button is
+    # to onboard people who can't log in at all).
+    users_with_link = await db.users.find({"client_id": {"$ne": None}}, {"_id": 0, "client_id": 1}).to_list(5000)
+    linked_ids = {u["client_id"] for u in users_with_link if u.get("client_id")}
+
+    sent: List[Dict[str, Any]] = []
+    skipped_no_email: List[Dict[str, Any]] = []
+    skipped_already_linked: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    for c in clients:
+        target_email = (c.get("email") or "").strip().lower()
+        if not target_email:
+            skipped_no_email.append({"id": c["id"], "name": c.get("name", "")})
+            continue
+        if c["id"] in linked_ids:
+            skipped_already_linked.append({"id": c["id"], "name": c.get("name", ""), "email": target_email})
+            continue
+        try:
+            # Mint a fresh token (invalidate any previously unused ones for safety)
+            await db.claim_tokens.delete_many({"client_id": c["id"], "used": False})
+            token = secrets.token_urlsafe(32)
+            expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
+            await db.claim_tokens.insert_one({
+                "token": token,
+                "client_id": c["id"],
+                "email": target_email,
+                "is_reset": False,
+                "used": False,
+                "created_at": now_iso(),
+                "expires_at": expires_at.isoformat(),
+            })
+            claim_url = _build_claim_url(token)
+            await send_account_claim(
+                to_email=target_email,
+                client_name=c.get("name", ""),
+                claim_url=claim_url,
+                is_reset=False,
+                expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+            )
+            sent.append({"id": c["id"], "name": c.get("name", ""), "email": target_email})
+        except Exception as e:
+            logger.warning("bulk-claim: failed for %s (%s): %s", c.get("name"), target_email, e)
+            errors.append({"id": c["id"], "name": c.get("name", ""), "email": target_email, "error": str(e)[:200]})
+
+    return {
+        "ok": True,
+        "total_clients": len(clients),
+        "sent_count": len(sent),
+        "skipped_no_email_count": len(skipped_no_email),
+        "skipped_already_linked_count": len(skipped_already_linked),
+        "errors_count": len(errors),
+        "sent": sent,
+        "skipped_no_email": skipped_no_email,
+        "skipped_already_linked": skipped_already_linked,
+        "errors": errors,
+    }
+
+
 @api.post("/clients/{client_id}/send-claim-email")
 async def send_claim_email(client_id: str, _: dict = Depends(require_admin)):
     """Generate a one-time claim/reset token for this client and email it.

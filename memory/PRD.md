@@ -760,3 +760,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** Admin "Duplicate Clients" detector + merge UI (for existing duplicates created before Sprint 69)
 - **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
 - **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules
+
+## Sprint 70 — Bulk claim-email recovery tool (2026-02)
+- ✅ **Backend `POST /api/clients/send-claim-emails/bulk`**: scans all clients, fires a fresh one-time claim token + email for every client that has an email on file AND no portal user linked yet. Skips clients without emails and clients already linked. Returns a structured summary (total, sent, skipped_no_email, skipped_already_linked, errors).
+- ✅ **Settings → Backup & Restore**: new "Mass Claim Emails (Recovery)" section with a single button + result chips (Total / Sent / No Email / Already Linked / Errors). Confirm-dialog before firing to avoid accidental sends.
+- ✅ Tested via curl: 48 clients scanned → 8 sent, 37 already linked, 3 no-email, 0 errors. JSON shape includes `sent[]`, `skipped_*[]`, `errors[]` arrays for inline display.
+- 🎯 **Use case**: when migrating from Emergent → self-hosted Docker, the `clients` collection came over via mongodump but the `users` collection didn't. Result: 25 clients, 1 user. This button is the one-click recovery: every client gets an email with a "Set Your Password" link → they pick a password → land back in their account with all their dogs, credits, and history intact.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
+- **P2** Admin "Duplicate Clients" detector + merge UI
+- **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
+- **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules
