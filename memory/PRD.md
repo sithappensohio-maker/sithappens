@@ -819,3 +819,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
+
+## Sprint 74 — Removed Emergent branding + telemetry from self-hosted build (2026-02)
+- ✅ **Removed `#emergent-badge` `<a>` tag** from `frontend/public/index.html` (the floating "Made with Emergent" pill in the bottom-right).
+- ✅ **Removed the PostHog session-recording script** that was capturing every click + session of every client + admin and sending it to `us.i.posthog.com`. Privacy + GDPR win.
+- ✅ **Removed the `https://assets.emergent.sh/scripts/emergent-main.js`** external script tag (which likely re-injected the badge dynamically).
+- 📝 Note: These changes only take effect on builds where the user controls the pipeline (self-hosted Docker). The Emergent platform re-injects badge + tracking server-side on its managed preview/deployment URLs — out of our control.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" announcement email blast to clients (one-click button)
+- **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
