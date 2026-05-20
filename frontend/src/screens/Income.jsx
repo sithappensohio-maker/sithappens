@@ -32,6 +32,43 @@ export default function Income() {
   const [savingId, setSavingId] = useState(null);
   const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
 
+  // ── Expenses (tracked in the same date range as the Range View above)
+  const [expenses, setExpenses] = useState([]);
+  const [expCategories, setExpCategories] = useState([]);
+  const [expOpen, setExpOpen] = useState(false);
+  const [expEditing, setExpEditing] = useState(null);
+
+  const loadExpenses = async () => {
+    if (!rangeStart || !rangeEnd) return;
+    try {
+      const [{ data }, { data: cats }] = await Promise.all([
+        api.get("/expenses", { params: { start_date: rangeStart, end_date: rangeEnd } }),
+        api.get("/expenses/categories"),
+      ]);
+      setExpenses(data || []);
+      setExpCategories(cats?.categories || []);
+    } catch (e) { console.warn("expenses load failed", e); }
+  };
+  useEffect(() => { loadExpenses(); /* eslint-disable-next-line */ }, [rangeStart, rangeEnd]);
+
+  const refreshAfterExpenseChange = () => {
+    loadExpenses();
+    // re-pull range summary so the Net tile updates
+    if (rangeStart && rangeEnd) {
+      api.get("/transactions/summary-range", { params: { start_date: rangeStart, end_date: rangeEnd } })
+         .then(r => setRangeSummary(r.data))
+         .catch(()=>{});
+    }
+  };
+
+  const removeExpense = async (e) => {
+    if (!(await confirm({ title: "Remove expense?", body: `"${e.description}" on ${e.date} (${fmt(e.amount)}) will be permanently removed.`, confirmText: "Remove", tone: "danger" }))) return;
+    try {
+      await api.delete(`/expenses/${e.id}`);
+      refreshAfterExpenseChange();
+    } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
+  };
+
   const load = async () => {
     const [s, sum, svcs, ds] = await Promise.all([
       api.get("/transactions", { params: { revenue_only: !showLegacy } }),
@@ -227,13 +264,76 @@ export default function Income() {
                      className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
             </div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <StatTile label="Completed (revenue earned)" value={fmt(rangeSummary.completed_total)} sub={`over ${rangeSummary.by_day?.length || 0} active days`} color="text-shGreen" icon="fa-circle-check" big />
-            <StatTile label="Paid" value={fmt(rangeSummary.paid_total)} sub="received" color="text-shBlue" icon="fa-dollar-sign" />
+            <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
+            <StatTile label="Net (income − expenses)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
             <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
           </div>
           {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}
         </div>
+      )}
+
+      {/* Expenses (date range matches Range View above) */}
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="expenses-card">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+          <div>
+            <h4 className="text-sm font-black text-red-300 uppercase tracking-widest"><i className="fas fa-receipt mr-2"/>Expenses</h4>
+            <p className="text-[12px] text-gray-500 mt-1">Logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · subtracted from gross to show NET above.</p>
+          </div>
+          <button onClick={()=>{ setExpEditing(null); setExpOpen(true); }} data-testid="expense-add-btn"
+                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30">
+            <i className="fas fa-plus mr-1.5"/>Add Expense
+          </button>
+        </div>
+        {expenses.length === 0 ? (
+          <div className="text-center py-6 text-gray-500 text-[13px]">
+            <i className="fas fa-receipt text-2xl mb-2 block opacity-40"/>
+            No expenses logged in this range.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="text-[11px] text-gray-500 uppercase tracking-widest border-b border-bgHover">
+                  <th className="text-left py-2 pr-3">Date</th>
+                  <th className="text-left py-2 pr-3">What</th>
+                  <th className="text-left py-2 pr-3">Category</th>
+                  <th className="text-left py-2 pr-3">Method</th>
+                  <th className="text-right py-2 pr-3">Amount</th>
+                  <th className="text-right py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {expenses.map(e => (
+                  <tr key={e.id} className="border-b border-bgHover/40 hover:bg-bgBase/40" data-testid={`expense-row-${e.id}`}>
+                    <td className="py-2 pr-3 text-gray-300">{e.date}</td>
+                    <td className="py-2 pr-3 text-white">{e.description}</td>
+                    <td className="py-2 pr-3 text-gray-400">{e.category || "—"}</td>
+                    <td className="py-2 pr-3 text-gray-500 capitalize">{e.payment_method || "—"}</td>
+                    <td className="py-2 pr-3 text-right text-red-300 font-black">−{fmt(e.amount)}</td>
+                    <td className="py-2 text-right">
+                      <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[11px] text-gray-400 hover:text-shBlue mr-3" data-testid={`expense-edit-${e.id}`}>
+                        <i className="fas fa-pen"/>
+                      </button>
+                      <button onClick={()=>removeExpense(e)} className="text-[11px] text-gray-400 hover:text-red-400" data-testid={`expense-delete-${e.id}`}>
+                        <i className="fas fa-trash"/>
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {expOpen && (
+        <ExpenseModal expense={expEditing}
+                      categories={expCategories}
+                      onClose={()=>{ setExpOpen(false); setExpEditing(null); }}
+                      onSaved={()=>{ setExpOpen(false); setExpEditing(null); refreshAfterExpenseChange(); }}
+                      onError={(msg)=>setEditErr(msg)} />
       )}
 
       {/* Filters */}
@@ -518,6 +618,114 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
               {busy ? "Saving…" : "Log Service"}
             </button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
+  const isEdit = !!expense;
+  const [form, setForm] = useState({
+    date: expense?.date || todayISO(),
+    description: expense?.description || "",
+    amount: expense?.amount ?? "",
+    category: expense?.category || "",
+    payment_method: expense?.payment_method || "card",
+    notes: expense?.notes || "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!form.description.trim()) { onError && onError("Description is required"); return; }
+    if (form.amount === "" || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
+      onError && onError("Amount must be greater than zero"); return;
+    }
+    setBusy(true);
+    try {
+      const body = {
+        date: form.date,
+        description: form.description.trim(),
+        amount: Number(form.amount),
+        category: (form.category || "").trim(),
+        notes: (form.notes || "").trim(),
+        payment_method: form.payment_method,
+      };
+      if (isEdit) await api.put(`/expenses/${expense.id}`, body);
+      else await api.post("/expenses", body);
+      onSaved && onSaved();
+    } catch (e) {
+      onError && onError(`Save failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[80] flex items-center justify-center p-4" onClick={onClose} data-testid="expense-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <h3 className="text-lg font-black text-white uppercase italic tracking-tight">
+            <i className="fas fa-receipt text-red-300 mr-2"/>{isEdit ? "Edit Expense" : "Add Expense"}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><i className="fas fa-times"/></button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+            <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} style={{colorScheme:"dark"}}
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
+            <input type="number" step="0.01" min="0" value={form.amount} onChange={(e)=>setForm({...form, amount:e.target.value})}
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-amount" />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">What was it</label>
+          <input type="text" value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})}
+                 placeholder="e.g., 40lb kibble bag, vet supplies, paper towels"
+                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-description" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Category</label>
+            <input type="text" value={form.category} onChange={(e)=>setForm({...form, category:e.target.value})}
+                   list="expense-categories" placeholder="e.g., Food, Supplies, Utilities"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-category" />
+            <datalist id="expense-categories">
+              {categories.map(c => <option key={c} value={c}/>)}
+            </datalist>
+          </div>
+          <div>
+            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
+            <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="card">Card</option>
+              <option value="cash">Cash</option>
+              <option value="transfer">Transfer</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+          <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
+        </div>
+
+        <div className="flex gap-2 justify-end pt-2">
+          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+          <button onClick={save} disabled={busy} data-testid="expense-save"
+                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-5 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-50">
+            {busy ? "Saving…" : (isEdit ? "Save changes" : "Add expense")}
+          </button>
         </div>
       </div>
     </div>

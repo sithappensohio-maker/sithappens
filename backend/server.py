@@ -3987,7 +3987,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
 # -------- Backup & Restore --------
 BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "incidents", "homework",
-    "waiver_signatures", "vaccine_dismissals", "settings",
+    "waiver_signatures", "vaccine_dismissals", "settings", "expenses",
 ]
 BACKUP_VERSION = 1
 
@@ -4070,6 +4070,11 @@ async def admin_income_csv(
         {"sold_at": {"$gte": f"{yr}-01-01T00:00:00", "$lte": f"{yr}-12-31T23:59:59"}},
         {"_id": 0},
     ).to_list(50000)
+    # Expenses in the same year
+    expenses = await db.expenses.find(
+        {"date": {"$gte": start, "$lte": end}},
+        {"_id": 0},
+    ).to_list(50000)
 
     out_rows: List[List[str]] = [
         ["Date", "Type", "Client", "Dog", "Service / Pack", "Amount (USD)", "Payment method", "Payment status", "Booking/Lot ID"]
@@ -4090,11 +4095,22 @@ async def admin_income_csv(
             lot.get("pack_name", "") or lot.get("service_type", ""), f"{float(lot.get('paid_amount', 0)):.2f}",
             lot.get("payment_method", "") or "", "paid", lot.get("id", ""),
         ])
+    # Expenses as negative-amount rows so the trailing TOTAL line nets correctly.
+    for e in expenses:
+        amt = float(e.get("amount") or 0)
+        if amt <= 0:
+            continue
+        out_rows.append([
+            e.get("date", ""), "Expense", "", "",
+            e.get("description", "") + (f" ({e.get('category')})" if e.get("category") else ""),
+            f"-{amt:.2f}",
+            e.get("payment_method", "") or "", "paid", e.get("id", ""),
+        ])
 
     # Trailing summary row keeps the totals visible in Excel without a pivot.
     total = sum(float(r[5]) for r in out_rows[1:])
     out_rows.append([])
-    out_rows.append(["", "", "", "", f"{yr} TOTAL", f"{total:.2f}", "", "", ""])
+    out_rows.append(["", "", "", "", f"{yr} NET TOTAL", f"{total:.2f}", "", "", ""])
 
     # CSV escape — minimal but correct.
     def esc(v: str) -> str:
@@ -5003,13 +5019,112 @@ async def summary_range(
             by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
         if r.get("payment_status") == "paid":
             paid_total += price
+    # Expenses in the same window so the UI can show NET (income - expenses)
+    exp_rows = await db.expenses.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0},
+    ).to_list(5000)
+    expenses_total = round(sum(float(e.get("amount") or 0) for e in exp_rows), 2)
+    by_category: Dict[str, Dict] = {}
+    for e in exp_rows:
+        cat = (e.get("category") or "Uncategorized").strip() or "Uncategorized"
+        b = by_category.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
+        b["count"] += 1
+        b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
     return {
         "start_date": start_date,
         "end_date": end_date,
         "completed_total": round(completed_total, 2),
         "paid_total": round(paid_total, 2),
+        "expenses_total": expenses_total,
+        "net_total": round(completed_total - expenses_total, 2),
+        "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
+        "expense_count": len(exp_rows),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
     }
+
+
+# ────────────────────────── Expenses ──────────────────────────
+class ExpenseIn(BaseModel):
+    date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
+    description: str = Field(min_length=1, max_length=200)
+    amount: float = Field(ge=0)
+    category: Optional[str] = ""
+    notes: Optional[str] = ""
+    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "card"
+
+
+@api.get("/expenses")
+async def list_expenses(
+    _: dict = Depends(require_admin),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """List expenses, optionally filtered to a date window. Newest first."""
+    q: Dict[str, Any] = {}
+    if start_date or end_date:
+        q["date"] = {}
+        if start_date:
+            q["date"]["$gte"] = start_date
+        if end_date:
+            q["date"]["$lte"] = end_date
+    cursor = db.expenses.find(q, {"_id": 0}).sort([("date", -1), ("created_at", -1)])
+    return await cursor.to_list(2000)
+
+
+@api.post("/expenses")
+async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
+    """Log an out-of-pocket business expense (food, supplies, utilities, etc.).
+    These flow into the Income screen's monthly/range view so you can see NET
+    instead of just gross income."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": body.date,
+        "description": body.description.strip(),
+        "amount": round(float(body.amount), 2),
+        "category": (body.category or "").strip(),
+        "notes": (body.notes or "").strip(),
+        "payment_method": body.payment_method or "card",
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+    }
+    await db.expenses.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/expenses/{expense_id}")
+async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(require_admin)):
+    existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    patch = {
+        "date": body.date,
+        "description": body.description.strip(),
+        "amount": round(float(body.amount), 2),
+        "category": (body.category or "").strip(),
+        "notes": (body.notes or "").strip(),
+        "payment_method": body.payment_method or "card",
+        "updated_at": now_iso(),
+    }
+    await db.expenses.update_one({"id": expense_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.delete("/expenses/{expense_id}")
+async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
+    res = await db.expenses.delete_one({"id": expense_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    return {"ok": True}
+
+
+@api.get("/expenses/categories")
+async def expense_categories(_: dict = Depends(require_admin)):
+    """Unique category strings seen so far — used to power autocomplete."""
+    cats = await db.expenses.distinct("category")
+    cats = sorted([c for c in cats if c])
+    return {"categories": cats}
 
 
 # ────────────────────────── Credit Packs + FIFO Lots ──────────────────────────
