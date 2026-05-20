@@ -40,11 +40,26 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
   const [slots, setSlots] = useState(null);
   const [slotLoading, setSlotLoading] = useState(false);
   const [avail, setAvail] = useState(null);
+  const [closedDates, setClosedDates] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
 
   // Date guard rails
   const minDate = todayISO();
+
+  // Load closed-dates list once so we can flag picks the business is closed.
+  useEffect(() => {
+    api.get("/settings/public")
+       .then(r => setClosedDates(Array.isArray(r.data?.closed_dates) ? r.data.closed_dates : []))
+       .catch(() => setClosedDates([]));
+  }, []);
+
+  // Is the currently-picked date a closed day?
+  const dateIsClosed = useMemo(() => closedDates.includes(date), [closedDates, date]);
+  const endDateIsClosed = useMemo(
+    () => serviceType === "boarding" && endDate && closedDates.includes(endDate),
+    [serviceType, endDate, closedDates]
+  );
 
   // Fetch slot availability when needed
   useEffect(() => {
@@ -75,11 +90,16 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
 
   const canProceedFromStep2 = useMemo(() => {
     if (!date) return false;
-    if (serviceType === "boarding") return !!endDate && endDate >= date;
+    if (dateIsClosed) return false;
+    if (serviceType === "boarding") {
+      if (!endDate || endDate < date) return false;
+      if (endDateIsClosed) return false;
+      return true;
+    }
     if (TIME_SLOTTED.has(serviceType)) return !!time;
     if (serviceType === "daycare") return !!avail && avail.vaccine_ok && avail.open_slots > 0;
     return true;
-  }, [serviceType, date, endDate, time, avail]);
+  }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed]);
 
   const book = async () => {
     setErr(""); setSubmitting(true);
@@ -186,6 +206,18 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
                 <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Date</label>
                 <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+              </div>
+            )}
+
+            {/* Closed-day warnings — Settings → Closed Days is the source */}
+            {dateIsClosed && (
+              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[12px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-date">
+                <i className="fas fa-calendar-xmark mr-1.5"/>We're closed on this day — please pick another date
+              </div>
+            )}
+            {endDateIsClosed && !dateIsClosed && (
+              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[12px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-end-date">
+                <i className="fas fa-calendar-xmark mr-1.5"/>We're closed on the pickup day — please choose another
               </div>
             )}
 
