@@ -8,10 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python deps first so changes to app code don't bust the cache.
+# Install Python deps. The emergentintegrations package is optional — it's
+# only needed for Emergent-managed LLM features which aren't required for
+# self-hosted operation. Marked || true so a registry hiccup doesn't fail the build.
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir emergentintegrations --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ ./
 
