@@ -15,7 +15,9 @@ cd "$(dirname "$0")"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "❌ docker is not installed."
-  echo "   On Bazzite, run:  ujust setup-docker   then reboot."
+  echo "   On Bazzite, run:  rpm-ostree install moby-engine docker-compose"
+  echo "   Then reboot:      systemctl reboot"
+  echo "   Then enable:      sudo systemctl enable --now docker"
   exit 1
 fi
 

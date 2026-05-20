@@ -51,26 +51,45 @@ After the reboot, open the terminal again and continue.
 
 ### 1.3 Turn on Docker
 
-Bazzite has a built-in helper for this. Type:
+Bazzite is an immutable OS, so Docker isn't installed by default. Use either path below.
+
+#### Path A (fast) — try the built-in recipe
 
 ```bash
-ujust setup-docker
+ujust
 ```
 
-It will ask you to confirm. Say **yes**. When it finishes, **reboot one more time**:
+This lists every available recipe. Look for one with `docker` in the name (e.g. `install-docker`, `enable-docker`, `setup-docker`) and run it:
+
+```bash
+ujust install-docker
+```
+
+If no docker recipe exists in the list, skip to Path B.
+
+#### Path B (bulletproof) — layer the OS-native Docker package
+
+Works on every Bazzite version.
+
+```bash
+rpm-ostree install moby-engine docker-compose
+```
+
+When it finishes, **reboot**:
 
 ```bash
 systemctl reboot
 ```
 
-After reboot, open the terminal and verify Docker is alive:
+After reboot, open the terminal again and run:
 
 ```bash
+sudo systemctl enable --now docker
 docker --version
 docker compose version
 ```
 
-You should see two version numbers (e.g. `Docker version 27.x.x`). If you see "command not found", Docker didn't install — run `ujust setup-docker` again.
+You should see two version numbers (e.g. `Docker version 27.x.x`). If you see "command not found", the install didn't complete — re-run the `rpm-ostree install` command and reboot again.
 
 ### 1.4 Add yourself to the docker group
 
