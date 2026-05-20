@@ -5,6 +5,7 @@ import { useConfirm } from "../lib/useConfirm";
 import ServicesSettings from "../components/ServicesSettings";
 import CreditPacksSettings from "../components/CreditPacksSettings";
 import IconPicker from "../components/IconPicker";
+import { useTheme, FONT_OPTIONS } from "../lib/theme";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -54,6 +55,7 @@ export default function Settings() {
 
   const tabs = [
     { id: "hours", label: "Hours", icon: "fa-clock" },
+    { id: "brand", label: "Brand & Theme", icon: "fa-palette" },
     { id: "capacity", label: "Capacity & Kennels", icon: "fa-warehouse" },
     { id: "rules", label: "Booking Rules", icon: "fa-clipboard-list" },
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
@@ -90,6 +92,7 @@ export default function Settings() {
 
         <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
           {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
+          {tab === "brand" && <BrandPanel />}
           {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
           {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
           {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -125,6 +128,145 @@ export default function Settings() {
     </div>
   );
 }
+
+function BrandPanel() {
+  const ctx = useTheme();
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    if (ctx?.branding && !draft) setDraft({ ...ctx.branding });
+  }, [ctx?.branding, draft]);
+
+  if (!ctx || !draft) return <div className="text-gray-400 text-sm">Loading…</div>;
+
+  const dirty = JSON.stringify(draft) !== JSON.stringify(ctx.branding);
+
+  const onSave = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await ctx.saveBranding({
+        brand_primary: draft.brand_primary,
+        brand_accent: draft.brand_accent,
+        brand_warning: draft.brand_warning,
+        brand_font_family: draft.brand_font_family,
+      });
+      setMsg("Saved");
+      setTimeout(() => setMsg(""), 1800);
+    } catch (e) {
+      setMsg("Failed to save");
+    }
+    setSaving(false);
+  };
+
+  const reset = () => {
+    setDraft({
+      brand_primary: "#8cc63f",
+      brand_accent:  "#00a9e0",
+      brand_warning: "#f26522",
+      brand_font_family: "Inter",
+    });
+  };
+
+  return (
+    <div className="space-y-6" data-testid="brand-panel">
+      <Section title="Brand Colors" subtitle="Applied everywhere — login screen, admin shell, and client portal. Changes save when you hit the Save button below.">
+        <div className="grid sm:grid-cols-3 gap-4">
+          <ColorField testid="brand-primary"  label="Primary" sub="buttons, accents, active nav" value={draft.brand_primary}  onChange={(v)=>setDraft({...draft, brand_primary: v})} />
+          <ColorField testid="brand-accent"   label="Accent"  sub="highlights, links, info badges" value={draft.brand_accent}   onChange={(v)=>setDraft({...draft, brand_accent: v})} />
+          <ColorField testid="brand-warning"  label="Warning" sub="alerts, expiring vaccines"    value={draft.brand_warning}  onChange={(v)=>setDraft({...draft, brand_warning: v})} />
+        </div>
+      </Section>
+
+      <Section title="Font" subtitle="Switches the typeface used throughout the app.">
+        <div className="flex flex-wrap gap-2" data-testid="brand-font-options">
+          {FONT_OPTIONS.map(opt => {
+            const active = draft.brand_font_family === opt.value;
+            const styleFam = opt.value === "System" ? "system-ui" : opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                data-testid={`brand-font-${opt.value}`}
+                onClick={()=>setDraft({...draft, brand_font_family: opt.value})}
+                className={`px-4 py-3 rounded-lg border-2 transition text-left ${
+                  active
+                    ? "border-shGreen bg-shGreen/10"
+                    : "border-bgHover bg-bgBase hover:border-shGreen/50"
+                }`}
+                style={{ fontFamily: styleFam }}
+              >
+                <div className="text-sm font-black text-white">{opt.label}</div>
+                <div className="text-[12px] text-gray-400 mt-0.5">The quick brown fox</div>
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
+        <div
+          className="rounded-xl p-5 border space-y-3"
+          style={{
+            borderColor: draft.brand_primary,
+            backgroundColor: "#0f172a",
+            fontFamily: draft.brand_font_family === "System" ? "system-ui" : draft.brand_font_family,
+          }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_primary, color: "#0f172a" }}>Primary</span>
+            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_accent, color: "#fff" }}>Accent</span>
+            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_warning, color: "#fff" }}>Warning</span>
+          </div>
+          <p className="text-base text-white">A booking was just approved for <span style={{ color: draft.brand_primary, fontWeight: 900 }}>Buddy</span>.</p>
+          <p className="text-[14px] text-gray-300">Rabies expires soon — <span style={{ color: draft.brand_warning, fontWeight: 900 }}>renew before Dec 31</span>.</p>
+        </div>
+      </Section>
+
+      <div className="flex justify-between items-center pt-4 border-t border-bgHover">
+        <button onClick={reset} data-testid="brand-reset" className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
+          <i className="fas fa-rotate-left mr-2"/>Reset to defaults
+        </button>
+        <div className="flex items-center gap-3">
+          {msg && <span className={`text-[14px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
+          <button onClick={onSave} disabled={saving || !dirty} data-testid="brand-save"
+                  className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-40">
+            {saving ? "Saving…" : "Save Brand"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ColorField({ label, sub, value, onChange, testid }) {
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+      <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
+      <p className="text-[11px] text-gray-500 mt-0.5">{sub}</p>
+      <div className="flex items-center gap-2 mt-2">
+        <input
+          type="color"
+          value={value || "#000000"}
+          onChange={(e)=>onChange(e.target.value)}
+          data-testid={`${testid}-picker`}
+          className="w-12 h-10 rounded cursor-pointer bg-transparent border border-bgHover"
+        />
+        <input
+          type="text"
+          value={value || ""}
+          onChange={(e)=>onChange(e.target.value)}
+          data-testid={`${testid}-hex`}
+          placeholder="#8cc63f"
+          className="flex-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-sm text-white font-mono"
+        />
+      </div>
+    </div>
+  );
+}
+
+
 
 function Field({ label, value, onChange, type="text", testId }) {
   return (

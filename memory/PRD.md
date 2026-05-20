@@ -725,3 +725,23 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** One-tap waitlist when daycare is full
 - **P2** Migrate base64 photo storage to local disk or R2
 - **Refactor** Split `server.py` (~5800 lines) into `/app/backend/routes/` modules
+## Sprint 68 — Brand & Theme customization (admin global + per-user text size) (2026-02)
+- ✅ **Backend** (`server.py`):
+  - Extended `SettingsIn` with `brand_primary`, `brand_accent`, `brand_warning`, `brand_font_family` (all Optional[str]).
+  - New unauthenticated `GET /api/branding` — returns the 4 brand fields (with defaults) so the login screen can theme itself before auth.
+  - New `GET/PUT /api/me/preferences` — stores `text_size` (one of S/M/L/XL) on the user document. Validates the enum, defaults to "M".
+- ✅ **Tailwind config**: changed `shGreen/shBlue/shOrange` from hardcoded hexes to `var(--sh-green, ...)` and the sans font to `var(--sh-font, Inter)`. Every existing `bg-shGreen`/`text-shBlue` class is now recolorable at runtime — zero code changes elsewhere.
+- ✅ **`lib/theme.js` `ThemeProvider`**: fetches `/api/branding` on boot (cached + applied as CSS vars on `:root`), fetches `/me/preferences` when a token exists, applies html `font-size` from the S/M/L/XL → 16/18.5/21/24px scale, persists user pref to localStorage for instant-no-flicker reloads. Exposes `branding`, `prefs`, `savePrefs`, `saveBranding` via `useTheme()`.
+- ✅ **`components/TextSizePicker.jsx`**: shared S/M/L/XL pill picker. Mounted in the admin sidebar (above InstallAppButton) and the client portal credits card.
+- ✅ **Settings → Brand & Theme tab** (`Settings.jsx`): new BrandPanel with 3 color pickers (HTML color input + hex text field), font family selector showing 5 options (Inter/Nunito/Poppins/Roboto/System) rendered in their actual typeface, a Live Preview card, Reset-to-defaults link, and Save button with dirty-state detection.
+- ✅ Added Nunito/Poppins/Roboto to `public/index.html` Google Fonts preload.
+- ✅ E2E verified: logged in as admin, changed primary→#ff5577 + font→Poppins, hit Save → entire app (sidebar active nav, action buttons, settings preview, badges) recolored + retypefaced instantly. Switched text size to XL → all text scaled proportionally. Reverted cleanly. Backend tested via curl: GET /branding (unauth ✓), PUT /settings persists, PUT /me/preferences enforces enum (400 on "Z"), defaults to "M" for new users.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
+- **P2** Light mode (current app is dark-only — would need per-screen background/text overrides)
+- **P2** SMS reminders via Twilio for tomorrow's appointments
+- **P2** One-tap waitlist when daycare is full
+- **P2** Migrate base64 photo storage to local disk or R2
+- **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules

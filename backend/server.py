@@ -2390,10 +2390,27 @@ class SettingsIn(BaseModel):
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
+    # Branding (Sprint 68) — admin-set, applies to everyone (login screen, portal, admin shell)
+    brand_primary: Optional[str] = None      # CSS color for the primary action (default #8cc63f green)
+    brand_accent: Optional[str] = None       # CSS color for accents/highlights (default #00a9e0 blue)
+    brand_warning: Optional[str] = None      # CSS color for warnings/alerts (default #f26522 orange)
+    brand_font_family: Optional[str] = None  # one of: Inter, Nunito, Poppins, Roboto, System
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
     return await get_settings()
+
+@api.get("/branding")
+async def fetch_branding():
+    """Unauthenticated endpoint — returns just the brand colors + font so the
+    login screen can theme itself before the user has a token."""
+    s = await get_settings()
+    return {
+        "brand_primary":     s.get("brand_primary")     or "#8cc63f",
+        "brand_accent":      s.get("brand_accent")      or "#00a9e0",
+        "brand_warning":     s.get("brand_warning")     or "#f26522",
+        "brand_font_family": s.get("brand_font_family") or "Inter",
+    }
 
 @api.get("/settings/public")
 async def fetch_public_settings(user: dict = Depends(get_current_user)):
@@ -2434,6 +2451,33 @@ async def change_password(body: ChangePwIn, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
     return {"ok": True}
+
+
+# -------- Per-user UI Preferences (Sprint 68) --------
+# Each user (admin or client) can pick their own text size. Stored on the user
+# document under `preferences`. Read via GET /me/preferences, write via PUT.
+ALLOWED_TEXT_SIZES = ["S", "M", "L", "XL"]
+
+class PreferencesIn(BaseModel):
+    text_size: Optional[str] = None  # one of S/M/L/XL
+
+@api.get("/me/preferences")
+async def get_my_prefs(user: dict = Depends(get_current_user)):
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0, "preferences": 1})
+    return (full or {}).get("preferences") or {"text_size": "M"}
+
+@api.put("/me/preferences")
+async def set_my_prefs(body: PreferencesIn, user: dict = Depends(get_current_user)):
+    update = {}
+    if body.text_size is not None:
+        ts = body.text_size.upper()
+        if ts not in ALLOWED_TEXT_SIZES:
+            raise HTTPException(status_code=400, detail=f"text_size must be one of {ALLOWED_TEXT_SIZES}")
+        update["preferences.text_size"] = ts
+    if not update:
+        return await get_my_prefs(user)
+    await db.users.update_one({"id": user["id"]}, {"$set": update})
+    return await get_my_prefs(user)
 
 
 # -------- Waivers --------

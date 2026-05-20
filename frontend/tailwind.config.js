@@ -5,16 +5,20 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        shGreen: '#8cc63f',
-        shBlue: '#00a9e0',
-        shOrange: '#f26522',
-        bgBase: '#0f172a',
-        bgPanel: '#1e293b',
+        // Brand colors are driven by CSS variables so the admin's Brand & Theme
+        // settings can recolor the whole app at runtime. Defaults match the
+        // historical Sit Happens palette.
+        shGreen:  'var(--sh-green,  #8cc63f)',
+        shBlue:   'var(--sh-blue,   #00a9e0)',
+        shOrange: 'var(--sh-orange, #f26522)',
+        bgBase:   '#0f172a',
+        bgPanel:  '#1e293b',
         bgHeader: '#020617',
-        bgHover: '#334155',
+        bgHover:  '#334155',
       },
       fontFamily: {
-        sans: ['Inter', 'ui-sans-serif', 'system-ui'],
+        // Same trick: --sh-font is set at runtime by ThemeProvider.
+        sans: ['var(--sh-font, Inter)', 'ui-sans-serif', 'system-ui'],
       },
     },
   },

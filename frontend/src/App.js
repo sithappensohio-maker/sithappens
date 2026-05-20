@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./lib/auth";
+import { ThemeProvider } from "./lib/theme";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
 import Schedule from "./screens/Schedule";
@@ -23,6 +24,7 @@ import InstallPrompt from "./components/InstallPrompt";
 import InstallAppButton from "./components/InstallAppButton";
 import { ConfirmProvider } from "./lib/useConfirm";
 import ImpersonationBanner from "./components/ImpersonationBanner";
+import TextSizePicker from "./components/TextSizePicker";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -82,7 +84,8 @@ function AdminShell() {
           </button>
         ))}
       </nav>
-      <div className="p-4 border-t border-bgHover space-y-2">
+      <div className="p-4 border-t border-bgHover space-y-3">
+        <TextSizePicker testid={`${prefix}text-size`} compact />
         <InstallAppButton testid={`${prefix}install-app-nav`} />
         <div className="bg-bgPanel rounded-lg p-3">
           <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">Signed in</p>
@@ -172,11 +175,13 @@ export default function App() {
   return (
     <ErrorBoundary>
       <AuthProvider>
-        <ConfirmProvider>
-          <ImpersonationBanner />
-          <Gate />
-          <InstallPrompt />
-        </ConfirmProvider>
+        <ThemeProvider>
+          <ConfirmProvider>
+            <ImpersonationBanner />
+            <Gate />
+            <InstallPrompt />
+          </ConfirmProvider>
+        </ThemeProvider>
       </AuthProvider>
     </ErrorBoundary>
   );

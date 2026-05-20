@@ -10,6 +10,7 @@ import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
+import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
 import ServicesByCategory from "../components/ServicesByCategory";
@@ -882,6 +883,9 @@ export default function Portal() {
                     className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
               <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
             </button>
+            <div className="mt-4 pt-4 border-t border-bgHover">
+              <TextSizePicker testid="portal-text-size" compact />
+            </div>
           </div>
 
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
