@@ -705,3 +705,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **Schedule calendar duplicate time fix** (`server.py` `/events`): training/grooming events were rendering as `"2:16pm 14:16 · Buddy (training)"` because the backend prepended the time to the title while FullCalendar also rendered its own native time prefix. Removed the redundant title prefix so events now render cleanly as `"2:16pm Buddy (training)"`.
 - ✅ **Birthday field on one-shot Client+Dog modal** (`Clients.jsx`): added a `Birthday (optional)` date input to the quick-add-dog section so admins get feature parity with the standalone Dog form. `birthday` is now part of `emptyDog` and is included in the `POST /api/dogs` payload when the modal is submitted. Backend already accepts `birthday` on the Dog model — no server changes needed.
 - ✅ Verified both fixes via screenshot tool: birthday input visible between Age and Sex; May 2026 calendar shows the clean `2:16pm Buddy (training)` chip.
+
+
+
+## Sprint 66 — Self-host workflow finalized (2026-02)
+- ✅ User migrated from zip-download (`sithappens-main`) to proper `git clone` on Bazzite Linux PC. Stopped orphan containers (folder deleted but containers cached), preserved MongoDB volume `sit-happens_mongo_data`, restored `.env` from `sit-happens.old`, and restarted with `docker compose -p sit-happens up -d --build` so the existing data volume re-attached.
+- ✅ Made GitHub repo public to avoid PAT/expiry headaches (no secrets in repo — `.env` is gitignored).
+- ✅ Verified app loads on phone with all historical data intact. `./update.sh` is now functional for future one-command updates.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
+- **P2** SMS reminders via Twilio for tomorrow's appointments
+- **P2** One-tap waitlist when daycare is full
+- **P2** Migrate base64 photo storage to local disk or R2
+- **Refactor** Split `server.py` (~5800 lines) into `/app/backend/routes/` modules
