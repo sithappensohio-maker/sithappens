@@ -337,6 +337,7 @@ class BookingOut(BaseModel):
     dropoff_time: Optional[str] = ""
     pickup_time: Optional[str] = ""
     time: Optional[str] = ""  # appointment time slot for training/grooming/photography
+    duration_minutes: Optional[int] = 0  # blocks the schedule for time-slotted services
     cost: Optional[int] = 0
     grooming_type: Optional[str] = None
     # Income tracking (Sprint 16) — populated when the booking is logged as
@@ -914,6 +915,34 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
                 raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
 
+    # Time-slot conflict check for time-based services. Shared pool: a Training
+    # at 2pm blocks a Grooming at 2pm, etc. Admins can override.
+    duration_minutes_used = 0
+    if body.service_type in TIME_SLOTTED_SERVICES and (body.time or "").strip():
+        duration_minutes_used = await _get_default_duration(body.service_type)
+        if not (is_admin and body.override_capacity) and duration_minutes_used > 0:
+            new_start = _hhmm_to_min(body.time)
+            if new_start is not None:
+                existing_slots = await db.bookings.find(
+                    {
+                        "date": body.date,
+                        "status": {"$in": ["pending", "approved", "completed"]},
+                        "service_type": {"$in": list(TIME_SLOTTED_SERVICES)},
+                        "time": {"$ne": ""},
+                    },
+                    {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "dog_name": 1},
+                ).to_list(500)
+                for b in existing_slots:
+                    bstart = _hhmm_to_min(b.get("time") or "")
+                    if bstart is None:
+                        continue
+                    bdur = int(b.get("duration_minutes") or 0) or await _get_default_duration(b.get("service_type"))
+                    if _slot_overlaps(new_start, duration_minutes_used, bstart, bdur):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"That time conflicts with an existing {b.get('service_type')} appointment at {b.get('time')}.",
+                        )
+
     # Credit cost — daycare only; boarding/training are pay-on-the-day.
     # Clients can book even with 0 credits (they'll settle on arrival); credits
     # are deducted on approval IF they have any (otherwise the booking is approved
@@ -938,6 +967,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "notes": body.notes or "",
         "kennel": body.kennel or "",
         "time": body.time or "",
+        "duration_minutes": duration_minutes_used,  # snapshot for future conflict checks
         "dropoff_time": body.dropoff_time or "",
         "pickup_time": body.pickup_time or "",
         "created_at": now_iso(),
@@ -1412,18 +1442,6 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
     return {"ok": True}
 
-@api.get("/bookings/{booking_id}", response_model=BookingOut)
-async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
-    """Single-booking detail. Used by the admin Schedule's booking-detail
-    modal so we can show notes / payment / homework history without paging
-    through the full /bookings list."""
-    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
-    if not b:
-        raise HTTPException(status_code=404, detail="Booking not found")
-    if user.get("role") != "admin" and b.get("client_id") != user.get("client_id"):
-        raise HTTPException(status_code=403, detail="Not your booking")
-    return b
-
 @api.get("/bookings/availability")
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
@@ -1451,6 +1469,119 @@ async def availability(date_str: str, dog_id: str, user: dict = Depends(get_curr
         "missing_vaccines": missing,
         "rabies_expiration": (dog.get("vaccines") or {}).get("rabies", ""),
     }
+
+
+# Time-slotted services share a single conflict pool so a 2pm Training also
+# blocks 2pm Grooming etc. (Matches the user's "shared slot pool" preference.)
+TIME_SLOTTED_SERVICES = ("training", "grooming", "photography")
+
+
+def _slot_overlaps(a_start_min: int, a_dur: int, b_start_min: int, b_dur: int) -> bool:
+    """Return True when two [start, start+duration) intervals overlap."""
+    return (a_start_min < b_start_min + b_dur) and (b_start_min < a_start_min + a_dur)
+
+
+def _hhmm_to_min(s: str) -> Optional[int]:
+    try:
+        hh, mm = s.split(":")[:2]
+        return int(hh) * 60 + int(mm)
+    except Exception:
+        return None
+
+
+async def _get_default_duration(service_type: str) -> int:
+    """Default duration in minutes for time-slotted services. Pulls from the
+    `is_default` service of that type; falls back to 60."""
+    if service_type not in TIME_SLOTTED_SERVICES:
+        return 0
+    svc = await db.services.find_one(
+        {"service_type": service_type, "is_default": True, "active": True},
+        {"_id": 0, "duration_minutes": 1},
+    )
+    return int((svc or {}).get("duration_minutes") or 60)
+
+
+@api.get("/bookings/time-slots")
+async def list_time_slots(
+    date_str: str,
+    service_type: Literal["training", "grooming", "photography"],
+    duration: Optional[int] = None,
+    user: dict = Depends(get_current_user),
+):
+    """Return the candidate slots for a given date and time-slotted service.
+    Each slot is marked available/blocked; the blocking pool is shared across
+    training/grooming/photography so the operator never double-books their time.
+
+    Slots are 30-min granular from 08:00 to 18:00 by default — this matches a
+    typical small-business operating window without needing a separate setting.
+    """
+    if not duration or duration <= 0:
+        duration = await _get_default_duration(service_type)
+
+    # Pull every active time-slotted booking on this date — we'll see if each
+    # candidate slot overlaps any of them.
+    existing = await db.bookings.find(
+        {
+            "date": date_str,
+            "status": {"$in": ["pending", "approved", "completed"]},
+            "service_type": {"$in": list(TIME_SLOTTED_SERVICES)},
+            "time": {"$ne": ""},
+        },
+        {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "service_id": 1, "dog_id": 1, "id": 1},
+    ).to_list(500)
+    # Hydrate each existing booking with its service's duration if not stored on the booking.
+    svc_cache: Dict[str, int] = {}
+    async def _booking_dur(b: dict) -> int:
+        d = int(b.get("duration_minutes") or 0)
+        if d > 0:
+            return d
+        st = b.get("service_type")
+        if st in svc_cache:
+            return svc_cache[st]
+        d = await _get_default_duration(st)
+        svc_cache[st] = d
+        return d
+
+    # Generate candidate slots: 08:00 → 18:00 every 30 min.
+    candidates: List[Dict[str, Any]] = []
+    for total in range(8 * 60, 18 * 60, 30):
+        # Don't propose a slot whose end would land past 18:00.
+        if total + duration > 18 * 60:
+            continue
+        hh, mm = divmod(total, 60)
+        label = f"{hh:02d}:{mm:02d}"
+        blocked_by = None
+        for b in existing:
+            bstart = _hhmm_to_min(b.get("time") or "")
+            if bstart is None:
+                continue
+            bdur = await _booking_dur(b)
+            if _slot_overlaps(total, duration, bstart, bdur):
+                blocked_by = b.get("service_type") or "other"
+                break
+        candidates.append({"time": label, "available": blocked_by is None, "blocked_by": blocked_by})
+    return {
+        "date": date_str,
+        "service_type": service_type,
+        "duration_minutes": duration,
+        "slots": candidates,
+    }
+
+
+# Catch-all booking-by-id MUST come AFTER any literal /bookings/<thing> routes
+# (availability, time-slots) or it will shadow them. FastAPI matches in order.
+@api.get("/bookings/{booking_id}", response_model=BookingOut)
+async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
+    """Single-booking detail. Used by the admin Schedule's booking-detail
+    modal so we can show notes / payment / homework history without paging
+    through the full /bookings list."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if user.get("role") != "admin" and b.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your booking")
+    return b
+
 
 
 @api.get("/portal/me")
@@ -1731,6 +1862,8 @@ async def check_out(
 
     # Resolve a sensible service value for income tracking. Admin's manual
     # base_price wins; otherwise fall back to the booking's default service price.
+    # For BOARDING the per-night rate is multiplied by the actual nights stayed
+    # so a 3-night boarding at $50/night auto-prefills as $150.
     async def _resolve_service_value(default_for_zero: float = 0.0) -> float:
         if body.base_price is not None:
             return float(body.base_price)
@@ -1739,7 +1872,16 @@ async def check_out(
             {"_id": 0},
         )
         if default_svc:
-            return float(default_svc.get("base_price") or 0)
+            unit_price = float(default_svc.get("base_price") or 0)
+            if booking.get("service_type") == "boarding":
+                try:
+                    start_d = date.fromisoformat(booking.get("date"))
+                    end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
+                    nights_stayed = max(1, (end_d - start_d).days or 1)
+                except Exception:
+                    nights_stayed = 1
+                return unit_price * nights_stayed
+            return unit_price
         return default_for_zero
 
     # ── Case A: client chose to KEEP using the credits that were already deducted.
@@ -1823,6 +1965,19 @@ async def check_out(
     # Determine base price / service tag for paid-today bookings (no credits, or credits refunded).
     will_charge = use_credits is False or not had_credit
     base_price = 0.0
+    # For boarding, the per-night service price is multiplied by the actual
+    # nights stayed so a 3-night stay at $50/night auto-prefills as $150.
+    def _maybe_apply_nights(unit: float) -> float:
+        if booking.get("service_type") != "boarding":
+            return unit
+        try:
+            start_d = date.fromisoformat(booking.get("date"))
+            end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
+            nights_stayed = max(1, (end_d - start_d).days or 1)
+        except Exception:
+            nights_stayed = 1
+        return unit * nights_stayed
+
     if will_charge and not booking.get("actual_price"):
         # Honour explicit override from the modal.
         if body.base_price is not None:
@@ -1836,8 +1991,9 @@ async def check_out(
             if default_svc:
                 update["service_id"] = default_svc["id"]
                 update["service_name"] = default_svc["name"]
-                base_price = float(default_svc.get("base_price") or 0)
-                update["actual_price"] = base_price
+                unit_price = float(default_svc.get("base_price") or 0)
+                base_price = _maybe_apply_nights(unit_price)
+                update["actual_price"] = round(base_price, 2)
         else:
             base_price = float(booking.get("actual_price") or 0)
     elif booking.get("actual_price"):
@@ -4728,6 +4884,10 @@ class ServiceIn(BaseModel):
     service_type: Optional[Literal["daycare", "boarding", "training", "grooming", "photography", "other"]] = "other"
     color: Optional[str] = "#64748b"
     icon: Optional[str] = "fa-tag"
+    # How many minutes the service blocks on the schedule. Used for slot
+    # conflicts on time-based services (training / grooming / photography).
+    # Daycare and boarding ignore this since they're date-based, not time-based.
+    duration_minutes: Optional[int] = 60
     active: bool = True
 
 

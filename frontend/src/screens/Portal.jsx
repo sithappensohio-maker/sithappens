@@ -6,6 +6,7 @@ import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
+import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
@@ -629,6 +630,8 @@ export default function Portal() {
   const [bookingsTab, setBookingsTab] = useState("upcoming");
   // Optional month filter for the "All" tab — "YYYY-MM" or "" for no filter.
   const [bookingsMonth, setBookingsMonth] = useState("");
+  // New: wizard-based booking flow (replaces inline form).
+  const [showBookWizard, setShowBookWizard] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -787,7 +790,9 @@ export default function Portal() {
   };
 
   const waiverNeeded = pubSettings?.waiver_required_for_booking && (!waiver?.signed || waiver?.needs_resign);
-  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded && bookType !== "training";
+  // Bug fix: previously this had `&& bookType !== "training"` which disabled
+  // the Book Now button for ALL training bookings. Training is bookable.
+  const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
 
   // Onboarding checklist — show until all complete
   const profileComplete = !!(client?.phone && client?.address);
@@ -987,127 +992,31 @@ export default function Portal() {
           )}
 
           <div id="portal-book-section" className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
-            <h4 className="font-black text-shBlue mb-4 uppercase text-xs tracking-widest"><i className="fas fa-calendar-plus mr-2"/>Book Service</h4>
-
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
-            <select value={bookDogId} onChange={(e)=>setBookDogId(e.target.value)} data-testid="portal-book-dog"
-                    className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-            <div className="grid grid-cols-2 gap-2 mt-1 mb-3" data-testid="portal-service-grid">
-              {["daycare","boarding","training","grooming","photography"].map(t => (
-                <div key={t} className="relative">
-                  <button onClick={()=>{ setBookType(t); if(t==="boarding") setIsRecurring(false); if(t==="grooming") setIsRecurring(false); }} data-testid={`book-service-${t}`}
-                          className={`w-full py-2 pr-7 rounded text-[14px] font-black uppercase tracking-widest ${bookType===t?"bg-shBlue text-white":"bg-bgBase border border-bgHover text-gray-400"}`}>{t}</button>
-                  <button onClick={(e)=>{e.stopPropagation(); setShowServiceInfo(t);}} data-testid={`book-service-info-${t}`}
-                          aria-label={`About ${t}`}
-                          className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-full text-[13px] ${bookType===t?"text-white hover:bg-white/15":"text-gray-500 hover:text-shBlue hover:bg-shBlue/10"}`}>
-                    <i className="fas fa-circle-info"/>
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {bookType === "training" && (
-              <div className="mb-3 bg-gradient-to-br from-purple-500/10 to-shBlue/10 border border-purple-500/40 rounded-lg p-4" data-testid="training-eval-notice">
-                <div className="flex items-start gap-3">
-                  <i className="fas fa-graduation-cap text-purple-400 text-xl mt-0.5"/>
-                  <div className="flex-1">
-                    <p className="text-[13px] font-black text-white uppercase tracking-widest">Free Evaluation First</p>
-                    <p className="text-[12px] text-gray-300 mt-1 leading-relaxed">
-                      Training sessions can't be self-booked online — every dog gets a <strong className="text-shGreen">free evaluation</strong> with the trainer so we can recommend the right program. Tap below and we'll be in touch within 24 hours.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={()=>setShowServicesModal(true)}
-                      data-testid="training-eval-cta"
-                      className="mt-3 bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shGreen/90 shadow-lg"
-                    >
-                      <i className="fas fa-envelope mr-1.5"/>Browse Training & Request Info
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {bookType === "grooming" && (
-              <div className="mb-3" data-testid="book-grooming-types">
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  {[
-                    { k: "bath", label: "Bath", icon: "fa-bath" },
-                    { k: "nail_trim", label: "Nail Trim", icon: "fa-scissors" },
-                  ].map(g => (
-                    <button key={g.k} onClick={()=>setGroomingType(g.k)} data-testid={`book-grooming-${g.k}`}
-                            className={`py-3 rounded text-[14px] font-black uppercase tracking-widest border flex items-center justify-center gap-2 ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
-                      <i className={`fas ${g.icon}`}/>{g.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {bookType !== "boarding" && (
-              <div className="flex gap-4 mb-3">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={isRecurring} onChange={(e)=>{setIsRecurring(e.target.checked); if(e.target.checked) setIsMultiDate(false);}} data-testid="recurring-toggle" className="accent-shGreen" />
-                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Recurring (weekdays)</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={isMultiDate} onChange={(e)=>{setIsMultiDate(e.target.checked); if(e.target.checked) setIsRecurring(false);}} data-testid="multi-date-toggle" className="accent-shGreen" />
-                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Pick specific days</span>
-                </label>
-              </div>
-            )}
-
-            {!isMultiDate && (
-              <>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{bookType==="boarding"?"Start Date":isRecurring?"Recurrence Start":"Date"}</label>
-                <input type="date" value={bookDate} onChange={(e)=>setBookDate(e.target.value)} data-testid="portal-book-date"
-                       className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-              </>
-            )}
-
-            {bookType==="boarding" && <>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">End Date</label>
-              <input type="date" value={bookEnd} onChange={(e)=>setBookEnd(e.target.value)} data-testid="portal-book-end"
-                     className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-            </>}
-
-            {isRecurring && bookType!=="boarding" && <>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Repeat Until</label>
-              <input type="date" value={recEnd} onChange={(e)=>setRecEnd(e.target.value)} data-testid="rec-end"
-                     className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Repeat On</label>
-              <div className="grid grid-cols-7 gap-1 mt-1 mb-3">
-                {["M","T","W","T","F","S","S"].map((d,i)=>(
-                  <button key={i} onClick={()=>toggleRecDay(i)} data-testid={`rec-day-${i}`}
-                          className={`py-2 rounded text-[14px] font-black uppercase ${recDays.includes(i)?"bg-shGreen text-bgHeader":"bg-bgBase border border-bgHover text-gray-400"}`}>{d}</button>
-                ))}
-              </div>
-            </>}
-
-            {isMultiDate && bookType!=="boarding" && (
-              <MultiDateCalendar selected={multiDates} onToggle={toggleMultiDate} />
-            )}
-
-            {avail && (
-              <div className={`text-[14px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 ${!avail.vaccine_ok?"bg-red-500/20 text-red-400":avail.open_slots<=0?"bg-shOrange/20 text-shOrange":"bg-shGreen/10 text-shGreen"}`} data-testid="availability-message">
-                {!avail.vaccine_ok ? "Rabies vaccine missing/expired"
-                  : avail.open_slots <= 0 ? "Fully booked"
-                  : `${avail.open_slots} of ${avail.capacity} slots open`}
-              </div>
-            )}
-
-            {err && <div className="text-[14px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 bg-red-500/15 text-red-400">{err}</div>}
-            {success && <div className="text-[14px] font-black p-3 rounded uppercase text-center tracking-widest mb-3 bg-shGreen/15 text-shGreen">{success}</div>}
-
-            <button onClick={book} disabled={!canBook} data-testid="portal-book-button"
-                    className={`w-full py-3 rounded font-black uppercase text-[14px] tracking-widest shadow-lg ${canBook?"bg-shBlue text-white hover:bg-shBlue/90":"bg-bgBase text-gray-500 cursor-not-allowed border border-bgHover"}`}>
-              Book Now
+            <h4 className="font-black text-shBlue mb-2 uppercase text-xs tracking-widest">
+              <i className="fas fa-calendar-plus mr-2"/>Book a Service
+            </h4>
+            <p className="text-[12px] text-gray-500 mb-4 leading-relaxed">
+              {dogs.length === 0 ? "Add a dog first to book a service." :
+               waiverNeeded ? "Sign the waiver before booking your first service." :
+               "Choose a service, pick a date, and we'll take it from there."}
+            </p>
+            <button
+              onClick={() => setShowBookWizard(true)}
+              disabled={dogs.length === 0 || waiverNeeded}
+              data-testid="portal-book-button"
+              className={`w-full py-4 rounded font-black uppercase text-[14px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition ${
+                (dogs.length === 0 || waiverNeeded)
+                  ? "bg-bgBase text-gray-500 cursor-not-allowed border border-bgHover"
+                  : "bg-shBlue text-white hover:bg-shBlue/90"
+              }`}>
+              <i className="fas fa-calendar-plus"/>Book Service
             </button>
+            {waiverNeeded && (
+              <button onClick={()=>setShowWaiver(true)} data-testid="portal-book-waiver-link"
+                      className="w-full mt-2 text-[12px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
+                Sign waiver to enable booking
+              </button>
+            )}
           </div>
         </div>
 
@@ -1415,12 +1324,20 @@ export default function Portal() {
       {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always reachable */}
       {dogs.length > 0 && (
         <button
-          onClick={()=>{ const el = document.getElementById("portal-book-section"); if (el) el.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+          onClick={()=>setShowBookWizard(true)}
+          disabled={waiverNeeded}
           data-testid="portal-sticky-book"
-          className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-shGreen text-bgHeader py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t border-shGreen/60"
+          className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-shGreen text-bgHeader py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t border-shGreen/60 disabled:opacity-50"
         >
           <i className="fas fa-calendar-plus"/>Book Service
         </button>
+      )}
+
+      {showBookWizard && (
+        <PortalBookWizard
+          dogs={dogs}
+          onClose={()=>setShowBookWizard(false)}
+          onBooked={()=>{ setShowBookWizard(false); loadAll(); setSuccess("Booking submitted!"); setTimeout(()=>setSuccess(""), 4000); }} />
       )}
 
       {hwModal && (

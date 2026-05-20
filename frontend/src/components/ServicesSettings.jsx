@@ -18,7 +18,7 @@ const SERVICE_TYPES = [
   { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
-const emptyService = { name: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", active: true };
+const emptyService = { name: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true };
 
 
 export default function ServicesSettings() {
@@ -157,6 +157,16 @@ export default function ServicesSettings() {
                     {SERVICE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                   </select>
                 </div>
+                {["training","grooming","photography"].includes(form.service_type) && (
+                  <div>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
+                    <input type="number" min="15" step="15" value={form.duration_minutes ?? 60}
+                           onChange={(e)=>setForm({...form, duration_minutes: parseInt(e.target.value) || 60})}
+                           data-testid="service-duration-input"
+                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                    <p className="text-[11px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule when booked. Other time-slotted services can't book overlapping times.</p>
+                  </div>
+                )}
                 <div>
                   <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
                   <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} />
