@@ -4,6 +4,7 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 import os
+import re
 import uuid
 import asyncio
 import secrets
@@ -400,8 +401,21 @@ async def register(body: RegisterIn):
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-    # Auto-create a linked client record so they can self-manage profile + dogs
-    client_id = str(uuid.uuid4())
+
+    # Auto-merge (Sprint 69): if an admin already created a client record with this
+    # email and no portal account is linked yet, attach the new user to THAT client
+    # instead of creating a duplicate. Skips when the existing client already has
+    # a user — that case is handled by the email-uniqueness check above.
+    existing_client = await db.clients.find_one(
+        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+    linked_user = None
+    if existing_client:
+        linked_user = await db.users.find_one(
+            {"client_id": existing_client["id"]}, {"_id": 0, "id": 1}
+        )
+
     # Validate referral code (if any) — uppercase, must match an existing client's referral_code
     ref_code: Optional[str] = None
     raw_ref = (body.referred_by_code or "").upper().strip()
@@ -409,19 +423,34 @@ async def register(body: RegisterIn):
         ref = await db.clients.find_one({"referral_code": raw_ref}, {"_id": 0, "id": 1})
         if ref:
             ref_code = raw_ref
-    client_doc = {
-        "id": client_id,
-        "name": body.name,
-        "address": "",
-        "phone": "",
-        "email": email,
-        "emerg": "",
-        "credits": 0,
-        "waiver": False,
-        "referred_by_code": ref_code,
-        "created_at": now_iso(),
-    }
-    await db.clients.insert_one(client_doc)
+
+    if existing_client and not linked_user:
+        # Re-use the admin-created record — preserves dogs, credits, history.
+        client_id = existing_client["id"]
+        # Only fill in referral_by_code if it's not already set (don't overwrite admin's data).
+        if ref_code and not existing_client.get("referred_by_code"):
+            await db.clients.update_one(
+                {"id": client_id}, {"$set": {"referred_by_code": ref_code}}
+            )
+        client_doc = existing_client
+        merged = True
+    else:
+        client_id = str(uuid.uuid4())
+        client_doc = {
+            "id": client_id,
+            "name": body.name,
+            "address": "",
+            "phone": "",
+            "email": email,
+            "emerg": "",
+            "credits": 0,
+            "waiver": False,
+            "referred_by_code": ref_code,
+            "created_at": now_iso(),
+        }
+        await db.clients.insert_one(client_doc)
+        merged = False
+
     user = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -432,9 +461,9 @@ async def register(body: RegisterIn):
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
-    # Best-effort: alert the operator that a new client just signed up.
+    # Best-effort: alert the operator that a new client just signed up (or merged).
     try:
-        await notify_admin_new_client(user, client_doc)
+        await notify_admin_new_client(user, {**client_doc, "_merged": merged})
     except Exception:
         pass
     token = create_access_token(user["id"], user["email"], user["role"])

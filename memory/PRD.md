@@ -745,3 +745,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** One-tap waitlist when daycare is full
 - **P2** Migrate base64 photo storage to local disk or R2
 - **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules
+
+## Sprint 69 — Auto-merge on self-register (2026-02)
+- ✅ **`/auth/register` auto-merge logic**: when a client self-registers, the backend now checks if a client record already exists with that email AND has no portal user linked. If so, attaches the new user to the existing client_id instead of creating a duplicate. Preserves pre-loaded dogs, credits, bookings, vaccine certs, etc.
+- ✅ Email match is case-insensitive (regex with `^...$` and `i` flag).
+- ✅ Referral code on register only updates the existing client if it didn't already have one (admin's data wins).
+- ✅ Duplicate-email block on `users` is still in place — prevents re-registration when a portal user already exists.
+- ✅ Feature (c) — auto-claim-email on admin client creation — was already implemented in `Clients.jsx` save flow (lines 130-141): when a new client is created with an email, `/clients/{id}/send-claim-email` fires automatically and a toast confirms "Claim email sent to {email}".
+- ✅ E2E tested via curl: admin creates Alice with 5 credits + dog Rex, Alice self-registers, logs in, sees Rex and 5 credits, only 1 client record exists in DB.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
+- **P2** Admin "Duplicate Clients" detector + merge UI (for existing duplicates created before Sprint 69)
+- **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
+- **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules
