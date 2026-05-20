@@ -38,6 +38,7 @@ services:
       # Pass-through everything else from the backend/.env file:
       APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      SENDER_EMAIL: "${SENDER_EMAIL:-}"
       ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
       EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
