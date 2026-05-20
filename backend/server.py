@@ -945,33 +945,11 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     }
     if is_admin and body.check_in_now:
         doc["checked_in_at"] = now_iso()
-    # Deduct credits by service-type pool. Daycare, training, and boarding all use the pool;
-    # boarding only deducts if the client *has* boarding credits (otherwise it's pay-on-the-day).
-    deducted = 0
-    credit_value = 0.0
-    lot_ids: List[str] = []
-    low_credit_remaining: Optional[int] = None
-    balance_field = _credit_balance_field(body.service_type) if status_val == "approved" else None
-    if balance_field:
-        if body.service_type == "training":
-            needed = 1
-        elif body.service_type == "boarding":
-            needed = max(int(cost), 0)  # 1 credit per night
-        else:  # daycare
-            needed = int(cost)
-        available = int(client.get(balance_field) or 0)
-        deducted = min(needed, available) if needed > 0 else 0
-        if deducted > 0:
-            await db.clients.update_one({"id": client["id"]}, {"$inc": {balance_field: -deducted}})
-            credit_value, lot_ids = await _consume_credit_lots(client["id"], deducted, body.service_type)
-            after = available - deducted
-            if available > 2 and after <= 2:
-                low_credit_remaining = after
-    doc["credits_deducted"] = deducted
-    if deducted > 0:
-        doc["credit_value"] = credit_value
-        doc["credit_lot_ids"] = lot_ids
-        doc["credit_service_type"] = body.service_type
+    # NOTE: credits are no longer deducted at booking time or on approval —
+    # they're only deducted at checkout (see check_out()). This makes credit
+    # use predictable and prevents accidental deductions for bookings that get
+    # rescheduled, cancelled before drop-off, or paid with cash on the day.
+    doc["credits_deducted"] = 0
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     # Best-effort notification: tell admin when a client books from the portal.
@@ -992,12 +970,6 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             await notify_admin_first_booking(doc, client)
     except Exception:
         pass
-    # Low-credit heads-up to client (fires once per threshold crossing).
-    if low_credit_remaining is not None:
-        try:
-            await notify_client_low_credits(client, body.service_type, low_credit_remaining)
-        except Exception:
-            pass
     return doc
 
 
@@ -1334,42 +1306,9 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=404, detail="Booking not found")
     if booking["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Booking is {booking['status']}")
-    # Credit pools by service:
-    #   daycare → client.credits (1 day = 1 credit)
-    #   training → client.training_credits (1 session = 1 credit)
-    cost = booking.get("cost") or 0
-    deducted = 0
-    credit_value = 0.0
-    lot_ids: List[str] = []
-    svc_type = booking.get("service_type")
-    low_credit_remaining: Optional[int] = None  # set when balance crosses the low-credit threshold
-    if svc_type in ("daycare", "training"):
-        # Training uses 1 credit per session regardless of `cost` (which is a
-        # daycare-day count). Daycare uses the existing `cost` field.
-        if svc_type == "training":
-            needed = 1
-        elif svc_type == "boarding":
-            needed = max(int(cost), 0)
-        else:
-            needed = int(cost)
-        if needed > 0:
-            client = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
-            balance_field = _credit_balance_field(svc_type) or "credits"
-            available = int((client or {}).get(balance_field) or 0)
-            deducted = min(needed, available)
-            if deducted > 0:
-                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -deducted}})
-                credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], deducted, svc_type)
-                # Low-credit heads-up: previously >2, now ≤2 → notify (fires once per crossing).
-                before = available
-                after = available - deducted
-                if before > 2 and after <= 2:
-                    low_credit_remaining = after
-    update = {"status": "approved", "credits_deducted": deducted}
-    if deducted > 0:
-        update["credit_value"] = credit_value
-        update["credit_lot_ids"] = lot_ids
-        update["credit_service_type"] = svc_type
+    # Credits are deducted at CHECKOUT, not approval. Approval just confirms
+    # the spot is reserved.
+    update = {"status": "approved"}
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
     # Best-effort confirmation email to the client
@@ -1377,8 +1316,6 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         if client_doc:
             await notify_client_booking_approved(booking, client_doc)
-            if low_credit_remaining is not None:
-                await notify_client_low_credits(client_doc, svc_type, low_credit_remaining)
     except Exception:
         pass
     return booking
@@ -1815,9 +1752,10 @@ async def check_out(
         update["credits_deducted"] = 0
         # Fall through to base-price logic below.
 
-    # ── Case C: NEW — booking had NO pre-deduction (e.g. client had no credits when
-    # they booked, OR admin created the booking) BUT now the admin wants to settle
-    # it from credits at checkout. Consume from the client's available pool.
+    # ── Case C: NEW — booking had NO pre-deduction (the normal case now that
+    # credits are checkout-time only). If the admin opts to settle from credits
+    # and the client has enough, consume them. If not, silently fall through
+    # to the cash/card path below — don't block the checkout on a credit shortfall.
     elif not had_credit and use_credits and not booking.get("actual_price"):
         svc_type = booking.get("service_type") or "daycare"
         # Boarding consumes one credit per night; everything else is 1 credit.
@@ -1832,24 +1770,23 @@ async def check_out(
         balance_field = _credit_balance_field(svc_type) or "credits"
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = int((client_doc or {}).get(balance_field) or 0)
-        if available < nights:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Client only has {available} {svc_type} credit(s) — need {nights}. Uncheck 'Pay with credits' to charge instead.",
-            )
-        credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
-        await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
-        update["credit_value"] = round(float(credit_value), 2)
-        update["credit_lot_ids"] = lot_ids
-        update["credit_service_type"] = svc_type
-        update["credits_deducted"] = nights
-        update["actual_price"] = round(float(credit_value), 2)
-        update["payment_status"] = "paid"
-        update["payment_method"] = "credits"
-        update["paid_at"] = ts
-        # Skip the "will_charge" branch below — we're done settling this booking.
-        had_credit = True
-        use_credits = True
+        if available >= nights and nights > 0:
+            credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
+            update["credit_value"] = round(float(credit_value), 2)
+            update["credit_lot_ids"] = lot_ids
+            update["credit_service_type"] = svc_type
+            update["credits_deducted"] = nights
+            update["actual_price"] = round(float(credit_value), 2)
+            update["payment_status"] = "paid"
+            update["payment_method"] = "credits"
+            update["paid_at"] = ts
+            # Skip the "will_charge" branch below — we're done settling this booking.
+            had_credit = True
+            use_credits = True
+        else:
+            # Not enough credits — silently fall through to charge cash/card.
+            use_credits = False
 
     # Determine base price / service tag for paid-today bookings (no credits, or credits refunded).
     will_charge = use_credits is False or not had_credit

@@ -558,7 +558,18 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Can the admin opt to settle this booking from credits NOW?
   const canPayWithCredits = !hadCredit && !booking.actual_price && available >= nightsNeeded;
 
-  const [useCredits, setUseCredits] = useState(hadCredit); // default: keep credits if pre-deducted
+  // Default: use credits if either (a) the booking was pre-deducted (legacy)
+  // or (b) the client has enough credits available right now. Credits are
+  // deducted at checkout only, so this is the typical happy path.
+  const [useCredits, setUseCredits] = useState(hadCredit);
+  const [defaultedFromBal, setDefaultedFromBal] = useState(false);
+  // Once we know the client's balance, flip the default ON if they can cover it.
+  useEffect(() => {
+    if (clientBal && !defaultedFromBal && !hadCredit && available >= nightsNeeded && nightsNeeded > 0 && !booking.actual_price) {
+      setUseCredits(true);
+      setDefaultedFromBal(true);
+    }
+  }, [clientBal, available, nightsNeeded, hadCredit, defaultedFromBal, booking.actual_price]);
   const [payMethod, setPayMethod] = useState("cash");
   const [basePrice, setBasePrice] = useState(""); // empty = use service default
   // Boarding-only: extra nights beyond the original booking

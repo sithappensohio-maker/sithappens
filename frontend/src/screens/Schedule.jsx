@@ -350,7 +350,7 @@ function BookingDetailModal({ id, onClose, onChanged }) {
     return () => { alive = false; };
   }, [id]);
   const cancel = async () => {
-    if (!window.confirm("Cancel this booking? Any deducted credits will be refunded.")) return;
+    if (!window.confirm("Cancel this booking?")) return;
     setBusy(true);
     try {
       await api.delete(`/bookings/${id}`);

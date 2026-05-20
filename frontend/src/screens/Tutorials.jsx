@@ -88,7 +88,7 @@ const ADMIN_SECTIONS = [
         steps: [
           "Sidebar → Bookings.",
           "Pending requests show with an orange 'pending' tag.",
-          "Hit 'Approve' (deducts credits if daycare) or 'Reject' with a reason.",
+          "Hit 'Approve' to confirm the spot or 'Reject' with a reason. Credits aren't deducted until check-out.",
           "Client gets an email automatically (Resend integration).",
         ],
       },

@@ -769,7 +769,7 @@ export default function Portal() {
   const toggleRecDay = (d) => setRecDays(recDays.includes(d) ? recDays.filter(x=>x!==d) : [...recDays, d]);
 
   const cancel = async (id) => {
-    if (!(await confirm({ title: "Cancel this booking?", body: "Any deducted credits will be refunded to your pack.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
+    if (!(await confirm({ title: "Cancel this booking?", body: "Credits aren't charged until check-out, so cancelling is free.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
     try { await api.delete(`/bookings/${id}`); loadAll(); } catch (e) { alert(formatErr(e.response?.data?.detail)); }
   };
 
