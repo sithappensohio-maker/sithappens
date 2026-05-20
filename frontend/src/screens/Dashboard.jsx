@@ -601,11 +601,15 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const cartItems = Object.values(cart);
   const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
 
-  // Base price preview — what gets charged for the underlying booking line.
+  // Base price preview — what gets logged as today's income line.
+  // Even when paying with credits, we still want a dollar figure for income tracking.
   let basePreview = 0;
-  if (useCredits && hadCredit) basePreview = creditAmt; // owner pays nothing today, but credit is consumed
-  else if (basePrice !== "") basePreview = Number(basePrice) || 0;
-  else {
+  if (basePrice !== "") {
+    basePreview = Number(basePrice) || 0;
+  } else if (useCredits && hadCredit && creditAmt > 0) {
+    // Legacy: pre-deducted credits with a known lot value
+    basePreview = creditAmt;
+  } else {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
     basePreview = defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0);
   }
@@ -638,14 +642,19 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         if (basePrice !== "") body.base_price = Number(basePrice);
       } else if (!hadCredit) {
         // Settling from credits AT CHECKOUT (Case C on the backend). The server
-        // will consume credits + flag payment_method="credits" itself. Don't
-        // pass payment_method/payment_status here — that would override Case C
-        // and (worse) leave the booking flagged as cash-paid with no credit
-        // consumption.
+        // will consume credits + flag payment_method="credits" itself. Send
+        // base_price if admin entered one so income is tracked correctly even
+        // though it's a credit redemption.
+        if (basePrice !== "") body.base_price = Number(basePrice);
       } else if (extraNightsCharge > 0) {
         // Owner is keeping main-stay credits, but the extra nights still need to be billed
         body.payment_method = payMethod;
         body.payment_status = "paid";
+        if (basePrice !== "") body.base_price = Number(basePrice);
+      } else {
+        // Pre-deducted credits, no extra charges — still pass base_price if
+        // admin overrode it so the income line reflects the day's value.
+        if (basePrice !== "") body.base_price = Number(basePrice);
       }
       await api.post(`/bookings/${booking.id}/check-out`, body);
       onClose();
@@ -786,24 +795,33 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
         </div>
 
-        {/* Section 3 — Payment method + total (only if charging today) */}
-        {(!useCredits || !hadCredit || addOnTotal > 0) && (
-          <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-            <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
+        {/* Section 3 — Payment method + Service value */}
+        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
+          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
+          {/* Payment method only shown when NOT fully covered by credits */}
+          {(!useCredits || addOnTotal > 0) && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
               <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
             </select>
-            {(!useCredits || !hadCredit) && (
-              <div>
-                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Base price <span className="text-gray-600">(blank = use service default)</span></label>
-                <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
-                       placeholder={basePreview ? `$${basePreview.toFixed(2)}` : "$0.00"}
-                       className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-              </div>
+          )}
+          {/* Service value — ALWAYS shown so income is tracked even when paying with credits */}
+          <div>
+            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">
+              {useCredits ? "Service value (for income tracking)" : "Base price"}
+              <span className="text-gray-600"> (blank = use service default)</span>
+            </label>
+            <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
+                   placeholder={basePreview ? `$${basePreview.toFixed(2)}` : "$0.00"}
+                   className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+            {useCredits && (
+              <p className="text-[11px] text-gray-500 mt-1.5 normal-case">
+                <i className="fas fa-circle-info text-shGreen mr-1"/>
+                Credit is still consumed from the client's pack. This dollar amount is recorded as today's income so the daily/weekly totals stay accurate.
+              </p>
             )}
           </div>
-        )}
+        </div>
 
         {/* Total summary */}
         <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">

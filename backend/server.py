@@ -1729,9 +1729,32 @@ async def check_out(
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)
 
+    # Resolve a sensible service value for income tracking. Admin's manual
+    # base_price wins; otherwise fall back to the booking's default service price.
+    async def _resolve_service_value(default_for_zero: float = 0.0) -> float:
+        if body.base_price is not None:
+            return float(body.base_price)
+        default_svc = await db.services.find_one(
+            {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+            {"_id": 0},
+        )
+        if default_svc:
+            return float(default_svc.get("base_price") or 0)
+        return default_for_zero
+
     # ── Case A: client chose to KEEP using the credits that were already deducted.
     if had_credit and use_credits:
-        update["actual_price"] = float(booking["credit_value"])
+        # Income value: prefer admin's manual override, then the lot value, then
+        # the default service price — that way even legacy lots that have $0
+        # value still record the day's income correctly.
+        lot_val = float(booking.get("credit_value") or 0)
+        if body.base_price is not None:
+            svc_value = float(body.base_price)
+        elif lot_val > 0:
+            svc_value = lot_val
+        else:
+            svc_value = await _resolve_service_value(lot_val)
+        update["actual_price"] = round(svc_value, 2)
         update["payment_status"] = "paid"
         update["payment_method"] = "credits"
         update["paid_at"] = ts
@@ -1773,11 +1796,20 @@ async def check_out(
         if available >= nights and nights > 0:
             credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
+            # Income value: prefer admin's manual override; fall back to lot value;
+            # if the lot has no $ data, use the default service price so income is
+            # still recorded correctly.
+            if body.base_price is not None:
+                svc_value = float(body.base_price)
+            elif credit_value > 0:
+                svc_value = float(credit_value)
+            else:
+                svc_value = await _resolve_service_value(float(credit_value))
             update["credit_value"] = round(float(credit_value), 2)
             update["credit_lot_ids"] = lot_ids
             update["credit_service_type"] = svc_type
             update["credits_deducted"] = nights
-            update["actual_price"] = round(float(credit_value), 2)
+            update["actual_price"] = round(svc_value, 2)
             update["payment_status"] = "paid"
             update["payment_method"] = "credits"
             update["paid_at"] = ts
