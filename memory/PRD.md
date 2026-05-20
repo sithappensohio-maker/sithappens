@@ -787,3 +787,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** Admin "Duplicate Clients" detector + merge UI
 - **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
 - **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
+
+## Sprint 72 — Repo cleanup + idiot-proof README (2026-02)
+- ✅ **Deleted unneeded files** from repo root: `start.sh` (superseded by install.sh), `test_result.md`, `yarn.lock` stub (86 bytes — real one is in frontend/), `.gitconfig`, `MIGRATE_TO_NEW_PC.md` (content already covered by BAZZITE_SETUP.md + migrate-*.sh), entire `test_reports/` and `tests/` directories (Emergent testing artifacts).
+- ✅ **Rewrote `.gitignore`** from scratch — was corrupted with the same 18-line block repeated 30+ times by prior agents. New file is 53 lines, organized into clear sections (deps, build artefacts, Python, logs, secrets, backups, agent-only). Adds patterns for the new backup files (`sit-happens-users-*.json`, `sit-happens-backup-*.tar.gz`).
+- ✅ **Rewrote `README.md`** — was literally "Here are your Instructions" 😅. New 100-line README is the entry point for self-hosters: features list, 3-step quickstart for Bazzite, Cloudflare Tunnel pointer, daily commands, backups, new-PC migration, full file-reference table, troubleshooting checklist.
+- ✅ **Added `SENDER_EMAIL` to `.env.example`** with the warning that the domain must be verified in Resend.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
