@@ -1512,11 +1512,44 @@ async def list_time_slots(
     Each slot is marked available/blocked; the blocking pool is shared across
     training/grooming/photography so the operator never double-books their time.
 
-    Slots are 30-min granular from 08:00 to 18:00 by default — this matches a
-    typical small-business operating window without needing a separate setting.
+    Slot granularity is 30-min. The window comes from Settings → service_hours
+    (per-weekday open/close), so Saturday-only or evenings-only schedules work
+    out of the box. Days marked `closed` return no slots.
     """
     if not duration or duration <= 0:
         duration = await _get_default_duration(service_type)
+
+    # Resolve the day's open/close from settings (with safe fallback to 08–18
+    # in case the settings schema is missing for some reason).
+    open_min, close_min = 8 * 60, 18 * 60
+    day_closed = False
+    try:
+        the_date = date.fromisoformat(date_str)
+        dow = DEFAULT_DAYS[the_date.weekday()]
+        settings = await get_settings()
+        svc_hrs = (settings.get("service_hours") or {}).get(service_type)
+        if isinstance(svc_hrs, dict) and isinstance(svc_hrs.get(dow), dict):
+            day_cfg = svc_hrs[dow]
+            if day_cfg.get("closed"):
+                day_closed = True
+            else:
+                o = _hhmm_to_min(day_cfg.get("open") or "")
+                c = _hhmm_to_min(day_cfg.get("close") or "")
+                if o is not None:
+                    open_min = o
+                if c is not None:
+                    close_min = c
+    except Exception:
+        pass
+
+    if day_closed:
+        return {
+            "date": date_str,
+            "service_type": service_type,
+            "duration_minutes": duration,
+            "closed": True,
+            "slots": [],
+        }
 
     # Pull every active time-slotted booking on this date — we'll see if each
     # candidate slot overlaps any of them.
@@ -1542,11 +1575,11 @@ async def list_time_slots(
         svc_cache[st] = d
         return d
 
-    # Generate candidate slots: 08:00 → 18:00 every 30 min.
+    # Generate candidate slots: open → close every 30 min.
     candidates: List[Dict[str, Any]] = []
-    for total in range(8 * 60, 18 * 60, 30):
-        # Don't propose a slot whose end would land past 18:00.
-        if total + duration > 18 * 60:
+    for total in range(open_min, close_min, 30):
+        # Don't propose a slot whose end would land past closing.
+        if total + duration > close_min:
             continue
         hh, mm = divmod(total, 60)
         label = f"{hh:02d}:{mm:02d}"
@@ -1564,6 +1597,7 @@ async def list_time_slots(
         "date": date_str,
         "service_type": service_type,
         "duration_minutes": duration,
+        "closed": False,
         "slots": candidates,
     }
 

@@ -218,7 +218,12 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
               <div>
                 <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Available time slots</label>
                 {slotLoading && <p className="text-[12px] text-gray-500 mt-2"><i className="fas fa-spinner fa-spin mr-1"/>Checking openings…</p>}
-                {!slotLoading && slots && (
+                {!slotLoading && slots && slots.closed && (
+                  <div className="mt-2 bg-shOrange/10 text-shOrange p-3 rounded text-[12px] font-black uppercase tracking-widest text-center">
+                    <i className="fas fa-door-closed mr-1.5"/>Closed for {serviceType} on this date — pick another day
+                  </div>
+                )}
+                {!slotLoading && slots && !slots.closed && (
                   <>
                     <p className="text-[11px] text-gray-500 mt-1">{slots.duration_minutes || 60}-minute session</p>
                     <div className="grid grid-cols-4 gap-2 mt-2 max-h-56 overflow-y-auto p-1">
