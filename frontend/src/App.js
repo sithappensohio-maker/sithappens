@@ -25,6 +25,7 @@ import InstallAppButton from "./components/InstallAppButton";
 import { ConfirmProvider } from "./lib/useConfirm";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import TextSizePicker from "./components/TextSizePicker";
+import BrandFooter from "./components/BrandFooter";
 
 function AdminShell() {
   const { user, logout } = useAuth();
@@ -180,6 +181,7 @@ export default function App() {
             <ImpersonationBanner />
             <Gate />
             <InstallPrompt />
+            <BrandFooter />
           </ConfirmProvider>
         </ThemeProvider>
       </AuthProvider>
