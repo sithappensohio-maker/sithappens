@@ -35,7 +35,7 @@ echo "  ➜ Restoring Mongo data volume..."
 docker volume create sit-happens_mongo_data >/dev/null
 docker run --rm \
   -v sit-happens_mongo_data:/data \
-  -v "$TMP":/backup \
+  -v "$TMP":/backup:Z \
   alpine sh -c "cd /data && tar xzf /backup/mongo_data.tar.gz"
 
 # 3) Restore Cloudflare Tunnel config (if present in the backup)

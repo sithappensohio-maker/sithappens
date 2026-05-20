@@ -23,8 +23,8 @@ docker compose down
 echo "  ➜ Dumping Mongo data volume..."
 docker run --rm \
   -v sit-happens_mongo_data:/data \
-  -v "$TMP":/backup \
-  alpine sh -c "cd /data && tar czf /backup/mongo_data.tar.gz ."
+  -v "$TMP":/backup:Z \
+  alpine sh -c "cd /data && tar czf /backup/mongo_data.tar.gz . && chmod 644 /backup/mongo_data.tar.gz"
 
 # 3) Copy the app source (without node_modules / build artefacts / git)
 echo "  ➜ Copying app source..."
