@@ -3925,6 +3925,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
             "borderColor": color,
             "extendedProps": {
                 "status": b["status"],
+                "client_id": b.get("client_id"),
                 "client_name": b["client_name"],
                 "service_type": b["service_type"],
                 "grooming_type": b.get("grooming_type"),

@@ -36,6 +36,9 @@ export default function Schedule() {
   const [bookErr, setBookErr] = useState("");
   const [bookSaving, setBookSaving] = useState(false);
   const [dogs, setDogs] = useState([]);
+  // Map of client_id → { credits, training_credits, boarding_credits } so the
+  // day roster can show a "credits available" chip next to each dog.
+  const [clientBalById, setClientBalById] = useState({});
   const calRef = useRef(null);
 
   useEffect(() => {
@@ -51,7 +54,21 @@ export default function Schedule() {
   const loadDogs = async () => {
     try { const { data } = await api.get("/dogs"); setDogs(data); } catch (e) { console.warn("dogs load failed", e); }
   };
-  useEffect(() => { load(); loadDogs(); }, []);
+  const loadClients = async () => {
+    try {
+      const { data } = await api.get("/clients");
+      const map = {};
+      (data || []).forEach(c => {
+        map[c.id] = {
+          credits: c.credits || 0,
+          training_credits: c.training_credits || 0,
+          boarding_credits: c.boarding_credits || 0,
+        };
+      });
+      setClientBalById(map);
+    } catch (e) { console.warn("clients load failed", e); }
+  };
+  useEffect(() => { load(); loadDogs(); loadClients(); }, []);
   // Auto-refresh on tab focus so bookings created elsewhere appear right away.
   useEffect(() => {
     const onVisible = () => { if (document.visibilityState === "visible") load(); };
@@ -185,7 +202,7 @@ export default function Schedule() {
       {detailId && (
         <BookingDetailModal id={detailId}
                             onClose={()=>setDetailId(null)}
-                            onChanged={() => { load(); setDetailId(null); }} />
+                            onChanged={() => { load(); loadClients(); setDetailId(null); }} />
       )}
 
       {dayOpen && (
@@ -220,6 +237,16 @@ export default function Schedule() {
                       {dayBookings.map((e) => {
                         const meta = SVC_META[e.extendedProps?.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: e.extendedProps?.service_type };
                         const t = e.extendedProps?.time;
+                        const svc = e.extendedProps?.service_type;
+                        const balField = svc === "training" ? "training_credits"
+                                        : svc === "boarding" ? "boarding_credits"
+                                        : svc === "daycare" ? "credits"
+                                        : null;
+                        const cid = e.extendedProps?.client_id;
+                        const credits = balField && cid ? (clientBalById[cid]?.[balField] ?? null) : null;
+                        const creditChipColor = credits == null ? ""
+                          : credits > 0 ? "bg-shGreen/15 text-shGreen border-shGreen/40"
+                          : "bg-gray-700/50 text-gray-400 border-gray-600";
                         return (
                           <button key={e.id} onClick={()=>setDetailId(e.id)}
                                   className="w-full text-left bg-bgBase border border-bgHover rounded-lg px-3 py-2.5 flex items-start gap-3 hover:border-shBlue/60 transition" data-testid={`day-roster-row-${e.id}`}>
@@ -228,6 +255,13 @@ export default function Schedule() {
                               <p className="text-white font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
                               <p className="text-[11px] text-gray-500 normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
                             </div>
+                            {credits != null && (
+                              <span className={`shrink-0 text-[10px] font-black uppercase tracking-widest px-1.5 py-1 rounded border ${creditChipColor}`}
+                                    data-testid={`day-roster-credits-${e.id}`}
+                                    title={`Available ${svc} credits`}>
+                                <i className="fas fa-coins mr-1"/>{credits}
+                              </span>
+                            )}
                             {t && <span className="shrink-0 text-[12px] font-black text-shOrange tracking-widest">{t}</span>}
                             {e.extendedProps?.status === "pending" && (
                               <span className="shrink-0 text-[10px] font-black uppercase tracking-widest bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded">Pending</span>
