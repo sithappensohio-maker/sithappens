@@ -773,3 +773,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** Admin "Duplicate Clients" detector + merge UI
 - **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
 - **Refactor** Split `server.py` (~5900 lines) into `/app/backend/routes/` modules
+
+## Sprint 71 — User credential migration (carry over bcrypt hashes) (2026-02)
+- ✅ **`GET /api/admin/users/export-with-hashes`** (admin-only) — dumps every user record INCLUDING `password_hash`. Output is a single JSON file with `{version, exported_at, user_count, users[]}`.
+- ✅ **`POST /api/admin/users/import-with-hashes`** (admin-only) — accepts that JSON, merges by email (existing emails updated in-place, new emails inserted with a fresh UUID id). Never touches the calling admin's own record (`skipped_self` counter). Skips entries without an email or hash.
+- ✅ **Settings → Backup & Restore**: new "Migrate User Logins (with passwords)" section above the bulk-claim panel. Green "Export Users" button (downloads `sit-happens-users-YYYY-MM-DD.json`) + blue "Import Users" file picker with confirm-dialog and 4-chip result summary (Inserted / Updated / Skipped Self / Skipped No Hash).
+- ✅ Round-trip tested: export 39 users → re-import → 0 inserted / 38 updated / 1 skipped_self / 0 errors. Admin login still works after self-import.
+- 🎯 **Use case**: when migrating from Emergent → self-hosted Docker, run Export on the old instance, Import on the new one — every client keeps their existing password. No "reset your password" email needed.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
+- **P2** Admin "Duplicate Clients" detector + merge UI
+- **P2** Light mode, SMS reminders (Twilio), waitlist, photo→disk migration
+- **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules

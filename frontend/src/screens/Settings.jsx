@@ -1085,9 +1085,103 @@ function BackupPanel() {
         <p>Clients, dogs, bookings, incidents, homework, waiver signatures, and your settings. Admin login credentials are <span className="text-white font-black">not</span> included — your password stays in the database and is never exported. Backups are plain JSON and safe to email to yourself or store in cloud storage.</p>
       </div>
 
+      <UserMigrationSection />
+
       <BulkClaimEmailsSection />
 
       <PhotoCompressionPanel />
+    </div>
+  );
+}
+
+function UserMigrationSection() {
+  const confirm = useConfirm();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [result, setResult] = useState(null);
+
+  const downloadExport = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const { data } = await api.get("/admin/users/export-with-hashes");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url; a.download = `sit-happens-users-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg(`Exported ${data.user_count} user accounts ✓`);
+    } catch (e) {
+      setMsg("Export failed — " + (formatErr(e.response?.data?.detail) || "unknown error"));
+    }
+    setBusy(false);
+  };
+
+  const importFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";  // allow re-select same file
+    if (!file) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch {
+      setMsg("That file isn't valid JSON.");
+      return;
+    }
+    if (!Array.isArray(parsed.users)) {
+      setMsg("Wrong format — expected a file from 'Export Users' button.");
+      return;
+    }
+    const ok = await confirm({
+      title: `Import ${parsed.users.length} user accounts?`,
+      message: "Existing accounts with the same email will be updated. New ones will be inserted. Your own admin account is left untouched. Clients will be able to log in with their original passwords.",
+      confirmText: "Import users",
+      tone: "primary",
+    });
+    if (!ok) return;
+    setBusy(true); setMsg(""); setResult(null);
+    try {
+      const { data } = await api.post("/admin/users/import-with-hashes", { users: parsed.users, mode: "merge" });
+      setResult(data);
+      setMsg(`Imported ✓ — ${data.inserted} new, ${data.updated} updated`);
+    } catch (e) {
+      setMsg("Import failed — " + (formatErr(e.response?.data?.detail) || "unknown error"));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-3" data-testid="user-migration-section">
+      <div>
+        <p className="text-shGreen font-black uppercase tracking-widest text-[14px]"><i className="fas fa-key mr-2"/>Migrate User Logins (with passwords)</p>
+        <p className="text-[14px] text-gray-400 mt-1 leading-relaxed">
+          Move clients to a new host without making them reset their passwords. On your <span className="text-white font-black">old instance</span>, click Export. On your <span className="text-white font-black">new instance</span>, click Import and pick that file. Existing passwords keep working.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={downloadExport} disabled={busy} data-testid="user-export-btn"
+                className="bg-shGreen text-bgHeader px-5 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+          <i className="fas fa-download mr-2"/>Export Users
+        </button>
+        <label className="bg-shBlue text-white px-5 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg cursor-pointer hover:bg-shBlue/90 disabled:opacity-50">
+          <i className="fas fa-upload mr-2"/>Import Users
+          <input type="file" accept="application/json,.json" onChange={importFile} disabled={busy} className="hidden" data-testid="user-import-file" />
+        </label>
+      </div>
+      {msg && (
+        <div className={`text-[14px] font-black uppercase tracking-widest p-2 rounded ${msg.includes("✓") ? "bg-shGreen/15 text-shGreen" : "bg-red-500/15 text-red-400"}`} data-testid="user-migration-msg">
+          {msg}
+        </div>
+      )}
+      {result && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-[14px]" data-testid="user-migration-result">
+          <StatChip label="Inserted" value={result.inserted} color="text-shGreen" />
+          <StatChip label="Updated" value={result.updated} color="text-shBlue" />
+          <StatChip label="Skipped (Self)" value={result.skipped_self} color="text-gray-400" />
+          <StatChip label="Skipped (No Hash)" value={result.skipped_no_email_or_hash} color="text-gray-400" />
+        </div>
+      )}
     </div>
   );
 }

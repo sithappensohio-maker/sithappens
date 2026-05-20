@@ -4374,6 +4374,92 @@ async def backup_export(_: dict = Depends(require_admin)):
     return payload
 
 
+# -------- User credential migration (admin-only) --------
+# Use this when moving an instance to a new host and you want clients to keep
+# their existing passwords (bcrypt hashes are portable as long as both ends use
+# the same bcrypt implementation, which they do).
+#
+# Flow:
+#   1. Admin hits GET  /api/admin/users/export-with-hashes on the SOURCE instance
+#      → downloads a JSON file containing { users: [ {id, email, name, role, client_id, password_hash, ...} ] }
+#   2. Admin hits POST /api/admin/users/import-with-hashes on the TARGET instance
+#      → uploads that JSON. Existing users (by email) are updated, new ones inserted.
+#
+# Security: requires admin auth on both ends. The hash itself is not the
+# password — it's already what the DB stores; exposing it is equivalent to
+# stealing the DB file, which the admin can already do.
+class UserImportIn(BaseModel):
+    users: List[Dict[str, Any]]
+    mode: str = "merge"  # "merge" = upsert by email; "replace_clients_only" = also wipe non-admin users first
+
+
+@api.get("/admin/users/export-with-hashes")
+async def admin_users_export_with_hashes(_: dict = Depends(require_admin)):
+    """Export every user record INCLUDING password_hash. Admin-only.
+    Use this to migrate logins between hosts so clients keep their passwords."""
+    users = await db.users.find({}, {"_id": 0}).to_list(5000)
+    return {
+        "version": BACKUP_VERSION,
+        "exported_at": now_iso(),
+        "user_count": len(users),
+        "users": users,
+    }
+
+
+@api.post("/admin/users/import-with-hashes")
+async def admin_users_import_with_hashes(body: UserImportIn, current: dict = Depends(require_admin)):
+    """Import users (with hashes) from an export-with-hashes dump.
+    Safety: never touches the calling admin's own user record. Existing users
+    with the same email are updated in place (preserves their `id`). New users
+    are inserted as-is."""
+    inserted = 0
+    updated = 0
+    skipped_no_email = 0
+    skipped_self = 0
+
+    if body.mode == "replace_clients_only":
+        # Wipe everyone EXCEPT the calling admin so we don't lock ourselves out.
+        await db.users.delete_many({"id": {"$ne": current["id"]}})
+
+    for u in body.users:
+        email = (u.get("email") or "").strip().lower()
+        if not email:
+            skipped_no_email += 1
+            continue
+        if email == (current.get("email") or "").lower():
+            skipped_self += 1
+            continue
+        # Defensive: only keep known fields
+        doc = {
+            "email": email,
+            "password_hash": u.get("password_hash"),
+            "name": u.get("name") or "",
+            "role": u.get("role") or "client",
+            "client_id": u.get("client_id"),
+            "created_at": u.get("created_at") or now_iso(),
+        }
+        if not doc["password_hash"]:
+            skipped_no_email += 1  # tracked as skipped — useless without a hash
+            continue
+        existing = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
+        if existing:
+            await db.users.update_one({"email": email}, {"$set": doc})
+            updated += 1
+        else:
+            doc["id"] = u.get("id") or str(uuid.uuid4())
+            await db.users.insert_one(doc)
+            inserted += 1
+
+    return {
+        "ok": True,
+        "inserted": inserted,
+        "updated": updated,
+        "skipped_no_email_or_hash": skipped_no_email,
+        "skipped_self": skipped_self,
+    }
+
+
+
 
 # -------- Recent server errors (admin only) --------
 @api.get("/admin/recent-errors")
