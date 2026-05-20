@@ -713,6 +713,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Made GitHub repo public to avoid PAT/expiry headaches (no secrets in repo — `.env` is gitignored).
 - ✅ Verified app loads on phone with all historical data intact. `./update.sh` is now functional for future one-command updates.
 
+## Sprint 67 — Nightly auto-backups to Google Drive (2026-02)
+- ✅ **`backup-now.sh`**: runs `mongodump` inside the mongo container (uses the existing `./backups` bind mount), stages the dump + `.env` + `docker-compose.yml` + a RESTORE.md, tars+gzips to `~/sit-happens-backups/sit-happens-backup-YYYY-MM-DD_HHMMSS.tar.gz`, rotates locally (keeps newest 14), then uploads to Google Drive via rclone (`gdrive:sit-happens-backups`). Cloud upload is best-effort — if Drive is down the local copy still succeeds.
+- ✅ **`setup-auto-backup.sh`**: idempotent installer for Bazzite. Drops rclone into `~/.local/bin/` (no rpm-ostree needed for the immutable filesystem), walks user through `rclone config` for Google Drive auth, then installs a systemd --user timer (`sit-happens-backup.timer`) running nightly at 03:00 with 5min randomized delay. Calls `loginctl enable-linger` so backups continue when the user is logged out.
+- ✅ Both scripts are bash-lint clean. PRD already mentioned user has a Google Drive account.
+
 ## Backlog / Next Up
 - **P1** Public booking page (no-login request flow from website)
 - **P1** Vaccine expiry email blast (one-click email all owners with expiring vaccines via Resend)
