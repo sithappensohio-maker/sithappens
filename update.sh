@@ -10,11 +10,10 @@ cd "$(dirname "$0")"
 
 if [ ! -d .git ]; then
   echo "❌ This folder isn't a git clone — update.sh needs it to be one."
-  echo "   Easiest fix: push your code to GitHub from Emergent (one click in"
-  echo "   the chat input), then:"
+  echo "   Fix:"
   echo "     cd ~"
   echo "     mv sit-happens sit-happens.old"
-  echo "     git clone https://github.com/YOUR-USER/YOUR-REPO.git sit-happens"
+  echo "     git clone https://github.com/sithappensohio-maker/sithappens.git sit-happens"
   echo "     cp sit-happens.old/.env sit-happens/"
   echo "     cd sit-happens && ./update.sh"
   exit 1

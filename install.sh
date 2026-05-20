@@ -4,7 +4,7 @@
 # Cloudflare Tunnel. Idempotent — safe to re-run if something fails.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/YOUR-USER/YOUR-REPO/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/sithappensohio-maker/sithappens/main/install.sh | bash
 #   OR after cloning:
 #   ./install.sh
 
