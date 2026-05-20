@@ -739,10 +739,18 @@ async def verify_claim_token(token: str):
         return ClaimVerifyOut(valid=False)
     if datetime.now(timezone.utc) > exp:
         return ClaimVerifyOut(valid=False)
-    client = await db.clients.find_one({"id": rec["client_id"]}, {"_id": 0, "name": 1})
+    # Look up display name: prefer client name (if token tied to a client),
+    # fall back to user.name (used for admin/staff resets without a client_id).
+    display_name = ""
+    if rec.get("client_id"):
+        client = await db.clients.find_one({"id": rec["client_id"]}, {"_id": 0, "name": 1})
+        display_name = (client or {}).get("name", "")
+    elif rec.get("user_id"):
+        u = await db.users.find_one({"id": rec["user_id"]}, {"_id": 0, "name": 1})
+        display_name = (u or {}).get("name", "")
     return ClaimVerifyOut(
         valid=True,
-        client_name=(client or {}).get("name", ""),
+        client_name=display_name,
         email=rec.get("email", ""),
         is_reset=bool(rec.get("is_reset", False)),
         expires_at=rec.get("expires_at"),
@@ -751,7 +759,12 @@ async def verify_claim_token(token: str):
 
 @api.post("/claim/{token}", response_model=AuthOut)
 async def consume_claim_token(token: str, body: ClaimSetIn):
-    """Public — set the password using a valid claim/reset token and auto-log in."""
+    """Public — set the password using a valid claim/reset token and auto-log in.
+    Handles three cases:
+      1. Token tied to a client_id + existing portal user → update user's password.
+      2. Token tied to a client_id only (no user yet)     → create the portal user.
+      3. Token tied to a user_id (no client_id)           → admin/staff password reset.
+    """
     rec = await db.claim_tokens.find_one({"token": token, "used": False}, {"_id": 0})
     if not rec:
         raise HTTPException(status_code=400, detail="This link is invalid or has already been used.")
@@ -762,15 +775,40 @@ async def consume_claim_token(token: str, body: ClaimSetIn):
     except Exception:
         raise HTTPException(status_code=400, detail="This link is invalid.")
     if datetime.now(timezone.utc) > exp:
-        raise HTTPException(status_code=400, detail="This link has expired. Ask your trainer to send a new one.")
+        raise HTTPException(status_code=400, detail="This link has expired. Request a new password reset.")
 
-    client_id = rec["client_id"]
+    client_id = rec.get("client_id")
+    user_id_on_token = rec.get("user_id")
     email = (rec.get("email") or "").lower()
+    new_hash = hash_password(body.password)
+
+    # Case 3: admin/staff reset — token tied directly to a user_id, no client.
+    if user_id_on_token and not client_id:
+        existing_user = await db.users.find_one({"id": user_id_on_token})
+        if not existing_user:
+            raise HTTPException(status_code=400, detail="That account no longer exists.")
+        await db.users.update_one(
+            {"id": existing_user["id"]},
+            {"$set": {"password_hash": new_hash}},
+        )
+        await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
+        access = create_access_token(existing_user["id"], existing_user["email"], existing_user.get("role", "admin"))
+        return AuthOut(
+            token=access,
+            user=UserOut(
+                id=existing_user["id"],
+                email=existing_user["email"],
+                name=existing_user.get("name", ""),
+                role=existing_user.get("role", "admin"),
+                client_id=existing_user.get("client_id"),
+            ),
+        )
+
+    # Cases 1 + 2: client claim or client reset — token tied to client_id.
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=400, detail="The client account no longer exists.")
 
-    new_hash = hash_password(body.password)
     existing_user = await db.users.find_one({"client_id": client_id})
 
     if existing_user:
@@ -805,6 +843,63 @@ async def consume_claim_token(token: str, body: ClaimSetIn):
         token=access,
         user=UserOut(id=user_id, email=user_email, name=user_name, role="client", client_id=client_id),
     )
+
+
+# -------- Public forgot-password (self-service for everyone) --------
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+@api.post("/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordIn):
+    """Public — anyone can request a password reset for their email.
+    For security, ALWAYS returns ok regardless of whether the email exists.
+    This prevents attackers from probing the DB for valid emails."""
+    email = (body.email or "").strip().lower()
+    if not email:
+        return {"ok": True}
+
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        # Don't leak the existence/non-existence of accounts.
+        return {"ok": True}
+
+    # Mint a fresh token and invalidate any old unused ones for this user.
+    await db.claim_tokens.delete_many({
+        "$or": [
+            {"user_id": user["id"], "used": False},
+            {"client_id": user.get("client_id"), "used": False} if user.get("client_id") else {"_unused": True},
+        ]
+    })
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
+    await db.claim_tokens.insert_one({
+        "token": token,
+        "user_id": user["id"],
+        "client_id": user.get("client_id"),  # may be None for admins
+        "email": email,
+        "is_reset": True,
+        "used": False,
+        "created_at": now_iso(),
+        "expires_at": expires_at.isoformat(),
+    })
+
+    claim_url = _build_claim_url(token)
+    display_name = user.get("name") or ""
+    if user.get("client_id") and not display_name:
+        c = await db.clients.find_one({"id": user["client_id"]}, {"_id": 0, "name": 1})
+        display_name = (c or {}).get("name", "")
+    try:
+        await send_account_claim(
+            to_email=email,
+            client_name=display_name,
+            claim_url=claim_url,
+            is_reset=True,
+            expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+        )
+    except Exception as e:
+        logger.warning("forgot_password: email dispatch failed for %s: %s", email, e)
+
+    return {"ok": True}
 
 
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
+import ForgotPasswordModal from "../components/ForgotPasswordModal";
 
 export default function Login() {
   const { login, register, error, setError } = useAuth();
@@ -9,6 +10,7 @@ export default function Login() {
   const [name, setName] = useState("");
   const [refCode, setRefCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   // Auto-detect ?ref=CODE on first load → flip to register tab and prefill code.
   useEffect(() => {
@@ -68,6 +70,12 @@ export default function Login() {
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Password</label>
             <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required data-testid="login-password-input"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none" />
+            {mode === "login" && (
+              <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
+                      className="mt-2 text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
+                Forgot password?
+              </button>
+            )}
           </div>
           {error && <div data-testid="login-error" className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{error}</div>}
           <button type="submit" disabled={loading} data-testid="login-submit-button"
@@ -79,6 +87,7 @@ export default function Login() {
           {mode==="login" ? "New client? Register to access the portal." : "Already have an account? Switch to Sign In."}
         </p>
       </div>
+      <ForgotPasswordModal open={forgotOpen} onClose={()=>setForgotOpen(false)} initialEmail={email} />
     </div>
   );
 }

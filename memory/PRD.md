@@ -800,3 +800,22 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
+
+## Sprint 73 — Self-service password reset for everyone (2026-02)
+- ✅ **Backend `POST /auth/forgot-password`** (public, unauthenticated): looks up user by email. If found → mints a claim token with `user_id` set (and `client_id` if applicable) → emails the reset link via Resend → always returns `{ok: true}` whether or not the email exists (prevents account-enumeration probing).
+- ✅ **Extended `GET /claim/{token}`**: display name now falls back to `users.name` when the token has no `client_id` (admin/staff reset case).
+- ✅ **Extended `POST /claim/{token}`**: new third branch — when token has `user_id` but no `client_id`, treats it as a direct user-record password update (admin/staff reset). Returns proper auth token with the user's actual role (admin/client) so they're logged in automatically after reset.
+- ✅ **`components/ForgotPasswordModal.jsx`**: clean modal on Login screen — collects email, hits the endpoint, shows a generic "Check your inbox" success message regardless of whether the email exists.
+- ✅ **`Login.jsx`**: small "Forgot password?" link below the password input, only visible on Sign In tab (not Register). Modal pre-fills with whatever email the user has already typed.
+- ✅ E2E tested via curl + Python+motor token lookup:
+  - Admin forgot → reset → login with new password ✅
+  - Client forgot → reset → login with new password ✅
+  - Unknown email → silent `{ok:true}` (no leak) ✅
+  - UI smoke-tested: modal opens, submits, success state shows ✅
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow from website)
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
