@@ -38,7 +38,29 @@ else
   TMP="$(mktemp -d)"
   echo "    Downloading rclone for linux-${RCLONE_ARCH}..."
   curl -fsSL "https://downloads.rclone.org/rclone-current-linux-${RCLONE_ARCH}.zip" -o "$TMP/rclone.zip"
-  ( cd "$TMP" && unzip -q rclone.zip && cp rclone-*/rclone "$RCLONE_BIN" && chmod +x "$RCLONE_BIN" )
+
+  # Bazzite doesn't ship `unzip` by default — try several extractors in order
+  echo "    Extracting..."
+  if command -v unzip >/dev/null 2>&1; then
+    ( cd "$TMP" && unzip -q rclone.zip )
+  elif command -v bsdtar >/dev/null 2>&1; then
+    ( cd "$TMP" && bsdtar -xf rclone.zip )
+  elif command -v python3 >/dev/null 2>&1; then
+    ( cd "$TMP" && python3 -m zipfile -e rclone.zip . )
+  else
+    err "No zip extractor found. Install one with:  rpm-ostree install unzip  (then reboot)"
+    rm -rf "$TMP"
+    exit 1
+  fi
+
+  RCLONE_SRC="$(find "$TMP" -maxdepth 2 -name rclone -type f | head -1)"
+  if [ -z "$RCLONE_SRC" ]; then
+    err "rclone binary not found inside the zip — extraction failed?"
+    rm -rf "$TMP"
+    exit 1
+  fi
+  cp "$RCLONE_SRC" "$RCLONE_BIN"
+  chmod +x "$RCLONE_BIN"
   rm -rf "$TMP"
   ok "rclone installed at $RCLONE_BIN"
 fi
