@@ -289,6 +289,15 @@ export default function Dashboard() {
             const careIcons = [];
             if (d.feeding_schedule?.length) careIcons.push({i:"fa-bowl-food",c:"text-shGreen",n:d.feeding_schedule.length});
             if (d.medications?.length) careIcons.push({i:"fa-pills",c:"text-purple-400",n:d.medications.length});
+            // Credit balance for the relevant pool — shown so admin can settle from credits at check-out
+            const balField = b.service_type === "training" ? "training_credits"
+                            : b.service_type === "boarding" ? "boarding_credits"
+                            : b.service_type === "daycare" ? "credits"
+                            : null;
+            const credits = balField ? (b.client_credits?.[balField] ?? null) : null;
+            const creditChipColor = credits == null ? ""
+              : credits > 0 ? "bg-shGreen/15 text-shGreen border-shGreen/40"
+              : "bg-gray-700/50 text-gray-400 border-gray-600";
             return (
               <div key={b.id} className="px-6 py-4 flex items-center justify-between hover:bg-bgBase/30 transition" data-testid={`roster-${b.id}`}>
                 <div className="flex items-center gap-4">
@@ -297,6 +306,12 @@ export default function Dashboard() {
                     <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
                       {b.dog_name}
                       {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[14px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
+                      {credits != null && (
+                        <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${creditChipColor}`}
+                              title={`Available ${b.service_type} credits`} data-testid={`roster-credits-${b.id}`}>
+                          <i className="fas fa-coins mr-1"/>{credits}
+                        </span>
+                      )}
                     </p>
                     <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}{b.kennel?` · ${b.kennel}`:""}</p>
                   </div>

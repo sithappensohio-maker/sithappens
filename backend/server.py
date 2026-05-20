@@ -3794,6 +3794,20 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     ).to_list(2000)
     # Build dog map for enrichment
     dog_map = {d["id"]: d for d in dogs}
+    # Pre-fetch only the clients we actually need (instead of all clients) so
+    # the roster rows can show "credits remaining" per dog at a glance.
+    today_client_ids = list({b.get("client_id") for b in today_bookings if b.get("client_id")})
+    client_bal_map = {}
+    if today_client_ids:
+        for c in await db.clients.find(
+            {"id": {"$in": today_client_ids}},
+            {"_id": 0, "id": 1, "credits": 1, "training_credits": 1, "boarding_credits": 1},
+        ).to_list(2000):
+            client_bal_map[c["id"]] = {
+                "credits": int(c.get("credits") or 0),
+                "training_credits": int(c.get("training_credits") or 0),
+                "boarding_credits": int(c.get("boarding_credits") or 0),
+            }
     daycare_today = 0
     boarding_today = 0
     training_today = 0
@@ -3811,6 +3825,9 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
                 training_today += 1
             enriched = dict(b)
             enriched["dog"] = dog_map.get(b["dog_id"], {})
+            enriched["client_credits"] = client_bal_map.get(b.get("client_id"), {
+                "credits": 0, "training_credits": 0, "boarding_credits": 0,
+            })
             roster.append(enriched)
     return {
         "daycare_occupancy": daycare_today,

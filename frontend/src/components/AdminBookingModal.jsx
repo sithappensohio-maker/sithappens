@@ -9,6 +9,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [kennels, setKennels] = useState([]);
   const [clientId, setClientId] = useState(existing?.client_id || "");
   const [dogId, setDogId] = useState(existing?.dog_id || "");
+  // Quick Check-in mode: dog-first selection (the common drop-off flow).
+  // Normal booking creation stays client-first.
+  const isQuickCheckin = defaultCheckIn && !existing;
   const [serviceType, setServiceType] = useState(existing?.service_type || "daycare");
   const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
   const [endDate, setEndDate] = useState(existing?.end_date || "");
@@ -37,10 +40,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setClients(cRes.data);
         setDogs(dRes.data);
         setKennels(sRes.data.kennels || []);
-        if (!existing && cRes.data[0]) setClientId(cRes.data[0].id);
+        if (!existing) {
+          if (isQuickCheckin) {
+            // Pre-select the first dog and its owner so the form is ready to submit.
+            const firstDog = (dRes.data || []).find(d => d.owner_id);
+            if (firstDog) {
+              setDogId(firstDog.id);
+              setClientId(firstDog.owner_id);
+            }
+          } else if (cRes.data[0]) {
+            setClientId(cRes.data[0].id);
+          }
+        }
       } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     })();
-  }, [existing]);
+  }, [existing, isQuickCheckin]);
 
   // Auto-detect conflicts when dog/date/client change. Keyed on clientId so
   // when the user switches clients (which auto-resets dogId via clientDogs),
@@ -58,8 +72,25 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
   const clientDogs = useMemo(() => dogs.filter(d => d.owner_id === clientId), [dogs, clientId]);
   useEffect(() => {
-    if (clientDogs.length && !clientDogs.find(d => d.id === dogId)) setDogId(clientDogs[0].id);
-  }, [clientDogs, dogId]);
+    // In normal mode, auto-pick the first dog when client changes.
+    // In quick-checkin mode, the dog dropdown drives clientId so we skip this.
+    if (!isQuickCheckin && clientDogs.length && !clientDogs.find(d => d.id === dogId)) {
+      setDogId(clientDogs[0].id);
+    }
+  }, [clientDogs, dogId, isQuickCheckin]);
+
+  // Quick check-in: sorted "all dogs" list with owner name embedded so the
+  // admin can find dogs faster (most relevant to drop-off workflows).
+  const allDogsSorted = useMemo(() => {
+    const byName = [...dogs].filter(d => d.owner_id).sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", undefined, { sensitivity: "base" })
+    );
+    const clientMap = Object.fromEntries(clients.map(c => [c.id, c]));
+    return byName.map(d => ({
+      ...d,
+      ownerLabel: clientMap[d.owner_id]?.name || "—",
+    }));
+  }, [dogs, clients]);
 
   const selectedDog = dogs.find(d => d.id === dogId);
   const rabies = selectedDog?.vaccines?.rabies || "";
@@ -115,23 +146,58 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         </div>
 
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
-              <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-                {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
-              </select>
+          {isQuickCheckin ? (
+            // Quick Check-in: dog-first selection. Searching/finding a dog is
+            // faster than narrowing by client at drop-off time.
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <select value={dogId}
+                        onChange={(e)=>{
+                          const id = e.target.value;
+                          setDogId(id);
+                          const dog = allDogsSorted.find(d => d.id === id);
+                          if (dog) setClientId(dog.owner_id);
+                        }}
+                        data-testid="ab-dog"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  {allDogsSorted.length === 0 && <option value="">No dogs on file</option>}
+                  {allDogsSorted.map(d => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({d.breed || "—"}) — {d.ownerLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
+                <div className="w-full mt-1 bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center justify-between" data-testid="ab-client-readout">
+                  <span>{clients.find(c => c.id === clientId)?.name || "—"}</span>
+                  <span className="text-[11px] text-shGreen font-black uppercase tracking-widest">
+                    {clients.find(c => c.id === clientId)?.credits ?? 0} credits
+                  </span>
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
-              <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-                {clientDogs.length === 0 && <option value="">No dogs on file</option>}
-                {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
-              </select>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
+                <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  {clientDogs.length === 0 && <option value="">No dogs on file</option>}
+                  {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
+                </select>
+              </div>
             </div>
-          </div>
+          )}
 
           {selectedDog && (
             <div className={`text-[14px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shGreen/10 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
