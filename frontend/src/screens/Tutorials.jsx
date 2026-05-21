@@ -230,6 +230,141 @@ const ADMIN_SECTIONS = [
       },
     ],
   },
+  {
+    id: "brand-and-theme",
+    title: "Brand & Theme",
+    icon: "fa-palette",
+    color: "text-shGreen",
+    cards: [
+      {
+        title: "Change the app's colors to match your business",
+        steps: [
+          "Sidebar → Settings → Brand & Theme tab.",
+          "Brand Colors: pick a primary, accent, and warning color. They apply across every screen, every button, every badge.",
+          "Font: pick from Inter / Nunito / Poppins / Roboto / System.",
+          "Card Gradients: each card 'flavor' (Hero, Info, Warning, Danger, Success) gets its own color — affects dashboard tiles, banners, report cards, vaccine alerts, etc.",
+          "Hit Save Brand — the whole app recolors instantly.",
+        ],
+        tip: "Live preview cards show exactly what each gradient will look like before you save.",
+      },
+      {
+        title: "Set the footer pill text and link",
+        steps: [
+          "Settings → Brand & Theme → 'Footer Pill' section.",
+          "Text: what the pill says in the bottom-right of every page (default 'Sit Happens').",
+          "Link URL: blank = just a label, set a URL = clickable pill that opens in a new tab.",
+          "Useful if your business has a marketing site separate from the app.",
+        ],
+      },
+      {
+        title: "Adjust text size per user",
+        steps: [
+          "Below the nav in the sidebar there's an S / M / L / XL picker.",
+          "Each user (admin + every client) picks their own text size — it's saved to their account.",
+          "Scales the entire app proportionally (16 / 18.5 / 21 / 24 px).",
+        ],
+        tip: "Great for older clients who need bigger fonts on their portal — they only change theirs, not yours.",
+      },
+    ],
+  },
+  {
+    id: "vaccine-center",
+    title: "Vaccine Center & Health Flags",
+    icon: "fa-shield-heart",
+    color: "text-shOrange",
+    cards: [
+      {
+        title: "Triage every flagged vaccine in one place",
+        steps: [
+          "Dashboard → click the 'Health Flags' stat tile (or 'Manage All' on the orange Vaccine Alerts banner).",
+          "The Vaccine Center modal opens with every flagged dog (missing OR expired) listed.",
+          "Each row pre-fills a new expiry date 1 year from today — adjust if needed.",
+          "Optionally upload a photo of the new certificate.",
+          "Hit Save — that row disappears and the dashboard stat updates.",
+          "Use 'Hide 30d' if you're waiting on the owner and want to suppress the alert temporarily.",
+        ],
+        tip: "Saves you opening each dog's profile individually — knock out the whole week's vaccine paperwork in 60 seconds.",
+      },
+      {
+        title: "Send a mass claim-email after a migration",
+        steps: [
+          "Settings → Backup & Restore → 'Mass Claim Emails (Recovery)'.",
+          "Click 'Send Claim Emails to All Clients'.",
+          "Every client with an email and no portal login yet gets a 'Set up your account' link.",
+          "Result chips show how many sent / skipped / errored.",
+        ],
+        tip: "Use this after restoring from a backup that didn't include user passwords. Each client picks their own password.",
+      },
+    ],
+  },
+  {
+    id: "client-recovery",
+    title: "Client Logins & Recovery",
+    icon: "fa-key",
+    color: "text-shBlue",
+    cards: [
+      {
+        title: "Migrate logins between hosts (keep passwords)",
+        steps: [
+          "On the OLD instance: Settings → Backup & Restore → 'Migrate User Logins' → click 'Export Users.'",
+          "A JSON file downloads with every user's bcrypt password hash.",
+          "On the NEW instance: same panel → click 'Import Users' → pick the file.",
+          "Existing accounts updated, new ones inserted. Your own admin record is left untouched.",
+        ],
+        tip: "Use this when moving from Emergent hosting to self-hosted, or between two PCs. Clients keep their existing passwords.",
+      },
+      {
+        title: "Forgot Password",
+        steps: [
+          "Anyone (admin or client) clicks 'Forgot password?' under the Sign In form.",
+          "They enter their email — a reset link is emailed via Resend.",
+          "Link expires in 7 days. They click it, pick a new password, and are auto-logged-in.",
+          "The system never reveals whether an email is registered — prevents account-probing.",
+        ],
+      },
+      {
+        title: "Auto-merge on self-signup",
+        steps: [
+          "If you create a client record with an email but no portal user, and that same person later self-registers using that exact email, they are auto-attached to the existing client record.",
+          "All pre-loaded dogs, credits, and history follow them — no duplicates.",
+          "Tip: even better, send them a claim email right after creating the record so they never see the signup form.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "backups-hosting",
+    title: "Backups & Self-Hosting",
+    icon: "fa-cloud-arrow-down",
+    color: "text-shGreen",
+    cards: [
+      {
+        title: "One-shot nightly Google Drive backups",
+        steps: [
+          "SSH to your Bazzite PC and run `./setup-auto-backup.sh` inside `~/sit-happens`.",
+          "It installs rclone (no rpm-ostree needed), walks you through Google Drive auth, and installs a systemd timer at 3 AM nightly.",
+          "Local copies kept for 14 days at `~/sit-happens-backups/`. Cloud copies kept indefinitely in Drive → /sit-happens-backups/.",
+        ],
+        tip: "Run `./backup-now.sh` any time to make an immediate backup.",
+      },
+      {
+        title: "Pull new app updates",
+        steps: [
+          "SSH to your Bazzite PC → `cd ~/sit-happens && ./update.sh`.",
+          "Pulls the latest code from GitHub, rebuilds containers, restarts. ~1-3 minutes.",
+        ],
+      },
+      {
+        title: "Move to a new PC",
+        steps: [
+          "On the old PC: `./migrate-export.sh` → makes one big `.tar.gz` of code + DB + Cloudflare config.",
+          "Copy that file to a USB stick.",
+          "On the new PC (after installing Docker): `./migrate-import.sh path/to/that/file.tar.gz`.",
+          "Same domain, same data. Done.",
+        ],
+      },
+    ],
+  },
 ];
 
 const CLIENT_SECTIONS = [
@@ -256,6 +391,25 @@ const CLIENT_SECTIONS = [
           "On iPhone Safari: tap Share → Add to Home Screen.",
           "On Android Chrome: a prompt pops up — tap Install.",
           "The husky logo will appear on your home screen. Tap it to open like a normal app.",
+        ],
+      },
+      {
+        title: "Forgot your password?",
+        steps: [
+          "On the sign-in screen, tap 'Forgot password?' under the password field.",
+          "Enter your email and tap 'Send Reset Link.'",
+          "Check your inbox (and spam folder) — you'll get an email with a link.",
+          "Click the link, pick a new password, and you're back in. Link is good for 7 days.",
+        ],
+        tip: "No need to call your trainer to reset it for you — you can do it yourself anytime.",
+      },
+      {
+        title: "Make the text bigger (or smaller)",
+        steps: [
+          "Scroll down past the credits card on the portal.",
+          "You'll see a 'Text Size' picker with S / M / L / XL pills.",
+          "Tap whichever is most comfortable — everything scales up together.",
+          "Your choice is remembered every time you log in.",
         ],
       },
     ],
