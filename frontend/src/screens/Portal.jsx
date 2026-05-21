@@ -851,7 +851,7 @@ export default function Portal() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
-          <div className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl" data-testid="credits-card">
+          <div className="bg-bgPanel card-pop p-6 rounded-xl border border-bgHover shadow-2xl" data-testid="credits-card">
             <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest text-center mb-4">Your Credits</p>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="bg-bgBase rounded p-3">

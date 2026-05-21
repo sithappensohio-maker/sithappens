@@ -848,3 +848,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** "We've moved" announcement email blast (one-click button)
 - **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into route modules
+
+## Sprint 77 — Card gradients across the app (2026-02)
+- ✅ Added subtle 135° linear gradients to `.bg-bgPanel` and `.bg-bgBase` via `index.css` `background-image` (NOT `background-color` so opacity variants `/40 /50 /60` still work). Effect: every card across admin + portal picks up a soft top-left light + bottom-right shadow gradient automatically — zero JSX changes needed.
+- ✅ Added `.card-pop` utility class — richer variant with brand-green halo from top-left + brand-blue glow from bottom-right + thicker brand-tinted border. Applied to the Portal credit-balance card (the most-seen surface for clients).
+- ✅ Defensive reset rule for dropdowns / menus / buttons — they re-apply `background-image: none` so flat surfaces stay flat.
+- ✅ Verified via screenshots: Dashboard stat tiles, Dog Records grid, and Client Hub all show the new depth. No regression in FullCalendar (its own dark theme overrides took precedence).
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into route modules
