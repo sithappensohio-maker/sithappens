@@ -133,7 +133,11 @@ function AdminShell() {
           <button onClick={()=>setSearchOpen(true)} className="md:hidden text-gray-300 p-2"><i className="fas fa-search" /></button>
         </header>
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative" data-scroll-root>
-          {tab === "dashboard" && <Dashboard onNavigate={(t)=>setTab(t)} />}
+          {tab === "dashboard" && <Dashboard
+            onNavigate={(t)=>setTab(t)}
+            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }}
+            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id}); setTab("clients"); }}
+          />}
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}

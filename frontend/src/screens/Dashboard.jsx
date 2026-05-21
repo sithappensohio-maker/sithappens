@@ -15,7 +15,7 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
-export default function Dashboard({ onNavigate = () => {} }) {
+export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
@@ -304,7 +304,13 @@ export default function Dashboard({ onNavigate = () => {} }) {
               : "bg-gray-700/50 text-gray-400 border-gray-600";
             return (
               <div key={b.id} className="px-6 py-4 flex items-center justify-between hover:bg-bgBase/30 transition" data-testid={`roster-${b.id}`}>
-                <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => b.dog_id ? onJumpToDog(b.dog_id) : null}
+                  title="Open dog profile"
+                  className="flex items-center gap-4 -ml-2 pl-2 pr-3 py-1 rounded text-left transition hover:bg-bgPanel/60 cursor-pointer focus:outline-none focus:ring-2 focus:ring-shGreen/40"
+                  data-testid={`roster-dog-link-${b.id}`}
+                >
                   <div className={`w-3 h-3 rounded-full ${done?"bg-gray-500":onPremises?"bg-shGreen animate-pulse":"bg-shOrange"}`}/>
                   <div>
                     <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
@@ -319,7 +325,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
                     </p>
                     <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">{b.client_name} · {b.service_type}{b.kennel?` · ${b.kennel}`:""}</p>
                   </div>
-                </div>
+                </button>
                 <div className="flex items-center gap-4">
                   <div className="text-right hidden md:block">
                     <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">In · Out</p>
@@ -362,7 +368,14 @@ export default function Dashboard({ onNavigate = () => {} }) {
               <h3 className="text-xs font-black text-shOrange uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fas fa-trophy"/>Top Dogs · Most Trophies</h3>
               <div className="space-y-2">
                 {leaderboard.top_dogs.map((d, i) => (
-                  <div key={d.dog_id} className="flex items-center gap-3 bg-bgBase/50 rounded p-2" data-testid={`top-dog-${d.dog_id}`}>
+                  <button
+                    key={d.dog_id}
+                    type="button"
+                    onClick={() => onJumpToDog(d.dog_id)}
+                    title="Open dog profile"
+                    className="w-full text-left flex items-center gap-3 bg-bgBase/50 rounded p-2 transition hover:bg-bgBase hover:ring-1 hover:ring-shOrange/40 cursor-pointer focus:outline-none focus:ring-2 focus:ring-shOrange/60"
+                    data-testid={`top-dog-${d.dog_id}`}
+                  >
                     <span className={`text-lg font-black w-7 text-center ${i===0?"text-yellow-400":i===1?"text-slate-300":i===2?"text-amber-600":"text-gray-500"}`}>#{i+1}</span>
                     {d.photo ? (
                       <img src={d.photo} alt={d.dog_name} className="w-10 h-10 rounded-full object-cover ring-1 ring-bgHover"/>
@@ -374,7 +387,7 @@ export default function Dashboard({ onNavigate = () => {} }) {
                       <div className="text-[11px] text-gray-500">{d.breed || "—"} · {d.owner_name || ""}</div>
                     </div>
                     <span className="bg-shOrange/15 text-shOrange font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{d.trophy_count} 🏆</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -384,14 +397,21 @@ export default function Dashboard({ onNavigate = () => {} }) {
               <h3 className="text-xs font-black text-shBlue uppercase tracking-widest mb-4 flex items-center gap-2"><i className="fas fa-medal"/>Top Clients · Most Trophies</h3>
               <div className="space-y-2">
                 {leaderboard.top_clients.map((c, i) => (
-                  <div key={c.client_id} className="flex items-center gap-3 bg-bgBase/50 rounded p-2" data-testid={`top-client-${c.client_id}`}>
+                  <button
+                    key={c.client_id}
+                    type="button"
+                    onClick={() => onJumpToClient(c.client_id)}
+                    title="Open client profile"
+                    className="w-full text-left flex items-center gap-3 bg-bgBase/50 rounded p-2 transition hover:bg-bgBase hover:ring-1 hover:ring-shBlue/40 cursor-pointer focus:outline-none focus:ring-2 focus:ring-shBlue/60"
+                    data-testid={`top-client-${c.client_id}`}
+                  >
                     <span className={`text-lg font-black w-7 text-center ${i===0?"text-yellow-400":i===1?"text-slate-300":i===2?"text-amber-600":"text-gray-500"}`}>#{i+1}</span>
                     <div className="w-10 h-10 rounded-full bg-bgHover grid place-items-center text-shBlue"><i className="fas fa-user"/></div>
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-black text-white uppercase truncate">{c.client_name}</div>
                     </div>
                     <span className="bg-shBlue/15 text-shBlue font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{c.trophy_count} 🏆</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>

@@ -885,3 +885,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into route modules
+
+## Sprint 80 — Deep drill-downs from Dashboard (2026-02)
+- ✅ **App.js** now passes `onJumpToDog` + `onJumpToClient` callbacks to Dashboard (using the existing `searchTarget` pattern that opens the corresponding edit modal on the target screen).
+- ✅ **Top Dogs leaderboard row** → button → `onJumpToDog(d.dog_id)` → jumps to Dogs tab + opens that dog's full edit modal (basics, vaccines, feeding, training, gallery).
+- ✅ **Top Clients leaderboard row** → button → `onJumpToClient(c.client_id)` → jumps to Clients tab + focuses that client's card.
+- ✅ **Today's Check-in Board row** → dog-name+meta area is now a button that opens the dog's profile. Action buttons (Check In, Check Out, Cancel, Report Card) remain separate so clicks don't conflict.
+- ✅ Hover states added: scale, ring-tint, focus rings for keyboard accessibility. Tooltips on every clickable area.
+- ✅ Tested via screenshot: clicking Top Dog row jumped to Dogs and auto-opened Buddy's edit modal.
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into route modules
