@@ -11,6 +11,7 @@ export default function Bookings() {
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [groupByDate, setGroupByDate] = useState(false);
   const [archived, setArchived] = useState([]);
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
@@ -92,6 +93,10 @@ export default function Bookings() {
               <i className="fas fa-box-archive mr-2 text-shBlue"/>Archive · {archiveTotal}
             </span>
           )}
+          <button onClick={()=>setGroupByDate(g=>!g)} data-testid="group-by-date-btn"
+                  className={`text-[15px] font-black uppercase tracking-widest px-3 py-2 bg-bgPanel rounded border ${groupByDate ? "text-shGreen border-shGreen/40" : "text-gray-400 border-bgHover hover:text-white"}`}>
+            <i className="fas fa-layer-group mr-2"/>{groupByDate ? "Ungroup" : "Group by Date"}
+          </button>
           <button onClick={()=>setShowModal(true)} data-testid="new-booking-button"
                   className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ New Booking</button>
         </div>
@@ -120,6 +125,37 @@ export default function Bookings() {
                   </div>
                   <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
                   {!b._archived && <button onClick={()=>setEditing(b)} className="text-[13px] font-black uppercase text-shBlue hover:underline shrink-0">Open</button>}
+                </div>
+              )}
+            />
+          </div>
+        ) : groupByDate ? (
+          <div className="p-4">
+            <CollapsibleDateGroups
+              rows={visible}
+              getDate={(b) => b.date}
+              getAmount={() => 1}
+              fmtAmount={(n) => `${n} booking${n === 1 ? "" : "s"}`}
+              testid="bookings-active-groups"
+              emptyText="No active bookings."
+              renderRow={(b) => (
+                <div key={b.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2" data-testid={`booking-grouped-row-${b.id}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-white uppercase truncate">{b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span></p>
+                    <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
+                      {b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}
+                      {b.end_date && b.end_date !== b.date ? ` · → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                  <div className="flex flex-wrap gap-x-3 shrink-0">
+                    <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shBlue hover:underline">Edit</button>
+                    {b.status === "pending" && <>
+                      <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shGreen hover:underline">Approve</button>
+                      <button onClick={()=>reject(b.id)} className="text-[13px] font-black uppercase text-red-400 hover:underline">Reject</button>
+                    </>}
+                    {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[13px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
+                  </div>
                 </div>
               )}
             />
