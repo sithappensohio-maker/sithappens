@@ -51,10 +51,50 @@ body {
 }
 .card-pop {
   background-image:
-    radial-gradient(120% 80% at 0% 0%, rgba(140, 198, 63, 0.18), transparent 55%),
-    radial-gradient(120% 80% at 100% 100%, rgba(0, 169, 224, 0.10), transparent 60%),
+    radial-gradient(120% 80% at 0% 0%, rgba(var(--grad-hero-rgb), 0.20), transparent 55%),
+    radial-gradient(120% 80% at 100% 100%, rgba(var(--grad-info-rgb), 0.10), transparent 60%),
     linear-gradient(135deg, rgba(148, 163, 184, 0.10), rgba(2, 6, 23, 0.20)) !important;
-  border: 1px solid rgba(140, 198, 63, 0.22) !important;
+  border: 1px solid rgba(var(--grad-hero-rgb), 0.28) !important;
+}
+
+/* Semantic card variants — colors come from CSS vars set by ThemeProvider, so
+   the admin's "Card Gradients" picks in Settings recolor them live. */
+.card-hero,
+.card-info,
+.card-warning,
+.card-danger,
+.card-success {
+  position: relative;
+}
+.card-hero {
+  background-image:
+    radial-gradient(130% 90% at 0% 0%, rgba(var(--grad-hero-rgb), 0.22), transparent 60%),
+    linear-gradient(135deg, rgba(var(--grad-hero-rgb), 0.10), rgba(2, 6, 23, 0.25)) !important;
+  border: 1px solid rgba(var(--grad-hero-rgb), 0.35) !important;
+}
+.card-info {
+  background-image:
+    radial-gradient(130% 90% at 0% 0%, rgba(var(--grad-info-rgb), 0.20), transparent 60%),
+    linear-gradient(135deg, rgba(var(--grad-info-rgb), 0.08), rgba(2, 6, 23, 0.25)) !important;
+  border: 1px solid rgba(var(--grad-info-rgb), 0.32) !important;
+}
+.card-warning {
+  background-image:
+    radial-gradient(130% 90% at 0% 0%, rgba(var(--grad-warning-rgb), 0.22), transparent 60%),
+    linear-gradient(135deg, rgba(var(--grad-warning-rgb), 0.10), rgba(2, 6, 23, 0.25)) !important;
+  border: 1px solid rgba(var(--grad-warning-rgb), 0.38) !important;
+}
+.card-danger {
+  background-image:
+    radial-gradient(130% 90% at 0% 0%, rgba(var(--grad-danger-rgb), 0.22), transparent 60%),
+    linear-gradient(135deg, rgba(var(--grad-danger-rgb), 0.10), rgba(2, 6, 23, 0.25)) !important;
+  border: 1px solid rgba(var(--grad-danger-rgb), 0.40) !important;
+}
+.card-success {
+  background-image:
+    radial-gradient(130% 90% at 0% 0%, rgba(var(--grad-success-rgb), 0.20), transparent 60%),
+    linear-gradient(135deg, rgba(var(--grad-success-rgb), 0.08), rgba(2, 6, 23, 0.25)) !important;
+  border: 1px solid rgba(var(--grad-success-rgb), 0.32) !important;
 }
 /* Some shadcn / dropdown menus reuse bg-bgPanel — keep them flat by
    resetting the gradient on small interactive elements. */

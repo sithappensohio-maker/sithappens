@@ -153,6 +153,11 @@ function BrandPanel() {
         brand_font_family: draft.brand_font_family,
         brand_footer_text: draft.brand_footer_text,
         brand_footer_url: draft.brand_footer_url,
+        grad_hero_color:    draft.grad_hero_color,
+        grad_info_color:    draft.grad_info_color,
+        grad_warning_color: draft.grad_warning_color,
+        grad_danger_color:  draft.grad_danger_color,
+        grad_success_color: draft.grad_success_color,
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -170,6 +175,11 @@ function BrandPanel() {
       brand_font_family: "Inter",
       brand_footer_text: "Sit Happens",
       brand_footer_url: "",
+      grad_hero_color:    "#8cc63f",
+      grad_info_color:    "#00a9e0",
+      grad_warning_color: "#f59e0b",
+      grad_danger_color:  "#ef4444",
+      grad_success_color: "#8cc63f",
     });
   };
 
@@ -206,6 +216,16 @@ function BrandPanel() {
               </button>
             );
           })}
+        </div>
+      </Section>
+
+      <Section title="Card Gradients" subtitle="Each card type in the app gets a tinted gradient. Pick the color for each — every matching card across admin + portal recolors instantly. Hover any swatch to see what kind of cards it controls.">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <GradColorField testid="grad-hero"    label="Hero"    sub="credit balance, hero stats, onboarding banner" sample="card-hero"    value={draft.grad_hero_color}    onChange={(v)=>setDraft({...draft, grad_hero_color: v})} />
+          <GradColorField testid="grad-info"    label="Info"    sub="dashboard tiles, tips, secondary info"          sample="card-info"    value={draft.grad_info_color}    onChange={(v)=>setDraft({...draft, grad_info_color: v})} />
+          <GradColorField testid="grad-warning" label="Warning" sub="vaccine expiring, low credits, attention"       sample="card-warning" value={draft.grad_warning_color} onChange={(v)=>setDraft({...draft, grad_warning_color: v})} />
+          <GradColorField testid="grad-danger"  label="Danger"  sub="vaccine missing, errors, overdue"               sample="card-danger"  value={draft.grad_danger_color}  onChange={(v)=>setDraft({...draft, grad_danger_color: v})} />
+          <GradColorField testid="grad-success" label="Success" sub="report cards, approvals, trophies earned"       sample="card-success" value={draft.grad_success_color} onChange={(v)=>setDraft({...draft, grad_success_color: v})} />
         </div>
       </Section>
 
@@ -273,6 +293,57 @@ function BrandPanel() {
     </div>
   );
 }
+
+
+function GradColorField({ label, sub, sample, value, onChange, testid }) {
+  // Live mini-preview card that uses the actual gradient class — when the
+  // admin drags the color, the swatch recolors in real time because the
+  // class references CSS vars set by ThemeProvider on save.
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid={testid}>
+      <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
+      <p className="text-[11px] text-gray-500 mt-0.5 mb-2 leading-tight">{sub}</p>
+      <div
+        className={`${sample} rounded-lg h-12 flex items-center justify-center mb-2 text-[11px] font-black uppercase tracking-widest text-white/80`}
+        style={{
+          // Inline override so the preview reflects the in-flight draft color
+          // before the admin hits Save (instead of waiting for theme vars to update).
+          ["--grad-hero-rgb"]: hexToRgbInline(value),
+          ["--grad-info-rgb"]: hexToRgbInline(value),
+          ["--grad-warning-rgb"]: hexToRgbInline(value),
+          ["--grad-danger-rgb"]: hexToRgbInline(value),
+          ["--grad-success-rgb"]: hexToRgbInline(value),
+        }}
+      >
+        Preview
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={value || "#000000"}
+          onChange={(e)=>onChange(e.target.value)}
+          data-testid={`${testid}-picker`}
+          className="w-12 h-9 rounded cursor-pointer bg-transparent border border-bgHover"
+        />
+        <input
+          type="text"
+          value={value || ""}
+          onChange={(e)=>onChange(e.target.value)}
+          data-testid={`${testid}-hex`}
+          className="flex-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-sm text-white font-mono"
+        />
+      </div>
+    </div>
+  );
+}
+
+function hexToRgbInline(hex) {
+  const h = (hex || "").replace("#", "").trim();
+  if (h.length !== 6) return "140, 198, 63";
+  const n = parseInt(h, 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
+
 
 function ColorField({ label, sub, value, onChange, testid }) {
   return (

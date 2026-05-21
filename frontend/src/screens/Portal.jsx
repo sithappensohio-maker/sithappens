@@ -833,7 +833,7 @@ export default function Portal() {
 
       <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
         {!onboardingDone && (
-          <div className="mb-4 sm:mb-6 bg-gradient-to-br from-shGreen/15 via-bgPanel to-shBlue/15 border border-shGreen/40 rounded-xl p-4 sm:p-6 shadow-2xl" data-testid="onboarding-banner">
+          <div className="mb-4 sm:mb-6 card-hero rounded-xl p-4 sm:p-6 shadow-2xl" data-testid="onboarding-banner">
             <div className="flex items-start justify-between gap-3 mb-4">
               <div className="min-w-0">
                 <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
@@ -1272,7 +1272,7 @@ export default function Portal() {
                     </div>
                   </div>
                   {b.report_card && (
-                    <div className="border-t border-bgHover/50 bg-gradient-to-br from-shGreen/5 to-shBlue/5 p-4" data-testid={`report-card-${b.id}`}>
+                    <div className="border-t border-bgHover/50 card-success p-4" data-testid={`report-card-${b.id}`}>
                       <p className="text-[14px] font-black text-shGreen uppercase tracking-widest mb-3"><i className="fas fa-paw mr-1"/> Pup Report Card</p>
                       {b.report_card.photos?.length > 0 && (
                         <div className="flex gap-2 mb-3">

@@ -2591,6 +2591,12 @@ class SettingsIn(BaseModel):
     # Footer pill (Sprint 76)
     brand_footer_text: Optional[str] = None  # text shown in the bottom-right pill (default "Sit Happens")
     brand_footer_url: Optional[str] = None   # link target (default "" = no link, just text)
+    # Card gradients (Sprint 78) — colors auto-applied to semantic card surfaces
+    grad_hero_color: Optional[str] = None     # default #8cc63f — credit balance, dashboard hero stat
+    grad_info_color: Optional[str] = None     # default #00a9e0 — info banners, secondary stat tiles
+    grad_warning_color: Optional[str] = None  # default #f59e0b — vaccine expiring, low credits
+    grad_danger_color: Optional[str] = None   # default #ef4444 — vaccine missing, server errors
+    grad_success_color: Optional[str] = None  # default #8cc63f — approved bookings, trophies earned
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -2608,6 +2614,11 @@ async def fetch_branding():
         "brand_font_family": s.get("brand_font_family") or "Inter",
         "brand_footer_text": s.get("brand_footer_text") or "Sit Happens",
         "brand_footer_url":  s.get("brand_footer_url")  or "",
+        "grad_hero_color":    s.get("grad_hero_color")    or "#8cc63f",
+        "grad_info_color":    s.get("grad_info_color")    or "#00a9e0",
+        "grad_warning_color": s.get("grad_warning_color") or "#f59e0b",
+        "grad_danger_color":  s.get("grad_danger_color")  or "#ef4444",
+        "grad_success_color": s.get("grad_success_color") or "#8cc63f",
     }
 
 @api.get("/settings/public")

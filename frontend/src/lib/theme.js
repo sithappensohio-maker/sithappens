@@ -38,7 +38,20 @@ const DEFAULT_BRANDING = {
   brand_font_family: "Inter",
   brand_footer_text: "Sit Happens",
   brand_footer_url: "",
+  grad_hero_color:    "#8cc63f",
+  grad_info_color:    "#00a9e0",
+  grad_warning_color: "#f59e0b",
+  grad_danger_color:  "#ef4444",
+  grad_success_color: "#8cc63f",
 };
+
+// Convert "#RRGGBB" → "r, g, b" string for CSS rgba() composition.
+function hexToRgb(hex) {
+  const h = (hex || "").replace("#", "").trim();
+  if (h.length !== 6) return "140, 198, 63";
+  const n = parseInt(h, 16);
+  return `${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}`;
+}
 
 function applyBranding(b) {
   const root = document.documentElement;
@@ -47,6 +60,17 @@ function applyBranding(b) {
   root.style.setProperty("--sh-orange", b.brand_warning  || DEFAULT_BRANDING.brand_warning);
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
   root.style.setProperty("--sh-font", fam === "System" ? "system-ui" : `'${fam}'`);
+  // Gradient colors → expose both hex (for borders) and rgb (for rgba() in gradient stops)
+  root.style.setProperty("--grad-hero",       b.grad_hero_color    || DEFAULT_BRANDING.grad_hero_color);
+  root.style.setProperty("--grad-info",       b.grad_info_color    || DEFAULT_BRANDING.grad_info_color);
+  root.style.setProperty("--grad-warning",    b.grad_warning_color || DEFAULT_BRANDING.grad_warning_color);
+  root.style.setProperty("--grad-danger",     b.grad_danger_color  || DEFAULT_BRANDING.grad_danger_color);
+  root.style.setProperty("--grad-success",    b.grad_success_color || DEFAULT_BRANDING.grad_success_color);
+  root.style.setProperty("--grad-hero-rgb",    hexToRgb(b.grad_hero_color    || DEFAULT_BRANDING.grad_hero_color));
+  root.style.setProperty("--grad-info-rgb",    hexToRgb(b.grad_info_color    || DEFAULT_BRANDING.grad_info_color));
+  root.style.setProperty("--grad-warning-rgb", hexToRgb(b.grad_warning_color || DEFAULT_BRANDING.grad_warning_color));
+  root.style.setProperty("--grad-danger-rgb",  hexToRgb(b.grad_danger_color  || DEFAULT_BRANDING.grad_danger_color));
+  root.style.setProperty("--grad-success-rgb", hexToRgb(b.grad_success_color || DEFAULT_BRANDING.grad_success_color));
 }
 
 function applyTextSize(size) {

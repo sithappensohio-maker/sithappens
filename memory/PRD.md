@@ -861,3 +861,27 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into route modules
+
+## Sprint 78 — Semantic card gradients (5 flavors, fully customizable) (2026-02)
+- ✅ **Backend**: added 5 new fields to `SettingsIn` + `/api/branding` — `grad_hero_color`, `grad_info_color`, `grad_warning_color`, `grad_danger_color`, `grad_success_color`. Defaults: hero/success=#8cc63f, info=#00a9e0, warning=#f59e0b, danger=#ef4444.
+- ✅ **ThemeProvider**: exposes both hex (for borders) and RGB triplet (for `rgba()` gradient stops) as CSS vars on `:root`. Applied automatically on boot + after admin saves.
+- ✅ **`index.css`**: 5 new utility classes — `.card-hero`, `.card-info`, `.card-warning`, `.card-danger`, `.card-success`. Each emits a radial brand-tinted halo from the top-left + linear gradient + matching border. `.card-pop` updated to use the configurable hero color.
+- ✅ **Settings → Brand & Theme**: new "Card Gradients" section with 5 mini-preview swatches. Each swatch uses the actual gradient class so admin sees the exact effect live as they pick. Hex + color-picker side by side.
+- ✅ **Applied semantic classes** to high-visibility cards:
+  - Dashboard stat tiles → info (Daycare), hero (Boarding), warning (Health Flags), default (Total Dogs)
+  - Vaccine alerts banner → warning
+  - Pending-vax-reviews banner → info
+  - Quote requests banner → info
+  - First-booking-banner → success
+  - Birthday banner → info
+  - Portal onboarding banner → hero
+  - Portal Pup Report Card → success
+- ✅ Reset-to-defaults restores all 5 gradient colors too.
+- ✅ E2E screenshot-verified: dashboard tiles + vaccine banner show the colored gradients, Settings panel shows 5 live preview swatches.
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into route modules

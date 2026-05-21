@@ -86,7 +86,7 @@ export default function Dashboard() {
     <div className="space-y-6 animate-slide-in" data-testid="admin-dashboard">
       <RefreshSpinner pulling={pulling} progress={progress} />
       {alerts.length > 0 && (
-        <div className="bg-gradient-to-r from-shOrange/20 to-red-500/10 border border-shOrange/40 rounded-xl p-5 shadow-xl" data-testid="vaccine-alerts-banner">
+        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="vaccine-alerts-banner">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-black text-shOrange uppercase tracking-widest flex items-center gap-2"><i className="fas fa-shield-virus"/> Vaccine Alerts · {alerts.length}</h3>
           </div>
@@ -108,7 +108,7 @@ export default function Dashboard() {
       )}
 
       {pendingVax.length > 0 && (
-        <div className="bg-gradient-to-r from-shBlue/20 to-shGreen/10 border border-shBlue/40 rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
+        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-black text-shBlue uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-file-medical"/> Pending Vaccine Reviews · {pendingVax.length}
@@ -166,7 +166,7 @@ export default function Dashboard() {
       )}
 
       {quoteRequests.length > 0 && (
-        <div className="bg-gradient-to-r from-shGreen/15 to-shBlue/10 border border-shGreen/40 rounded-xl p-5 shadow-xl" data-testid="quote-requests-panel">
+        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="quote-requests-panel">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
             <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-envelope-open-text"/> Quote Requests · {quoteRequests.length}
@@ -207,7 +207,7 @@ export default function Dashboard() {
       )}
 
       {(stats.first_time_bookings_today || []).length > 0 && (
-        <div className="bg-gradient-to-r from-shGreen/25 via-shGreen/10 to-shBlue/15 border border-shGreen/50 rounded-xl p-5 shadow-xl" data-testid="first-booking-banner">
+        <div className="card-success rounded-xl p-5 shadow-xl" data-testid="first-booking-banner">
           <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2 mb-3">
             <i className="fas fa-party-horn"/> First Booking Celebration · {stats.first_time_bookings_today.length}
           </h3>
@@ -227,7 +227,7 @@ export default function Dashboard() {
       )}
 
       {(stats.upcoming_birthdays || []).length > 0 && (
-        <div className="bg-gradient-to-r from-shGreen/20 to-shBlue/10 border border-shGreen/40 rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
+        <div className="card-info rounded-xl p-5 shadow-xl" data-testid="birthday-banner">
           <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2 mb-3"><i className="fas fa-cake-candles"/> Upcoming Birthdays · {stats.upcoming_birthdays.length}</h3>
           <div className="flex flex-wrap gap-2">
             {stats.upcoming_birthdays.map(b => (
@@ -242,10 +242,10 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" textColor="text-white" testId="stat-daycare" />
-        <StatCard label="Boarding Today" value={stats.boarding_today} accent="border-t-shGreen" textColor="text-shGreen" testId="stat-boarding" />
-        <StatCard label="Health Flags" value={stats.health_flags} accent="border-t-shOrange" textColor="text-shOrange" testId="stat-health" />
-        <StatCard label="Total Dogs" value={stats.total_dogs} accent="border-t-bgHover" textColor="text-white" testId="stat-dogs" />
+        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" />
+        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" />
+        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" />
+        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" />
       </div>
 
       {programs && programs.total > 0 && (
@@ -421,9 +421,9 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ label, value, accent, textColor, testId }) {
+function StatCard({ label, value, accent, gradClass = "", textColor, testId }) {
   return (
-    <div className={`bg-bgPanel p-6 rounded-xl border-t-4 ${accent} shadow-lg`} data-testid={testId}>
+    <div className={`bg-bgPanel ${gradClass} p-6 rounded-xl border-t-4 ${accent} shadow-lg`} data-testid={testId}>
       <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">{label}</p>
       <p className={`text-3xl font-black mt-2 ${textColor}`}>{value}</p>
     </div>
