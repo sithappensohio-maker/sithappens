@@ -151,6 +151,8 @@ function BrandPanel() {
         brand_accent: draft.brand_accent,
         brand_warning: draft.brand_warning,
         brand_font_family: draft.brand_font_family,
+        brand_footer_text: draft.brand_footer_text,
+        brand_footer_url: draft.brand_footer_url,
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -166,6 +168,8 @@ function BrandPanel() {
       brand_accent:  "#00a9e0",
       brand_warning: "#f26522",
       brand_font_family: "Inter",
+      brand_footer_text: "Sit Happens",
+      brand_footer_url: "",
     });
   };
 
@@ -202,6 +206,36 @@ function BrandPanel() {
               </button>
             );
           })}
+        </div>
+      </Section>
+
+      <Section title="Footer Pill" subtitle="The small pill in the bottom-right corner of every page. Leave the URL blank to make it a non-clickable label.">
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+            <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Text</label>
+            <p className="text-[11px] text-gray-500 mt-0.5">What the pill says</p>
+            <input
+              type="text"
+              maxLength={28}
+              value={draft.brand_footer_text || ""}
+              onChange={(e)=>setDraft({...draft, brand_footer_text: e.target.value})}
+              data-testid="brand-footer-text"
+              placeholder="Sit Happens"
+              className="w-full mt-2 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-sm text-white"
+            />
+          </div>
+          <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+            <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Link URL</label>
+            <p className="text-[11px] text-gray-500 mt-0.5">Opens in a new tab when clicked. Blank = no link.</p>
+            <input
+              type="url"
+              value={draft.brand_footer_url || ""}
+              onChange={(e)=>setDraft({...draft, brand_footer_url: e.target.value})}
+              data-testid="brand-footer-url"
+              placeholder="https://sithappens.app"
+              className="w-full mt-2 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-sm text-white font-mono"
+            />
+          </div>
         </div>
       </Section>
 

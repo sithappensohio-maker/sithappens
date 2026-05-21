@@ -2588,6 +2588,9 @@ class SettingsIn(BaseModel):
     brand_accent: Optional[str] = None       # CSS color for accents/highlights (default #00a9e0 blue)
     brand_warning: Optional[str] = None      # CSS color for warnings/alerts (default #f26522 orange)
     brand_font_family: Optional[str] = None  # one of: Inter, Nunito, Poppins, Roboto, System
+    # Footer pill (Sprint 76)
+    brand_footer_text: Optional[str] = None  # text shown in the bottom-right pill (default "Sit Happens")
+    brand_footer_url: Optional[str] = None   # link target (default "" = no link, just text)
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -2603,6 +2606,8 @@ async def fetch_branding():
         "brand_accent":      s.get("brand_accent")      or "#00a9e0",
         "brand_warning":     s.get("brand_warning")     or "#f26522",
         "brand_font_family": s.get("brand_font_family") or "Inter",
+        "brand_footer_text": s.get("brand_footer_text") or "Sit Happens",
+        "brand_footer_url":  s.get("brand_footer_url")  or "",
     }
 
 @api.get("/settings/public")

@@ -833,3 +833,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P2** "We've moved" announcement email blast to clients (one-click button)
 - **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into `/app/backend/routes/` modules
+
+## Sprint 76 — Configurable footer + "dog ate my homework" error UI (2026-02)
+- ✅ **`DogAteHomework.jsx`**: hand-crafted SVG of a husky-style dog with a torn paper sticking out of its mouth (ears, raised eyebrows, closed embarrassed eyes, nose with highlight, torn jagged paper with ink lines behind the head + a smaller piece between the teeth). 3 sizes (sm/md/lg). Pure SVG = scales perfectly, zero asset deps.
+- ✅ **`ErrorState.jsx`**: reusable error UI — illustration + funny rotating headline ("The dog ate our homework" / "Buddy chewed the page" / "Looks like Rex got the file" / "Caught Daisy with the homework" / "Something got fetched a little too hard") + supporting copy + optional detail block + optional action button. Drop-in replacement for any error card.
+- ✅ **`ErrorBoundary.jsx`**: rewrote to use ErrorState — every React crash now shows the cute dog with a "Clear session & reload" button. Bad news, friendly delivery.
+- ✅ **Configurable footer pill**: added `brand_footer_text` + `brand_footer_url` to `SettingsIn` + `/api/branding` response + theme defaults. `BrandFooter.jsx` now renders an `<a>` when URL is set, plain `<div>` when blank. New "Footer Pill" section in Settings → Brand & Theme with Text + Link URL inputs. Reset-to-defaults restores "Sit Happens" + blank URL.
+- ✅ Tested via screenshot: Brand panel renders the new section cleanly, footer pill ("SIT HAPPENS") visible in bottom-right of every page, backend `/branding` returns the 6 fields.
+
+## Backlog / Next Up
+- **P1** Public booking page (no-login request flow)
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" announcement email blast (one-click button)
+- **P2** Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into route modules

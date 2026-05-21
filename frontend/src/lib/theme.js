@@ -36,6 +36,8 @@ const DEFAULT_BRANDING = {
   brand_accent:  "#00a9e0",
   brand_warning: "#f26522",
   brand_font_family: "Inter",
+  brand_footer_text: "Sit Happens",
+  brand_footer_url: "",
 };
 
 function applyBranding(b) {
