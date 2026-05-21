@@ -216,6 +216,8 @@ class ClientOut(ClientIn):
     waiver: bool = False
     portal_email: Optional[str] = None  # the login email of linked user
     dogs: Optional[List[Dict[str, Any]]] = None  # lightweight [{id, name, breed}] for admin listing
+    last_login_at: Optional[str] = None  # ISO timestamp of the client's most recent portal login
+    login_count: int = 0  # total number of times this client has logged in
     created_at: str
 
 class PortalAccountIn(BaseModel):
@@ -476,6 +478,15 @@ async def login(body: LoginIn):
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Record last-login timestamp so admin can see who's actually using the app.
+    # Best-effort — don't block the login if this fails.
+    try:
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_login_at": now_iso()}, "$inc": {"login_count": 1}},
+        )
+    except Exception:
+        pass
     token = create_access_token(user["id"], user["email"], user["role"])
     return {
         "token": token,
@@ -499,10 +510,12 @@ async def list_clients(_: dict = Depends(require_admin)):
         dogs_by_owner.setdefault(d.get("owner_id", ""), []).append(
             {"id": d.get("id"), "name": d.get("name", ""), "breed": d.get("breed", "")}
         )
-    # attach portal email + dogs
+    # attach portal email + dogs + last-login info
     for c in items:
-        u = await db.users.find_one({"client_id": c["id"]}, {"_id": 0, "email": 1})
+        u = await db.users.find_one({"client_id": c["id"]}, {"_id": 0, "email": 1, "last_login_at": 1, "login_count": 1})
         c["portal_email"] = u["email"] if u else None
+        c["last_login_at"] = u.get("last_login_at") if u else None
+        c["login_count"] = int(u.get("login_count") or 0) if u else 0
         c["dogs"] = sorted(dogs_by_owner.get(c["id"], []), key=lambda x: (x.get("name") or "").lower())
     return items
 

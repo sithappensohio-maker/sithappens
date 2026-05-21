@@ -257,6 +257,13 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               <div className="text-right">
                 <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
+                {c.portal_email && (
+                  <p className={`text-[11px] font-black uppercase tracking-widest mt-1 ${lastLoginColor(c.last_login_at)}`}
+                     title={c.last_login_at ? `Logged in ${c.login_count} time${c.login_count===1?"":"s"} · last ${c.last_login_at}` : "Hasn't logged in yet"}
+                     data-testid={`last-login-${c.id}`}>
+                    <i className="fas fa-clock mr-1"/>{lastLoginLabel(c.last_login_at)}
+                  </p>
+                )}
               </div>
             </div>
             <button onClick={async ()=>{
@@ -1015,5 +1022,36 @@ function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
       {err && <p className="text-[11px] text-red-400 mt-1 normal-case">{err}</p>}
     </div>
   );
+}
+
+
+// Format ISO timestamp into a friendly "5d ago" / "3h ago" / "Today" label, or
+// "Never" if the client has never logged in. Used in the Portal column so admin
+// can spot which clients are actually using the app.
+function lastLoginLabel(iso) {
+  if (!iso) return "Never logged in";
+  const t = new Date(iso).getTime();
+  if (!t) return "Never logged in";
+  const mins = (Date.now() - t) / 60000;
+  if (mins < 2) return "Just now";
+  if (mins < 60) return `${Math.floor(mins)} min ago`;
+  const hrs = mins / 60;
+  if (hrs < 24) return `${Math.floor(hrs)}h ago`;
+  const days = hrs / 24;
+  if (days < 14) return `${Math.floor(days)}d ago`;
+  const weeks = days / 7;
+  if (weeks < 9) return `${Math.floor(weeks)}w ago`;
+  const months = days / 30;
+  return `${Math.floor(months)}mo ago`;
+}
+
+// Color codes recency: green = active, gray = quiet, red = stale (>90 days).
+function lastLoginColor(iso) {
+  if (!iso) return "text-gray-500";
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (days < 7) return "text-shGreen";
+  if (days < 30) return "text-shBlue";
+  if (days < 90) return "text-gray-400";
+  return "text-red-400";
 }
 

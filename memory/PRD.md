@@ -932,3 +932,19 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card (or uploads a new file!)
 - **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6300 lines) into route modules
+
+## Sprint 86 — Track + display client last-login (2026-02)
+- ✅ **Backend `POST /auth/login`**: now sets `users.last_login_at = now_iso()` and increments `users.login_count` on every successful login (best-effort — never blocks the actual login).
+- ✅ **`ClientOut` model** gained `last_login_at: Optional[str]` and `login_count: int = 0`.
+- ✅ **`GET /clients`** decorates each client with `last_login_at` + `login_count` pulled from their linked user record.
+- ✅ **Clients screen** displays a tiny chip under the "Portal" column: "Just now" / "5 min ago" / "3h ago" / "5d ago" / "2w ago" / "Never logged in". Color-coded: green <7d, blue <30d, gray <90d, red >90d, gray for never. Hover reveals exact timestamp + total login count.
+- ✅ E2E tested via curl + screenshot: login bumped `last_login_at` and `login_count`, list endpoint returned both fields, UI renders the chip in the right colors.
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card / uploads new file
+- **P1** Cold-storage auto-prune of completed/cancelled bookings 90+ days old
+- **P2** Sort Clients by last-login (so the admin can easily find the most inactive ones to re-engage)
+- **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6300 lines) into route modules
