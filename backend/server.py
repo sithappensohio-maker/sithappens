@@ -32,6 +32,7 @@ from email_service import (
     notify_admin_homework_completed,
     notify_admin_first_booking,
     notify_admin_quote_request,
+    notify_admin_pl_report,
     notify_client_booking_approved,
     notify_client_homework_assigned,
     notify_client_low_credits,
@@ -39,6 +40,7 @@ from email_service import (
     notify_client_quote_received,
     send_account_claim,
 )
+import email_service
 
 from trophy_service import (
     seed_trophies_if_empty,
@@ -5770,6 +5772,61 @@ async def summary_range(
         "expense_count": len(exp_rows),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
     }
+
+
+# ────────────────────────── Profit & Loss Report ──────────────────────────
+@api.get("/reports/pl")
+async def pl_report_json(
+    start_date: str,
+    end_date: str,
+    _: dict = Depends(require_admin),
+):
+    """JSON snapshot of all P&L data (used by both UI preview and PDF render)."""
+    import pl_report
+    return await pl_report.build_pl_data(db, start_date, end_date)
+
+
+@api.get("/reports/pl/pdf")
+async def pl_report_pdf(
+    start_date: str,
+    end_date: str,
+    _: dict = Depends(require_admin),
+):
+    """Download a printable Profit & Loss PDF for the given range."""
+    import pl_report
+    from fastapi.responses import Response
+    settings = await get_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+    data = await pl_report.build_pl_data(db, start_date, end_date)
+    pdf_bytes = await asyncio.to_thread(pl_report.render_pl_pdf, data, brand_name)
+    filename = f"PL_{start_date}_to_{end_date}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api.post("/reports/pl/email-now")
+async def pl_report_email_now(
+    start_date: str,
+    end_date: str,
+    admin: dict = Depends(require_admin),
+):
+    """Generate the P&L PDF and email it to ADMIN_NOTIFICATION_EMAIL right now."""
+    import pl_report
+    settings = await get_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+    data = await pl_report.build_pl_data(db, start_date, end_date)
+    pdf_bytes = await asyncio.to_thread(pl_report.render_pl_pdf, data, brand_name)
+    try:
+        await email_service.notify_admin_pl_report(pdf_bytes, start_date, end_date, data)
+        return {"ok": True, "to": email_service.ADMIN_NOTIFICATION_EMAIL,
+                "start_date": start_date, "end_date": end_date,
+                "net": data["net"]}
+    except Exception as e:
+        logger.warning("PL email send failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Email send failed: {e}")
 
 
 # ────────────────────────── Expenses ──────────────────────────

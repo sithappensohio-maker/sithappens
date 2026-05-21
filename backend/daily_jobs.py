@@ -120,6 +120,47 @@ async def run_vaccine_expiry_job(db) -> dict:
     return {"sent": sent, "skipped": skipped}
 
 
+async def run_pl_monthly_job(db) -> Dict[str, Any]:
+    """Generate the previous month's P&L PDF and email it to the admin.
+    Idempotent — keyed by `pl:YYYY-MM` in `notification_log` so re-runs are no-ops."""
+    import pl_report
+    today = date.today()
+    # Last full month: if today is Jan 1, the previous month is December of last year.
+    if today.month == 1:
+        year, month = today.year - 1, 12
+    else:
+        year, month = today.year, today.month - 1
+    start = date(year, month, 1)
+    if month == 12:
+        end = date(year + 1, 1, 1) - timedelta(days=1)
+    else:
+        end = date(year, month + 1, 1) - timedelta(days=1)
+    start_iso, end_iso = start.isoformat(), end.isoformat()
+    key = f"pl:{year}-{month:02d}"
+    if await _already_notified(db, key):
+        return {"skipped": True, "key": key}
+    try:
+        # Fetch brand name (avoid circular import — read directly from db)
+        settings = await db.settings.find_one({"id": "site"}, {"_id": 0}) or {}
+        brand_name = settings.get("brand_name") or "Sit Happens"
+        data = await pl_report.build_pl_data(db, start_iso, end_iso)
+        pdf_bytes = await asyncio.to_thread(pl_report.render_pl_pdf, data, brand_name)
+        await email_service.notify_admin_pl_report(pdf_bytes, start_iso, end_iso, data)
+        await _mark_notified(db, key, {
+            "job": "pl_monthly",
+            "start_date": start_iso,
+            "end_date": end_iso,
+            "net": data["net"],
+        })
+        return {"sent": True, "key": key, "start_date": start_iso, "end_date": end_iso, "net": data["net"]}
+    except Exception as e:
+        logger.warning("pl_monthly failed for %s: %s", key, e)
+        return {"error": str(e), "key": key}
+
+
+
+
+
 async def maybe_run_daily(db) -> dict | None:
     """Run every daily job at most once per UTC day. Returns a summary dict
     on the first call of the day, or None if already ran today.
@@ -138,6 +179,9 @@ async def maybe_run_daily(db) -> dict | None:
         results = {}
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
+        # Monthly P&L only fires on the 1st of the month
+        if date.today().day == 1:
+            results["pl_monthly"] = await run_pl_monthly_job(db)
         await db.system_runs.update_one(
             {"id": "daily"},
             {"$set": {"finished_at": datetime.now(timezone.utc).isoformat(), "last_result": results}},

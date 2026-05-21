@@ -758,3 +758,58 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
         f"📋 {dog_name}: vaccine renewal in 30 days",
         html,
     )
+
+
+
+async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: str, summary: dict) -> None:
+    """Email the admin a Profit & Loss PDF report as an attachment.
+    `summary` is the dict returned by `pl_report.build_pl_data` — used to
+    render KPI snapshots in the email body."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping P&L email")
+        return
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY not set — skipping P&L email")
+        return
+
+    income = summary.get("income", {}).get("completed_total", 0)
+    expenses = summary.get("expenses", {}).get("total", 0)
+    net = summary.get("net", 0)
+    net_color = "#16a34a" if net >= 0 else "#dc2626"
+    rows = [
+        ("Period", f"{start_date} → {end_date}"),
+        ("Income (completed)", f"${income:,.2f}"),
+        ("Expenses", f"${expenses:,.2f}"),
+        ("Net profit", f"${net:,.2f}"),
+        ("Completed bookings", str(summary.get("income", {}).get("completed_count", 0))),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"📊 P&amp;L Report · {start_date} → {end_date}",
+        intro=(
+            "Your monthly Profit &amp; Loss report is attached as a PDF. "
+            f"<strong style='color:{net_color}'>Net: ${net:,.2f}</strong> for this period."
+        ),
+        rows=rows,
+        cta_text="Open Income Dashboard" if cta_url else None,
+        cta_url=cta_url + "#income" if cta_url else None,
+        show_install=False,
+    )
+
+    attachment_name = f"PL_Report_{start_date}_to_{end_date}.pdf"
+    try:
+        params = {
+            "from": SENDER_EMAIL,
+            "to": [ADMIN_NOTIFICATION_EMAIL],
+            "subject": f"📊 P&L Report · {start_date} → {end_date} · Net ${net:,.2f}",
+            "html": html,
+            "attachments": [{
+                "filename": attachment_name,
+                "content": list(pdf_bytes),  # Resend SDK accepts a list of ints
+            }],
+        }
+        result = await asyncio.to_thread(resend.Emails.send, params)
+        logger.info("P&L email sent to %s: %s", ADMIN_NOTIFICATION_EMAIL,
+                    result.get("id") if isinstance(result, dict) else result)
+    except Exception as e:
+        logger.warning("P&L email send failed: %s", e)

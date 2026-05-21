@@ -27,6 +27,8 @@ export default function Income() {
   const [services, setServices] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [logOpen, setLogOpen] = useState(false);
+  const [plBusy, setPlBusy] = useState(false);
+  const [plMsg, setPlMsg] = useState("");
   const [filters, setFilters] = useState({ dog_id: "", service_id: "", payment_status: "", status: "" });
   const [showLegacy, setShowLegacy] = useState(false);
   const [groupByDate, setGroupByDate] = useState(false);
@@ -165,6 +167,40 @@ export default function Income() {
     load();
   };
 
+  const downloadPL = async () => {
+    if (!rangeStart || !rangeEnd) { setPlMsg("Pick a date range first"); return; }
+    setPlBusy(true); setPlMsg("");
+    try {
+      const res = await api.get("/reports/pl/pdf", {
+        params: { start_date: rangeStart, end_date: rangeEnd },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = `PL_${rangeStart}_to_${rangeEnd}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      setPlMsg("Downloaded");
+      setTimeout(()=>setPlMsg(""), 2500);
+    } catch (e) {
+      setPlMsg(`Download failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setPlBusy(false); }
+  };
+
+  const emailPL = async () => {
+    if (!rangeStart || !rangeEnd) { setPlMsg("Pick a date range first"); return; }
+    if (!(await confirm({ title: "Email P&L Report?", body: `Send a Profit & Loss PDF for ${rangeStart} → ${rangeEnd} to your admin notification email.`, confirmText: "Send", tone: "info" }))) return;
+    setPlBusy(true); setPlMsg("");
+    try {
+      const { data } = await api.post("/reports/pl/email-now", null, {
+        params: { start_date: rangeStart, end_date: rangeEnd },
+      });
+      setPlMsg(`Sent to ${data.to} · Net $${(data.net||0).toFixed(2)}`);
+      setTimeout(()=>setPlMsg(""), 4000);
+    } catch (e) {
+      setPlMsg(`Email failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setPlBusy(false); }
+  };
+
   return (
     <div className="space-y-6 animate-slide-in" data-testid="income-screen">
       {editErr && (
@@ -179,10 +215,18 @@ export default function Income() {
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-dollar-sign text-shGreen mr-2"/>Income & Services</h3>
           <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Weekly tally, transaction log, and quick service entry</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={exportCSV} data-testid="income-export-csv"
                   className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
             <i className="fas fa-file-csv mr-1"/>Export CSV
+          </button>
+          <button onClick={downloadPL} disabled={plBusy} data-testid="pl-download-btn"
+                  className="bg-bgPanel border border-shBlue/40 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-50">
+            <i className={`fas ${plBusy ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1`}/>P&L PDF
+          </button>
+          <button onClick={emailPL} disabled={plBusy} data-testid="pl-email-btn"
+                  className="bg-bgPanel border border-shOrange/40 text-shOrange px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/10 disabled:opacity-50">
+            <i className="fas fa-envelope mr-1"/>Email Me
           </button>
           <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
                   className="bg-shGreen text-black px-5 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
@@ -190,6 +234,11 @@ export default function Income() {
           </button>
         </div>
       </div>
+      {plMsg && (
+        <div className="bg-shBlue/10 border border-shBlue/30 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">
+          <i className="fas fa-circle-info mr-2"/>{plMsg} · range {rangeStart} → {rangeEnd}
+        </div>
+      )}
 
       {/* Weekly tally tiles */}
       {summary && (
