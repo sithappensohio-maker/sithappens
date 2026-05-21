@@ -914,3 +914,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into route modules
+
+## Sprint 84 — Client file uploads (homework + training assignments) (2026-02)
+- ✅ **Backend** — new `client_files` collection + 5 endpoints:
+  - `POST /api/clients/{client_id}/files` (admin) — upload base64-encoded file with optional `dog_id` tag + `note`. 10 MB cap. Validates dog ownership when tagged.
+  - `GET /api/clients/{client_id}/files` (admin) — list files for a client (metadata only, no payload).
+  - `GET /api/portal/files` (any authed) — client lists their own files.
+  - `GET /api/files/{file_id}/download` (any authed) — returns base64 payload, admin OR owner-client only.
+  - `DELETE /api/files/{file_id}` (admin) — remove a file.
+- ✅ **Admin UI** — `ClientFilesModal.jsx` opened by a new "Files & Homework" button on every client card. Upload form (file picker + dog tag dropdown + note), live file list with icons by content-type, file size formatted human-readable, download/delete buttons per row.
+- ✅ **Client UI** — `PortalFilesSection.jsx` shows up below Training Progress in the portal. Files grouped by dog (or "General"). Click any row → downloads. Auto-hides when there are no files.
+- ✅ E2E tested via curl: upload general file, list as admin, list as client, download as client (content roundtrip OK), random user gets 403, cleanup deletes correctly.
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card (or uploads a new file!)
+- **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6300 lines) into route modules

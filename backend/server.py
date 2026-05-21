@@ -603,6 +603,109 @@ class ClaimSetIn(BaseModel):
     password: str = Field(min_length=6)
 
 
+# -------- Client files (Sprint 84) --------
+# Admin uploads PDFs, photos, short videos to a specific client. Optionally
+# tags to a specific dog (e.g. "Rocky's loose-leash homework"). Clients see
+# them in the portal under a "Training Files & Homework" section.
+#
+# Storage: base64 inline in Mongo for consistency with existing photo storage.
+# Capped at 10 MB per file to keep doc size sane.
+CLIENT_FILE_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+class ClientFileIn(BaseModel):
+    name: str
+    content_type: str
+    data: str  # base64-encoded content (data URI or raw base64 both accepted)
+    note: Optional[str] = ""
+    dog_id: Optional[str] = None  # optional — file tagged to a specific dog
+
+def _strip_data_uri(s: str) -> str:
+    """Accept either a raw base64 string or a `data:...;base64,...` URI."""
+    if s.startswith("data:") and ";base64," in s:
+        return s.split(";base64,", 1)[1]
+    return s
+
+@api.post("/clients/{client_id}/files")
+async def upload_client_file(client_id: str, body: ClientFileIn, user: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    raw_b64 = _strip_data_uri(body.data or "")
+    if not raw_b64:
+        raise HTTPException(status_code=400, detail="File is empty.")
+    # Approximate byte count from base64 length (4 chars → 3 bytes)
+    approx_bytes = (len(raw_b64) * 3) // 4
+    if approx_bytes > CLIENT_FILE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large. Max {CLIENT_FILE_MAX_BYTES // (1024*1024)} MB.")
+    if body.dog_id:
+        # Verify the dog belongs to this client (so admin can't accidentally tag the wrong dog)
+        owned = await db.dogs.find_one({"id": body.dog_id, "owner_id": client_id}, {"_id": 0, "id": 1})
+        if not owned:
+            raise HTTPException(status_code=400, detail="That dog doesn't belong to this client.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "dog_id": body.dog_id,
+        "name": (body.name or "untitled").strip()[:160],
+        "content_type": (body.content_type or "application/octet-stream").strip()[:120],
+        "data": raw_b64,
+        "size_bytes": approx_bytes,
+        "note": (body.note or "").strip()[:500],
+        "uploaded_at": now_iso(),
+        "uploaded_by": user.get("name", "admin"),
+    }
+    await db.client_files.insert_one(doc)
+    # Return without the base64 payload — front end fetches that on demand
+    return {k: doc[k] for k in doc if k not in ("data", "_id")}
+
+@api.get("/clients/{client_id}/files")
+async def list_client_files(client_id: str, _: dict = Depends(require_admin)):
+    files = await db.client_files.find(
+        {"client_id": client_id},
+        {"_id": 0, "data": 0},  # exclude base64 payload — fetched per file on download
+    ).sort("uploaded_at", -1).to_list(500)
+    return files
+
+@api.get("/portal/files")
+async def list_my_files(user: dict = Depends(get_current_user)):
+    """Client portal — lists files the admin has uploaded to this client.
+    Excludes the base64 payload; clients click an item to download it."""
+    if not user.get("client_id"):
+        return []
+    files = await db.client_files.find(
+        {"client_id": user["client_id"]},
+        {"_id": 0, "data": 0},
+    ).sort("uploaded_at", -1).to_list(500)
+    return files
+
+@api.get("/files/{file_id}/download")
+async def download_file(file_id: str, user: dict = Depends(get_current_user)):
+    """Fetch the actual file bytes. Admin OR the owner client only."""
+    f = await db.client_files.find_one({"id": file_id}, {"_id": 0})
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+    is_admin = user.get("role") == "admin"
+    is_owner = user.get("client_id") and user["client_id"] == f["client_id"]
+    if not (is_admin or is_owner):
+        raise HTTPException(status_code=403, detail="Not your file.")
+    return {
+        "id": f["id"],
+        "name": f["name"],
+        "content_type": f["content_type"],
+        "data": f["data"],  # raw base64
+        "size_bytes": f.get("size_bytes", 0),
+    }
+
+@api.delete("/files/{file_id}")
+async def delete_file(file_id: str, _: dict = Depends(require_admin)):
+    res = await db.client_files.delete_one({"id": file_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"ok": True}
+
+
+
+
 @api.post("/clients/send-claim-emails/bulk")
 async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
     """Send a claim email to EVERY client who has an email on file but no

@@ -6,6 +6,7 @@ import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
+import PortalFilesSection from "../components/PortalFilesSection";
 import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import MultiDateCalendar from "../components/MultiDateCalendar";
@@ -1101,6 +1102,8 @@ export default function Portal() {
               </div>
             </div>
           )}
+
+          <PortalFilesSection dogs={dogs} />
 
           {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
             <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">

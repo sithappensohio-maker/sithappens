@@ -7,6 +7,7 @@ import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import Avatar from "../components/Avatar";
 import { startImpersonation } from "../lib/impersonation";
+import ClientFilesModal from "../components/ClientFilesModal";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
@@ -27,6 +28,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [sellOpen, setSellOpen] = useState(null); // client object
   const [adjustOpen, setAdjustOpen] = useState(null); // client object
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
+  const [filesOpen, setFilesOpen] = useState(null); // client object — shows files/homework manager
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
@@ -298,6 +300,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                     className="mt-2 w-full bg-bgHover/40 text-gray-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgHover/70 hover:text-white">
               <i className="fas fa-receipt mr-1"/>Receipts
             </button>
+            <button onClick={()=>setFilesOpen(c)} data-testid={`files-${c.id}`}
+                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
+              <i className="fas fa-folder-open mr-1"/>Files & Homework
+            </button>
             <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
@@ -493,6 +499,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                            onClose={()=>setReceiptsOpen(null)}
                            onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
+      {filesOpen && <ClientFilesModal client={filesOpen} onClose={()=>setFilesOpen(null)} />}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
       {adjustOpen && <AdjustCreditsModal client={adjustOpen} onClose={()=>setAdjustOpen(null)} onSaved={()=>{ setAdjustOpen(null); load(); }} />}
     </div>
