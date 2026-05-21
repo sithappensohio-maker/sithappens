@@ -29,6 +29,7 @@ export default function Income() {
   const [logOpen, setLogOpen] = useState(false);
   const [filters, setFilters] = useState({ dog_id: "", service_id: "", payment_status: "", status: "" });
   const [showLegacy, setShowLegacy] = useState(false);
+  const [groupByDate, setGroupByDate] = useState(false);
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
@@ -358,9 +359,41 @@ export default function Income() {
                  className="w-4 h-4 accent-shBlue" />
           Include unpriced
         </label>
+        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shGreen">
+          <input type="checkbox" checked={groupByDate} onChange={(e)=>setGroupByDate(e.target.checked)} data-testid="group-by-date-toggle"
+                 className="w-4 h-4 accent-shGreen" />
+          <i className="fas fa-layer-group"/> Group by date
+        </label>
       </div>
 
-      {/* Spreadsheet table */}
+      {/* Spreadsheet table OR grouped-by-date view */}
+      {groupByDate ? (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="income-grouped">
+          <CollapsibleDateGroups
+            rows={filtered}
+            getDate={(r) => r.date}
+            getAmount={(r) => Number(r.actual_price) || 0}
+            fmtAmount={(n) => fmt(n)}
+            testid="income-groups"
+            emptyText="No transactions match these filters."
+            renderRow={(r) => {
+              const ps = PAYMENT_STATUSES.find(p => p.key === r.payment_status);
+              return (
+                <div key={r.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`income-grouped-row-${r.id}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-black text-white truncate">{r.dog_name} <span className="text-gray-500 font-normal">· {r.client_name}</span></p>
+                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                      {r.service_name || r.service_type || "—"} · <span className="capitalize">{r.payment_method || "—"}</span>
+                    </p>
+                  </div>
+                  {ps && <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${ps.color}`}>{ps.label}</span>}
+                  <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(r.actual_price || 0)}</span>
+                </div>
+              );
+            }}
+          />
+        </div>
+      ) : (
       <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="income-table">
         <div className="overflow-x-auto">
           <table className="w-full text-[15px]">
@@ -451,6 +484,7 @@ export default function Income() {
           </table>
         </div>
       </div>
+      )}
 
       {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={load} dogs={dogs} services={services} />}
     </div>

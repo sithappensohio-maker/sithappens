@@ -322,6 +322,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ Smoke-tested in the actual preview iframe via Playwright: `Cancel button → modal opens → confirm → DELETE 200 → modal closes → roster row removed`.
 
 ## Sprint 48 — Portal feature pack: loyalty badges, refer-a-friend, vaccine self-upload, quick links (2026-02)
+## Sprint 89 — Income "Group by Date" + Archived Bookings Viewer (2026-02)
+- ✅ **Income transactions table** — new `[ ] Group by date` toggle next to "Include unpriced". When on, the spreadsheet table swaps for the same `CollapsibleDateGroups` Year → Month → Week → Day hierarchy already used by Expenses and Bookings History. Daily/weekly/monthly totals roll up the `actual_price` sum; each row chip shows dog · client · service · payment status · price. Status pills color-coded.
+- ✅ **Bookings History — "Load Archived (>90d)"** button next to "Hide History". Fetches `/api/admin/bookings/archive` (limit 1000), merges archived rows into the live history list, marks each with a blue "Archived" pill, and shows total count in an "Archive · N" status pill once loaded. Archived rows are read-only (no Open button) to prevent accidental edits to cold-storage data.
+- ✅ Backend `_archive_old_bookings_once()` already runs on dashboard load (idempotent, once-per-UTC-day) and the manual trigger `POST /api/admin/bookings/archive-now` is still available for testing.
+- ✅ Verified: Income grouped view shows "2026 → JULY 2026 → Week of Jun 29 → Sat Jul 4 → Sparky $35.00" with proper totals at each level. Bookings History "Load Archived" button correctly fetched archive (0 items currently, since earliest bookings are May 2026 < 90 days old).
+
+
 - ✅ **Settings → Portal Links** (`PortalLinksPanel`): editable URLs for your website and photo gallery host. Backend wires through `client_portal_links` field on settings doc + default block + nested backfill + `/api/settings/public`.
 - ✅ **Loyalty visit badges**: `/api/portal/me` extended to return `visit_counts` (per-dog completed-booking count via a single Mongo aggregation). Portal dog cards now show a green "🏆 N visits" pill next to the breed when count > 0.
 - ✅ **Refer a Friend**: `/api/portal/me` mints a 6-char `referral_code` on first call and stores it on the client doc. New `<ReferFriendModal>` shows the code in big orange type with one-tap **Text / Email / Copy** actions that pre-fill a sharable message + a `?ref=CODE` URL. Admin-side helpers added: `GET /api/referrals/lookup/{code}` to validate a code and `POST /api/clients/{id}/credit-referral` to comp a daycare day to the referrer (writes both a `referrals` audit entry and a `credit_adjustments` entry).
