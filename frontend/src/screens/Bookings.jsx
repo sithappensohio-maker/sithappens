@@ -48,13 +48,13 @@ export default function Bookings() {
         <div className="flex items-center gap-2">
           {hiddenCount > 0 && !showHistory && (
             <button onClick={()=>setShowHistory(true)} data-testid="show-history-btn"
-                    className="text-[13px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-3 py-2 bg-bgPanel rounded border border-bgHover">
+                    className="text-[15px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-3 py-2 bg-bgPanel rounded border border-bgHover">
               <i className="fas fa-clock-rotate-left mr-2"/>Show History · {hiddenCount}
             </button>
           )}
           {showHistory && (
             <button onClick={()=>setShowHistory(false)} data-testid="hide-history-btn"
-                    className="text-[13px] font-black uppercase tracking-widest text-shOrange hover:text-white px-3 py-2 bg-bgPanel rounded border border-shOrange/40">
+                    className="text-[15px] font-black uppercase tracking-widest text-shOrange hover:text-white px-3 py-2 bg-bgPanel rounded border border-shOrange/40">
               <i className="fas fa-eye-slash mr-2"/>Hide History
             </button>
           )}
@@ -102,21 +102,21 @@ export default function Bookings() {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-black uppercase text-white">{b.dog_name}</p>
-                  <p className="text-[11px] text-gray-400 truncate">{b.client_name}</p>
+                  <p className="text-[13px] text-gray-400 truncate">{b.client_name}</p>
                 </div>
-                <span className={`shrink-0 text-[11px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
               </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px]">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px]">
                 <span className="font-black uppercase tracking-widest text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>
                 <span className="text-gray-400">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}</span>
               </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
-                <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-m`} className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
+                <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
                 {b.status === "pending" && <>
-                  <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-m`} className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:underline">Approve</button>
-                  <button onClick={()=>reject(b.id)} className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
+                  <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shGreen hover:underline">Approve</button>
+                  <button onClick={()=>reject(b.id)} className="text-[14px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
                 </>}
-                {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
+                {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
               </div>
             </div>
           ))}

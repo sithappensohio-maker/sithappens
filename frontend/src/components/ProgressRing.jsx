@@ -14,7 +14,7 @@ export default function ProgressRing({ percent = 0, size = 140, stroke = 12, col
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
         <span className="text-3xl font-black text-white">{safePercent}%</span>
-        {label && <span className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-0.5">{label}</span>}
+        {label && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest mt-0.5">{label}</span>}
       </div>
     </div>
   );

@@ -61,7 +61,7 @@ export default function TrainingProgram({ dogId, dogName }) {
 
   return (
     <div className="space-y-5" data-testid="training-program">
-      {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+      {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
       {/* Top bar: progress + badges + actions */}
       <div className="bg-bgBase/50 border border-bgHover rounded-lg p-4 flex flex-wrap items-center gap-5">
@@ -69,11 +69,11 @@ export default function TrainingProgram({ dogId, dogName }) {
                       size={120} stroke={10} color="#8cc63f"
                       label={`${training.progress.overall.mastered}/${training.progress.overall.total}`} />
         <div className="flex-1 min-w-[200px]">
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Service-Dog Curriculum</p>
+          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">Service-Dog Curriculum</p>
           <p className="text-base font-black text-white">{dogName}</p>
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2">
             {training.progress.by_category.map(c => (
-              <div key={c.key} className="flex items-center justify-between text-[13px]">
+              <div key={c.key} className="flex items-center justify-between text-[15px]">
                 <span className="font-black uppercase tracking-widest text-gray-400" style={{color: c.color}}>{c.label}</span>
                 <span className="text-white font-black">{c.mastered}/{c.total}</span>
               </div>
@@ -82,11 +82,11 @@ export default function TrainingProgram({ dogId, dogName }) {
         </div>
         <div className="flex flex-col gap-2">
           <button onClick={()=>setSessionModal(true)} data-testid="log-session-btn"
-                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-clipboard-check mr-1"/>Log Session
           </button>
           <button onClick={()=>setHistoryOpen(true)} data-testid="view-history-btn"
-                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
+                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
             <i className="fas fa-clock-rotate-left mr-1"/>History ({sessions.length})
           </button>
         </div>
@@ -99,8 +99,8 @@ export default function TrainingProgram({ dogId, dogName }) {
             <div key={b.key} className="rounded-lg px-3 py-2 border flex items-center gap-2" style={{borderColor: b.color + "80", background: b.color + "15"}}>
               <i className="fas fa-medal text-base" style={{color: b.color}}/>
               <div>
-                <p className="text-[13px] font-black uppercase tracking-widest" style={{color: b.color}}>{b.title}</p>
-                <p className="text-[12px] text-gray-400">{b.description}</p>
+                <p className="text-[15px] font-black uppercase tracking-widest" style={{color: b.color}}>{b.title}</p>
+                <p className="text-[14px] text-gray-400">{b.description}</p>
               </div>
             </div>
           ))}
@@ -111,10 +111,10 @@ export default function TrainingProgram({ dogId, dogName }) {
       {groupedItems.map(group => (
         <div key={group.key} className="bg-bgBase/40 border border-bgHover rounded-lg overflow-hidden">
           <div className="px-4 py-2 border-b border-bgHover flex items-center justify-between" style={{background: group.color + "12"}}>
-            <p className="text-[13px] font-black uppercase tracking-widest" style={{color: group.color}}>
+            <p className="text-[15px] font-black uppercase tracking-widest" style={{color: group.color}}>
               <i className="fas fa-graduation-cap mr-2"/>{group.label}
             </p>
-            <p className="text-[12px] text-gray-500 font-black">{group.items.filter(i=>i.level>=4).length}/{group.items.length} mastered</p>
+            <p className="text-[14px] text-gray-500 font-black">{group.items.filter(i=>i.level>=4).length}/{group.items.length} mastered</p>
           </div>
           <div className="divide-y divide-bgHover">
             {group.items.map(item => {
@@ -126,13 +126,13 @@ export default function TrainingProgram({ dogId, dogName }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-sm font-black text-white">{item.command.name}</p>
-                      {item.in_homework && <span className="text-[11px] bg-shOrange/20 text-shOrange font-black uppercase tracking-widest px-2 py-0.5 rounded"><i className="fas fa-house mr-1"/>Homework</span>}
+                      {item.in_homework && <span className="text-[13px] bg-shOrange/20 text-shOrange font-black uppercase tracking-widest px-2 py-0.5 rounded"><i className="fas fa-house mr-1"/>Homework</span>}
                       {item.command.video_url && <i className="fab fa-youtube text-red-500" title="Has video demo"/>}
                     </div>
-                    <p className="text-[13px] text-gray-400 mt-0.5 line-clamp-1">{item.command.description}</p>
-                    {item.last_session_at && <p className="text-[12px] text-gray-600 font-black uppercase tracking-widest mt-1">Last: {item.last_session_at}</p>}
+                    <p className="text-[15px] text-gray-400 mt-0.5 line-clamp-1">{item.command.description}</p>
+                    {item.last_session_at && <p className="text-[14px] text-gray-600 font-black uppercase tracking-widest mt-1">Last: {item.last_session_at}</p>}
                   </div>
-                  <span className="shrink-0 px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest border"
+                  <span className="shrink-0 px-3 py-1 rounded text-[14px] font-black uppercase tracking-widest border"
                         style={{color: sc.color, borderColor: sc.color + "80", background: sc.color + "15"}}>
                     {item.level}/5 · {sc.label}
                   </span>
@@ -169,28 +169,28 @@ function EditEntryModal({ entry, setEntry, scale, onSave, onClose }) {
         <div className="flex items-center justify-between mb-3">
           <div>
             <h4 className="text-base font-black text-white uppercase italic">{entry.command.name}</h4>
-            <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{entry.command.category.replace("_"," ")}</p>
+            <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">{entry.command.category.replace("_"," ")}</p>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
         <p className="text-[14px] text-gray-300 mb-3">{entry.command.description}</p>
         {entry.command.video_url && (
           <a href={entry.command.video_url} target="_blank" rel="noopener noreferrer"
-             className="inline-block text-[13px] font-black uppercase tracking-widest text-red-400 mb-3"><i className="fab fa-youtube mr-2"/>Watch demo video</a>
+             className="inline-block text-[15px] font-black uppercase tracking-widest text-red-400 mb-3"><i className="fab fa-youtube mr-2"/>Watch demo video</a>
         )}
-        <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Level</label>
+        <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Level</label>
         <div className="grid grid-cols-6 gap-1 mt-1 mb-3">
           {scale.map(s => (
             <button key={s.value} onClick={()=>setEntry({...entry, level: s.value})} data-testid={`level-${s.value}`}
                     title={s.description}
-                    className={`py-2 rounded text-[13px] font-black tracking-widest border transition ${entry.level===s.value?"text-white":"text-gray-400 hover:text-white"}`}
+                    className={`py-2 rounded text-[15px] font-black tracking-widest border transition ${entry.level===s.value?"text-white":"text-gray-400 hover:text-white"}`}
                     style={entry.level===s.value ? {background: s.color, borderColor: s.color} : {borderColor:"#334155"}}>
               {s.value}
             </button>
           ))}
         </div>
-        <p className="text-[12px] text-gray-400 mb-3">{scale.find(s=>s.value===entry.level)?.description}</p>
-        <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Trainer Notes</label>
+        <p className="text-[14px] text-gray-400 mb-3">{scale.find(s=>s.value===entry.level)?.description}</p>
+        <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Trainer Notes</label>
         <textarea value={entry.notes||""} onChange={(e)=>setEntry({...entry, notes:e.target.value})} rows={3}
                   data-testid="entry-notes"
                   className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
@@ -200,9 +200,9 @@ function EditEntryModal({ entry, setEntry, scale, onSave, onClose }) {
           <span><i className="fas fa-house text-shOrange mr-1"/>Flag for homework — show on client portal</span>
         </label>
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
           <button onClick={onSave} data-testid="save-entry"
-                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>
+                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">Save</button>
         </div>
       </div>
     </div>
@@ -243,7 +243,7 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
           <div>
             <h4 className="text-lg font-black text-white uppercase italic">Log Training Session</h4>
-            <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{dogName} · {date}</p>
+            <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">{dogName} · {date}</p>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
@@ -251,26 +251,26 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
         <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Date</label>
+              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Date</label>
               <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="sess-date"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
             </div>
             <div>
-              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Environment</label>
+              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Environment</label>
               <select value={env} onChange={(e)=>setEnv(e.target.value)} data-testid="sess-env"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 {ENVIRONMENTS.map(e => <option key={e.k} value={e.k}>{e.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Distraction · {distraction}/10</label>
+              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Distraction · {distraction}/10</label>
               <input type="range" min="1" max="10" value={distraction} onChange={(e)=>setDistraction(Number(e.target.value))} data-testid="sess-distraction"
                      className="w-full mt-3 accent-shBlue" />
             </div>
           </div>
 
           <div>
-            <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Session Notes</label>
+            <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Session Notes</label>
             <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} data-testid="sess-notes"
                       placeholder="What went well, what to work on next time…"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
@@ -282,23 +282,23 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
           </label>
 
           <div className="border-t border-bgHover pt-3">
-            <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-2">Score commands tested today</p>
-            <p className="text-[13px] text-gray-400 mb-3">Skip any you didn't work on. Highest score wins — the curriculum auto-updates.</p>
+            <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2">Score commands tested today</p>
+            <p className="text-[15px] text-gray-400 mb-3">Skip any you didn't work on. Highest score wins — the curriculum auto-updates.</p>
             {grouped.map(g => (
               <div key={g.key} className="mb-4">
-                <p className="text-[13px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>
+                <p className="text-[15px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>
                 <div className="grid grid-cols-1 gap-2">
                   {g.items.map(it => (
                     <div key={it.command.id} className="bg-bgBase/60 border border-bgHover rounded p-2 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-[14px] font-black text-white truncate">{it.command.name}</p>
-                        <p className="text-[12px] text-gray-500">Current: {it.level}/5</p>
+                        <p className="text-[14px] text-gray-500">Current: {it.level}/5</p>
                       </div>
                       <div className="flex gap-1">
                         {[1,2,3,4,5].map(n => (
                           <button key={n} onClick={()=>setScores(s => ({...s, [it.command.id]: scores[it.command.id]===n ? null : n}))}
                                   data-testid={`score-${it.command.id}-${n}`}
-                                  className={`w-7 h-7 text-[13px] font-black rounded border ${scores[it.command.id]===n ? "bg-shGreen text-bgHeader border-shGreen" : "text-gray-400 border-bgHover hover:text-white"}`}>{n}</button>
+                                  className={`w-7 h-7 text-[15px] font-black rounded border ${scores[it.command.id]===n ? "bg-shGreen text-bgHeader border-shGreen" : "text-gray-400 border-bgHover hover:text-white"}`}>{n}</button>
                         ))}
                       </div>
                     </div>
@@ -308,13 +308,13 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
             ))}
           </div>
 
-          {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+          {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
         </div>
 
         <div className="px-6 py-3 border-t border-bgHover flex justify-end gap-3 shrink-0">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
           <button onClick={save} disabled={saving} data-testid="save-session"
-                  className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+                  className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">
             {saving ? "Saving…" : "Save Session"}
           </button>
         </div>
@@ -337,16 +337,16 @@ function HistoryModal({ sessions, meta, commandsById, onClose }) {
             <div key={s.id} className="px-6 py-3">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-sm font-black text-white">{s.date}</p>
-                <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">{ENVIRONMENTS.find(e=>e.k===s.environment)?.label || s.environment} · Distraction {s.distraction}/10</p>
+                <p className="text-[15px] text-gray-400 font-black uppercase tracking-widest">{ENVIRONMENTS.find(e=>e.k===s.environment)?.label || s.environment} · Distraction {s.distraction}/10</p>
               </div>
-              {s.cgc_mock_pass && <p className="text-[13px] text-shGreen font-black uppercase tracking-widest mb-1"><i className="fas fa-award mr-1"/>CGC Mock Pass</p>}
+              {s.cgc_mock_pass && <p className="text-[15px] text-shGreen font-black uppercase tracking-widest mb-1"><i className="fas fa-award mr-1"/>CGC Mock Pass</p>}
               {s.notes && <p className="text-[14px] text-gray-300 mb-1 italic">"{s.notes}"</p>}
               <div className="flex flex-wrap gap-1 mt-2">
                 {s.scores.map((sc, i) => {
                   const c = commandsById[sc.command_id];
                   const def = (meta.scale.find(x=>x.value===sc.score)) || {};
                   return (
-                    <span key={i} className="text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border"
+                    <span key={i} className="text-[14px] font-black uppercase tracking-widest px-2 py-0.5 rounded border"
                           style={{color: def.color, borderColor: (def.color||"#334155")+"80"}}>
                       {c?.name || "?"}: {sc.score}/5
                     </span>

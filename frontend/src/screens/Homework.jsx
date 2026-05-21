@@ -79,9 +79,9 @@ export default function Homework() {
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
                     <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                    {snap && <span className={`text-[12px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${snap.icon || "fa-paw"} mr-1`}/>{tm.label}</span>}
+                    {snap && <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${snap.icon || "fa-paw"} mr-1`}/>{tm.label}</span>}
                     {h.due_date && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
-                    {snap && <span className="text-[12px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-list-check mr-1"/>{logCount} client log{logCount===1?"":"s"}</span>}
+                    {snap && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-list-check mr-1"/>{logCount} client log{logCount===1?"":"s"}</span>}
                   </div>
                   <h4 className="text-lg font-black text-white uppercase tracking-tight">{h.title}</h4>
                   <p className="text-[15px] text-shBlue font-black uppercase tracking-widest mt-1">{h.dog_name} · {h.client_name}</p>
@@ -99,7 +99,7 @@ export default function Homework() {
                   <button onClick={()=>remove(h.id)} className="text-gray-400 hover:text-red-400 p-2"><i className="fas fa-trash text-sm" /></button>
                   {snap && (
                     <button onClick={()=>setExpandedId(isExpanded ? null : h.id)} data-testid={`hw-toggle-report-${h.id}`}
-                            className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline whitespace-nowrap">
+                            className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:underline whitespace-nowrap">
                       {isExpanded ? "Hide report" : "View report"} <i className={`fas fa-chevron-${isExpanded?"up":"down"} ml-1`}/>
                     </button>
                   )}

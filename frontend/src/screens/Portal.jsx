@@ -101,14 +101,14 @@ function MyRecurringModal({ dogs, onClose }) {
 
         <div className="p-5 space-y-3">
           {toast && (
-            <div className={`rounded-lg p-3 text-[13px] ${toast.ok ? "bg-shGreen/15 text-shGreen border border-shGreen/40" : "bg-red-500/15 text-red-400 border border-red-500/40"}`}>
+            <div className={`rounded-lg p-3 text-[15px] ${toast.ok ? "bg-shGreen/15 text-shGreen border border-shGreen/40" : "bg-red-500/15 text-red-400 border border-red-500/40"}`}>
               <i className={`fas ${toast.ok ? "fa-check-circle" : "fa-triangle-exclamation"} mr-2`}/>{toast.msg}
             </div>
           )}
 
           {step === "list" && (
             <>
-              <p className="text-[12px] text-gray-400 normal-case leading-relaxed">Set up a weekly daycare pattern once (e.g. M/W/F), then tap <strong className="text-white">Extend</strong> any time to roll the next batch of bookings forward.</p>
+              <p className="text-[14px] text-gray-400 normal-case leading-relaxed">Set up a weekly daycare pattern once (e.g. M/W/F), then tap <strong className="text-white">Extend</strong> any time to roll the next batch of bookings forward.</p>
               {rows.length === 0 ? (
                 <div className="bg-bgBase border border-dashed border-bgHover rounded-lg p-6 text-center" data-testid="my-recurring-empty">
                   <i className="fas fa-calendar-week text-gray-600 text-3xl mb-2"/>
@@ -123,19 +123,19 @@ function MyRecurringModal({ dogs, onClose }) {
                           <p className="text-white font-black text-[14px] truncate">{r.label}</p>
                           <div className="flex flex-wrap gap-1 mt-1.5">
                             {_WD.map((d, i) => (
-                              <span key={i} className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? "bg-shBlue/25 text-shBlue" : "bg-bgHover text-gray-600"}`}>{d}</span>
+                              <span key={i} className={`text-[12px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? "bg-shBlue/25 text-shBlue" : "bg-bgHover text-gray-600"}`}>{d}</span>
                             ))}
                           </div>
-                          <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1.5">
+                          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1.5">
                             {r.last_booked_through ? <>Booked through <span className="text-white">{r.last_booked_through}</span></> : "Never extended"}
                           </p>
                         </div>
                         <button onClick={()=>extend(r)} disabled={busy === r.id} data-testid={`my-extend-${r.id}`}
-                                className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-40 whitespace-nowrap shrink-0">
+                                className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-40 whitespace-nowrap shrink-0">
                           {busy === r.id ? <><i className="fas fa-circle-notch fa-spin mr-1"/>…</> : <><i className="fas fa-forward mr-1"/>Extend</>}
                         </button>
                       </div>
-                      <div className="flex gap-3 mt-2 text-[11px] font-black uppercase tracking-widest">
+                      <div className="flex gap-3 mt-2 text-[13px] font-black uppercase tracking-widest">
                         <button onClick={()=>openEdit(r)} className="text-shBlue hover:underline">Edit</button>
                         <button onClick={()=>remove(r)} className="text-red-400 hover:underline">Delete</button>
                       </div>
@@ -144,7 +144,7 @@ function MyRecurringModal({ dogs, onClose }) {
                 </div>
               )}
               <button onClick={openNew} data-testid="my-recurring-new-btn"
-                      className="w-full bg-shBlue text-white px-4 py-3 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90">
+                      className="w-full bg-shBlue text-white px-4 py-3 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shBlue/90">
                 <i className="fas fa-plus mr-2"/>New Schedule
               </button>
             </>
@@ -153,7 +153,7 @@ function MyRecurringModal({ dogs, onClose }) {
           {step === "form" && (
             <div className="space-y-3">
               <div>
-                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
                 <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})}
                         data-testid="my-recurring-dog-select"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
@@ -162,47 +162,47 @@ function MyRecurringModal({ dogs, onClose }) {
                 </select>
               </div>
               <div>
-                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
                 <div className="flex gap-1 mt-1.5">
                   {_WD.map((d, i) => (
                     <button key={i} type="button" onClick={()=>toggleDay(i)}
                             data-testid={`my-recurring-day-${i}`}
-                            className={`flex-1 py-2 rounded text-[11px] font-black uppercase tracking-widest transition ${form.weekdays.includes(i) ? "bg-shBlue text-white" : "bg-bgBase text-gray-500 hover:bg-bgHover"}`}>
+                            className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${form.weekdays.includes(i) ? "bg-shBlue text-white" : "bg-bgBase text-gray-500 hover:bg-bgHover"}`}>
                       {d}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Start on</label>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Start on</label>
                 <input type="date" value={form.start_date}
                        onChange={(e)=>setForm({...form, start_date: e.target.value})}
                        data-testid="my-recurring-start-date"
                        style={{colorScheme:"dark"}}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-                <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1">Leave blank to start today.</p>
+                <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1">Leave blank to start today.</p>
               </div>
               <div>
-                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Default extend window (weeks)</label>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Default extend window (weeks)</label>
                 <input type="number" min="1" max="52" value={form.default_horizon_weeks}
                        onChange={(e)=>setForm({...form, default_horizon_weeks: parseInt(e.target.value) || 12})}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-                <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1">How far forward each "Extend" tap should book at once. Default 12 weeks (~3 months).</p>
+                <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1">How far forward each "Extend" tap should book at once. Default 12 weeks (~3 months).</p>
               </div>
               <div>
-                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
                 <input value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})}
                        placeholder="e.g. drop-off after 8am"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
               </div>
-              {err && <p className="text-red-400 text-[12px] normal-case">{err}</p>}
-              <div className="bg-shBlue/10 border border-shBlue/30 rounded p-2.5 text-[11px] text-gray-300 normal-case leading-snug">
+              {err && <p className="text-red-400 text-[14px] normal-case">{err}</p>}
+              <div className="bg-shBlue/10 border border-shBlue/30 rounded p-2.5 text-[13px] text-gray-300 normal-case leading-snug">
                 <i className="fas fa-circle-info text-shBlue mr-1"/>Daycare schedules only. For training schedules, request a free evaluation and our team will set it up for you.
               </div>
               <div className="flex justify-end gap-3 pt-1">
-                <button onClick={()=>setStep("list")} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+                <button onClick={()=>setStep("list")} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
                 <button onClick={save} data-testid="my-recurring-save-btn"
-                        className="bg-shBlue text-white px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90">
+                        className="bg-shBlue text-white px-5 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shBlue/90">
                   {editing ? "Save" : "Create"}
                 </button>
               </div>
@@ -234,12 +234,12 @@ function GalleryPinRow({ pin, accent = "green" }) {
          className={`flex items-center gap-3 px-3 py-3 border-t ${divider}`}>
       <i className="fas fa-key text-shOrange text-lg w-6 text-center shrink-0"/>
       <div className="flex-1 min-w-0">
-        <p className="text-[10px] font-black text-shOrange uppercase tracking-widest leading-none">Your Download PIN</p>
+        <p className="text-[12px] font-black text-shOrange uppercase tracking-widest leading-none">Your Download PIN</p>
         <p className="text-white font-black text-[17px] tracking-[0.3em] mt-1.5 truncate" data-testid="portal-gallery-pin-value">{pin}</p>
-        <p className="text-[10px] text-gray-400 normal-case tracking-normal mt-1.5 leading-tight">Enter this PIN when the gallery asks for it to unlock photo downloads.</p>
+        <p className="text-[12px] text-gray-400 normal-case tracking-normal mt-1.5 leading-tight">Enter this PIN when the gallery asks for it to unlock photo downloads.</p>
       </div>
       <button type="button" onClick={copy} data-testid="portal-gallery-pin-copy"
-              className="text-[11px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded bg-shOrange/15 text-shOrange hover:bg-shOrange/25 transition whitespace-nowrap shrink-0">
+              className="text-[13px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded bg-shOrange/15 text-shOrange hover:bg-shOrange/25 transition whitespace-nowrap shrink-0">
         <i className={`fas ${copied ? "fa-check" : "fa-copy"} mr-1`}/>{copied ? "Copied" : "Copy"}
       </button>
     </div>
@@ -264,15 +264,15 @@ function ReferFriendModal({ code, onClose }) {
         </div>
         <p className="text-[14px] text-gray-300 mb-4">Share your code with a friend. After they sign up and complete their first appointment (daycare, training, or boarding), we'll add a free daycare day to your account as a thank-you.</p>
         <div className="bg-bgBase border border-shOrange/40 rounded-lg p-4 text-center mb-4">
-          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Your code</p>
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Your code</p>
           <p className="text-3xl font-black text-shOrange tracking-[0.3em] mt-1" data-testid="refer-code">{code}</p>
         </div>
         <div className="grid grid-cols-3 gap-2 mb-3">
-          <a href={sms} data-testid="refer-via-sms" className="bg-shGreen/10 hover:bg-shGreen/20 text-shGreen text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className="fas fa-comment mr-1"/>Text</a>
-          <a href={email} data-testid="refer-via-email" className="bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className="fas fa-envelope mr-1"/>Email</a>
-          <button onClick={copy} data-testid="refer-copy" className="bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[12px] uppercase tracking-widest"><i className={`fas ${copied?"fa-check":"fa-copy"} mr-1`}/>{copied?"Copied":"Copy"}</button>
+          <a href={sms} data-testid="refer-via-sms" className="bg-shGreen/10 hover:bg-shGreen/20 text-shGreen text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className="fas fa-comment mr-1"/>Text</a>
+          <a href={email} data-testid="refer-via-email" className="bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className="fas fa-envelope mr-1"/>Email</a>
+          <button onClick={copy} data-testid="refer-copy" className="bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className={`fas ${copied?"fa-check":"fa-copy"} mr-1`}/>{copied?"Copied":"Copy"}</button>
         </div>
-        <button onClick={onClose} className="w-full bg-bgBase border border-bgHover text-gray-300 py-3 rounded font-black text-[13px] uppercase tracking-widest">Done</button>
+        <button onClick={onClose} className="w-full bg-bgBase border border-bgHover text-gray-300 py-3 rounded font-black text-[15px] uppercase tracking-widest">Done</button>
       </div>
     </div>
   );
@@ -311,24 +311,24 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Update {label} for {dog.name}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[13px] text-gray-400 mb-4">Snap a photo of the new vaccine certificate and enter the expiry date your vet wrote on it.</p>
+        <p className="text-[15px] text-gray-400 mb-4">Snap a photo of the new vaccine certificate and enter the expiry date your vet wrote on it.</p>
         <div className="space-y-3">
           <div>
-            <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">New expiry date</label>
+            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New expiry date</label>
             <input type="date" value={expiresOn} onChange={(e)=>setExpiresOn(e.target.value)} data-testid="vaccine-expiry-input"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm" style={{colorScheme:"dark"}} />
           </div>
           <div>
-            <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Cert photo (optional but recommended)</label>
+            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Cert photo (optional but recommended)</label>
             <input type="file" accept="image/*" capture="environment" onChange={handleFile} data-testid="vaccine-photo-input"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm file:bg-shBlue file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:font-black file:text-[12px] file:uppercase file:tracking-widest" />
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm file:bg-shBlue file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:font-black file:text-[14px] file:uppercase file:tracking-widest" />
             {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-bgHover"/>}
           </div>
-          {err && <p className="text-[13px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+          {err && <p className="text-[15px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
           <div className="flex gap-2">
-            <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[13px] font-black uppercase tracking-widest">Cancel</button>
+            <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[15px] font-black uppercase tracking-widest">Cancel</button>
             <button onClick={save} disabled={saving || !expiresOn} data-testid="vaccine-save"
-                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit Update"}</button>
+                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit Update"}</button>
           </div>
         </div>
       </div>
@@ -372,7 +372,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
            onClick={(e)=>e.stopPropagation()}>
         <div className="bg-gradient-to-br from-shOrange/25 to-shBlue/10 p-5 sm:p-6 border-b border-shOrange/30">
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-black uppercase tracking-widest bg-shOrange text-bgHeader px-2 py-0.5 rounded-full">Action Required</span>
+            <span className="text-[12px] font-black uppercase tracking-widest bg-shOrange text-bgHeader px-2 py-0.5 rounded-full">Action Required</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-black italic text-white uppercase tracking-tight">
             Welcome{client?.name ? `, ${client.name.split(" ")[0]}` : ""}!
@@ -388,22 +388,22 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
               <div className="w-9 h-9 mx-auto rounded-full bg-shGreen/15 text-shGreen flex items-center justify-center">
                 <i className="fas fa-camera text-base"/>
               </div>
-              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">1. Upload Cert</p>
-              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Snap a photo + type the expiry date</p>
+              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">1. Upload Cert</p>
+              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Snap a photo + type the expiry date</p>
             </div>
             <div className="bg-bgBase border border-bgHover rounded-lg p-3">
               <div className="w-9 h-9 mx-auto rounded-full bg-shBlue/15 text-shBlue flex items-center justify-center">
                 <i className="fas fa-check-double text-base"/>
               </div>
-              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">2. We Verify</p>
-              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Quick admin check — usually within a few hours</p>
+              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">2. We Verify</p>
+              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Quick admin check — usually within a few hours</p>
             </div>
             <div className="bg-bgBase border border-bgHover rounded-lg p-3">
               <div className="w-9 h-9 mx-auto rounded-full bg-shOrange/15 text-shOrange flex items-center justify-center">
                 <i className="fas fa-calendar-check text-base"/>
               </div>
-              <p className="text-[10px] font-black text-white uppercase tracking-widest mt-2 leading-tight">3. Book Stays</p>
-              <p className="text-[10px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Daycare, boarding & training open up</p>
+              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">3. Book Stays</p>
+              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Daycare, boarding & training open up</p>
             </div>
           </div>
 
@@ -413,9 +413,9 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
                 <div className="w-8 h-8 rounded-full bg-shBlue/20 text-shBlue font-black flex items-center justify-center shrink-0">1</div>
                 <div className="flex-1">
                   <p className="text-white font-black text-[15px] uppercase tracking-widest">Add your dog</p>
-                  <p className="text-[12px] text-gray-400 normal-case mt-1">Tell us their name, breed, age, and any feeding or medication notes.</p>
+                  <p className="text-[14px] text-gray-400 normal-case mt-1">Tell us their name, breed, age, and any feeding or medication notes.</p>
                   <button onClick={onAddDog} data-testid="onboarding-add-dog-btn"
-                          className="mt-3 bg-shBlue text-white px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90">
+                          className="mt-3 bg-shBlue text-white px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shBlue/90">
                     <i className="fas fa-plus mr-1.5"/>Add Dog
                   </button>
                 </div>
@@ -425,7 +425,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
             <>
               <div className="flex items-center justify-between bg-bgBase rounded-lg px-4 py-3 border border-bgHover">
                 <div>
-                  <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Vaccines still needed</p>
+                  <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Vaccines still needed</p>
                   <p className="text-shOrange font-black text-[26px] leading-none mt-1" data-testid="onboarding-missing-count">{totalMissing}</p>
                 </div>
                 <i className="fas fa-shield-virus text-shOrange/40 text-4xl"/>
@@ -440,14 +440,14 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
                         <div key={r.key} className="flex items-center justify-between gap-3 bg-bgPanel rounded p-2.5">
                           <div className="flex items-center gap-2 min-w-0">
                             <i className="fas fa-circle-exclamation text-shOrange text-sm"/>
-                            <span className="text-[13px] font-black text-white uppercase tracking-widest truncate">{r.label}</span>
-                            <span className="text-[11px] text-gray-500 normal-case tracking-normal truncate">
+                            <span className="text-[15px] font-black text-white uppercase tracking-widest truncate">{r.label}</span>
+                            <span className="text-[13px] text-gray-500 normal-case tracking-normal truncate">
                               {row.dog.vaccines?.[r.key] ? `expired ${row.dog.vaccines[r.key]}` : "no date on file"}
                             </span>
                           </div>
                           <button onClick={() => onUploadVaccine(row.dog, r.key)}
                                   data-testid={`onboarding-upload-${row.dog.id}-${r.key}`}
-                                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[11px] uppercase tracking-widest hover:bg-shGreen/80 whitespace-nowrap">
+                                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80 whitespace-nowrap">
                             <i className="fas fa-camera mr-1"/>Upload
                           </button>
                         </div>
@@ -459,7 +459,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
 
               <div className="bg-shBlue/10 border border-shBlue/30 rounded-lg p-3 flex gap-3">
                 <i className="fas fa-circle-info text-shBlue text-base mt-0.5"/>
-                <p className="text-[12px] text-gray-300 normal-case leading-snug">
+                <p className="text-[14px] text-gray-300 normal-case leading-snug">
                   Don't have a clear photo handy? Just type the <strong className="text-white">expiry date</strong> your vet wrote on the certificate — you can upload the photo later. We'll review and approve each upload before it goes live.
                 </p>
               </div>
@@ -467,7 +467,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
           )}
 
           <button onClick={onDismiss} data-testid="onboarding-dismiss-btn"
-                  className="w-full text-gray-500 hover:text-gray-300 text-[12px] font-black uppercase tracking-widest py-3">
+                  className="w-full text-gray-500 hover:text-gray-300 text-[14px] font-black uppercase tracking-widest py-3">
             Remind me later <span className="opacity-60">(this stays out of your way until next login)</span>
           </button>
         </div>
@@ -486,13 +486,13 @@ function OnboardingBanner({ missingCount, onOpen }) {
             className="w-full bg-gradient-to-r from-shOrange/25 to-shOrange/10 border-b border-shOrange/50 px-4 py-3 flex items-center gap-3 hover:from-shOrange/35 transition text-left">
       <i className="fas fa-shield-virus text-shOrange text-lg shrink-0"/>
       <div className="flex-1 min-w-0">
-        <p className="text-white font-black text-[13px] uppercase tracking-widest">
+        <p className="text-white font-black text-[15px] uppercase tracking-widest">
           {missingCount} vaccine{missingCount > 1 ? "s" : ""} need uploading before you can book
         </p>
-        <p className="text-[11px] text-gray-300 normal-case tracking-normal">Tap to finish setting up your account</p>
+        <p className="text-[13px] text-gray-300 normal-case tracking-normal">Tap to finish setting up your account</p>
       </div>
-      <span className="bg-shOrange text-bgHeader text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded shrink-0">
-        Finish setup <i className="fas fa-arrow-right ml-1 text-[10px]"/>
+      <span className="bg-shOrange text-bgHeader text-[13px] font-black uppercase tracking-widest px-3 py-1.5 rounded shrink-0">
+        Finish setup <i className="fas fa-arrow-right ml-1 text-[12px]"/>
       </span>
     </button>
   );
@@ -581,13 +581,13 @@ function ServiceInfoModal({ type, onClose, customDescriptions }) {
         <p className="text-[14px] text-gray-300 mb-4 whitespace-pre-line">{summary}</p>
         <ul className="space-y-2">
           {info.bullets.map((b, i) => (
-            <li key={i} className="flex items-start gap-2 text-[13px] text-gray-300">
-              <i className={`fas fa-check ${info.color} mt-1 text-[11px] shrink-0`}/>
+            <li key={i} className="flex items-start gap-2 text-[15px] text-gray-300">
+              <i className={`fas fa-check ${info.color} mt-1 text-[13px] shrink-0`}/>
               <span>{b}</span>
             </li>
           ))}
         </ul>
-        <button onClick={onClose} className="mt-5 w-full bg-bgBase border border-bgHover text-gray-300 hover:text-white py-3 rounded font-black text-[13px] uppercase tracking-widest">Got it</button>
+        <button onClick={onClose} className="mt-5 w-full bg-bgBase border border-bgHover text-gray-300 hover:text-white py-3 rounded font-black text-[15px] uppercase tracking-widest">Got it</button>
       </div>
     </div>
   );
@@ -811,21 +811,21 @@ export default function Portal() {
           <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-16 shrink-0" data-testid="portal-logo" />
           <div className="min-w-0">
             <p className="hidden sm:block text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding</p>
-            <p className="text-[11px] sm:text-xs text-shGreen font-black uppercase tracking-widest sm:mt-1 truncate">Welcome, {user.name}</p>
+            <p className="text-[13px] sm:text-xs text-shGreen font-black uppercase tracking-widest sm:mt-1 truncate">Welcome, {user.name}</p>
           </div>
         </div>
         <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
-                  className="text-[11px] sm:text-xs bg-shBlue/10 text-shBlue px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
+                  className="text-[13px] sm:text-xs bg-shBlue/10 text-shBlue px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
             <i className="fas fa-circle-question"/>
             <span className="hidden sm:inline">How to Use</span>
           </button>
           <InstallAppButton
             testid="portal-install-app"
             label="Install"
-            className="text-[11px] sm:text-xs bg-shGreen/10 text-shGreen px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
+            className="text-[13px] sm:text-xs bg-shGreen/10 text-shGreen px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
           />
-          <button onClick={logout} data-testid="logout-button" className="text-[11px] sm:text-xs bg-red-500/10 text-red-400 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">
+          <button onClick={logout} data-testid="logout-button" className="text-[13px] sm:text-xs bg-red-500/10 text-red-400 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">
             <i className="fas fa-right-from-bracket sm:hidden"/>
             <span className="hidden sm:inline">Logout</span>
           </button>
@@ -838,9 +838,9 @@ export default function Portal() {
             <div className="flex items-start justify-between gap-3 mb-4">
               <div className="min-w-0">
                 <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
-                <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
+                <p className="text-[15px] sm:text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
               </div>
-              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[11px] sm:text-[13px] font-black uppercase tracking-widest px-2 sm:px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
+              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[13px] sm:text-[15px] font-black uppercase tracking-widest px-2 sm:px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <OnboardStep n={1} done={profileComplete} active={onboardingStep===1} title="Complete your profile" desc="Add your phone, address and emergency contact." cta="Edit Profile" onClick={()=>setProfileOpen(true)} testId="onb-profile" />
@@ -856,24 +856,24 @@ export default function Portal() {
             <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest text-center mb-4">Your Credits</p>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="bg-bgBase rounded p-3">
-                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">Daycare</p>
+                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Daycare</p>
                 <p className="text-3xl font-black text-shGreen mt-1">{credits}</p>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">days</p>
+                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">days</p>
               </div>
               <div className="bg-bgBase rounded p-3">
-                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">Training</p>
+                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Training</p>
                 <p className="text-3xl font-black text-purple-400 mt-1">{client?.training_credits || 0}</p>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">sessions</p>
+                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">sessions</p>
               </div>
               <div className="bg-bgBase rounded p-3">
-                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">Boarding</p>
+                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Boarding</p>
                 <p className="text-3xl font-black text-shOrange mt-1">{client?.boarding_credits || 0}</p>
-                <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">nights</p>
+                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">nights</p>
               </div>
             </div>
-            <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">Grooming is pay-on-the-day</p>
+            <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">Grooming is pay-on-the-day</p>
             <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
-                    className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
+                    className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
               <i className="fas fa-user-pen mr-2"/>My Profile
             </button>
             <button onClick={()=>{
@@ -881,7 +881,7 @@ export default function Portal() {
                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                      }}
                     data-testid="jump-to-bookings"
-                    className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
+                    className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
               <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
             </button>
             <div className="mt-4 pt-4 border-t border-bgHover">
@@ -911,7 +911,7 @@ export default function Portal() {
 
           {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
             <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
-              <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
+              <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
               <div className="grid grid-cols-1 gap-2">
                 {(publicServices.length > 0 || publicPrograms.length > 0) && (
                   <button onClick={()=>setShowServicesModal(true)} data-testid="portal-open-services-btn"
@@ -919,7 +919,7 @@ export default function Portal() {
                     <i className="fas fa-list-check text-shGreen text-2xl w-7 text-center mt-0.5"/>
                     <div className="flex-1 min-w-0">
                       <div className="text-[14px] font-black text-white uppercase tracking-widest">Services & Pricing</div>
-                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">{publicServices.length + publicPrograms.length} services & programs offered · request a quote</p>
+                      <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">{publicServices.length + publicPrograms.length} services & programs offered · request a quote</p>
                     </div>
                     <i className="fas fa-arrow-right text-shGreen group-hover:translate-x-0.5 transition text-xs mt-1"/>
                   </button>
@@ -930,7 +930,7 @@ export default function Portal() {
                     <i className="fas fa-rotate text-shBlue text-2xl w-7 text-center mt-0.5"/>
                     <div className="flex-1 min-w-0">
                       <div className="text-[14px] font-black text-white uppercase tracking-widest">My Recurring Schedules</div>
-                      <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">Set up M/W/F daycare once · extend 12 weeks in one tap</p>
+                      <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">Set up M/W/F daycare once · extend 12 weeks in one tap</p>
                     </div>
                     <i className="fas fa-arrow-right text-shBlue group-hover:translate-x-0.5 transition text-xs mt-1"/>
                   </button>
@@ -951,7 +951,7 @@ export default function Portal() {
                            : "from-shGreen/15 to-shBlue/10 border-shGreen/40 hover:border-shGreen/60"}`}>
                     {client?.photo_gallery_has_new && (
                       <span data-testid="portal-gallery-new-badge"
-                            className="absolute -top-2 -right-2 flex items-center gap-1 bg-shOrange text-bgHeader text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-lg animate-pulse z-10">
+                            className="absolute -top-2 -right-2 flex items-center gap-1 bg-shOrange text-bgHeader text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-lg animate-pulse z-10">
                         <i className="fas fa-bell text-[9px]"/> New
                       </span>
                     )}
@@ -968,9 +968,9 @@ export default function Portal() {
                       <div className="flex-1 min-w-0 text-left">
                         <div className="text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2">
                           See Your Pup In Action
-                          <span className="text-[10px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
+                          <span className="text-[12px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
                         </div>
-                        <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5">
+                        <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">
                           {client?.photo_gallery_has_new
                             ? "Fresh photos just dropped! Browse your private gallery & order prints"
                             : "Browse your private gallery & order high-quality prints"}
@@ -987,7 +987,7 @@ export default function Portal() {
                     <i className="fas fa-gift text-shOrange text-lg w-6 text-center"/>
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-black text-white uppercase tracking-widest">Refer a Friend</p>
-                      <p className="text-[11px] text-gray-500 normal-case tracking-normal">Earn a free daycare day for every referral</p>
+                      <p className="text-[13px] text-gray-500 normal-case tracking-normal">Earn a free daycare day for every referral</p>
                     </div>
                     <i className="fas fa-arrow-right text-gray-500 text-xs"/>
                   </button>
@@ -1000,7 +1000,7 @@ export default function Portal() {
             <h4 className="font-black text-shBlue mb-2 uppercase text-xs tracking-widest">
               <i className="fas fa-calendar-plus mr-2"/>Book a Service
             </h4>
-            <p className="text-[12px] text-gray-500 mb-4 leading-relaxed">
+            <p className="text-[14px] text-gray-500 mb-4 leading-relaxed">
               {dogs.length === 0 ? "Add a dog first to book a service." :
                waiverNeeded ? "Sign the waiver before booking your first service." :
                "Choose a service, pick a date, and we'll take it from there."}
@@ -1018,7 +1018,7 @@ export default function Portal() {
             </button>
             {waiverNeeded && (
               <button onClick={()=>setShowWaiver(true)} data-testid="portal-book-waiver-link"
-                      className="w-full mt-2 text-[12px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
+                      className="w-full mt-2 text-[14px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
                 Sign waiver to enable booking
               </button>
             )}
@@ -1068,7 +1068,7 @@ export default function Portal() {
                       <div className="flex items-center justify-between gap-2 mt-1">
                         <p className="text-[14px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown"}</p>
                         {visits > 0 && (
-                          <span className="shrink-0 bg-shGreen/15 text-shGreen text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" data-testid={`visit-badge-${d.id}`}>
+                          <span className="shrink-0 bg-shGreen/15 text-shGreen text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" data-testid={`visit-badge-${d.id}`}>
                             <i className="fas fa-trophy mr-1"/>{visits}{visits >= 100 ? "+" : ""} {visits === 1 ? "visit" : "visits"}
                           </span>
                         )}
@@ -1078,12 +1078,12 @@ export default function Portal() {
                   </button>
                   {expiringVaccines.length > 0 && (
                     <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-alert-${d.id}`}>
-                      <p className="text-[11px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
+                      <p className="text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
                         <i className="fas fa-shield-virus mr-1"/>{expiringVaccines.length} vaccine{expiringVaccines.length > 1 ? "s" : ""} need updating
                       </p>
                       <button onClick={()=>setVaccineModal({ dog: d, vaccine: expiringVaccines[0] })}
                               data-testid={`vaccine-upload-btn-${d.id}`}
-                              className="shrink-0 text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
+                              className="shrink-0 text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline">
                         Upload <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
@@ -1109,11 +1109,11 @@ export default function Portal() {
             <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4 flex items-center gap-2">
                 <i className="fas fa-trophy text-shOrange"/> Trophy Wall
-                <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
+                <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
               </h2>
               {trophies.client_trophies.length > 0 && (
                 <div className="mb-5">
-                  <div className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
+                  <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
                   <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
                 </div>
               )}
@@ -1122,7 +1122,7 @@ export default function Portal() {
                 if (!mine.length) return null;
                 return (
                   <div key={d.id} className="mb-4 last:mb-0">
-                    <div className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
+                    <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
                     <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
                   </div>
                 );
@@ -1144,7 +1144,7 @@ export default function Portal() {
                           <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
                           <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
                           {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
-                          {hasTemplate && <span className="text-[12px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
+                          {hasTemplate && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
                         </div>
                         <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
                         {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
@@ -1190,7 +1190,7 @@ export default function Portal() {
                   all: bookings.length,
                 };
                 return (
-                  <div className="flex bg-bgPanel border border-bgHover rounded-lg p-1 text-[12px] font-black uppercase tracking-widest" data-testid="bookings-tabs">
+                  <div className="flex bg-bgPanel border border-bgHover rounded-lg p-1 text-[14px] font-black uppercase tracking-widest" data-testid="bookings-tabs">
                     {[
                       { key: "upcoming", label: "Upcoming", color: "shGreen" },
                       { key: "past",     label: "Past",     color: "shBlue"  },
@@ -1203,7 +1203,7 @@ export default function Portal() {
                                 data-testid={`bookings-tab-${t.key}`}
                                 className={`px-3 py-1.5 rounded transition flex items-center gap-1.5 ${active ? "bg-bgBase text-white" : "text-gray-500 hover:text-white"}`}>
                           <span>{t.label}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${active ? "bg-shGreen/20 text-shGreen" : "bg-bgHover text-gray-400"}`}>{counts[t.key]}</span>
+                          <span className={`text-[12px] px-1.5 py-0.5 rounded ${active ? "bg-shGreen/20 text-shGreen" : "bg-bgHover text-gray-400"}`}>{counts[t.key]}</span>
                         </button>
                       );
                     })}
@@ -1238,7 +1238,7 @@ export default function Portal() {
                   <select value={bookingsMonth}
                           onChange={(e)=>setBookingsMonth(e.target.value)}
                           data-testid="bookings-month-filter"
-                          className="bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-white text-[12px] font-black uppercase tracking-widest">
+                          className="bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-white text-[14px] font-black uppercase tracking-widest">
                     <option value="">All months</option>
                     {monthsAvailable.map(m => {
                       const [y, mm] = m.split("-");
@@ -1414,7 +1414,7 @@ export default function Portal() {
             <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover">
               <div className="min-w-0">
                 <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
-                <p className="text-[12px] text-gray-400 truncate">{publicServices.length + publicPrograms.length} offered · tap any tile to request info</p>
+                <p className="text-[14px] text-gray-400 truncate">{publicServices.length + publicPrograms.length} offered · tap any tile to request info</p>
               </div>
               <button onClick={()=>setShowServicesModal(false)} data-testid="services-modal-close"
                       className="shrink-0 text-gray-400 hover:text-white p-2 rounded hover:bg-bgHover transition">
@@ -1423,7 +1423,7 @@ export default function Portal() {
             </div>
             <div className="p-4 sm:p-6">
               <ServicesByCategory services={publicServices} programs={publicPrograms}/>
-              <p className="text-[11px] text-gray-500 mt-5 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
+              <p className="text-[13px] text-gray-500 mt-5 text-center"><i className="fas fa-circle-info text-shBlue mr-1"/>Save on daycare, training & boarding with multi-visit Credit Packs — ask us about current deals.</p>
             </div>
           </div>
         </div>
@@ -1457,7 +1457,7 @@ function OnboardStep({ n, done, active, title, desc, cta, onClick, testId, disab
       </div>
       <p className="text-[14px] text-gray-300 leading-snug mb-3">{desc}</p>
       <button onClick={onClick} disabled={disabled || done} data-testid={testId}
-              className={`w-full py-2 rounded font-black text-[13px] uppercase tracking-widest transition ${done ? "bg-shGreen/20 text-shGreen cursor-default" : disabled ? "bg-bgBase text-gray-600 cursor-not-allowed border border-bgHover" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
+              className={`w-full py-2 rounded font-black text-[15px] uppercase tracking-widest transition ${done ? "bg-shGreen/20 text-shGreen cursor-default" : disabled ? "bg-bgBase text-gray-600 cursor-not-allowed border border-bgHover" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
         {done ? "Complete" : cta}
       </button>
     </div>

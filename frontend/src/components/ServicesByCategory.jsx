@@ -28,18 +28,18 @@ function ServiceTile({ svc, onRequestQuote }) {
         </h3>
         <span className="text-shGreen font-black text-[15px] whitespace-nowrap">${Number(svc.base_price || 0).toFixed(2)}</span>
       </div>
-      {svc.description && <p className="text-[12px] text-gray-300 leading-relaxed flex-1">{svc.description}</p>}
+      {svc.description && <p className="text-[14px] text-gray-300 leading-relaxed flex-1">{svc.description}</p>}
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-bgHover flex-wrap">
         {usesCredits ? (
-          <span className="text-[10px] uppercase tracking-widest font-black text-shBlue">Credit-eligible</span>
+          <span className="text-[12px] uppercase tracking-widest font-black text-shBlue">Credit-eligible</span>
         ) : (
-          <span className="text-[10px] uppercase tracking-widest font-black text-shOrange">Pay-on-the-day</span>
+          <span className="text-[12px] uppercase tracking-widest font-black text-shOrange">Pay-on-the-day</span>
         )}
         <button
           type="button"
           onClick={()=>onRequestQuote({ kind: "service", id: svc.id, name: svc.name, price: svc.base_price })}
           data-testid={`portal-request-quote-${svc.id}`}
-          className="ml-auto text-[10px] uppercase tracking-widest font-black text-shGreen hover:text-white border border-shGreen/40 hover:border-shGreen rounded px-2 py-1 transition"
+          className="ml-auto text-[12px] uppercase tracking-widest font-black text-shGreen hover:text-white border border-shGreen/40 hover:border-shGreen rounded px-2 py-1 transition"
         >
           <i className="fas fa-envelope mr-1"/>Request Info
         </button>
@@ -63,17 +63,17 @@ function ProgramTile({ prog, onRequestQuote }) {
         </span>
       </div>
       {(prog.focus || prog.description) && (
-        <p className="text-[12px] text-gray-300 leading-relaxed flex-1">{prog.focus || prog.description}</p>
+        <p className="text-[14px] text-gray-300 leading-relaxed flex-1">{prog.focus || prog.description}</p>
       )}
       <div className="flex items-center gap-2 mt-3 pt-3 border-t border-bgHover flex-wrap">
-        <span className="text-[10px] uppercase tracking-widest font-black px-2 py-0.5 rounded bg-purple-500/15 text-purple-300">{(prog.type || "").replace("_", " ")}</span>
-        {fmt.count > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-gray-400">{fmt.count} {fmt.unit || "sessions"}</span>}
-        {prog.min_age_months > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-gray-500">{prog.min_age_months}+ mo</span>}
+        <span className="text-[12px] uppercase tracking-widest font-black px-2 py-0.5 rounded bg-purple-500/15 text-purple-300">{(prog.type || "").replace("_", " ")}</span>
+        {fmt.count > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-gray-400">{fmt.count} {fmt.unit || "sessions"}</span>}
+        {prog.min_age_months > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-gray-500">{prog.min_age_months}+ mo</span>}
         <button
           type="button"
           onClick={()=>onRequestQuote({ kind: "program", id: prog.id, name: prog.name, price: prog.price })}
           data-testid={`portal-request-quote-prog-${prog.id}`}
-          className="ml-auto text-[10px] uppercase tracking-widest font-black text-purple-300 hover:text-white border border-purple-400/40 hover:border-purple-400 rounded px-2 py-1 transition"
+          className="ml-auto text-[12px] uppercase tracking-widest font-black text-purple-300 hover:text-white border border-purple-400/40 hover:border-purple-400 rounded px-2 py-1 transition"
         >
           <i className="fas fa-envelope mr-1"/>Request Info
         </button>
@@ -113,11 +113,11 @@ function QuoteRequestModal({ item, onClose, onSent }) {
         ) : (
           <>
             <div className="bg-bgBase rounded p-3 mb-4">
-              <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black">{item.kind === "program" ? "Program" : "Service"}</p>
+              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">{item.kind === "program" ? "Program" : "Service"}</p>
               <p className="text-white font-black text-lg mt-0.5">{item.name}</p>
               {Number(item.price || 0) > 0 && <p className="text-shGreen font-black text-sm mt-1">${Number(item.price).toFixed(2)}</p>}
             </div>
-            <label className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Your question (optional)</label>
+            <label className="text-[14px] uppercase tracking-widest text-gray-500 font-black">Your question (optional)</label>
             <textarea
               value={msg}
               onChange={(e)=>setMsg(e.target.value)}
@@ -127,10 +127,10 @@ function QuoteRequestModal({ item, onClose, onSent }) {
               maxLength={500}
               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shGreen outline-none resize-none"
             />
-            <p className="text-[11px] text-gray-500 mt-1">{msg.length}/500 — we already have your email & phone on file.</p>
+            <p className="text-[13px] text-gray-500 mt-1">{msg.length}/500 — we already have your email & phone on file.</p>
             {err && <div className="bg-red-500/10 text-red-400 rounded p-2 text-sm mt-3">{err}</div>}
             <div className="flex justify-end gap-3 mt-5">
-              <button onClick={onClose} className="text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest">Cancel</button>
+              <button onClick={onClose} className="text-gray-400 hover:text-white text-[15px] font-black uppercase tracking-widest">Cancel</button>
               <button onClick={submit} disabled={busy} data-testid="quote-request-submit"
                       className="bg-shGreen text-bgHeader px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shGreen/90 disabled:opacity-50">
                 {busy ? "Sending…" : "Send Request"}
@@ -157,8 +157,8 @@ function Section({ cat, count, children, defaultOpen }) {
       >
         <div className="flex items-center gap-3 min-w-0">
           <i className={`fas ${cat.icon} text-lg`} style={{ color: cat.color }}/>
-          <span className="text-[13px] font-black uppercase italic tracking-tight text-white truncate">{cat.label}</span>
-          <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">· {count}</span>
+          <span className="text-[15px] font-black uppercase italic tracking-tight text-white truncate">{cat.label}</span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">· {count}</span>
         </div>
         <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"} text-gray-500`}/>
       </button>

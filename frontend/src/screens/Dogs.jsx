@@ -50,12 +50,12 @@ function TagEditor({ tags = [], onChange }) {
   return (
     <div className="mt-1 bg-bgBase border border-bgHover rounded p-2" data-testid="tag-editor">
       <div className="flex flex-wrap gap-2 mb-2">
-        {tags.length === 0 && <span className="text-[12px] text-gray-500 italic">No tags yet — type below and hit Enter.</span>}
+        {tags.length === 0 && <span className="text-[14px] text-gray-500 italic">No tags yet — type below and hit Enter.</span>}
         {tags.map((t) => (
-          <span key={t} className="bg-shBlue/15 text-shBlue px-2 py-1 rounded text-[12px] font-black uppercase tracking-widest flex items-center gap-1.5">
+          <span key={t} className="bg-shBlue/15 text-shBlue px-2 py-1 rounded text-[14px] font-black uppercase tracking-widest flex items-center gap-1.5">
             {t}
             <button type="button" onClick={() => remove(t)} className="hover:text-red-400" data-testid={`remove-tag-${t}`}>
-              <i className="fas fa-times text-[10px]" />
+              <i className="fas fa-times text-[12px]" />
             </button>
           </span>
         ))}
@@ -70,7 +70,7 @@ function TagEditor({ tags = [], onChange }) {
           className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none"
         />
         <button type="button" onClick={add} data-testid="tag-editor-add"
-                className="bg-shBlue/15 text-shBlue px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+                className="bg-shBlue/15 text-shBlue px-3 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/25">
           Add
         </button>
       </div>
@@ -299,7 +299,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                                 className={`${c.bg} rounded p-2 w-full text-left hover:ring-1 hover:ring-white/20 transition`}
                                 data-testid={`dog-program-${d.id}-${e.id}`}
                                 title="Open Training tab">
-                          <div className="flex items-center justify-between text-[13px] font-black uppercase tracking-widest">
+                          <div className="flex items-center justify-between text-[15px] font-black uppercase tracking-widest">
                             <span className={`${c.text} truncate flex items-center gap-2`}>
                               <i className="fas fa-graduation-cap" />
                               <span className="truncate">{pname}</span>
@@ -310,7 +310,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                           <div className="mt-1.5 h-1.5 w-full bg-black/30 rounded overflow-hidden">
                             <div className={`${c.bar} h-full transition-all`} style={{ width: `${pct}%` }} />
                           </div>
-                          <div className="mt-1 text-[11px] text-gray-400 flex justify-between">
+                          <div className="mt-1 text-[13px] text-gray-400 flex justify-between">
                             <span>{e.mastered_goals}/{e.total_goals} goals</span>
                             {e.days_to_target !== null && e.days_to_target !== undefined && (
                               <span className={e.days_to_target < 0 ? "text-red-400" : "text-gray-400"}>
@@ -334,14 +334,14 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                 )}
                 <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`dog-trophy-section-${d.id}`}>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(dogTrophies[d.id]||[]).length}</div>
+                    <div className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(dogTrophies[d.id]||[]).length}</div>
                     <button onClick={()=>setAwardPicker(d)} data-testid={`award-trophy-dog-${d.id}`}
-                            className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
+                            className="text-[13px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
                   </div>
                   {(dogTrophies[d.id]||[]).length > 0 ? (
                     <TrophyWall awards={dogTrophies[d.id]} testIdPrefix={`dog-trophies-${d.id}`}/>
                   ) : (
-                    <p className="text-[11px] text-gray-500 italic">No trophies yet.</p>
+                    <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
                   )}
                 </div>
               </div>
@@ -396,9 +396,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                         <div className="col-span-2">
                           <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Age</label>
                           <div className="w-full mt-1 bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center gap-2">
-                            <i className="fas fa-magic-wand-sparkles text-shGreen text-[12px]"/>
+                            <i className="fas fa-magic-wand-sparkles text-shGreen text-[14px]"/>
                             <span data-testid="dog-age-computed">{dogAgeLabel(form)}</span>
-                            <span className="text-[11px] text-gray-500 ml-auto">auto from birthday</span>
+                            <span className="text-[13px] text-gray-500 ml-auto">auto from birthday</span>
                           </div>
                         </div>
                         <Input label="Birthday" type="date" value={form.birthday} onChange={(v)=>setForm({...form, birthday:v})} />
@@ -420,7 +420,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
                               const iso = guess.toISOString().slice(0,10);
                               setForm({ ...form, birthday: iso });
                             }}
-                            className="text-[12px] text-shBlue hover:text-shGreen underline decoration-dotted font-black uppercase tracking-widest">
+                            className="text-[14px] text-shBlue hover:text-shGreen underline decoration-dotted font-black uppercase tracking-widest">
                       <i className="fas fa-wand-magic-sparkles mr-1"/>Suggest birthday from current age
                     </button>
                   )}
@@ -609,8 +609,8 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 function StatPill({ label, value, color, icon, small = false }) {
   return (
     <div className="bg-bgBase rounded p-2 sm:p-3 border border-bgHover">
-      <p className="text-[10px] sm:text-[15px] text-gray-500 font-black uppercase tracking-widest leading-tight"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
-      <p className={`font-black mt-1 ${color} ${small ? "text-[11px] sm:text-xs" : "text-lg sm:text-xl"}`}>{value}</p>
+      <p className="text-[12px] sm:text-[15px] text-gray-500 font-black uppercase tracking-widest leading-tight"><i className={`fas ${icon} mr-1 ${color}`} />{label}</p>
+      <p className={`font-black mt-1 ${color} ${small ? "text-[13px] sm:text-xs" : "text-lg sm:text-xl"}`}>{value}</p>
     </div>
   );
 }

@@ -639,7 +639,7 @@ export default function Tutorials({ role = "admin" }) {
         </div>
         <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
           <div className="relative w-full sm:w-64">
-            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[13px]" />
+            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[15px]" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -651,13 +651,13 @@ export default function Tutorials({ role = "admin" }) {
           <div className="flex gap-2">
             <button onClick={printCurrent} data-testid="tutorials-print-current"
                     title="Print only the section you're looking at"
-                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/25 flex items-center gap-2">
+                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/25 flex items-center gap-2">
               <i className="fas fa-print" />
               <span className="hidden sm:inline">Print Page</span>
             </button>
             <button onClick={printAll} data-testid="tutorials-print-all"
                     title="Print the full guide (all sections)"
-                    className="bg-shGreen/15 text-shGreen px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/25 flex items-center gap-2">
+                    className="bg-shGreen/15 text-shGreen px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/25 flex items-center gap-2">
               <i className="fas fa-file-pdf" />
               <span className="hidden sm:inline">Print All</span>
             </button>
@@ -672,7 +672,7 @@ export default function Tutorials({ role = "admin" }) {
             key={s.id}
             onClick={() => setOpenId(s.id)}
             data-testid={`tutorial-chip-${s.id}`}
-            className={`px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest border transition ${
+            className={`px-4 py-2 rounded-lg text-[15px] font-black uppercase tracking-widest border transition ${
               openId === s.id
                 ? "bg-bgPanel border-shBlue text-shBlue"
                 : "bg-bgPanel/40 border-bgHover text-gray-400 hover:border-shBlue/40"
@@ -702,10 +702,10 @@ export default function Tutorials({ role = "admin" }) {
                 {s.cards.map((c, i) => (
                   <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
                     <h5 className="text-white font-black uppercase tracking-tight text-[15px] flex items-start gap-2">
-                      <i className={`fas fa-circle-check ${s.color} mt-1 text-[12px]`} />
+                      <i className={`fas fa-circle-check ${s.color} mt-1 text-[14px]`} />
                       <span>{c.title}</span>
                     </h5>
-                    <ol className="mt-3 space-y-2 text-[13px] text-gray-300">
+                    <ol className="mt-3 space-y-2 text-[15px] text-gray-300">
                       {c.steps.map((step, j) => (
                         <li key={j} className="flex gap-3">
                           <span className={`${s.color} font-black flex-shrink-0`}>{j + 1}.</span>
@@ -714,7 +714,7 @@ export default function Tutorials({ role = "admin" }) {
                       ))}
                     </ol>
                     {c.tip && (
-                      <p className="mt-3 text-[12px] text-shOrange bg-shOrange/5 border border-shOrange/20 rounded p-2.5 leading-snug tip-box">
+                      <p className="mt-3 text-[14px] text-shOrange bg-shOrange/5 border border-shOrange/20 rounded p-2.5 leading-snug tip-box">
                         <i className="fas fa-lightbulb mr-1" />
                         <strong className="uppercase tracking-widest">Tip · </strong>
                         {c.tip}

@@ -12,13 +12,13 @@ export default function CollapsibleText({ text, title = "Description", maxChars 
   return (
     <div className={className} data-testid={testid}>
       <div className="flex items-start gap-2">
-        <p className={`text-[13px] text-gray-400 min-w-0 ${open ? "" : "truncate"}`}>{open ? text : (long ? text.slice(0, maxChars).trimEnd() + "…" : text)}</p>
+        <p className={`text-[15px] text-gray-400 min-w-0 ${open ? "" : "truncate"}`}>{open ? text : (long ? text.slice(0, maxChars).trimEnd() + "…" : text)}</p>
         {long && (
           <button
             type="button"
             onClick={(e)=>{ e.stopPropagation(); setOpen(o => !o); }}
             data-testid={testid ? `${testid}-toggle` : undefined}
-            className="shrink-0 text-[10px] font-black uppercase tracking-widest text-shBlue hover:underline whitespace-nowrap"
+            className="shrink-0 text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline whitespace-nowrap"
           >
             <i className={`fas fa-chevron-${open ? "up" : "down"} mr-1`}/>{open ? "Less" : "More"}
           </button>

@@ -87,10 +87,10 @@ export default function RecurringTemplates() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-4xl font-black uppercase italic text-white tracking-tight">Recurring</h1>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-2">Per-dog weekly schedules · roll forward N weeks with one click</p>
+          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-2">Per-dog weekly schedules · roll forward N weeks with one click</p>
         </div>
         <button onClick={openNew} data-testid="new-template-btn"
-                className="bg-shBlue text-white px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
+                className="bg-shBlue text-white px-5 py-2.5 rounded font-black text-[15px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
           <i className="fas fa-plus mr-2"/>New Schedule
         </button>
       </div>
@@ -107,7 +107,7 @@ export default function RecurringTemplates() {
         <div className="bg-bgPanel border border-bgHover rounded-xl p-12 text-center" data-testid="recurring-empty">
           <i className="fas fa-calendar-week text-gray-600 text-4xl mb-3"/>
           <p className="text-white font-black text-[16px] uppercase tracking-widest">No saved schedules yet</p>
-          <p className="text-[13px] text-gray-500 normal-case mt-2 max-w-md mx-auto">Set up a template once for your M/W/F regulars, then extend the next 12 weeks of bookings with a single click.</p>
+          <p className="text-[15px] text-gray-500 normal-case mt-2 max-w-md mx-auto">Set up a template once for your M/W/F regulars, then extend the next 12 weeks of bookings with a single click.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -116,17 +116,17 @@ export default function RecurringTemplates() {
                  className={`bg-bgPanel border border-bgHover rounded-lg p-4 grid grid-cols-12 gap-3 items-center ${!r.active ? "opacity-50" : ""}`}>
               <div className="col-span-12 md:col-span-4 min-w-0">
                 <p className="text-white font-black text-[15px] truncate">{r.label}</p>
-                <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-0.5">{r.client_name || "—"}</p>
+                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-0.5">{r.client_name || "—"}</p>
               </div>
               <div className="col-span-6 md:col-span-3">
                 <div className="flex flex-wrap gap-1">
                   {WD.map((d, i) => (
-                    <span key={i} className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? (r.service_type === "training" ? "bg-purple-500/25 text-purple-300" : "bg-shBlue/25 text-shBlue") : "bg-bgHover text-gray-600"}`}>{d}</span>
+                    <span key={i} className={`text-[12px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? (r.service_type === "training" ? "bg-purple-500/25 text-purple-300" : "bg-shBlue/25 text-shBlue") : "bg-bgHover text-gray-600"}`}>{d}</span>
                   ))}
                 </div>
-                <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-1">{r.service_type} · {r.default_horizon_weeks}w default</p>
+                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">{r.service_type} · {r.default_horizon_weeks}w default</p>
               </div>
-              <div className="col-span-6 md:col-span-3 text-[12px] text-gray-400 font-black uppercase tracking-widest">
+              <div className="col-span-6 md:col-span-3 text-[14px] text-gray-400 font-black uppercase tracking-widest">
                 {r.last_booked_through ? (
                   <span>Booked through <span className="text-white">{r.last_booked_through}</span></span>
                 ) : (
@@ -135,11 +135,11 @@ export default function RecurringTemplates() {
               </div>
               <div className="col-span-12 md:col-span-2 flex md:justify-end gap-2">
                 <button onClick={()=>extend(r)} disabled={busy===r.id || !r.active} data-testid={`extend-btn-${r.id}`}
-                        className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-40">
+                        className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-40">
                   {busy === r.id ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Booking…</> : <><i className="fas fa-forward mr-1"/>Extend</>}
                 </button>
-                <button onClick={()=>openEdit(r)} className="text-shBlue text-[11px] font-black uppercase tracking-widest hover:underline px-1">Edit</button>
-                <button onClick={()=>remove(r)} className="text-red-400 text-[11px] font-black uppercase tracking-widest hover:underline px-1">Delete</button>
+                <button onClick={()=>openEdit(r)} className="text-shBlue text-[13px] font-black uppercase tracking-widest hover:underline px-1">Edit</button>
+                <button onClick={()=>remove(r)} className="text-red-400 text-[13px] font-black uppercase tracking-widest hover:underline px-1">Delete</button>
               </div>
             </div>
           ))}
@@ -155,7 +155,7 @@ export default function RecurringTemplates() {
             </div>
             <div className="space-y-4">
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
                 <select value={form.dog_id} onChange={(e)=>setForm({...form, dog_id: e.target.value})}
                         data-testid="template-dog-select"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
@@ -164,7 +164,7 @@ export default function RecurringTemplates() {
                 </select>
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
                 <select value={form.service_type} onChange={(e)=>setForm({...form, service_type: e.target.value})}
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                   <option value="daycare">Daycare</option>
@@ -172,43 +172,43 @@ export default function RecurringTemplates() {
                 </select>
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
                 <div className="flex gap-1 mt-1.5">
                   {WD.map((d, i) => (
                     <button key={i} type="button" onClick={()=>toggleDay(i)}
                             data-testid={`weekday-${i}`}
-                            className={`flex-1 py-2 rounded text-[11px] font-black uppercase tracking-widest transition ${form.weekdays.includes(i) ? "bg-shBlue text-white" : "bg-bgBase text-gray-500 hover:bg-bgHover"}`}>
+                            className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${form.weekdays.includes(i) ? "bg-shBlue text-white" : "bg-bgBase text-gray-500 hover:bg-bgHover"}`}>
                       {d}
                     </button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Start on</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Start on</label>
                 <input type="date" value={form.start_date}
                        onChange={(e)=>setForm({...form, start_date: e.target.value})}
                        data-testid="template-start-date"
                        style={{colorScheme:"dark"}}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-                <p className="text-[11px] text-gray-500 normal-case mt-1">Leave blank to start today. Useful for "starts next month" patterns. After the first extend, future ones pick up where the last one left off automatically.</p>
+                <p className="text-[13px] text-gray-500 normal-case mt-1">Leave blank to start today. Useful for "starts next month" patterns. After the first extend, future ones pick up where the last one left off automatically.</p>
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Default extend horizon (weeks)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Default extend horizon (weeks)</label>
                 <input type="number" min="1" max="52" value={form.default_horizon_weeks}
                        onChange={(e)=>setForm({...form, default_horizon_weeks: parseInt(e.target.value) || 12})}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
                 <input value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})}
                        placeholder="e.g. half-day, picked up by grandma"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
-              {err && <p className="text-red-400 text-[13px]">{err}</p>}
+              {err && <p className="text-red-400 text-[15px]">{err}</p>}
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+                <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
                 <button onClick={save} data-testid="save-template-btn"
-                        className="bg-shBlue text-white px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90">
+                        className="bg-shBlue text-white px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shBlue/90">
                   {editing ? "Save Changes" : "Create Schedule"}
                 </button>
               </div>

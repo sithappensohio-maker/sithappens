@@ -100,8 +100,8 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
                         <i className={`fas ${t.icon || "fa-paw"}`} />
                       </div>
                       <h4 className="text-white font-black text-[15px] uppercase tracking-tight pr-10">{t.name}</h4>
-                      <p className="text-gray-400 text-[13px] mt-2 leading-snug line-clamp-3">{t.description}</p>
-                      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mt-3"><i className="fas fa-list mr-1"/>{(t.sections || []).length} sections · {t.default_duration_days}d</p>
+                      <p className="text-gray-400 text-[15px] mt-2 leading-snug line-clamp-3">{t.description}</p>
+                      <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mt-3"><i className="fas fa-list mr-1"/>{(t.sections || []).length} sections · {t.default_duration_days}d</p>
                     </button>
                   ))}
                 </div>
@@ -115,7 +115,7 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
                 <div className="flex items-center gap-3 mb-3">
                   <i className={`fas ${selected.icon} text-2xl ${tierMeta(selected.tier).color}`} />
                   <div>
-                    <p className={`text-[11px] font-black uppercase tracking-widest ${tierMeta(selected.tier).color}`}>{tierMeta(selected.tier).label}</p>
+                    <p className={`text-[13px] font-black uppercase tracking-widest ${tierMeta(selected.tier).color}`}>{tierMeta(selected.tier).label}</p>
                     <h4 className="text-white font-black uppercase tracking-tight">{selected.name}</h4>
                   </div>
                 </div>
@@ -125,7 +125,7 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
               {(selected.global_rules_this_week || []).length > 0 && (
                 <div>
                   <p className="text-[14px] font-black uppercase tracking-widest text-shOrange mb-2"><i className="fas fa-triangle-exclamation mr-1"/>House Rules This Week</p>
-                  <ul className="space-y-1.5 text-[13px] text-gray-300">
+                  <ul className="space-y-1.5 text-[15px] text-gray-300">
                     {selected.global_rules_this_week.map((r,i) => <li key={i} className="flex gap-2"><span className="text-shOrange">▸</span><span>{r}</span></li>)}
                   </ul>
                 </div>
@@ -137,8 +137,8 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
                   {(selected.sections || []).map(s => (
                     <details key={s.id} className="bg-bgBase border border-bgHover rounded p-3">
                       <summary className="cursor-pointer text-white font-black text-[14px] uppercase tracking-tight">{s.title}</summary>
-                      <p className="text-[13px] text-gray-300 mt-2 whitespace-pre-wrap">{s.instructions}</p>
-                      <ul className="mt-2 grid grid-cols-2 gap-1 text-[12px] text-gray-400">
+                      <p className="text-[15px] text-gray-300 mt-2 whitespace-pre-wrap">{s.instructions}</p>
+                      <ul className="mt-2 grid grid-cols-2 gap-1 text-[14px] text-gray-400">
                         {(s.fields || []).map(f => (
                           <li key={f.id} className="flex items-center gap-1.5"><i className="fas fa-circle text-[6px] text-shGreen" /><span>{f.label}{f.target ? ` (goal ${f.target})` : ""}</span></li>
                         ))}
@@ -177,11 +177,11 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
                 <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Due date (optional)</label>
                 <input type="date" value={dueDate} onChange={(e)=>setDueDate(e.target.value)} data-testid="template-due-date"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
-                <p className="text-[11px] text-gray-500 mt-1">Defaults to today + {selected.default_duration_days} days.</p>
+                <p className="text-[13px] text-gray-500 mt-1">Defaults to today + {selected.default_duration_days} days.</p>
               </div>
-              {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
+              {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
               <div className="flex gap-2">
-                <button onClick={()=>setSelected(null)} className="text-gray-400 px-4 py-3 font-black uppercase text-[13px] tracking-widest">← Back</button>
+                <button onClick={()=>setSelected(null)} className="text-gray-400 px-4 py-3 font-black uppercase text-[15px] tracking-widest">← Back</button>
                 <button onClick={assign} disabled={busy} data-testid="template-assign-button"
                         className="flex-1 bg-shGreen text-black px-5 py-3 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
                   {busy ? "Assigning…" : "Assign to dog"}

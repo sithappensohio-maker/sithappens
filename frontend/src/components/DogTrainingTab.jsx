@@ -76,18 +76,18 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 
   return (
     <div className="space-y-4" data-testid="dog-training-tab">
-      {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+      {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
       {/* Enroll dropdown */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
+        <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
         <div className="flex gap-2">
           <button onClick={()=>setEnrollOpen(true)} data-testid="enroll-btn"
-                  className="bg-shBlue text-white px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
+                  className="bg-shBlue text-white px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-graduation-cap mr-1"/>Enroll
           </button>
           <button onClick={()=>setCustomOpen(true)} data-testid="custom-btn"
-                  className="bg-pink-500/15 text-pink-300 border border-pink-500/50 px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest">
+                  className="bg-pink-500/15 text-pink-300 border border-pink-500/50 px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest">
             <i className="fas fa-wand-magic-sparkles mr-1"/>Custom
           </button>
         </div>
@@ -113,18 +113,18 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
       {/* History */}
       {history.length > 0 && (
         <details className="bg-bgBase/40 border border-bgHover rounded p-3" data-testid="enrollment-history">
-          <summary className="cursor-pointer text-[13px] font-black uppercase tracking-widest text-shBlue">History · {history.length}</summary>
+          <summary className="cursor-pointer text-[15px] font-black uppercase tracking-widest text-shBlue">History · {history.length}</summary>
           <div className="mt-3 space-y-2">
             {history.map(h => (
               <div key={h.id} className="bg-bgPanel rounded p-3 border border-bgHover">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-black text-white">{h.program_snapshot.name}</p>
-                    <p className="text-[13px] text-gray-500">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
+                    <p className="text-[15px] text-gray-500">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
                   </div>
                   {h.status !== "active" && (
                     <button onClick={()=>updateStatus(h.id, "active")} data-testid={`resume-${h.id}`}
-                            className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-white">Resume</button>
+                            className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:text-white">Resume</button>
                   )}
                 </div>
               </div>
@@ -162,16 +162,16 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
           <ProgressRing percent={enrollment.mastered_pct} size={64} stroke={6} color={color}
                         label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
           <div className="flex-1 min-w-0">
-            <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+            <p className="text-[13px] sm:text-[14px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
             <p className="text-sm sm:text-base font-black text-white truncate">{snap.name}</p>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
             <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
-                    className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[11px] sm:text-[12px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
+                    className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
             <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
-                    className="text-gray-400 hover:text-white text-[11px] sm:text-[12px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
+                    className="text-gray-400 hover:text-white text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
             <button onClick={onUnenroll} data-testid={`unenroll-${enrollment.id}`}
-                    className="text-red-400 hover:text-red-300 text-[11px] sm:text-[12px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
+                    className="text-red-400 hover:text-red-300 text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
           </div>
         </div>
         {snap.focus && (
@@ -179,15 +179,15 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
                            testid={`enrollment-focus-${enrollment.id}`} />
         )}
         <div className="flex items-center gap-2 flex-wrap mt-2">
-          <p className="text-[11px] sm:text-[12px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
+          <p className="text-[13px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
           {editTarget ? (
             <input type="date" defaultValue={enrollment.target_completion_date||""}
                    onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
                    data-testid={`target-date-input-${enrollment.id}`}
-                   className="bg-bgPanel border border-bgHover rounded px-1 text-[12px] text-white" style={{colorScheme:"dark"}} autoFocus />
+                   className="bg-bgPanel border border-bgHover rounded px-1 text-[14px] text-white" style={{colorScheme:"dark"}} autoFocus />
           ) : (
             <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
-                    className={`text-[11px] sm:text-[12px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
+                    className={`text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
               <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
             </button>
           )}
@@ -197,7 +197,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
       <div className="divide-y divide-bgHover">
         {snap.modules.map(m => (
           <div key={m.id} className="px-4 py-3">
-            <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-2">{m.name}</p>
+            <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2">{m.name}</p>
             <div className="space-y-1">
               {m.goals.map(g => {
                 const p = enrollment.goal_progress?.[g.id] || { score: 0, status: "not_started", notes: "" };
@@ -223,14 +223,14 @@ function GoalRow({ goal, progress, onChange }) {
     <div className="bg-bgPanel rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-black text-white">{goal.name} {isManual && <span className="text-[10px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
-          {goal.description && <p className="text-[12px] text-gray-500">{goal.description}</p>}
+          <p className="text-[14px] font-black text-white">{goal.name} {isManual && <span className="text-[12px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
+          {goal.description && <p className="text-[14px] text-gray-500">{goal.description}</p>}
         </div>
         <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
           {isManual ? (
             <button onClick={()=>onChange({ score: isDone ? 0 : 5, status: isDone ? "not_started" : "mastered" })}
                     data-testid={`goal-toggle-${goal.id}`}
-                    className={`px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
+                    className={`px-3 py-1 rounded text-[14px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
               <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
             </button>
           ) : (
@@ -238,7 +238,7 @@ function GoalRow({ goal, progress, onChange }) {
               {[0,1,2,3,4,5].map(n => (
                 <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
                         title={labels[n]}
-                        className={`w-8 h-8 sm:w-6 sm:h-6 text-[13px] sm:text-[12px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
+                        className={`w-8 h-8 sm:w-6 sm:h-6 text-[15px] sm:text-[14px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
                         style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
               ))}
             </div>
@@ -252,10 +252,10 @@ function GoalRow({ goal, progress, onChange }) {
                  onBlur={()=>{ if (note !== progress.notes) onChange({ notes: note }); setOpenNote(false); }}
                  onKeyDown={(e)=>{ if (e.key === "Enter") { onChange({ notes: note }); setOpenNote(false); } }}
                  placeholder="Trainer note for this goal"
-                 className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-[13px] text-white" autoFocus />
+                 className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-white" autoFocus />
         </div>
       )}
-      {!openNote && progress.notes && <p className="text-[12px] text-gray-400 italic mt-1 pl-1">"{progress.notes}"</p>}
+      {!openNote && progress.notes && <p className="text-[14px] text-gray-400 italic mt-1 pl-1">"{progress.notes}"</p>}
     </div>
   );
 }
@@ -272,7 +272,7 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
         <div className="overflow-y-auto flex-1 p-4 space-y-4">
           {grouped.filter(g => g.items.length > 0).map(g => (
             <div key={g.key}>
-              <p className="text-[13px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>
+              <p className="text-[15px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>
               <div className="space-y-2">
                 {g.items.map(p => {
                   const tooYoung = dogAgeMonths > 0 && p.min_age_months > dogAgeMonths;
@@ -282,13 +282,13 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-black text-white">{p.name}</p>
-                          <p className="text-[13px] text-gray-400 mt-0.5">{p.focus}</p>
-                          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                          <p className="text-[15px] text-gray-400 mt-0.5">{p.focus}</p>
+                          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">
                             {p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}
                           </p>
                         </div>
                         {tooYoung && (
-                          <span className="shrink-0 text-[12px] font-black uppercase tracking-widest text-shOrange px-2 py-1 bg-shOrange/15 rounded">
+                          <span className="shrink-0 text-[14px] font-black uppercase tracking-widest text-shOrange px-2 py-1 bg-shOrange/15 rounded">
                             <i className="fas fa-triangle-exclamation mr-1"/>Under {p.min_age_months}mo
                           </span>
                         )}

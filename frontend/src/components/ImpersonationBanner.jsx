@@ -11,14 +11,14 @@ export default function ImpersonationBanner() {
   const meta = getImpersonationMeta() || {};
   return (
     <div className="sticky top-0 z-[100] bg-yellow-500 text-black px-4 py-2 flex items-center justify-between gap-3 shadow-lg" data-testid="impersonation-banner">
-      <div className="flex items-center gap-2 text-[12px] sm:text-[13px] font-black uppercase tracking-widest min-w-0">
+      <div className="flex items-center gap-2 text-[14px] sm:text-[15px] font-black uppercase tracking-widest min-w-0">
         <i className="fas fa-user-shield shrink-0"/>
         <span className="truncate">Viewing portal as <span className="underline">{meta.client_name || "client"}</span> · read-only preview</span>
       </div>
       <button
         onClick={endImpersonation}
         data-testid="end-impersonation-btn"
-        className="shrink-0 bg-black/15 hover:bg-black/30 text-black font-black uppercase tracking-widest text-[11px] sm:text-[12px] px-3 py-1.5 rounded transition"
+        className="shrink-0 bg-black/15 hover:bg-black/30 text-black font-black uppercase tracking-widest text-[13px] sm:text-[14px] px-3 py-1.5 rounded transition"
       >
         <i className="fas fa-arrow-left mr-1"/>Return to Admin
       </button>

@@ -69,24 +69,24 @@ export default function ServicesSettings() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services & Programs Catalog</h4>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
+          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
         </div>
         <div className="flex gap-2">
           {services.length === 0 && (
             <button onClick={seedAll} data-testid="seed-services-btn"
-                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/25">
               <i className="fas fa-magic-wand-sparkles mr-1"/>Seed Standard 7
             </button>
           )}
           <button onClick={openNew} data-testid="new-service-btn"
-                  className="bg-shGreen text-black px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80">
+                  className="bg-shGreen text-black px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
             + New Service
           </button>
         </div>
       </div>
 
       {services.length === 0 && (
-        <div className="bg-bgBase border border-bgHover rounded-lg p-8 text-center text-[13px] text-gray-500 uppercase font-black tracking-widest">
+        <div className="bg-bgBase border border-bgHover rounded-lg p-8 text-center text-[15px] text-gray-500 uppercase font-black tracking-widest">
           No services yet — seed the standard 7 or add your own.
         </div>
       )}
@@ -99,7 +99,7 @@ export default function ServicesSettings() {
             <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: `linear-gradient(90deg, ${cat.color}1f, transparent 60%)` }}>
               <i className={`fas ${cat.icon}`} style={{ color: cat.color }}/>
               <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">{cat.label}</h5>
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">· {list.length}</span>
+              <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">· {list.length}</span>
             </div>
             <div className="divide-y divide-bgHover/40">
               {list.map(s => (
@@ -109,11 +109,11 @@ export default function ServicesSettings() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-black text-[14px] tracking-tight truncate">{s.name}</p>
-                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{s.is_default ? "default" : "custom"}{!s.active ? " · inactive" : ""}</p>
+                    <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">{s.is_default ? "default" : "custom"}{!s.active ? " · inactive" : ""}</p>
                   </div>
                   <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${s.base_price?.toFixed(2)}</p>
-                  <button onClick={()=>openEdit(s)} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
-                  <button onClick={()=>remove(s)} className="text-red-400 text-[12px] font-black uppercase tracking-widest hover:underline px-2">Remove</button>
+                  <button onClick={()=>openEdit(s)} className="text-shBlue text-[14px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
+                  <button onClick={()=>remove(s)} className="text-red-400 text-[14px] font-black uppercase tracking-widest hover:underline px-2">Remove</button>
                 </div>
               ))}
             </div>
@@ -137,17 +137,17 @@ export default function ServicesSettings() {
             <div className="p-5" data-testid="service-form-panel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Name</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Name</label>
                   <input value={form.name} onChange={(e)=>setForm({...form, name:e.target.value})} placeholder="e.g., Private Behavioral Consultation" data-testid="service-name-input"
                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
                 </div>
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Base price (USD)</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Base price (USD)</label>
                   <input type="number" step="0.01" value={form.base_price} onChange={(e)=>setForm({...form, base_price: parseFloat(e.target.value) || 0})} data-testid="service-price-input"
                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
                 </div>
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Category</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Category</label>
                   <select value={form.service_type} onChange={(e)=>{
                              const t = e.target.value;
                              const meta = SERVICE_TYPES.find(x=>x.key===t);
@@ -159,20 +159,20 @@ export default function ServicesSettings() {
                 </div>
                 {["training","grooming","photography"].includes(form.service_type) && (
                   <div>
-                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
+                    <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
                     <input type="number" min="15" step="15" value={form.duration_minutes ?? 60}
                            onChange={(e)=>setForm({...form, duration_minutes: parseInt(e.target.value) || 60})}
                            data-testid="service-duration-input"
                            className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-                    <p className="text-[11px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule when booked. Other time-slotted services can't book overlapping times.</p>
+                    <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule when booked. Other time-slotted services can't book overlapping times.</p>
                   </div>
                 )}
                 <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
                   <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Color</label>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Color</label>
                   <div className="mt-2">
                     <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="service-color-row" />
                   </div>
@@ -180,7 +180,7 @@ export default function ServicesSettings() {
               </div>
               {/* Live preview — exactly how this row will render in the catalog. */}
               <div className="mt-4">
-                <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
+                <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
                 <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="service-preview">
                   <div className="w-10 h-10 rounded grid place-items-center shrink-0"
                        style={{ backgroundColor: `${form.color || "#64748b"}20`, color: form.color || "#64748b" }}>
@@ -188,16 +188,16 @@ export default function ServicesSettings() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled service"}</p>
-                    <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{form.service_type}</p>
+                    <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{form.service_type}</p>
                   </div>
                   <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.base_price || 0).toFixed(2)}</p>
                 </div>
               </div>
-              {err && <p className="text-red-400 text-[13px] mt-2">{err}</p>}
+              {err && <p className="text-red-400 text-[15px] mt-2">{err}</p>}
               <div className="flex justify-end gap-2 mt-4">
-                <button onClick={closeModal} className="text-gray-400 text-[12px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>
+                <button onClick={closeModal} className="text-gray-400 text-[14px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>
                 <button onClick={save} data-testid="save-service-btn"
-                        className="bg-shGreen text-black px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80">
+                        className="bg-shGreen text-black px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shGreen/80">
                   {editing ? "Save Changes" : "Add Service"}
                 </button>
               </div>
@@ -205,14 +205,14 @@ export default function ServicesSettings() {
           </div>
         </div>
       )}
-      {seeded && <p className="text-shGreen text-[12px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
+      {seeded && <p className="text-shGreen text-[14px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
 
       {/* Training Programs — surfaced as a sixth category inside the unified catalog. */}
       <div className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid="services-category-programs">
         <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: "linear-gradient(90deg, #a855f71f, transparent 60%)" }}>
           <i className="fas fa-list-check" style={{ color: "#a855f7" }}/>
           <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">Training Programs</h5>
-          <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals & sessions</span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals & sessions</span>
         </div>
         <div className="p-4">
           <ProgramsPanel />

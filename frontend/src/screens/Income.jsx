@@ -168,7 +168,7 @@ export default function Income() {
       {editErr && (
         <div className="fixed top-4 right-4 z-[70] bg-red-500/95 text-white px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 animate-slide-in" data-testid="income-edit-err">
           <i className="fas fa-exclamation-triangle"/>
-          <span className="text-[13px] font-bold">{editErr}</span>
+          <span className="text-[15px] font-bold">{editErr}</span>
           <button onClick={()=>setEditErr("")} className="ml-2 text-white/80 hover:text-white"><i className="fas fa-times"/></button>
         </div>
       )}
@@ -179,11 +179,11 @@ export default function Income() {
         </div>
         <div className="flex gap-2">
           <button onClick={exportCSV} data-testid="income-export-csv"
-                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">
+                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
             <i className="fas fa-file-csv mr-1"/>Export CSV
           </button>
           <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
-                  className="bg-shGreen text-black px-5 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80">
+                  className="bg-shGreen text-black px-5 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
             <i className="fas fa-plus mr-1"/>Log Service
           </button>
         </div>
@@ -194,22 +194,22 @@ export default function Income() {
         <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
-              <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">This Week (Mon–Sun)</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">This Week (Mon–Sun)</p>
               <p className="text-white font-black uppercase italic tracking-tight">{summary.week_start} → {summary.week_end}</p>
             </div>
             <div className="flex gap-2 items-center">
               <button onClick={()=>setRefDate(new Date(new Date(refDate).getTime() - 7*86400000).toISOString().split("T")[0])}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[12px] font-black hover:border-shBlue">
+                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
                 <i className="fas fa-chevron-left"/>
               </button>
               <input type="date" value={refDate} onChange={(e)=>setRefDate(e.target.value)} style={{colorScheme:"dark"}}
                      className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" data-testid="weekly-ref-date" />
               <button onClick={()=>setRefDate(new Date(new Date(refDate).getTime() + 7*86400000).toISOString().split("T")[0])}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[12px] font-black hover:border-shBlue">
+                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
                 <i className="fas fa-chevron-right"/>
               </button>
               <button onClick={()=>setRefDate(todayISO())}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-shBlue text-[12px] font-black uppercase tracking-widest hover:border-shBlue">
+                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-shBlue text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
                 Today
               </button>
             </div>
@@ -222,10 +222,10 @@ export default function Income() {
           </div>
           {summary.by_service?.length > 0 && (
             <div className="mt-4">
-              <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-2">Breakdown by service</p>
+              <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mb-2">Breakdown by service</p>
               <div className="flex flex-wrap gap-2">
                 {summary.by_service.map(b => (
-                  <span key={b.name} className="bg-bgBase border border-bgHover rounded px-3 py-1.5 text-[12px]">
+                  <span key={b.name} className="bg-bgBase border border-bgHover rounded px-3 py-1.5 text-[14px]">
                     <span className="text-gray-300">{b.name}</span>
                     <span className="text-gray-500 mx-1">·</span>
                     <span className="text-white font-black">{fmt(b.total)}</span>
@@ -243,13 +243,13 @@ export default function Income() {
         <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
-              <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Longer-Range View</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">Longer-Range View</p>
               <p className="text-white font-black uppercase italic tracking-tight">{rangeStart} → {rangeEnd}</p>
             </div>
             <div className="flex flex-wrap gap-1">
               {["month","quarter","ytd","custom"].map(k => (
                 <button key={k} onClick={()=>setRangePreset(k)} data-testid={`range-preset-${k}`}
-                        className={`px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest ${rangePreset===k?"bg-shBlue text-white":"bg-bgBase text-gray-400 border border-bgHover hover:border-shBlue"}`}>
+                        className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${rangePreset===k?"bg-shBlue text-white":"bg-bgBase text-gray-400 border border-bgHover hover:border-shBlue"}`}>
                   {k === "ytd" ? "YTD" : k}
                 </button>
               ))}
@@ -279,23 +279,23 @@ export default function Income() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-red-300 uppercase tracking-widest"><i className="fas fa-receipt mr-2"/>Expenses</h4>
-            <p className="text-[12px] text-gray-500 mt-1">Logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · subtracted from gross to show NET above.</p>
+            <p className="text-[14px] text-gray-500 mt-1">Logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · subtracted from gross to show NET above.</p>
           </div>
           <button onClick={()=>{ setExpEditing(null); setExpOpen(true); }} data-testid="expense-add-btn"
-                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30">
+                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30">
             <i className="fas fa-plus mr-1.5"/>Add Expense
           </button>
         </div>
         {expenses.length === 0 ? (
-          <div className="text-center py-6 text-gray-500 text-[13px]">
+          <div className="text-center py-6 text-gray-500 text-[15px]">
             <i className="fas fa-receipt text-2xl mb-2 block opacity-40"/>
             No expenses logged in this range.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table className="w-full text-[15px]">
               <thead>
-                <tr className="text-[11px] text-gray-500 uppercase tracking-widest border-b border-bgHover">
+                <tr className="text-[13px] text-gray-500 uppercase tracking-widest border-b border-bgHover">
                   <th className="text-left py-2 pr-3">Date</th>
                   <th className="text-left py-2 pr-3">What</th>
                   <th className="text-left py-2 pr-3">Category</th>
@@ -313,10 +313,10 @@ export default function Income() {
                     <td className="py-2 pr-3 text-gray-500 capitalize">{e.payment_method || "—"}</td>
                     <td className="py-2 pr-3 text-right text-red-300 font-black">−{fmt(e.amount)}</td>
                     <td className="py-2 text-right">
-                      <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[11px] text-gray-400 hover:text-shBlue mr-3" data-testid={`expense-edit-${e.id}`}>
+                      <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[13px] text-gray-400 hover:text-shBlue mr-3" data-testid={`expense-edit-${e.id}`}>
                         <i className="fas fa-pen"/>
                       </button>
-                      <button onClick={()=>removeExpense(e)} className="text-[11px] text-gray-400 hover:text-red-400" data-testid={`expense-delete-${e.id}`}>
+                      <button onClick={()=>removeExpense(e)} className="text-[13px] text-gray-400 hover:text-red-400" data-testid={`expense-delete-${e.id}`}>
                         <i className="fas fa-trash"/>
                       </button>
                     </td>
@@ -362,7 +362,7 @@ export default function Income() {
           <option value="approved">Approved</option>
           <option value="completed">Completed</option>
         </select>
-        <label className="flex items-center gap-2 text-[12px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shBlue">
+        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shBlue">
           <input type="checkbox" checked={showLegacy} onChange={(e)=>setShowLegacy(e.target.checked)} data-testid="show-legacy-toggle"
                  className="w-4 h-4 accent-shBlue" />
           Include unpriced
@@ -372,8 +372,8 @@ export default function Income() {
       {/* Spreadsheet table */}
       <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="income-table">
         <div className="overflow-x-auto">
-          <table className="w-full text-[13px]">
-            <thead className="bg-bgBase border-b border-bgHover text-[11px] font-black uppercase tracking-widest text-gray-500">
+          <table className="w-full text-[15px]">
+            <thead className="bg-bgBase border-b border-bgHover text-[13px] font-black uppercase tracking-widest text-gray-500">
               <tr>
                 <th className="px-3 py-2 text-left">Date</th>
                 <th className="px-3 py-2 text-left">Dog · Client</th>
@@ -387,7 +387,7 @@ export default function Income() {
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan="8" className="text-center text-gray-500 text-[12px] uppercase font-black tracking-widest py-10">No transactions match these filters.</td></tr>
+                <tr><td colSpan="8" className="text-center text-gray-500 text-[14px] uppercase font-black tracking-widest py-10">No transactions match these filters.</td></tr>
               )}
               {filtered.map(r => {
                 const ps = PAYMENT_STATUSES.find(p => p.key === r.payment_status);
@@ -396,16 +396,16 @@ export default function Income() {
                     <td className="px-3 py-2 text-gray-300">{r.date}</td>
                     <td className="px-3 py-2">
                       <p className="text-white font-black">{r.dog_name}</p>
-                      <p className="text-[11px] text-gray-500">{r.client_name}</p>
+                      <p className="text-[13px] text-gray-500">{r.client_name}</p>
                     </td>
                     <td className="px-3 py-2">
                       <select value={r.service_id || ""} onChange={(e)=>{ if (e.target.value) inlineUpdate(r, { service_id: e.target.value }); }}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[12px] text-gray-300 max-w-[150px]">
+                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 max-w-[150px]">
                         <option value="" disabled>— select service —</option>
                         {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                       {!r.service_id && r.service_type && (
-                        <p className="text-[10px] text-gray-500 mt-0.5 uppercase">legacy · {r.service_type}</p>
+                        <p className="text-[12px] text-gray-500 mt-0.5 uppercase">legacy · {r.service_type}</p>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -415,30 +415,30 @@ export default function Income() {
                                if (v !== (r.actual_price || 0)) inlineUpdate(r, { actual_price: v });
                              }}
                              data-testid={`txn-price-${r.id}`}
-                             className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[13px]" />
+                             className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[15px]" />
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shGreen/15 text-shGreen":r.status==="approved"?"bg-shBlue/15 text-shBlue":"bg-shOrange/15 text-shOrange"}`}>{r.status}</span>
+                      <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shGreen/15 text-shGreen":r.status==="approved"?"bg-shBlue/15 text-shBlue":"bg-shOrange/15 text-shOrange"}`}>{r.status}</span>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <select value={r.payment_status || ""} onChange={(e)=>inlineUpdate(r, { payment_status: e.target.value })}
                               data-testid={`txn-payment-${r.id}`}
-                              className={`text-[11px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-bgBase text-gray-400"} border border-bgHover`}>
+                              className={`text-[13px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-bgBase text-gray-400"} border border-bgHover`}>
                         <option value="">— set —</option>
                         {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <select value={r.payment_method || ""} onChange={(e)=>inlineUpdate(r, { payment_method: e.target.value })}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[12px] text-gray-300">
+                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300">
                         <option value="">—</option>
                         {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-gray-400 text-[12px]"/> : (
+                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-gray-400 text-[14px]"/> : (
                         <button onClick={()=>removeTxn(r)} className="text-gray-500 hover:text-red-400 px-2" title="Remove transaction">
-                          <i className="fas fa-trash text-[12px]"/>
+                          <i className="fas fa-trash text-[14px]"/>
                         </button>
                       )}
                     </td>
@@ -449,7 +449,7 @@ export default function Income() {
             {filtered.length > 0 && (
               <tfoot className="bg-bgBase border-t border-bgHover">
                 <tr>
-                  <td colSpan="3" className="px-3 py-2 text-[11px] font-black uppercase tracking-widest text-gray-500">{filtered.length} rows</td>
+                  <td colSpan="3" className="px-3 py-2 text-[13px] font-black uppercase tracking-widest text-gray-500">{filtered.length} rows</td>
                   <td className="px-3 py-2 text-right text-shGreen font-black text-[15px]">
                     {fmt(filtered.reduce((sum, r) => sum + (Number(r.actual_price) || 0), 0))}
                   </td>
@@ -481,7 +481,7 @@ function DailyBarChart({ points }) {
           );
         })}
       </div>
-      <div className="flex justify-between mt-2 text-[10px] text-gray-500 font-black uppercase tracking-widest">
+      <div className="flex justify-between mt-2 text-[12px] text-gray-500 font-black uppercase tracking-widest">
         <span>{points[0]?.date}</span>
         <span>{points.length} days w/ revenue</span>
         <span>{points[points.length - 1]?.date}</span>
@@ -492,9 +492,9 @@ function DailyBarChart({ points }) {
 
 function StatTile({ label, value, sub, color, icon, big = false }) {  return (
     <div className={`bg-bgBase border border-bgHover rounded-lg p-3 ${big ? "md:col-span-1" : ""}`}>
-      <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
+      <p className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
       <p className={`${big ? "text-[24px]" : "text-[18px]"} font-black ${color} mt-1`}>{value}</p>
-      {sub && <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-0.5">{sub}</p>}
+      {sub && <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -542,7 +542,7 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
         <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-4">Log a Service</h4>
         <div className="space-y-3">
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
             <div className="relative">
               <input value={dogQuery || selectedDog?.name || ""} onChange={(e)=>{setDogQuery(e.target.value); setForm({...form, dog_id: ""});}}
                      placeholder="Type to search…" data-testid="log-dog-search"
@@ -552,8 +552,8 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
                   {dogResults.map(d => (
                     <button key={d.id} onClick={()=>{setForm({...form, dog_id: d.id}); setDogQuery("");}}
                             data-testid={`log-dog-pick-${d.id}`}
-                            className="w-full text-left px-3 py-2 hover:bg-bgHover text-white text-[13px]">
-                      <span className="font-black">{d.name}</span> <span className="text-gray-500 text-[11px]">· {d.breed || "Unknown"}</span>
+                            className="w-full text-left px-3 py-2 hover:bg-bgHover text-white text-[15px]">
+                      <span className="font-black">{d.name}</span> <span className="text-gray-500 text-[13px]">· {d.breed || "Unknown"}</span>
                     </button>
                   ))}
                 </div>
@@ -561,7 +561,7 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
             </div>
           </div>
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
             <select value={form.service_id} onChange={(e)=>onServiceChange(e.target.value)} data-testid="log-service-select"
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
               {services.map(s => <option key={s.id} value={s.id}>{s.name} · ${s.base_price?.toFixed(2)}</option>)}
@@ -569,20 +569,20 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Price (override)</label>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Price (override)</label>
               <input type="number" step="0.01" value={form.actual_price} onChange={(e)=>setForm({...form, actual_price: parseFloat(e.target.value) || 0})}
                      data-testid="log-price-input"
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-shGreen font-black text-sm" />
             </div>
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Date</label>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Date</label>
               <input type="date" value={form.date} onChange={(e)=>setForm({...form, date: e.target.value})}
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Status</label>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Status</label>
               <select value={form.status} onChange={(e)=>setForm({...form, status: e.target.value})}
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 <option value="completed">Completed</option>
@@ -591,14 +591,14 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
               </select>
             </div>
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Payment</label>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Payment</label>
               <select value={form.payment_status} onChange={(e)=>setForm({...form, payment_status: e.target.value})}
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Method</label>
+              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Method</label>
               <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method: e.target.value})}
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
@@ -606,15 +606,15 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
             </div>
           </div>
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes</label>
             <textarea value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})} rows={2}
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
           </div>
-          {err && <p className="text-red-400 text-[13px]">{err}</p>}
+          {err && <p className="text-red-400 text-[15px]">{err}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[15px] tracking-widest">Cancel</button>
             <button onClick={save} disabled={busy || !form.dog_id || !form.service_id} data-testid="log-save-btn"
-                    className="bg-shGreen text-black px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
+                    className="bg-shGreen text-black px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
               {busy ? "Saving…" : "Log Service"}
             </button>
           </div>
@@ -673,19 +673,19 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
             <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} style={{colorScheme:"dark"}}
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
             <input type="number" step="0.01" min="0" value={form.amount} onChange={(e)=>setForm({...form, amount:e.target.value})}
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-amount" />
           </div>
         </div>
 
         <div>
-          <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">What was it</label>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">What was it</label>
           <input type="text" value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})}
                  placeholder="e.g., 40lb kibble bag, vet supplies, paper towels"
                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-description" />
@@ -693,7 +693,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Category</label>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Category</label>
             <input type="text" value={form.category} onChange={(e)=>setForm({...form, category:e.target.value})}
                    list="expense-categories" placeholder="e.g., Food, Supplies, Utilities"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-category" />
@@ -702,7 +702,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
             </datalist>
           </div>
           <div>
-            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
               <option value="card">Card</option>
@@ -715,15 +715,15 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
         </div>
 
         <div>
-          <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
         </div>
 
         <div className="flex gap-2 justify-end pt-2">
-          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
           <button onClick={save} disabled={busy} data-testid="expense-save"
-                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-5 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-50">
+                  className="bg-red-500/20 text-red-300 border border-red-500/40 px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-50">
             {busy ? "Saving…" : (isEdit ? "Save changes" : "Add expense")}
           </button>
         </div>

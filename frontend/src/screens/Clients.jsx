@@ -221,20 +221,20 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
               {c.address && <p><i className="fas fa-map-marker-alt w-4 text-shBlue" /> {c.address}</p>}
             </div>
             <div className="mt-3 border-t border-bgHover pt-3" data-testid={`client-dogs-${c.id}`}>
-              <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest flex items-center gap-2">
+              <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest flex items-center gap-2">
                 <i className="fas fa-paw text-shGreen" /> Dogs · {(c.dogs || []).length}
               </p>
               {(c.dogs || []).length === 0 ? (
-                <p className="text-[12px] text-gray-600 italic mt-1">No dogs on file</p>
+                <p className="text-[14px] text-gray-600 italic mt-1">No dogs on file</p>
               ) : (
-                <ul className="mt-1 text-[13px] text-white space-y-0.5">
+                <ul className="mt-1 text-[15px] text-white space-y-0.5">
                   {c.dogs.map(d => (
                     <li key={d.id} data-testid={`client-dog-${d.id}`}>
                       <button onClick={()=>onJumpToDog(d.id)} data-testid={`jump-to-dog-${d.id}`}
                               className="flex items-baseline gap-2 text-left hover:text-shBlue transition group">
                         <span className="font-black uppercase tracking-tight group-hover:underline">{d.name}</span>
-                        {d.breed && <span className="text-gray-500 text-[12px]">· {d.breed}</span>}
-                        <i className="fas fa-arrow-right text-[10px] text-shBlue opacity-0 group-hover:opacity-100 transition" />
+                        {d.breed && <span className="text-gray-500 text-[14px]">· {d.breed}</span>}
+                        <i className="fas fa-arrow-right text-[12px] text-shBlue opacity-0 group-hover:opacity-100 transition" />
                       </button>
                     </li>
                   ))}
@@ -243,22 +243,22 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             </div>
             <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-bgHover pt-3">
               <div>
-                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
                 <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{c.credits || 0}</p>
               </div>
               <div>
-                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Training</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Training</p>
                 <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{c.training_credits || 0}</p>
               </div>
               <div>
-                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
                 <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{c.boarding_credits || 0}</p>
               </div>
               <div className="text-right">
-                <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
+                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
                 {c.portal_email && (
-                  <p className={`text-[11px] font-black uppercase tracking-widest mt-1 ${lastLoginColor(c.last_login_at)}`}
+                  <p className={`text-[13px] font-black uppercase tracking-widest mt-1 ${lastLoginColor(c.last_login_at)}`}
                      title={c.last_login_at ? `Logged in ${c.login_count} time${c.login_count===1?"":"s"} · last ${c.last_login_at}` : "Hasn't logged in yet"}
                      data-testid={`last-login-${c.id}`}>
                     <i className="fas fa-clock mr-1"/>{lastLoginLabel(c.last_login_at)}
@@ -274,11 +274,11 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                       }
                     }}
                     data-testid={`view-as-client-${c.id}`}
-                    className="mt-4 w-full bg-yellow-500 text-bgHeader py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-yellow-400 flex items-center justify-center gap-2 shadow-lg">
+                    className="mt-4 w-full bg-yellow-500 text-bgHeader py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-yellow-400 flex items-center justify-center gap-2 shadow-lg">
               <i className="fas fa-user-shield"/>View Portal as {c.name?.split(" ")[0] || "Client"}
             </button>
             <button onClick={()=>setPreviewId(c.id)} data-testid={`preview-portal-${c.id}`}
-                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
+                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
               <i className="fas fa-eye"/>Quick portal snapshot
             </button>
             <button onClick={()=>sendClaimEmail(c)} data-testid={`send-claim-email-${c.id}`}
@@ -287,7 +287,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             </button>
             {claimToast && claimToast.clientId === c.id && (
               <div data-testid={`claim-toast-${c.id}`}
-                   className={`mt-2 text-[12px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shGreen/15 text-shGreen" : "bg-yellow-500/15 text-yellow-300"}`}>
+                   className={`mt-2 text-[14px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shGreen/15 text-shGreen" : "bg-yellow-500/15 text-yellow-300"}`}>
                 <i className={`fas ${claimToast.tone === "ok" ? "fa-check" : "fa-exclamation-triangle"} mr-1`} />{claimToast.msg}
               </div>
             )}
@@ -313,14 +313,14 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             </button>
             <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
+                <div className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
                 <button onClick={()=>setAwardPicker(c)} data-testid={`award-trophy-${c.id}`}
-                        className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
+                        className="text-[13px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
               </div>
               {(trophyMap[c.id]||[]).length > 0 ? (
                 <TrophyWall awards={trophyMap[c.id]} testIdPrefix={`client-trophies-${c.id}`}/>
               ) : (
-                <p className="text-[11px] text-gray-500 italic">No trophies yet.</p>
+                <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
               )}
             </div>
           </div>
@@ -344,9 +344,9 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             <div className="flex items-center gap-3">
               <Avatar src={form.photo} icon="fa-user" size="lg" ring="border-shBlue/40" testid="client-photo-preview"/>
               <div className="flex-1">
-                <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Profile Photo</label>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Profile Photo</label>
                 <div className="flex items-center gap-2 mt-1">
-                  <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="client-photo-upload-btn">
+                  <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="client-photo-upload-btn">
                     <i className="fas fa-upload mr-1"/>{form.photo ? "Replace" : "Upload"}
                     <input type="file" accept="image/*" className="hidden" data-testid="client-photo-input"
                            onChange={async (e) => {
@@ -359,7 +359,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                   </label>
                   {form.photo && <button type="button" onClick={()=>setForm({...form, photo:""})} className="text-red-400 text-xs font-black uppercase">Remove</button>}
                 </div>
-                <p className="text-[11px] text-gray-500 mt-1 normal-case">Optional. Auto-compressed. Falls back to a placeholder icon if empty.</p>
+                <p className="text-[13px] text-gray-500 mt-1 normal-case">Optional. Auto-compressed. Falls back to a placeholder icon if empty.</p>
               </div>
             </div>
             <Input label="Address" value={form.address} onChange={(v)=>setForm({...form, address:v})} />
@@ -374,14 +374,14 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                      value={form.photo_gallery_url || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_url: v.trim()})}
                      testId="client-photo-gallery-input" />
-              <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as "See your pup in action — order prints". Leave blank if no gallery yet.</p>
+              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as "See your pup in action — order prints". Leave blank if no gallery yet.</p>
             </div>
             <div>
               <Input label="Photo Gallery Download PIN" color="text-shOrange"
                      value={form.photo_gallery_pin || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_pin: v.trim()})}
                      testId="client-photo-gallery-pin-input" />
-              <p className="text-[11px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under "See your pup in action" with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
+              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under "See your pup in action" with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
             </div>
             <div>
               <button type="button" onClick={()=>setForm(f => ({...f, photo_gallery_has_new: !f.photo_gallery_has_new}))}
@@ -392,15 +392,15 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                 <div className="flex items-center gap-3 text-left">
                   <i className={`fas fa-bell ${form.photo_gallery_has_new ? "text-shOrange" : "text-gray-500"} text-lg w-6 text-center`}/>
                   <div>
-                    <p className={`text-[13px] font-black uppercase tracking-widest ${form.photo_gallery_has_new ? "text-shOrange" : "text-white"}`}>
+                    <p className={`text-[15px] font-black uppercase tracking-widest ${form.photo_gallery_has_new ? "text-shOrange" : "text-white"}`}>
                       {form.photo_gallery_has_new ? "New photos badge: ON" : "Notify of New Photos"}
                     </p>
-                    <p className="text-[11px] text-gray-500 normal-case tracking-normal">{form.photo_gallery_has_new
+                    <p className="text-[13px] text-gray-500 normal-case tracking-normal">{form.photo_gallery_has_new
                       ? "Client sees a pulsing NEW badge on their gallery link. Clears when they open it."
                       : "Flip on after uploading a fresh batch to nudge the client to visit their gallery."}</p>
                   </div>
                 </div>
-                <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${form.photo_gallery_has_new ? "bg-shOrange/30 text-shOrange" : "bg-bgHover text-gray-400"}`}>
+                <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${form.photo_gallery_has_new ? "bg-shOrange/30 text-shOrange" : "bg-bgHover text-gray-400"}`}>
                   {form.photo_gallery_has_new ? "On" : "Off"}
                 </span>
               </button>
@@ -412,11 +412,11 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                   <div className="flex items-center gap-3 text-left">
                     <i className={`fas fa-paw text-lg w-6 text-center ${addDog ? "text-shGreen" : "text-gray-500"}`}/>
                     <div>
-                      <p className={`text-[13px] font-black uppercase tracking-widest ${addDog ? "text-shGreen" : "text-white"}`}>Also add a dog</p>
-                      <p className="text-[11px] text-gray-500 normal-case tracking-normal">Saves a trip to the Dogs screen for new sign-ups.</p>
+                      <p className={`text-[15px] font-black uppercase tracking-widest ${addDog ? "text-shGreen" : "text-white"}`}>Also add a dog</p>
+                      <p className="text-[13px] text-gray-500 normal-case tracking-normal">Saves a trip to the Dogs screen for new sign-ups.</p>
                     </div>
                   </div>
-                  <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${addDog ? "bg-shGreen/30 text-shGreen" : "bg-bgHover text-gray-400"}`}>{addDog ? "On" : "Off"}</span>
+                  <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${addDog ? "bg-shGreen/30 text-shGreen" : "bg-bgHover text-gray-400"}`}>{addDog ? "On" : "Off"}</span>
                 </button>
 
                 {addDog && (
@@ -434,7 +434,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                            onChange={(v)=>setDog({...dog, birthday:v})} testId="quick-dog-birthday-input" />
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
+                        <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
                         <select value={dog.sex} onChange={(e)=>setDog({...dog, sex:e.target.value})}
                                 data-testid="quick-dog-sex-select"
                                 className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
@@ -443,7 +443,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                         </select>
                       </div>
                       <div>
-                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Fixed / Altered</label>
+                        <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Fixed / Altered</label>
                         <select value={dog.fixed} onChange={(e)=>setDog({...dog, fixed:e.target.value})}
                                 className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
                           <option value="No">No</option>
@@ -452,17 +452,17 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                       </div>
                     </div>
                     <div>
-                      <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates + Optional Cert Photos</p>
+                      <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates + Optional Cert Photos</p>
                       <div className="space-y-2">
                         <VaccineCertRow vaccine="rabies" label="Rabies" dog={dog} setDog={setDog} testIdBase="quick-dog-rabies"/>
                         <VaccineCertRow vaccine="bordetella" label="Bordetella" dog={dog} setDog={setDog} testIdBase="quick-dog-bordetella"/>
                         <VaccineCertRow vaccine="dhpp" label="DHPP" dog={dog} setDog={setDog} testIdBase="quick-dog-dhpp"/>
                       </div>
-                      <p className="text-[11px] text-gray-500 normal-case mt-1.5"><i className="fas fa-keyboard text-shBlue mr-1"/>Tip: copy a cert photo from your phone/email then press <kbd className="bg-bgPanel border border-bgHover rounded px-1.5 py-0.5 text-[10px] mx-0.5">Ctrl/Cmd + V</kbd> to drop it on the next empty cert. Leave blank to skip — the client will be prompted on their portal.</p>
+                      <p className="text-[13px] text-gray-500 normal-case mt-1.5"><i className="fas fa-keyboard text-shBlue mr-1"/>Tip: copy a cert photo from your phone/email then press <kbd className="bg-bgPanel border border-bgHover rounded px-1.5 py-0.5 text-[12px] mx-0.5">Ctrl/Cmd + V</kbd> to drop it on the next empty cert. Leave blank to skip — the client will be prompted on their portal.</p>
                     </div>
                     <Input label="Notes (optional)" value={dog.notes} onChange={(v)=>setDog({...dog, notes:v})}
                            testId="quick-dog-notes-input" />
-                    <p className="text-[11px] text-gray-500 normal-case"><i className="fas fa-circle-info text-shBlue mr-1"/>Feeding, medications, training skills, and photos can be added from the Dogs screen after save.</p>
+                    <p className="text-[13px] text-gray-500 normal-case"><i className="fas fa-circle-info text-shBlue mr-1"/>Feeding, medications, training skills, and photos can be added from the Dogs screen after save.</p>
                   </div>
                 )}
               </div>
@@ -556,15 +556,15 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
 
   return (
     <Modal title={`Adjust credits · ${client.name}`} onClose={onClose} maxWidth="max-w-md">
-      <p className="text-[12px] text-gray-400 mb-4">
+      <p className="text-[14px] text-gray-400 mb-4">
         Use positive numbers to add, negative to remove. This is for fixing data-entry mistakes or comping a client — it doesn't create a receipt.
       </p>
       <div className="space-y-3" data-testid="adjust-credits-modal">
         {rows.map(r => (
           <div key={r.key} className="bg-bgBase/60 border border-bgHover rounded p-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] uppercase font-black text-gray-500 tracking-widest">{r.label}</p>
-              <p className="text-[12px] text-gray-500">Current <span className="text-white font-black">{current[r.key]}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{next[r.key]}</span></p>
+              <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">{r.label}</p>
+              <p className="text-[14px] text-gray-500">Current <span className="text-white font-black">{current[r.key]}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{next[r.key]}</span></p>
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) - 1 }))}
@@ -581,17 +581,17 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
           </div>
         ))}
         <div>
-          <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Reason / note <span className="text-gray-600 normal-case tracking-normal">(saved to audit log)</span></label>
+          <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Reason / note <span className="text-gray-600 normal-case tracking-normal">(saved to audit log)</span></label>
           <textarea value={note} onChange={(e)=>setNote(e.target.value)} rows={2} data-testid="adjust-note"
                     placeholder="e.g. comp for missed appointment, fixing entry mistake…"
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
         </div>
-        {err && <p className="text-[13px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
-        {anyNegative && <p className="text-[12px] text-red-400 font-black uppercase tracking-widest">Cannot drop a balance below zero.</p>}
+        {err && <p className="text-[15px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+        {anyNegative && <p className="text-[14px] text-red-400 font-black uppercase tracking-widest">Cannot drop a balance below zero.</p>}
         <div className="flex gap-2 pt-1">
-          <button onClick={onClose} className="flex-1 text-gray-400 hover:text-white py-2 text-[13px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={onClose} className="flex-1 text-gray-400 hover:text-white py-2 text-[15px] font-black uppercase tracking-widest">Cancel</button>
           <button onClick={save} disabled={!anyChange || anyNegative || saving} data-testid="adjust-save"
-                  className="flex-1 bg-shOrange text-bgHeader py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+                  className="flex-1 bg-shOrange text-bgHeader py-2 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">
             {saving ? "Saving…" : "Apply"}
           </button>
         </div>
@@ -656,14 +656,14 @@ function SellPackModal({ client, packs, onClose, onSold }) {
               {k:"boarding", label:"Boarding", color:"text-shOrange"},
             ].map(p => (
               <button key={p.k} onClick={()=>setPoolFilter(p.k)} data-testid={`pool-filter-${p.k}`}
-                      className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-bgBase border-shBlue text-shBlue":"border-bgHover text-gray-400 hover:text-shBlue"}`}>
+                      className={`px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-bgBase border-shBlue text-shBlue":"border-bgHover text-gray-400 hover:text-shBlue"}`}>
                 {p.label}
               </button>
             ))}
           </div>
 
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Available Packs · tap to add</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Available Packs · tap to add</label>
             <div className="mt-2 space-y-1.5 max-h-56 overflow-auto pr-1">
               {active.map(p => {
                 const isTr = p.service_type === "training";
@@ -679,25 +679,25 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                       <i className={`fas ${p.icon || (isTr ? "fa-graduation-cap" : isBd ? "fa-moon" : "fa-sun")} shrink-0`} style={{ color: iconHex }}/>
                       <div className="min-w-0 flex-1">
                         <p className="text-[14px] font-black text-white truncate">{p.name}</p>
-                        <p className={`text-[11px] uppercase tracking-widest font-bold ${color}`}>
+                        <p className={`text-[13px] uppercase tracking-widest font-bold ${color}`}>
                           {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {inCart > 0 && <span className="bg-shBlue text-bgHeader px-2 py-0.5 rounded text-[12px] font-black">×{inCart}</span>}
+                      {inCart > 0 && <span className="bg-shBlue text-bgHeader px-2 py-0.5 rounded text-[14px] font-black">×{inCart}</span>}
                       <i className="fas fa-plus text-shGreen text-[14px]" />
                     </div>
                   </button>
                 );
               })}
-              {active.length === 0 && <p className="text-[13px] text-gray-500 italic">No packs in this pool.</p>}
+              {active.length === 0 && <p className="text-[15px] text-gray-500 italic">No packs in this pool.</p>}
             </div>
           </div>
 
           {cartItems.length > 0 && (
             <div className="border border-shGreen/40 bg-shGreen/5 rounded p-3 space-y-2" data-testid="sell-cart">
-              <p className="text-[11px] uppercase tracking-widest text-shGreen font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
+              <p className="text-[13px] uppercase tracking-widest text-shGreen font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
               {cartItems.map(({ pack, qty }) => {
                 const isTr = pack.service_type === "training";
                 const isBd = pack.service_type === "boarding";
@@ -706,8 +706,8 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                 return (
                   <div key={pack.id} className="flex items-center justify-between gap-2 bg-bgBase rounded px-2 py-1.5" data-testid={`cart-row-${pack.id}`}>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[13px] text-white font-bold truncate">{pack.name}</p>
-                      <p className={`text-[10px] uppercase tracking-widest font-bold ${color}`}>
+                      <p className="text-[15px] text-white font-bold truncate">{pack.name}</p>
+                      <p className={`text-[12px] uppercase tracking-widest font-bold ${color}`}>
                         {pack.qty * qty} {unit} · ${(pack.price * qty).toFixed(2)}
                       </p>
                     </div>
@@ -723,28 +723,28 @@ function SellPackModal({ client, packs, onClose, onSold }) {
                 );
               })}
               <div className="grid grid-cols-4 gap-2 pt-2 text-center">
-                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Daycare</p><p className="text-shGreen text-lg font-black">+{totalDaycare}</p></div>
-                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
-                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Boarding</p><p className="text-shOrange text-lg font-black">+{totalBoarding}</p></div>
-                <div><p className="text-[10px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-white text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Daycare</p><p className="text-shGreen text-lg font-black">+{totalDaycare}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Boarding</p><p className="text-shOrange text-lg font-black">+{totalBoarding}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-white text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
               <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           </div>
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note (optional)</label>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Note (optional)</label>
             <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="e.g., birthday gift, returning customer"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
           </div>
-          <p className="text-[11px] text-gray-500 italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
-          {err && <p className="text-red-400 text-[13px]">{err}</p>}
+          <p className="text-[13px] text-gray-500 italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
+          {err && <p className="text-red-400 text-[15px]">{err}</p>}
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
             <button onClick={sell} disabled={busy || cartItems.length === 0} data-testid="confirm-sell-pack"
@@ -787,8 +787,8 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
   return (
     <Modal title={`Receipts · ${client.name}`} onClose={onClose} maxWidth="max-w-lg">
       <div className="space-y-3 max-h-[60vh] overflow-auto" data-testid="receipts-list">
-        {err && <p className="text-red-400 text-[13px]">{err}</p>}
-        {receipts === null && !err && <p className="text-gray-500 text-[13px]">Loading…</p>}
+        {err && <p className="text-red-400 text-[15px]">{err}</p>}
+        {receipts === null && !err && <p className="text-gray-500 text-[15px]">Loading…</p>}
         {receipts && receipts.length === 0 && (
           <p className="text-[14px] text-gray-400 italic">No pack purchases yet. Sales will appear here automatically.</p>
         )}
@@ -802,19 +802,19 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-black text-white">{dt.toLocaleDateString()} · {dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
-                  <p className="text-[11px] uppercase tracking-widest text-gray-500 mt-0.5">
+                  <p className="text-[13px] uppercase tracking-widest text-gray-500 mt-0.5">
                     {r.line_count} item{r.line_count === 1 ? "" : "s"} · {r.lot_count} pack{r.lot_count === 1 ? "" : "s"} · {r.payment_method} · {r.sold_by}
                   </p>
                   <div className="flex gap-2 mt-1.5 flex-wrap">
-                    {dc > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-shGreen bg-shGreen/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
-                    {tr > 0 && <span className="text-[10px] uppercase tracking-widest font-black text-purple-400 bg-purple-400/10 px-2 py-0.5 rounded">+{tr} training</span>}
+                    {dc > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-shGreen bg-shGreen/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
+                    {tr > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-purple-400 bg-purple-400/10 px-2 py-0.5 rounded">+{tr} training</span>}
                   </div>
-                  {r.note && <p className="text-[12px] text-gray-400 italic mt-1.5 truncate">"{r.note}"</p>}
+                  {r.note && <p className="text-[14px] text-gray-400 italic mt-1.5 truncate">"{r.note}"</p>}
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-shGreen text-xl font-black">${r.total_price.toFixed(2)}</p>
                   <button onClick={()=>onReprint(r)} data-testid={`reprint-${i}`}
-                          className="mt-1.5 text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                          className="mt-1.5 text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
                     <i className="fas fa-print mr-1"/>Reprint
                   </button>
                 </div>
@@ -852,14 +852,14 @@ function ReceiptModal({ data, onClose }) {
         {/* Printable receipt body */}
         <div id="pack-receipt-print" className="p-6 text-white print:text-black print:p-10">
           <div className="border-b border-bgHover pb-4 mb-4 print:border-gray-300">
-            <p className="text-[11px] uppercase tracking-widest text-shGreen print:text-gray-600 font-black">Sit Happens · Receipt</p>
+            <p className="text-[13px] uppercase tracking-widest text-shGreen print:text-gray-600 font-black">Sit Happens · Receipt</p>
             <h3 className="text-2xl font-black mt-1 uppercase tracking-tight print:text-black">{client?.name}</h3>
-            <p className="text-[12px] text-gray-400 print:text-gray-600 mt-1">{dateStr} · Sold by {sold_by}</p>
+            <p className="text-[14px] text-gray-400 print:text-gray-600 mt-1">{dateStr} · Sold by {sold_by}</p>
           </div>
 
           <table className="w-full text-[14px]">
             <thead>
-              <tr className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600">
+              <tr className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600">
                 <th className="text-left font-black pb-2">Item</th>
                 <th className="text-right font-black pb-2">Qty</th>
                 <th className="text-right font-black pb-2">Each</th>
@@ -871,7 +871,7 @@ function ReceiptModal({ data, onClose }) {
                 <tr key={i} className="border-t border-bgHover print:border-gray-300" data-testid={`receipt-line-${i}`}>
                   <td className="py-2.5 font-bold">
                     {l.name}
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-bold">
+                    <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-bold">
                       {(l.pack_qty || 0) * l.qty} {l.service_type === "training" ? "training sessions" : l.service_type === "boarding" ? "boarding nights" : "daycare credits"}
                     </p>
                   </td>
@@ -883,22 +883,22 @@ function ReceiptModal({ data, onClose }) {
             </tbody>
           </table>
 
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[13px]">
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[15px]">
             {dc > 0 && (
               <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Daycare credits added</p>
+                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Daycare credits added</p>
                 <p className="text-shGreen text-2xl font-black print:text-black">+{dc}</p>
               </div>
             )}
             {tr > 0 && (
               <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Training sessions added</p>
+                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Training sessions added</p>
                 <p className="text-purple-400 text-2xl font-black print:text-black">+{tr}</p>
               </div>
             )}
             {bd > 0 && (
               <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Boarding nights added</p>
+                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Boarding nights added</p>
                 <p className="text-shOrange text-2xl font-black print:text-black">+{bd}</p>
               </div>
             )}
@@ -906,18 +906,18 @@ function ReceiptModal({ data, onClose }) {
 
           <div className="mt-5 border-t-2 border-shGreen pt-3 flex items-end justify-between print:border-black">
             <div>
-              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Payment · {payment_method}</p>
-              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black mt-1">Credits never expire</p>
+              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Payment · {payment_method}</p>
+              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black mt-1">Credits never expire</p>
             </div>
             <div className="text-right">
-              <p className="text-[10px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Total charged</p>
+              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Total charged</p>
               <p className="text-shGreen text-3xl font-black print:text-black" data-testid="receipt-total">${total_price.toFixed(2)}</p>
             </div>
           </div>
 
-          {note && <p className="mt-4 text-[12px] text-gray-400 italic print:text-gray-600">Note: {note}</p>}
+          {note && <p className="mt-4 text-[14px] text-gray-400 italic print:text-gray-600">Note: {note}</p>}
 
-          <p className="mt-6 text-[11px] text-gray-500 print:text-gray-600 text-center">
+          <p className="mt-6 text-[13px] text-gray-500 print:text-gray-600 text-center">
             Sit Happens Dog Training · Daycare · Boarding<br/>
             Thank you for your business!
           </p>
@@ -992,7 +992,7 @@ function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
          data-testid={`${testIdBase}-row`}>
       <div className="grid grid-cols-12 gap-2 items-center">
         <div className="col-span-4">
-          <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
+          <p className="text-[13px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
         </div>
         <div className="col-span-5">
           <input type="date" value={date}
@@ -1007,10 +1007,10 @@ function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
                    data-testid={`${testIdBase}-preview`} title="Cert attached"/>
               <button type="button" onClick={()=>setDog((d)=>({...d, [photoKey]: ""}))}
                       data-testid={`${testIdBase}-photo-clear`}
-                      className="text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 px-1">Clear</button>
+                      className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 px-1">Clear</button>
             </>
           ) : (
-            <label className="bg-bgBase border border-bgHover rounded px-2 py-1 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-shGreen hover:border-shGreen/40 cursor-pointer"
+            <label className="bg-bgBase border border-bgHover rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-shGreen hover:border-shGreen/40 cursor-pointer"
                    data-testid={`${testIdBase}-photo-label`}>
               <i className="fas fa-paperclip mr-1"/>Cert
               <input type="file" accept="image/*" className="hidden" onChange={onFile}
@@ -1019,7 +1019,7 @@ function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
           )}
         </div>
       </div>
-      {err && <p className="text-[11px] text-red-400 mt-1 normal-case">{err}</p>}
+      {err && <p className="text-[13px] text-red-400 mt-1 normal-case">{err}</p>}
     </div>
   );
 }

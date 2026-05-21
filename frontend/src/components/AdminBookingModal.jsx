@@ -173,7 +173,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
                 <div className="w-full mt-1 bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center justify-between" data-testid="ab-client-readout">
                   <span>{clients.find(c => c.id === clientId)?.name || "—"}</span>
-                  <span className="text-[11px] text-shGreen font-black uppercase tracking-widest">
+                  <span className="text-[13px] text-shGreen font-black uppercase tracking-widest">
                     {clients.find(c => c.id === clientId)?.credits ?? 0} credits
                   </span>
                 </div>
@@ -227,7 +227,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           {serviceType === "grooming" && !isEdit && (
             <div data-testid="ab-grooming-types">
-              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
+              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
               <div className="grid grid-cols-2 gap-2 mt-1">
                 {[
                   { k: "bath", label: "Bath", icon: "fa-bath" },
@@ -278,7 +278,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                      data-testid="ab-appointment-time"
                      className="w-full mt-1 bg-bgBase border border-shOrange/40 rounded p-2 text-white text-xs focus:border-shOrange outline-none"
                      style={{colorScheme:"dark"}} />
-              <p className="text-[11px] text-gray-500 normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
+              <p className="text-[13px] text-gray-500 normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">

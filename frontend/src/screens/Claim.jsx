@@ -44,7 +44,7 @@ export default function Claim({ token }) {
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-7 shadow-2xl">
         <div className="text-center mb-5">
           <img src="/logo.png" alt="Sit Happens" className="h-24 mx-auto drop-shadow-2xl" />
-          <p className="mt-3 text-[11px] text-gray-500 font-black uppercase tracking-[0.25em]">
+          <p className="mt-3 text-[13px] text-gray-500 font-black uppercase tracking-[0.25em]">
             Dog Training • Daycare • Boarding
           </p>
         </div>
@@ -64,7 +64,7 @@ export default function Claim({ token }) {
             <p className="mt-2 text-[14px] text-gray-400">
               This activation link is no longer valid. Ask your trainer to send a fresh one.
             </p>
-            <a href="/" className="inline-block mt-5 text-shBlue font-black uppercase text-[13px] tracking-widest hover:underline">
+            <a href="/" className="inline-block mt-5 text-shBlue font-black uppercase text-[15px] tracking-widest hover:underline">
               Back to sign in
             </a>
           </div>
@@ -82,14 +82,14 @@ export default function Claim({ token }) {
                   : "Set a password to finish activating your portal."}
               </p>
               {info.email && (
-                <p className="mt-3 text-[12px] text-gray-500 font-black uppercase tracking-widest">
+                <p className="mt-3 text-[14px] text-gray-500 font-black uppercase tracking-widest">
                   Account · <span className="text-shBlue normal-case">{info.email}</span>
                 </p>
               )}
             </div>
 
             <div>
-              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">New password</label>
+              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New password</label>
               <input
                 type="password"
                 value={password}
@@ -104,7 +104,7 @@ export default function Claim({ token }) {
             </div>
 
             <div>
-              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Confirm password</label>
+              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Confirm password</label>
               <input
                 type="password"
                 value={confirmPw}
@@ -118,7 +118,7 @@ export default function Claim({ token }) {
             </div>
 
             {err && (
-              <div data-testid="claim-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">
+              <div data-testid="claim-error" className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">
                 {err}
               </div>
             )}

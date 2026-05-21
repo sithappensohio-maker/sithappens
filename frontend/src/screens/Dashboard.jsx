@@ -92,7 +92,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-black text-shOrange uppercase tracking-widest flex items-center gap-2"><i className="fas fa-shield-virus"/> Vaccine Alerts · {alerts.length}</h3>
             <button onClick={()=>setVaccineCenterOpen(true)} data-testid="open-vaccine-center"
-                    className="bg-shOrange text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-[12px] shadow hover:bg-shOrange/90">
+                    className="bg-shOrange text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-[14px] shadow hover:bg-shOrange/90">
               <i className="fas fa-shield-heart mr-1"/>Manage All
             </button>
           </div>
@@ -119,7 +119,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             <h3 className="text-xs font-black text-shBlue uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-file-medical"/> Pending Vaccine Reviews · {pendingVax.length}
             </h3>
-            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Client uploads awaiting approval</span>
+            <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500">Client uploads awaiting approval</span>
           </div>
           <div className="space-y-2">
             {pendingVax.map(v => (
@@ -143,7 +143,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                   <div className="text-xs min-w-0">
                     <div className="font-black text-white uppercase truncate">{v.dog_name} <span className="text-gray-500 font-normal normal-case">· {v.client_name || "—"}</span></div>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
-                      <span className="font-black uppercase px-2 py-0.5 rounded bg-shBlue/20 text-shBlue text-[11px] tracking-widest">{v.vaccine}</span>
+                      <span className="font-black uppercase px-2 py-0.5 rounded bg-shBlue/20 text-shBlue text-[13px] tracking-widest">{v.vaccine}</span>
                       {v.expires_on && <span className="text-gray-400">Expires <span className="font-black text-white">{v.expires_on}</span></span>}
                       {v.uploaded_at && <span className="text-gray-500">· uploaded {new Date(v.uploaded_at).toLocaleDateString()}</span>}
                     </div>
@@ -153,14 +153,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                   <button
                     onClick={()=>rejectVax(v)}
                     data-testid={`reject-vax-${v.dog_id}-${v.vaccine}`}
-                    className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition"
+                    className="text-[13px] font-black uppercase tracking-widest px-3 py-2 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition"
                   >
                     <i className="fas fa-times mr-1"/> Reject
                   </button>
                   <button
                     onClick={()=>approveVax(v)}
                     data-testid={`approve-vax-${v.dog_id}-${v.vaccine}`}
-                    className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition"
+                    className="text-[13px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition"
                   >
                     <i className="fas fa-check mr-1"/> Approve
                   </button>
@@ -177,22 +177,22 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             <h3 className="text-xs font-black text-shGreen uppercase tracking-widest flex items-center gap-2">
               <i className="fas fa-envelope-open-text"/> Quote Requests · {quoteRequests.length}
             </h3>
-            <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500">Clients interested in services/programs</span>
+            <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500">Clients interested in services/programs</span>
           </div>
           <div className="space-y-2">
             {quoteRequests.map(q => (
               <div key={q.id} className="flex items-start justify-between gap-3 bg-bgBase/50 rounded p-3 flex-wrap" data-testid={`quote-request-${q.id}`}>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-black text-white uppercase italic tracking-tight">
+                  <div className="text-[15px] font-black text-white uppercase italic tracking-tight">
                     {q.client_name} <span className="text-gray-500 font-normal normal-case">wants info on</span> <span className="text-shGreen">{q.item_name}</span>
-                    {q.listed_price > 0 && <span className="text-gray-400 text-[12px] font-normal normal-case"> · ${Number(q.listed_price).toFixed(2)}</span>}
+                    {q.listed_price > 0 && <span className="text-gray-400 text-[14px] font-normal normal-case"> · ${Number(q.listed_price).toFixed(2)}</span>}
                   </div>
-                  <div className="text-[11px] text-gray-500 mt-1 flex flex-wrap items-center gap-2">
+                  <div className="text-[13px] text-gray-500 mt-1 flex flex-wrap items-center gap-2">
                     <span><i className="fas fa-clock mr-1"/>{q.created_at ? new Date(q.created_at).toLocaleString() : ""}</span>
                     {q.client_email && <a href={`mailto:${q.client_email}`} className="text-shBlue hover:underline"><i className="fas fa-envelope mr-1"/>{q.client_email}</a>}
                     {q.client_phone && <a href={`tel:${q.client_phone}`} className="text-shBlue hover:underline"><i className="fas fa-phone mr-1"/>{q.client_phone}</a>}
                   </div>
-                  {q.message && <p className="text-[12px] text-gray-300 mt-2 italic bg-bgPanel/60 rounded p-2"><i className="fas fa-quote-left text-gray-600 mr-1"/>{q.message}</p>}
+                  {q.message && <p className="text-[14px] text-gray-300 mt-2 italic bg-bgPanel/60 rounded p-2"><i className="fas fa-quote-left text-gray-600 mr-1"/>{q.message}</p>}
                 </div>
                 <button
                   onClick={async ()=>{
@@ -202,7 +202,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     } catch {}
                   }}
                   data-testid={`close-quote-${q.id}`}
-                  className="text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition self-start"
+                  className="text-[13px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shGreen/20 text-shGreen hover:bg-shGreen/30 transition self-start"
                 >
                   <i className="fas fa-check mr-1"/> Mark Handled
                 </button>
@@ -225,7 +225,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                 <span className="text-gray-400">just booked their</span>
                 <span className="font-black text-shGreen uppercase">first {b.service_type || "session"}</span>
                 {b.dog_name && <span className="text-gray-400">for <span className="font-black text-white uppercase">{b.dog_name}</span></span>}
-                {b.date && <span className="text-shBlue font-black uppercase text-[11px] tracking-widest">· {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</span>}
+                {b.date && <span className="text-shBlue font-black uppercase text-[13px] tracking-widest">· {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}</span>}
               </div>
             ))}
           </div>
@@ -319,7 +319,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                       {b.dog_name}
                       {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[14px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
                       {credits != null && (
-                        <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${creditChipColor}`}
+                        <span className={`text-[13px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${creditChipColor}`}
                               title={`Available ${b.service_type} credits`} data-testid={`roster-credits-${b.id}`}>
                           <i className="fas fa-coins mr-1"/>{credits}
                         </span>
@@ -343,7 +343,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                               className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
                       <button onClick={()=>setCancelFor(b)} data-testid={`cancel-${b.id}`}
                               title="Cancel booking — refunds any credit deducted"
-                              className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[12px] tracking-widest hover:bg-red-500/40 hover:text-white">
+                              className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-red-500/40 hover:text-white">
                         <i className="fas fa-times mr-1"/>Cancel
                       </button>
                     </>
@@ -386,9 +386,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-black text-white uppercase truncate">{d.dog_name}</div>
-                      <div className="text-[11px] text-gray-500">{d.breed || "—"} · {d.owner_name || ""}</div>
+                      <div className="text-[13px] text-gray-500">{d.breed || "—"} · {d.owner_name || ""}</div>
                     </div>
-                    <span className="bg-shOrange/15 text-shOrange font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{d.trophy_count} 🏆</span>
+                    <span className="bg-shOrange/15 text-shOrange font-black uppercase tracking-widest text-[13px] px-2 py-1 rounded">{d.trophy_count} 🏆</span>
                   </button>
                 ))}
               </div>
@@ -412,7 +412,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-black text-white uppercase truncate">{c.client_name}</div>
                     </div>
-                    <span className="bg-shBlue/15 text-shBlue font-black uppercase tracking-widest text-[11px] px-2 py-1 rounded">{c.trophy_count} 🏆</span>
+                    <span className="bg-shBlue/15 text-shBlue font-black uppercase tracking-widest text-[13px] px-2 py-1 rounded">{c.trophy_count} 🏆</span>
                   </button>
                 ))}
               </div>
@@ -733,25 +733,25 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           </h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
-        <p className="text-[12px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
+        <p className="text-[14px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
 
         {/* Section 1 — How to pay the base service */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Base service</p>
           {hadCredit ? (
             <div className="space-y-2">
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-use-credits">
                 <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Use {creditsDeducted || 1} {creditPool} credit{(creditsDeducted || 1) === 1 ? "" : "s"}</p>
-                  <p className="text-[12px] text-gray-400">${creditAmt.toFixed(2)} value · already deducted from their pack at approval</p>
+                  <p className="text-[14px] text-gray-400">${creditAmt.toFixed(2)} value · already deducted from their pack at approval</p>
                 </div>
               </label>
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${!useCredits ? "border-shBlue bg-shBlue/10" : "border-bgHover hover:border-shBlue/50"}`} data-testid="opt-charge">
                 <input type="radio" checked={!useCredits} onChange={()=>setUseCredits(false)} className="mt-1 accent-shBlue" />
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Charge as regular service</p>
-                  <p className="text-[12px] text-gray-400">Refund {creditsDeducted || 1} credit{(creditsDeducted || 1) === 1 ? "" : "s"} back to their pack & take payment today</p>
+                  <p className="text-[14px] text-gray-400">Refund {creditsDeducted || 1} credit{(creditsDeducted || 1) === 1 ? "" : "s"} back to their pack & take payment today</p>
                 </div>
               </label>
             </div>
@@ -761,22 +761,22 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Deduct {nightsNeeded} {booking.service_type} credit{nightsNeeded === 1 ? "" : "s"} now</p>
-                  <p className="text-[12px] text-gray-400">Client has <span className="text-shGreen font-black">{available}</span> available · FIFO from oldest pack</p>
+                  <p className="text-[14px] text-gray-400">Client has <span className="text-shGreen font-black">{available}</span> available · FIFO from oldest pack</p>
                 </div>
               </label>
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${!useCredits ? "border-shBlue bg-shBlue/10" : "border-bgHover hover:border-shBlue/50"}`} data-testid="opt-no-credit-at-checkout">
                 <input type="radio" checked={!useCredits} onChange={()=>setUseCredits(false)} className="mt-1 accent-shBlue" />
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Charge as regular service</p>
-                  <p className="text-[12px] text-gray-400">Collect payment today. Credits stay untouched.</p>
+                  <p className="text-[14px] text-gray-400">Collect payment today. Credits stay untouched.</p>
                 </div>
               </label>
             </div>
           ) : (
-            <p className="text-[13px] text-gray-300">
+            <p className="text-[15px] text-gray-300">
               No credits on file for this booking — collecting payment today.
               {clientBal && available > 0 && available < nightsNeeded && (
-                <span className="block mt-1 text-[12px] text-shOrange">
+                <span className="block mt-1 text-[14px] text-shOrange">
                   Client has {available} {booking.service_type} credit{available === 1 ? "" : "s"} but {nightsNeeded} {nightsNeeded === 1 ? "is" : "are"} needed.
                 </span>
               )}
@@ -788,8 +788,8 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         {isBoarding && (
           <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-extra-nights-panel">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
-              {booking.end_date && <span className="text-[10px] text-gray-500">Original end: {booking.end_date}</span>}
+              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black"><i className="fas fa-moon text-shBlue mr-1.5"/>Stayed Extra Nights?</p>
+              {booking.end_date && <span className="text-[12px] text-gray-500">Original end: {booking.end_date}</span>}
             </div>
             <div className="flex items-center gap-2 mb-3">
               <button type="button" onClick={()=>setExtraNights(Math.max(0, Number(extraNights)-1))} data-testid="extra-nights-minus"
@@ -798,23 +798,23 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                      className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center font-black"/>
               <button type="button" onClick={()=>setExtraNights(Number(extraNights)+1)} data-testid="extra-nights-plus"
                       className="bg-bgPanel w-9 h-9 rounded text-white font-black hover:bg-shGreen/30">+</button>
-              <span className="text-[12px] text-gray-400 ml-2">extra night{extraNights === 1 ? "" : "s"}</span>
+              <span className="text-[14px] text-gray-400 ml-2">extra night{extraNights === 1 ? "" : "s"}</span>
             </div>
             {extraNights > 0 && (
               <div className="space-y-3 animate-slide-in">
-                <label className="flex items-center gap-2 text-[13px] text-gray-300">
+                <label className="flex items-center gap-2 text-[15px] text-gray-300">
                   <input type="checkbox" checked={extraUseCredits} onChange={(e)=>setExtraUseCredits(e.target.checked)} data-testid="extra-nights-use-credits"/>
                   Use remaining boarding credits first (any leftover gets billed)
                 </label>
                 {!extraUseCredits && (
                   <div>
-                    <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
+                    <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
                     <input type="number" step="0.01" value={extraRate} onChange={(e)=>setExtraRate(e.target.value)} data-testid="extra-nights-rate"
                            placeholder={boardingRate ? `$${Number(boardingRate).toFixed(2)}` : "$0.00"}
                            className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
                   </div>
                 )}
-                <div className="text-[12px] bg-bgPanel rounded p-2 text-gray-300">
+                <div className="text-[14px] bg-bgPanel rounded p-2 text-gray-300">
                   <i className="fas fa-circle-info text-shBlue mr-1"/>
                   {extraUseCredits
                     ? `Will draw up to ${extraNights} credit${extraNights===1?"":"s"} from boarding pack; any uncovered nights will be billed at $${extraRateEffective.toFixed(2)}/night.`
@@ -827,9 +827,9 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
         {/* Section 2 — Add-ons */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
           {addOnCandidates.length === 0 ? (
-            <p className="text-[12px] text-gray-500 italic">No add-on services configured. Add some in Settings → Services & Prices.</p>
+            <p className="text-[14px] text-gray-500 italic">No add-on services configured. Add some in Settings → Services & Prices.</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {addOnCandidates.map(svc => {
@@ -838,14 +838,14 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                   <button key={svc.id} onClick={()=>addOne(svc)} data-testid={`addon-${svc.id}`}
                           className={`text-left flex items-center justify-between gap-2 p-2.5 rounded border transition ${inCart > 0 ? "border-purple-400 bg-purple-400/10" : "border-bgHover hover:border-purple-400/60"}`}>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[13px] font-black text-white truncate"><i className={`fas ${svc.icon || 'fa-tag'} mr-1.5 text-purple-400`}/>{svc.name}</p>
-                      <p className="text-[11px] text-gray-400 font-bold">${Number(svc.base_price || 0).toFixed(2)}</p>
+                      <p className="text-[15px] font-black text-white truncate"><i className={`fas ${svc.icon || 'fa-tag'} mr-1.5 text-purple-400`}/>{svc.name}</p>
+                      <p className="text-[13px] text-gray-400 font-bold">${Number(svc.base_price || 0).toFixed(2)}</p>
                     </div>
                     {inCart > 0 && (
                       <div className="flex items-center gap-1 shrink-0" onClick={(e)=>e.stopPropagation()}>
                         <button onClick={()=>removeOne(svc)} data-testid={`addon-minus-${svc.id}`} className="bg-bgHover w-6 h-6 rounded text-white font-black hover:bg-red-500/40">−</button>
                         <span className="text-white font-black w-5 text-center text-sm">{inCart}</span>
-                        <span className="text-purple-400 text-[11px] font-black">+</span>
+                        <span className="text-purple-400 text-[13px] font-black">+</span>
                       </div>
                     )}
                   </button>
@@ -857,7 +857,7 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
         {/* Section 3 — Payment method + Service value */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[11px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
           {/* Payment method only shown when NOT fully covered by credits */}
           {(!useCredits || addOnTotal > 0) && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
@@ -867,7 +867,7 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
           {/* Service value — ALWAYS shown so income is tracked even when paying with credits */}
           <div>
-            <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
               {useCredits ? "Service value (for income tracking)" : "Base price"}
               <span className="text-gray-600"> (blank = use service default)</span>
             </label>
@@ -875,7 +875,7 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                    placeholder={basePreview ? `$${basePreview.toFixed(2)}` : "$0.00"}
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
             {useCredits && (
-              <p className="text-[11px] text-gray-500 mt-1.5 normal-case">
+              <p className="text-[13px] text-gray-500 mt-1.5 normal-case">
                 <i className="fas fa-circle-info text-shGreen mr-1"/>
                 Credit is still consumed from the client's pack. This dollar amount is recorded as today's income so the daily/weekly totals stay accurate.
               </p>
@@ -886,21 +886,21 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         {/* Total summary */}
         <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
-            {addOnTotal > 0 && <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
-            {useCredits && hadCredit && <p className="text-[10px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
+            {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
+            {useCredits && hadCredit && <p className="text-[12px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
           </div>
           <div className="text-right">
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 ? "Total" : "Charged today"}</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 ? "Total" : "Charged today"}</p>
             <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${chargedToday.toFixed(2)}</p>
           </div>
         </div>
 
-        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
+        {err && <p className="text-red-400 text-[15px] mb-3">{err}</p>}
 
         <div className="flex items-center justify-between gap-3">
           <button onClick={() => onRequestCancel?.(booking)} disabled={busy} data-testid="checkout-cancel-booking"
-                  className="text-red-400 font-black uppercase text-[12px] tracking-widest hover:text-red-300 disabled:opacity-50">
+                  className="text-red-400 font-black uppercase text-[14px] tracking-widest hover:text-red-300 disabled:opacity-50">
             <i className="fas fa-times-circle mr-1"/>Cancel booking instead
           </button>
           <div className="flex gap-3">
@@ -941,7 +941,7 @@ function CancelBookingModal({ booking, onClose }) {
           </div>
           <div>
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Cancel booking?</h4>
-            <p className="text-[12px] text-gray-400">{booking.dog_name} · {booking.client_name}</p>
+            <p className="text-[14px] text-gray-400">{booking.dog_name} · {booking.client_name}</p>
           </div>
         </div>
 
@@ -952,17 +952,17 @@ function CancelBookingModal({ booking, onClose }) {
         {credits > 0 ? (
           <div className="bg-shGreen/10 border border-shGreen/40 rounded p-3 mb-4 flex items-center gap-2">
             <i className="fas fa-coins text-shGreen text-lg"/>
-            <p className="text-[13px] text-white">
+            <p className="text-[15px] text-white">
               <span className="text-shGreen font-black">{credits} {pool} credit{credits === 1 ? "" : "s"}</span> will be refunded to <strong>{booking.client_name}</strong>.
             </p>
           </div>
         ) : (
-          <div className="bg-bgBase border border-bgHover rounded p-3 mb-4 text-[13px] text-gray-400">
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-4 text-[15px] text-gray-400">
             <i className="fas fa-info-circle mr-1.5"/>No credits to refund on this booking.
           </div>
         )}
 
-        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
+        {err && <p className="text-red-400 text-[15px] mb-3">{err}</p>}
 
         <div className="flex justify-end gap-3">
           <button onClick={onClose} disabled={busy} data-testid="cancel-keep" className="text-gray-400 font-black uppercase text-[14px] tracking-widest hover:text-white disabled:opacity-50">

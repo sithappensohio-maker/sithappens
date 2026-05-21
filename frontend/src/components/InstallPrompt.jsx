@@ -45,15 +45,15 @@ export default function InstallPrompt() {
         <img src="/icon-192.png" alt="" className="h-10 w-10 rounded-lg flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-white font-black text-[14px] uppercase tracking-widest leading-tight">Install Sit Happens</p>
-          <p className="text-gray-400 text-[12px] mt-0.5 leading-tight">Add to your home screen for one-tap access.</p>
+          <p className="text-gray-400 text-[14px] mt-0.5 leading-tight">Add to your home screen for one-tap access.</p>
         </div>
         <div className="flex flex-col gap-1">
           <button onClick={install} data-testid="install-app-btn"
-                  className="bg-shGreen text-black font-black uppercase text-[11px] tracking-widest px-3 py-1.5 rounded hover:bg-shGreen/80">
+                  className="bg-shGreen text-black font-black uppercase text-[13px] tracking-widest px-3 py-1.5 rounded hover:bg-shGreen/80">
             Install
           </button>
           <button onClick={dismiss} data-testid="install-app-dismiss"
-                  className="text-gray-500 hover:text-gray-300 text-[11px] uppercase tracking-widest">
+                  className="text-gray-500 hover:text-gray-300 text-[13px] uppercase tracking-widest">
             Later
           </button>
         </div>
@@ -70,7 +70,7 @@ export default function InstallPrompt() {
         <img src="/icon-192.png" alt="" className="h-10 w-10 rounded-lg flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <p className="text-white font-black text-[14px] uppercase tracking-widest leading-tight">Install Sit Happens</p>
-          <p className="text-gray-300 text-[12px] mt-1 leading-snug">
+          <p className="text-gray-300 text-[14px] mt-1 leading-snug">
             Tap <i className="fas fa-arrow-up-from-bracket text-shBlue mx-0.5" /> then
             {" "}<span className="text-shGreen font-bold">Add to Home Screen</span>.
           </p>

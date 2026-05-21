@@ -45,7 +45,7 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
       ) : (
         <i className={`fas ${icon} ${txt} drop-shadow`}/>
       )}
-      {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[10px] bg-bgBase rounded-full p-1 text-gray-400"/>}
+      {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-bgBase rounded-full p-1 text-gray-400"/>}
     </button>
   );
 }

@@ -39,7 +39,7 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
             { k: "emerg", label: "Emergency Contact", placeholder: "Jane Doe — (555) 555-5555" },
           ].map(f => (
             <div key={f.k}>
-              <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{f.label}</label>
+              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{f.label}</label>
               <input value={form[f.k]} onChange={(e)=>setForm({...form, [f.k]: e.target.value})} placeholder={f.placeholder}
                      data-testid={`pp-${f.k}`}
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />

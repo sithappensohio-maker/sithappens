@@ -72,23 +72,23 @@ export function ProgramsPanel() {
           <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website's standard lineup.</p>
         </div>
         <button onClick={()=>startNew()} data-testid="prog-new"
-                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
+                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
       </div>
 
-      {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+      {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
       {grouped.filter(g => g.items.length > 0 || g.key !== "custom").map(g => (
         <div key={g.key} className="bg-bgBase/40 border border-bgHover rounded">
           <div className="px-3 py-2 border-b border-bgHover flex items-center justify-between" style={{background: g.color + "12"}}>
-            <p className="text-[13px] font-black uppercase tracking-widest" style={{color: g.color}}>{g.label} · {g.items.length}</p>
+            <p className="text-[15px] font-black uppercase tracking-widest" style={{color: g.color}}>{g.label} · {g.items.length}</p>
           </div>
           <div className="divide-y divide-bgHover">
-            {g.items.length === 0 && <p className="px-3 py-3 text-[13px] text-gray-500 italic">No programs in this category.</p>}
+            {g.items.length === 0 && <p className="px-3 py-3 text-[15px] text-gray-500 italic">No programs in this category.</p>}
             {g.items.map(p => (
               <div key={p.id} className="px-3 py-3 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[11px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>}</p>
-                  <p className="text-[13px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
+                  <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>}</p>
+                  <p className="text-[15px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
                 </div>
                 <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
                 <button onClick={()=>setEdit({...p})} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
@@ -158,7 +158,7 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                    onChange={(e)=>set({price: parseFloat(e.target.value)||0})} data-testid="prog-price"
                    placeholder="e.g. 450.00"
                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-            <p className="text-[11px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
+            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
           </Field>
 
           {allPrograms.length > 0 && !hideTypePicker && (
@@ -172,8 +172,8 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
 
           {/* Completion rule */}
           <div className="bg-bgBase/40 border border-bgHover rounded p-3">
-            <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-2"><i className="fas fa-flag-checkered mr-2"/>Completion Rule</p>
-            <p className="text-[13px] text-gray-400 mb-2">When is a dog ready to graduate from this program?</p>
+            <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2"><i className="fas fa-flag-checkered mr-2"/>Completion Rule</p>
+            <p className="text-[15px] text-gray-400 mb-2">When is a dog ready to graduate from this program?</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {[
                 { k: "percent", label: "% mastered", icon: "fa-percent" },
@@ -183,14 +183,14 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
               ].map(rt => (
                 <button key={rt.k} type="button" onClick={()=>set({completion_rule:{...(program.completion_rule||{}), type: rt.k}})}
                         data-testid={`rule-${rt.k}`}
-                        className={`py-2 rounded text-[13px] font-black uppercase tracking-widest border ${(program.completion_rule?.type||"percent")===rt.k?"bg-shBlue text-white border-shBlue":"bg-bgPanel border-bgHover text-gray-400"}`}>
+                        className={`py-2 rounded text-[15px] font-black uppercase tracking-widest border ${(program.completion_rule?.type||"percent")===rt.k?"bg-shBlue text-white border-shBlue":"bg-bgPanel border-bgHover text-gray-400"}`}>
                   <i className={`fas ${rt.icon} mr-1`}/>{rt.label}
                 </button>
               ))}
             </div>
             {((program.completion_rule?.type||"percent")==="percent" || program.completion_rule?.type==="sessions") && (
               <div className="mt-2 flex items-center gap-2">
-                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{program.completion_rule?.type==="sessions"?"Required sessions":"Threshold %"}:</label>
+                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{program.completion_rule?.type==="sessions"?"Required sessions":"Threshold %"}:</label>
                 <input type="number" min="1" max={program.completion_rule?.type==="sessions"?100:100}
                        value={program.completion_rule?.threshold ?? (program.completion_rule?.type==="sessions"?5:80)}
                        onChange={(e)=>set({completion_rule:{...(program.completion_rule||{type:"percent"}), threshold: parseInt(e.target.value)||0}})}
@@ -202,11 +202,11 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
           {/* Module builder */}
           <div className="border-t border-bgHover pt-3">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[13px] font-black uppercase tracking-widest text-shBlue">Modules & Goals</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-shBlue">Modules & Goals</p>
               <button onClick={addModule} data-testid="add-module"
-                      className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-1 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/15"><i className="fas fa-plus mr-1"/>Add Module</button>
+                      className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-1 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/15"><i className="fas fa-plus mr-1"/>Add Module</button>
             </div>
-            {(program.modules||[]).length === 0 && <p className="text-[13px] text-gray-500 italic py-3">No modules yet. Add one to begin.</p>}
+            {(program.modules||[]).length === 0 && <p className="text-[15px] text-gray-500 italic py-3">No modules yet. Add one to begin.</p>}
             <div className="space-y-3">
               {(program.modules||[]).map((m, mi) => (
                 <div key={mi} className="bg-bgBase/50 border border-bgHover rounded p-3">
@@ -217,18 +217,18 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                   </div>
                   <input value={m.description||""} onChange={(e)=>updateModule(mi, {description:e.target.value})}
                          placeholder="Module description (optional)"
-                         className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-[13px] text-gray-300 mb-2" />
+                         className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-gray-300 mb-2" />
                   <div className="space-y-1">
                     {(m.goals||[]).map((g, gi) => (
                       <div key={gi} className="bg-bgPanel rounded px-2 py-1.5">
                         <div className="flex gap-2 items-center">
-                          <i className="fas fa-circle-dot text-shGreen text-[10px]"/>
+                          <i className="fas fa-circle-dot text-shGreen text-[12px]"/>
                           <input value={g.name} onChange={(e)=>updateGoal(mi, gi, {name:e.target.value})}
                                  className="flex-1 bg-transparent text-[14px] text-white outline-none" />
                           <input value={g.description||""} onChange={(e)=>updateGoal(mi, gi, {description:e.target.value})}
                                  placeholder="description"
-                                 className="flex-[2] bg-transparent text-[13px] text-gray-400 outline-none" />
-                          <label className="flex items-center gap-1 text-[11px] text-pink-300 cursor-pointer" title="If on, this goal is a check-off (Done/Reset) instead of a 0-5 score">
+                                 className="flex-[2] bg-transparent text-[15px] text-gray-400 outline-none" />
+                          <label className="flex items-center gap-1 text-[13px] text-pink-300 cursor-pointer" title="If on, this goal is a check-off (Done/Reset) instead of a 0-5 score">
                             <input type="checkbox" checked={!!g.manual_only} onChange={(e)=>updateGoal(mi, gi, {manual_only:e.target.checked})} className="accent-pink-400"/>
                             Manual
                           </label>
@@ -238,7 +238,7 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                     ))}
                   </div>
                   <button onClick={()=>addGoal(mi)}
-                          className="mt-2 text-[13px] text-shBlue hover:text-white font-black uppercase tracking-widest">
+                          className="mt-2 text-[15px] text-shBlue hover:text-white font-black uppercase tracking-widest">
                     <i className="fas fa-plus mr-1"/>Add Goal
                   </button>
                 </div>
@@ -248,11 +248,11 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
         </div>
 
         <div className="px-6 py-3 border-t border-bgHover flex justify-between items-center gap-3 shrink-0">
-          {extraError ? <p className="text-red-400 text-[12px] font-bold truncate flex-1" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
+          {extraError ? <p className="text-red-400 text-[14px] font-bold truncate flex-1" data-testid="program-editor-err">{extraError}</p> : <span className="flex-1"/>}
           <div className="flex gap-3 shrink-0">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
             <button onClick={onSave} data-testid="prog-save"
-                    className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save Program</button>
+                    className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">Save Program</button>
           </div>
         </div>
       </div>
@@ -261,5 +261,5 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
 }
 
 function Field({ label, children }) {
-  return <div><label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{label}</label><div className="mt-1">{children}</div></div>;
+  return <div><label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{label}</label><div className="mt-1">{children}</div></div>;
 }

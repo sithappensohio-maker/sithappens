@@ -129,7 +129,7 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
               <i className="fas fa-calendar-plus text-shBlue mr-2"/>Book a Service
             </h3>
-            <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mt-1">
+            <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mt-1">
               Step {step} of 3 · {step===1?"Pick service":step===2?"Pick date & time":"Review & confirm"}
             </p>
           </div>
@@ -148,7 +148,7 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
           <div className="space-y-4">
             {dogs.length > 1 && (
               <div>
-                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">For which dog?</label>
+                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">For which dog?</label>
                 <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="wiz-dog"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
@@ -156,21 +156,21 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
               </div>
             )}
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
+              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
               <div className="grid grid-cols-2 gap-3 mt-2">
                 {SERVICE_OPTIONS.map(s => (
                   <button key={s.key} onClick={()=>setServiceType(s.key)} data-testid={`wiz-svc-${s.key}`}
                           className={`text-left p-4 rounded-lg border transition ${serviceType===s.key ? s.color + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
-                    <p className="font-black uppercase tracking-widest text-[13px]"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>
-                    <p className="text-[11px] mt-1 opacity-80 normal-case">{s.desc}</p>
+                    <p className="font-black uppercase tracking-widest text-[15px]"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>
+                    <p className="text-[13px] mt-1 opacity-80 normal-case">{s.desc}</p>
                   </button>
                 ))}
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-3">
-              <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+              <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
               <button onClick={()=>setStep(2)} disabled={!serviceType || !dogId} data-testid="wiz-step1-next"
-                      className="bg-shBlue text-white px-5 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                      className="bg-shBlue text-white px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
                 Next <i className="fas fa-arrow-right ml-1.5"/>
               </button>
             </div>
@@ -180,7 +180,7 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
         {/* STEP 2 */}
         {step === 2 && (
           <div className="space-y-4">
-            <div className={`rounded p-3 border text-[12px] font-black uppercase tracking-widest ${svcMeta?.color}`}>
+            <div className={`rounded p-3 border text-[14px] font-black uppercase tracking-widest ${svcMeta?.color}`}>
               <i className={`fas ${svcMeta?.icon} mr-2`}/>{svcMeta?.label} · {selectedDog?.name}
             </div>
 
@@ -188,12 +188,12 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             {serviceType === "boarding" && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
+                  <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
                   <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
                 </div>
                 <div>
-                  <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Pickup date</label>
+                  <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup date</label>
                   <input type="date" value={endDate} min={date} onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-end" />
                 </div>
@@ -203,7 +203,7 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             {/* Daycare or time-slotted: single date */}
             {serviceType !== "boarding" && (
               <div>
-                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
                 <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
               </div>
@@ -211,19 +211,19 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
 
             {/* Closed-day warnings — Settings → Closed Days is the source */}
             {dateIsClosed && (
-              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[12px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-date">
+              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[14px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-date">
                 <i className="fas fa-calendar-xmark mr-1.5"/>We're closed on this day — please pick another date
               </div>
             )}
             {endDateIsClosed && !dateIsClosed && (
-              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[12px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-end-date">
+              <div className="bg-red-500/15 text-red-300 border border-red-500/30 rounded p-3 text-[14px] font-black uppercase tracking-widest text-center" data-testid="wiz-closed-end-date">
                 <i className="fas fa-calendar-xmark mr-1.5"/>We're closed on the pickup day — please choose another
               </div>
             )}
 
             {/* Daycare availability */}
             {serviceType === "daycare" && avail && (
-              <div className={`text-[12px] font-black uppercase tracking-widest p-3 rounded text-center ${!avail.vaccine_ok?"bg-red-500/15 text-red-400":avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}>
+              <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded text-center ${!avail.vaccine_ok?"bg-red-500/15 text-red-400":avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}>
                 {!avail.vaccine_ok ? "Rabies missing/expired"
                   : avail.open_slots <= 0 ? "Fully booked"
                   : `${avail.open_slots} of ${avail.capacity} daycare spots open`}
@@ -233,11 +233,11 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             {/* Grooming type */}
             {serviceType === "grooming" && (
               <div>
-                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Grooming type</label>
+                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Grooming type</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
                   {[{k:"bath",l:"Bath",i:"fa-bath"},{k:"nail_trim",l:"Nail trim",i:"fa-scissors"}].map(g => (
                     <button key={g.k} onClick={()=>setGroomingType(g.k)} data-testid={`wiz-grooming-${g.k}`}
-                            className={`py-2 rounded text-[12px] font-black uppercase tracking-widest border ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
+                            className={`py-2 rounded text-[14px] font-black uppercase tracking-widest border ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
                       <i className={`fas ${g.i} mr-1.5`}/>{g.l}
                     </button>
                   ))}
@@ -248,24 +248,24 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             {/* Time slots for time-slotted services */}
             {TIME_SLOTTED.has(serviceType) && (
               <div>
-                <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Available time slots</label>
-                {slotLoading && <p className="text-[12px] text-gray-500 mt-2"><i className="fas fa-spinner fa-spin mr-1"/>Checking openings…</p>}
+                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Available time slots</label>
+                {slotLoading && <p className="text-[14px] text-gray-500 mt-2"><i className="fas fa-spinner fa-spin mr-1"/>Checking openings…</p>}
                 {!slotLoading && slots && slots.closed && (
-                  <div className="mt-2 bg-shOrange/10 text-shOrange p-3 rounded text-[12px] font-black uppercase tracking-widest text-center">
+                  <div className="mt-2 bg-shOrange/10 text-shOrange p-3 rounded text-[14px] font-black uppercase tracking-widest text-center">
                     <i className="fas fa-door-closed mr-1.5"/>Closed for {serviceType} on this date — pick another day
                   </div>
                 )}
                 {!slotLoading && slots && !slots.closed && (
                   <>
-                    <p className="text-[11px] text-gray-500 mt-1">{slots.duration_minutes || 60}-minute session</p>
+                    <p className="text-[13px] text-gray-500 mt-1">{slots.duration_minutes || 60}-minute session</p>
                     <div className="grid grid-cols-4 gap-2 mt-2 max-h-56 overflow-y-auto p-1">
-                      {slots.slots.length === 0 && <p className="col-span-4 text-[12px] text-gray-500 text-center py-3">No slots configured for this date.</p>}
+                      {slots.slots.length === 0 && <p className="col-span-4 text-[14px] text-gray-500 text-center py-3">No slots configured for this date.</p>}
                       {slots.slots.map(s => {
                         const selected = time === s.time;
                         return (
                           <button key={s.time} onClick={()=>s.available && setTime(s.time)}
                                   disabled={!s.available} data-testid={`wiz-slot-${s.time}`}
-                                  className={`py-2 rounded text-[12px] font-black tracking-widest border ${
+                                  className={`py-2 rounded text-[14px] font-black tracking-widest border ${
                                     selected ? "bg-shBlue text-white border-shBlue" :
                                     s.available ? "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue" :
                                     "bg-bgBase/40 border-bgHover/30 text-gray-600 line-through cursor-not-allowed"
@@ -276,7 +276,7 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
                       })}
                     </div>
                     {slots.slots.every(s => !s.available) && slots.slots.length > 0 && (
-                      <p className="text-[12px] text-shOrange mt-2 text-center"><i className="fas fa-info-circle mr-1"/>All slots booked for this date — try another day.</p>
+                      <p className="text-[14px] text-shOrange mt-2 text-center"><i className="fas fa-info-circle mr-1"/>All slots booked for this date — try another day.</p>
                     )}
                   </>
                 )}
@@ -284,18 +284,18 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
             )}
 
             <div>
-              <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
               <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2}
                         placeholder="Anything we should know? Allergies, meds, behavior notes…"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
             </div>
 
             <div className="flex justify-between gap-2 pt-3">
-              <button onClick={()=>setStep(1)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">
+              <button onClick={()=>setStep(1)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
                 <i className="fas fa-arrow-left mr-1.5"/>Back
               </button>
               <button onClick={()=>setStep(3)} disabled={!canProceedFromStep2} data-testid="wiz-step2-next"
-                      className="bg-shBlue text-white px-5 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                      className="bg-shBlue text-white px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
                 Review <i className="fas fa-arrow-right ml-1.5"/>
               </button>
             </div>
@@ -305,38 +305,38 @@ export default function PortalBookWizard({ dogs, onClose, onBooked }) {
         {/* STEP 3 */}
         {step === 3 && (
           <div className="space-y-4">
-            <div className="bg-bgBase border border-bgHover rounded-lg p-4 space-y-2 text-[13px]">
-              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Dog</span><span className="text-white font-black">{selectedDog?.name}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Service</span><span className="text-white font-black">{svcMeta?.label}</span></div>
+            <div className="bg-bgBase border border-bgHover rounded-lg p-4 space-y-2 text-[15px]">
+              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Dog</span><span className="text-white font-black">{selectedDog?.name}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Service</span><span className="text-white font-black">{svcMeta?.label}</span></div>
               {serviceType === "boarding" ? (
                 <>
-                  <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Drop-off</span><span className="text-white font-black">{fmt(date)}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Pickup</span><span className="text-white font-black">{fmt(endDate)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Drop-off</span><span className="text-white font-black">{fmt(date)}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Pickup</span><span className="text-white font-black">{fmt(endDate)}</span></div>
                 </>
               ) : (
-                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Date</span><span className="text-white font-black">{fmt(date)}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Date</span><span className="text-white font-black">{fmt(date)}</span></div>
               )}
               {TIME_SLOTTED.has(serviceType) && (
-                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Time</span><span className="text-white font-black">{time}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Time</span><span className="text-white font-black">{time}</span></div>
               )}
               {serviceType === "grooming" && (
-                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px]">Type</span><span className="text-white font-black capitalize">{groomingType.replace("_"," ")}</span></div>
+                <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Type</span><span className="text-white font-black capitalize">{groomingType.replace("_"," ")}</span></div>
               )}
               {notes && (
-                <div className="pt-2 border-t border-bgHover"><span className="text-gray-500 font-black uppercase tracking-widest text-[11px] block mb-1">Notes</span><span className="text-gray-300 text-[13px]">{notes}</span></div>
+                <div className="pt-2 border-t border-bgHover"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px] block mb-1">Notes</span><span className="text-gray-300 text-[15px]">{notes}</span></div>
               )}
             </div>
 
-            {err && <div className="text-[13px] font-black p-3 rounded uppercase tracking-widest bg-red-500/15 text-red-400 text-center">{err}</div>}
+            {err && <div className="text-[15px] font-black p-3 rounded uppercase tracking-widest bg-red-500/15 text-red-400 text-center">{err}</div>}
 
-            <p className="text-[12px] text-gray-500 text-center">Your booking will be reviewed and approved by Sit Happens.</p>
+            <p className="text-[14px] text-gray-500 text-center">Your booking will be reviewed and approved by Sit Happens.</p>
 
             <div className="flex justify-between gap-2 pt-3">
-              <button onClick={()=>setStep(2)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue">
+              <button onClick={()=>setStep(2)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
                 <i className="fas fa-arrow-left mr-1.5"/>Back
               </button>
               <button onClick={book} disabled={submitting} data-testid="wiz-confirm"
-                      className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
+                      className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
                 {submitting ? "Booking…" : "Confirm booking"}
               </button>
             </div>

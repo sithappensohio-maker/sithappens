@@ -102,7 +102,7 @@ export default function VaccineCenterModal({ open, onClose, onChanged }) {
             <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
               <i className="fas fa-shield-virus text-shOrange mr-2"/>Vaccine Center
             </h3>
-            <p className="text-[13px] text-gray-400 mt-0.5">Update every flagged vaccine in one place. Default expiry is 1 year out — adjust if needed.</p>
+            <p className="text-[15px] text-gray-400 mt-0.5">Update every flagged vaccine in one place. Default expiry is 1 year out — adjust if needed.</p>
           </div>
           <button onClick={onClose} data-testid="vaccine-center-close" className="text-gray-400 hover:text-white text-xl px-2"><i className="fas fa-times"/></button>
         </div>
@@ -132,31 +132,31 @@ export default function VaccineCenterModal({ open, onClose, onChanged }) {
                       {a.dog_name}
                       <span className="text-gray-500 font-normal normal-case text-[14px] ml-2">· {a.owner_name}</span>
                     </p>
-                    <p className="text-[12px] text-gray-500 mt-1">
-                      <span className={`px-2 py-0.5 rounded border text-[11px] font-black uppercase tracking-widest ${statusBadge(a.status)}`}>
+                    <p className="text-[14px] text-gray-500 mt-1">
+                      <span className={`px-2 py-0.5 rounded border text-[13px] font-black uppercase tracking-widest ${statusBadge(a.status)}`}>
                         {a.vaccine} · {a.status}
                       </span>
                       {a.rabies && <span className="ml-2 text-gray-400">(was {a.rabies})</span>}
                     </p>
                   </div>
                   <button onClick={() => dismissRow(a)} title="Hide this alert for 30 days" data-testid={`vax-dismiss-${a.dog_id}`}
-                          className="text-[12px] font-black uppercase tracking-widest text-gray-500 hover:text-gray-300 px-2 py-1">
+                          className="text-[14px] font-black uppercase tracking-widest text-gray-500 hover:text-gray-300 px-2 py-1">
                     <i className="fas fa-bell-slash mr-1"/>Hide 30d
                   </button>
                 </div>
 
                 <div className="grid sm:grid-cols-3 gap-2 items-end">
                   <div>
-                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">New Expiry</label>
+                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">New Expiry</label>
                     <input type="date" value={draft.expires_on || ""}
                            onChange={(e) => setDraft(a.dog_id, { expires_on: e.target.value })}
                            data-testid={`vax-expiry-${a.dog_id}`}
                            className="w-full mt-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-sm text-white"/>
                   </div>
                   <div>
-                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Photo (optional)</label>
+                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Photo (optional)</label>
                     <div className="mt-1 flex items-center gap-2">
-                      <label className="flex-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-[13px] text-gray-300 cursor-pointer hover:border-shGreen text-center truncate">
+                      <label className="flex-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-[15px] text-gray-300 cursor-pointer hover:border-shGreen text-center truncate">
                         <i className="fas fa-upload mr-1"/>{draft.photo ? "Photo attached" : "Upload"}
                         <input type="file" accept="image/*" onChange={(e) => onPhotoPick(a.dog_id, e.target.files?.[0])}
                                data-testid={`vax-photo-${a.dog_id}`} className="hidden"/>
@@ -170,13 +170,13 @@ export default function VaccineCenterModal({ open, onClose, onChanged }) {
                   </div>
                   <button onClick={() => saveRow(a)} disabled={savingId === a.dog_id}
                           data-testid={`vax-save-${a.dog_id}`}
-                          className="bg-shGreen text-bgHeader py-2 px-4 rounded font-black uppercase tracking-widest text-[13px] shadow-lg disabled:opacity-50">
+                          className="bg-shGreen text-bgHeader py-2 px-4 rounded font-black uppercase tracking-widest text-[15px] shadow-lg disabled:opacity-50">
                     {savingId === a.dog_id ? "Saving…" : <><i className="fas fa-check mr-1"/>Save</>}
                   </button>
                 </div>
 
                 {msg && (
-                  <div className={`text-[12px] font-black uppercase tracking-widest ${saved ? "text-shGreen" : "text-red-400"}`}>
+                  <div className={`text-[14px] font-black uppercase tracking-widest ${saved ? "text-shGreen" : "text-red-400"}`}>
                     {msg}
                   </div>
                 )}

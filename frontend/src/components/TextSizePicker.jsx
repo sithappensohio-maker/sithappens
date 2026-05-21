@@ -38,7 +38,7 @@ export function TextSizePicker({ testid = "text-size", compact = false }) {
         })}
       </div>
       {!compact && (
-        <p className="text-[12px] text-gray-500 leading-tight">
+        <p className="text-[14px] text-gray-500 leading-tight">
           Adjusts everything in the app proportionally.
         </p>
       )}

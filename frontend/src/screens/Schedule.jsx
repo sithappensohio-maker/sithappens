@@ -166,12 +166,12 @@ export default function Schedule() {
   return (
     <div className="h-full flex flex-col gap-3 animate-slide-in" data-testid="schedule-calendar">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest min-w-0 truncate">
+        <p className="text-[14px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest min-w-0 truncate">
           <i className="fas fa-mouse-pointer mr-2 text-shBlue"/>
           <span className="hidden sm:inline">Drag any event to reschedule · click a day to see the roster</span>
           <span className="sm:hidden">Drag to reschedule · tap a day</span>
         </p>
-        {msg && <span className="shrink-0 text-[12px] sm:text-[14px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 sm:px-3 py-1 rounded">{msg}</span>}
+        {msg && <span className="shrink-0 text-[14px] sm:text-[14px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 sm:px-3 py-1 rounded">{msg}</span>}
       </div>
       <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden">
         <FullCalendar
@@ -213,7 +213,7 @@ export default function Schedule() {
                className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
             <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
               <div className="min-w-0">
-                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Day Roster</p>
+                <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Day Roster</p>
                 <h2 className="text-lg font-black uppercase italic text-white tracking-tight truncate">{pretty(dayOpen)}</h2>
               </div>
               <button onClick={()=>{ setDayOpen(null); setNewBooking(null); }}
@@ -229,11 +229,11 @@ export default function Schedule() {
                     <div className="bg-bgBase border border-dashed border-bgHover rounded-lg p-8 text-center" data-testid="day-roster-empty">
                       <i className="fas fa-calendar-day text-gray-600 text-3xl mb-2"/>
                       <p className="text-white font-black text-[14px] uppercase tracking-widest">Nothing booked yet</p>
-                      <p className="text-[12px] text-gray-500 normal-case mt-1">Use the button below to add the first appointment.</p>
+                      <p className="text-[14px] text-gray-500 normal-case mt-1">Use the button below to add the first appointment.</p>
                     </div>
                   ) : (
                     <div className="space-y-2" data-testid="day-roster-list">
-                      <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">{dayBookings.length} appointment{dayBookings.length !== 1 ? "s" : ""}</p>
+                      <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{dayBookings.length} appointment{dayBookings.length !== 1 ? "s" : ""}</p>
                       {dayBookings.map((e) => {
                         const meta = SVC_META[e.extendedProps?.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: e.extendedProps?.service_type };
                         const t = e.extendedProps?.time;
@@ -250,21 +250,21 @@ export default function Schedule() {
                         return (
                           <button key={e.id} onClick={()=>setDetailId(e.id)}
                                   className="w-full text-left bg-bgBase border border-bgHover rounded-lg px-3 py-2.5 flex items-start gap-3 hover:border-shBlue/60 transition" data-testid={`day-roster-row-${e.id}`}>
-                            <span className={`shrink-0 text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
+                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
                             <div className="flex-1 min-w-0">
                               <p className="text-white font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
-                              <p className="text-[11px] text-gray-500 normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
+                              <p className="text-[13px] text-gray-500 normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
                             </div>
                             {credits != null && (
-                              <span className={`shrink-0 text-[10px] font-black uppercase tracking-widest px-1.5 py-1 rounded border ${creditChipColor}`}
+                              <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-1.5 py-1 rounded border ${creditChipColor}`}
                                     data-testid={`day-roster-credits-${e.id}`}
                                     title={`Available ${svc} credits`}>
                                 <i className="fas fa-coins mr-1"/>{credits}
                               </span>
                             )}
-                            {t && <span className="shrink-0 text-[12px] font-black text-shOrange tracking-widest">{t}</span>}
+                            {t && <span className="shrink-0 text-[14px] font-black text-shOrange tracking-widest">{t}</span>}
                             {e.extendedProps?.status === "pending" && (
-                              <span className="shrink-0 text-[10px] font-black uppercase tracking-widest bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded">Pending</span>
+                              <span className="shrink-0 text-[12px] font-black uppercase tracking-widest bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded">Pending</span>
                             )}
                           </button>
                         );
@@ -272,7 +272,7 @@ export default function Schedule() {
                     </div>
                   )}
                   <button onClick={startNewBooking} data-testid="day-roster-new-btn"
-                          className="w-full bg-shBlue text-white px-5 py-3 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90">
+                          className="w-full bg-shBlue text-white px-5 py-3 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shBlue/90">
                     <i className="fas fa-plus mr-2"/>New Appointment for this day
                   </button>
                 </>
@@ -280,9 +280,9 @@ export default function Schedule() {
 
               {newBooking && (
                 <div className="space-y-3" data-testid="day-roster-new-form">
-                  <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Quick-add for {pretty(dayOpen)}</p>
+                  <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Quick-add for {pretty(dayOpen)}</p>
                   <div>
-                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
                     <select value={newBooking.dog_id}
                             onChange={(e)=>setNewBooking({...newBooking, dog_id: e.target.value})}
                             data-testid="day-roster-dog-select"
@@ -292,7 +292,7 @@ export default function Schedule() {
                     </select>
                   </div>
                   <div>
-                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Service</label>
                     <select value={newBooking.service_type}
                             onChange={(e)=>setNewBooking({...newBooking, service_type: e.target.value})}
                             data-testid="day-roster-service-select"
@@ -305,7 +305,7 @@ export default function Schedule() {
                   </div>
                   {newBooking.service_type === "boarding" && (
                     <div>
-                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Check-out date</label>
+                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Check-out date</label>
                       <input type="date" value={newBooking.end_date}
                              onChange={(e)=>setNewBooking({...newBooking, end_date: e.target.value})}
                              style={{colorScheme:"dark"}}
@@ -314,7 +314,7 @@ export default function Schedule() {
                   )}
                   {(newBooking.service_type === "training" || newBooking.service_type === "grooming") && (
                     <div>
-                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Appointment time</label>
+                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Appointment time</label>
                       <input type="time" value={newBooking.time}
                              onChange={(e)=>setNewBooking({...newBooking, time: e.target.value})}
                              data-testid="day-roster-time-input"
@@ -324,7 +324,7 @@ export default function Schedule() {
                   )}
                   {newBooking.service_type === "grooming" && (
                     <div>
-                      <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Grooming type</label>
+                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Grooming type</label>
                       <select value={newBooking.grooming_type}
                               onChange={(e)=>setNewBooking({...newBooking, grooming_type: e.target.value})}
                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
@@ -334,16 +334,16 @@ export default function Schedule() {
                     </div>
                   )}
                   <div>
-                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
                     <input value={newBooking.notes}
                            onChange={(e)=>setNewBooking({...newBooking, notes: e.target.value})}
                            className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
                   </div>
-                  {bookErr && <p className="text-red-400 text-[12px] normal-case">{bookErr}</p>}
+                  {bookErr && <p className="text-red-400 text-[14px] normal-case">{bookErr}</p>}
                   <div className="flex justify-end gap-3 pt-1">
-                    <button onClick={()=>setNewBooking(null)} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Back</button>
+                    <button onClick={()=>setNewBooking(null)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Back</button>
                     <button onClick={saveBooking} disabled={bookSaving} data-testid="day-roster-save-btn"
-                            className="bg-shBlue text-white px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                            className="bg-shBlue text-white px-5 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
                       {bookSaving ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Saving…</> : "Add appointment"}
                     </button>
                   </div>
@@ -438,7 +438,7 @@ function BookingDetailModal({ id, onClose, onChanged }) {
            className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md shadow-2xl max-h-[92vh] overflow-y-auto">
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
           <div className="min-w-0">
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Booking detail</p>
+            <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Booking detail</p>
             <h2 className="text-lg font-black uppercase italic text-white tracking-tight truncate">{b?.dog_name || "…"}</h2>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="booking-detail-close">
@@ -446,15 +446,15 @@ function BookingDetailModal({ id, onClose, onChanged }) {
           </button>
         </div>
         <div className="p-5">
-          {err && <p className="text-red-400 text-[13px] mb-3" data-testid="booking-detail-error">{err}</p>}
-          {savedFlash && <p className="text-shGreen text-[12px] font-black uppercase tracking-widest mb-3" data-testid="booking-detail-flash"><i className="fas fa-check mr-1"/>{savedFlash}</p>}
-          {!b && !err && <p className="text-gray-500 text-[12px] uppercase tracking-widest"><i className="fas fa-circle-notch fa-spin mr-2"/>Loading…</p>}
+          {err && <p className="text-red-400 text-[15px] mb-3" data-testid="booking-detail-error">{err}</p>}
+          {savedFlash && <p className="text-shGreen text-[14px] font-black uppercase tracking-widest mb-3" data-testid="booking-detail-flash"><i className="fas fa-check mr-1"/>{savedFlash}</p>}
+          {!b && !err && <p className="text-gray-500 text-[14px] uppercase tracking-widest"><i className="fas fa-circle-notch fa-spin mr-2"/>Loading…</p>}
           {b && (
             <div className="space-y-3 text-[14px]">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
-                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
-                {b.payment_status === "paid" && <span className="text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shGreen/15 text-shGreen">Paid · {b.payment_method || "—"}</span>}
+                <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
+                <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
+                {b.payment_status === "paid" && <span className="text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded bg-shGreen/15 text-shGreen">Paid · {b.payment_method || "—"}</span>}
               </div>
               <Row label="Client" value={b.client_name}/>
               <Row label="Date" value={`${b.date}${b.end_date && b.end_date!==b.date ? ` → ${b.end_date}` : ""}`}/>
@@ -466,29 +466,29 @@ function BookingDetailModal({ id, onClose, onChanged }) {
               {/* Editable notes block — always shown so admin can ADD a note even when none exists. */}
               <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid="booking-detail-notes">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Notes</p>
+                  <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes</p>
                   {!editingNotes && <button onClick={()=>{ setDraftNotes(b.notes || ""); setEditingNotes(true); }}
                                             data-testid="booking-detail-edit-notes"
-                                            className="text-[10px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                                            className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">
                     <i className="fas fa-pen mr-1"/>{b.notes ? "Edit" : "Add"}
                   </button>}
                 </div>
                 {!editingNotes ? (
                   b.notes
-                    ? <p className="text-[13px] text-gray-200 whitespace-pre-wrap normal-case">{b.notes}</p>
-                    : <p className="text-[12px] text-gray-500 italic normal-case">No notes on this booking.</p>
+                    ? <p className="text-[15px] text-gray-200 whitespace-pre-wrap normal-case">{b.notes}</p>
+                    : <p className="text-[14px] text-gray-500 italic normal-case">No notes on this booking.</p>
                 ) : (
                   <div>
                     <textarea value={draftNotes}
                               onChange={(e)=>setDraftNotes(e.target.value)}
                               data-testid="booking-detail-notes-input"
                               rows={3}
-                              className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px] normal-case"/>
+                              className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-[15px] normal-case"/>
                     <div className="flex justify-end gap-2 mt-2">
                       <button onClick={()=>{ setEditingNotes(false); setDraftNotes(b.notes || ""); }}
-                              className="text-gray-400 hover:text-white text-[11px] font-black uppercase tracking-widest">Cancel</button>
+                              className="text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest">Cancel</button>
                       <button onClick={saveNotes} disabled={busy} data-testid="booking-detail-save-notes"
-                              className="bg-shGreen text-black px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
+                              className="bg-shGreen text-black px-3 py-1 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
                         {busy ? "Saving…" : "Save"}
                       </button>
                     </div>
@@ -497,8 +497,8 @@ function BookingDetailModal({ id, onClose, onChanged }) {
               </div>
               {b.report_card?.note && (
                 <div className="bg-shGreen/5 border border-shGreen/30 rounded-lg p-3">
-                  <p className="text-[10px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-paw mr-1"/>Report card</p>
-                  <p className="text-[13px] text-gray-200 italic normal-case">"{b.report_card.note}"</p>
+                  <p className="text-[12px] font-black text-shGreen uppercase tracking-widest mb-1"><i className="fas fa-paw mr-1"/>Report card</p>
+                  <p className="text-[15px] text-gray-200 italic normal-case">"{b.report_card.note}"</p>
                 </div>
               )}
               <div className="pt-2 flex flex-wrap justify-end gap-3">
@@ -507,13 +507,13 @@ function BookingDetailModal({ id, onClose, onChanged }) {
                     most recent booking. */}
                 {isPast && (
                   <button onClick={quickBookToday} disabled={busy} data-testid="booking-detail-quick-book"
-                          className="text-shGreen hover:text-shGreen/80 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                          className="text-shGreen hover:text-shGreen/80 text-[14px] font-black uppercase tracking-widest disabled:opacity-50">
                     <i className="fas fa-bolt mr-1.5"/>Add to today's roster
                   </button>
                 )}
                 {(b.status === "approved" || b.status === "pending") && (
                   <button onClick={cancel} disabled={busy} data-testid="booking-detail-cancel"
-                          className="text-red-400 hover:text-red-300 text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                          className="text-red-400 hover:text-red-300 text-[14px] font-black uppercase tracking-widest disabled:opacity-50">
                     {busy ? "Cancelling…" : <><i className="fas fa-trash mr-1.5"/>Cancel booking</>}
                   </button>
                 )}
@@ -529,7 +529,7 @@ function BookingDetailModal({ id, onClose, onChanged }) {
 function Row({ label, value }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+      <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{label}</span>
       <span className="text-white text-[14px] font-bold text-right break-words">{value || "—"}</span>
     </div>
   );

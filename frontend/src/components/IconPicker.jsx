@@ -131,7 +131,7 @@ export default function IconPicker({ value, onChange, testid = "icon-picker", au
             <i className="fas fa-search text-gray-500 text-xs"/>
             <input autoFocus value={q} onChange={(e)=>setQ(e.target.value)}
                    placeholder="Search icons (e.g. paw, bath, training)…"
-                   className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1 text-white text-[12px]"
+                   className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1 text-white text-[14px]"
                    data-testid={`${testid}-search`}/>
             <button type="button" onClick={()=>setOpen(false)} className="text-gray-500 hover:text-white text-xs px-1" aria-label="Close icon picker">
               <i className="fas fa-xmark"/>
@@ -148,7 +148,7 @@ export default function IconPicker({ value, onChange, testid = "icon-picker", au
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="col-span-8 text-center text-[12px] text-gray-500 py-4">No icons match &quot;{q}&quot;.</p>
+              <p className="col-span-8 text-center text-[14px] text-gray-500 py-4">No icons match &quot;{q}&quot;.</p>
             )}
           </div>
         </div>

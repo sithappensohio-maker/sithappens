@@ -27,25 +27,25 @@ function TrophyDetailModal({ award, onClose }) {
           <div className="flex items-center gap-4">
             <TrophyBadge trophy={award} size="lg"/>
             <div>
-              <div className="text-[11px] font-black uppercase tracking-widest text-gray-500">{award.trophy_tier} Trophy</div>
+              <div className="text-[13px] font-black uppercase tracking-widest text-gray-500">{award.trophy_tier} Trophy</div>
               <h3 className="text-2xl font-black text-white uppercase italic">{award.trophy_name}</h3>
-              <div className="text-[12px] text-gray-400 mt-1">Awarded to <span className="text-white font-bold">{award.recipient_name}</span> · {fmtDate(award.awarded_at)}</div>
+              <div className="text-[14px] text-gray-400 mt-1">Awarded to <span className="text-white font-bold">{award.recipient_name}</span> · {fmtDate(award.awarded_at)}</div>
             </div>
           </div>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1" data-testid="trophy-detail-close"><i className="fas fa-times text-lg"/></button>
         </div>
         {award.trophy_description && <p className="text-[14px] text-gray-300 mb-4 leading-relaxed">{award.trophy_description}</p>}
-        {award.note && <p className="text-[13px] bg-bgBase rounded p-3 mb-4 italic text-gray-300"><i className="fas fa-comment-dots mr-2 text-shBlue"/>{award.note}</p>}
+        {award.note && <p className="text-[15px] bg-bgBase rounded p-3 mb-4 italic text-gray-300"><i className="fas fa-comment-dots mr-2 text-shBlue"/>{award.note}</p>}
         <div className="bg-bgBase rounded-lg overflow-hidden border border-bgHover mb-4">
           <img src={cardUrl} alt="share card" className="w-full" data-testid="trophy-share-card"/>
         </div>
         <div className="flex gap-2">
           <a href={cardUrl} download={`${award.trophy_code}-${award.recipient_name}.png`} data-testid="trophy-share-download"
-             className="flex-1 bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[12px] uppercase tracking-widest">
+             className="flex-1 bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[14px] uppercase tracking-widest">
             <i className="fas fa-download mr-1"/> Download
           </a>
           <button onClick={copy} data-testid="trophy-share-copy"
-                  className="flex-1 bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[12px] uppercase tracking-widest">
+                  className="flex-1 bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[14px] uppercase tracking-widest">
             <i className={`fas ${copied?"fa-check":"fa-link"} mr-1`}/>{copied?"Copied":"Copy share link"}
           </button>
         </div>
@@ -128,12 +128,12 @@ export function ManualAwardPicker({ recipientType, recipientId, onClose, onAward
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
         </div>
         <div className="mb-3">
-          <label className="text-[12px] font-black uppercase tracking-widest text-gray-500">Optional note</label>
+          <label className="text-[14px] font-black uppercase tracking-widest text-gray-500">Optional note</label>
           <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="e.g. Crushed loose-leash walking today!"
                  data-testid="manual-award-note"
                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"/>
         </div>
-        {err && <div className="text-red-400 text-[13px] mb-2">{err}</div>}
+        {err && <div className="text-red-400 text-[15px] mb-2">{err}</div>}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {catalog.map(t => {
             const owned = held.has(t.code);
@@ -146,9 +146,9 @@ export function ManualAwardPicker({ recipientType, recipientId, onClose, onAward
                 className={`bg-bgBase border border-bgHover rounded-lg p-4 flex flex-col items-center gap-2 text-center transition ${owned ? "opacity-40 cursor-not-allowed" : "hover:border-shOrange/60 hover:bg-shOrange/5"}`}
               >
                 <TrophyBadge definition={t} size="md"/>
-                <div className="text-[12px] font-black uppercase tracking-tight text-white">{t.name}</div>
-                <div className="text-[10px] uppercase tracking-widest text-gray-500">{t.tier}{owned ? " · OWNED" : ""}</div>
-                {t.description && <div className="text-[11px] text-gray-400 leading-tight">{t.description}</div>}
+                <div className="text-[14px] font-black uppercase tracking-tight text-white">{t.name}</div>
+                <div className="text-[12px] uppercase tracking-widest text-gray-500">{t.tier}{owned ? " · OWNED" : ""}</div>
+                {t.description && <div className="text-[13px] text-gray-400 leading-tight">{t.description}</div>}
               </button>
             );
           })}

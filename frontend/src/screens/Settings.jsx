@@ -212,7 +212,7 @@ function BrandPanel() {
                 style={{ fontFamily: styleFam }}
               >
                 <div className="text-sm font-black text-white">{opt.label}</div>
-                <div className="text-[12px] text-gray-400 mt-0.5">The quick brown fox</div>
+                <div className="text-[14px] text-gray-400 mt-0.5">The quick brown fox</div>
               </button>
             );
           })}
@@ -232,8 +232,8 @@ function BrandPanel() {
       <Section title="Footer Pill" subtitle="The small pill in the bottom-right corner of every page. Leave the URL blank to make it a non-clickable label.">
         <div className="grid sm:grid-cols-2 gap-4">
           <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-            <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Text</label>
-            <p className="text-[11px] text-gray-500 mt-0.5">What the pill says</p>
+            <label className="text-[15px] font-black text-gray-400 uppercase tracking-widest">Text</label>
+            <p className="text-[13px] text-gray-500 mt-0.5">What the pill says</p>
             <input
               type="text"
               maxLength={28}
@@ -245,8 +245,8 @@ function BrandPanel() {
             />
           </div>
           <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-            <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">Link URL</label>
-            <p className="text-[11px] text-gray-500 mt-0.5">Opens in a new tab when clicked. Blank = no link.</p>
+            <label className="text-[15px] font-black text-gray-400 uppercase tracking-widest">Link URL</label>
+            <p className="text-[13px] text-gray-500 mt-0.5">Opens in a new tab when clicked. Blank = no link.</p>
             <input
               type="url"
               value={draft.brand_footer_url || ""}
@@ -269,9 +269,9 @@ function BrandPanel() {
           }}
         >
           <div className="flex items-center gap-2">
-            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_primary, color: "#0f172a" }}>Primary</span>
-            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_accent, color: "#fff" }}>Accent</span>
-            <span className="px-3 py-1 rounded font-black text-[13px] uppercase tracking-widest" style={{ background: draft.brand_warning, color: "#fff" }}>Warning</span>
+            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_primary, color: "#0f172a" }}>Primary</span>
+            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_accent, color: "#fff" }}>Accent</span>
+            <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_warning, color: "#fff" }}>Warning</span>
           </div>
           <p className="text-base text-white">A booking was just approved for <span style={{ color: draft.brand_primary, fontWeight: 900 }}>Buddy</span>.</p>
           <p className="text-[14px] text-gray-300">Rabies expires soon — <span style={{ color: draft.brand_warning, fontWeight: 900 }}>renew before Dec 31</span>.</p>
@@ -301,10 +301,10 @@ function GradColorField({ label, sub, sample, value, onChange, testid }) {
   // class references CSS vars set by ThemeProvider on save.
   return (
     <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid={testid}>
-      <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
-      <p className="text-[11px] text-gray-500 mt-0.5 mb-2 leading-tight">{sub}</p>
+      <label className="text-[15px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
+      <p className="text-[13px] text-gray-500 mt-0.5 mb-2 leading-tight">{sub}</p>
       <div
-        className={`${sample} rounded-lg h-12 flex items-center justify-center mb-2 text-[11px] font-black uppercase tracking-widest text-white/80`}
+        className={`${sample} rounded-lg h-12 flex items-center justify-center mb-2 text-[13px] font-black uppercase tracking-widest text-white/80`}
         style={{
           // Inline override so the preview reflects the in-flight draft color
           // before the admin hits Save (instead of waiting for theme vars to update).
@@ -348,8 +348,8 @@ function hexToRgbInline(hex) {
 function ColorField({ label, sub, value, onChange, testid }) {
   return (
     <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-      <label className="text-[13px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
-      <p className="text-[11px] text-gray-500 mt-0.5">{sub}</p>
+      <label className="text-[15px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
+      <p className="text-[13px] text-gray-500 mt-0.5">{sub}</p>
       <div className="flex items-center gap-2 mt-2">
         <input
           type="color"
@@ -417,7 +417,7 @@ function HoursPanel({ s, save, saving }) {
 
       <Section title="Closed Days" subtitle="Holidays / vacations. Clients can't self-book on these dates; admin overrides still work.">
         <div className="space-y-2" data-testid="closed-dates-list">
-          {closedDates.length === 0 && <p className="text-[12px] text-gray-500 italic normal-case">No closed days configured.</p>}
+          {closedDates.length === 0 && <p className="text-[14px] text-gray-500 italic normal-case">No closed days configured.</p>}
           {[...closedDates].sort().map((d) => (
             <div key={d} className="flex items-center gap-2 bg-bgBase rounded p-2" data-testid={`closed-date-${d}`}>
               <i className="fas fa-calendar-xmark text-shOrange text-xs"/>
@@ -439,7 +439,7 @@ function HoursPanel({ s, save, saving }) {
                      setClosedDates([...closedDates, newClosed]); setNewClosed("");
                    }}
                   data-testid="closed-date-add"
-                  className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shOrange/80">
+                  className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shOrange/80">
             + Add
           </button>
         </div>
@@ -769,11 +769,11 @@ function MarketingQRPanel() {
           </div>
           <div className="flex-1 space-y-4">
             <div>
-              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Points to</label>
-              <p className="text-[13px] text-shBlue break-all mt-1 font-mono" data-testid="qr-target-url">{targetUrl || "—"}</p>
+              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Points to</label>
+              <p className="text-[15px] text-shBlue break-all mt-1 font-mono" data-testid="qr-target-url">{targetUrl || "—"}</p>
             </div>
             <div>
-              <label className="text-[12px] text-gray-400 font-black uppercase tracking-widest">Tracking tag <span className="text-gray-600 normal-case tracking-normal">(optional — e.g. flyer, postcard, fb-ad)</span></label>
+              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Tracking tag <span className="text-gray-600 normal-case tracking-normal">(optional — e.g. flyer, postcard, fb-ad)</span></label>
               <input
                 type="text"
                 value={ref}
@@ -782,24 +782,24 @@ function MarketingQRPanel() {
                 data-testid="qr-ref-input"
                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"
               />
-              <p className="text-[11px] text-gray-500 mt-1">Appended as <span className="font-mono text-shBlue">?ref=…</span> so future analytics can show where each scan came from.</p>
+              <p className="text-[13px] text-gray-500 mt-1">Appended as <span className="font-mono text-shBlue">?ref=…</span> so future analytics can show where each scan came from.</p>
             </div>
-            {err && <p className="text-[12px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+            {err && <p className="text-[14px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
             <div className="grid grid-cols-3 gap-2">
               <button onClick={()=>download(512)} data-testid="qr-download-small"
-                      className="bg-bgBase border border-bgHover hover:border-shBlue text-shBlue py-2 rounded text-[12px] font-black uppercase tracking-widest">
-                <i className="fas fa-download mr-1"/>Small<br /><span className="text-[10px] text-gray-500">512px</span>
+                      className="bg-bgBase border border-bgHover hover:border-shBlue text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest">
+                <i className="fas fa-download mr-1"/>Small<br /><span className="text-[12px] text-gray-500">512px</span>
               </button>
               <button onClick={()=>download(1024)} data-testid="qr-download-medium"
-                      className="bg-shBlue/15 border border-shBlue/40 hover:bg-shBlue/30 text-shBlue py-2 rounded text-[12px] font-black uppercase tracking-widest">
-                <i className="fas fa-download mr-1"/>Print<br /><span className="text-[10px] opacity-70">1024px</span>
+                      className="bg-shBlue/15 border border-shBlue/40 hover:bg-shBlue/30 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest">
+                <i className="fas fa-download mr-1"/>Print<br /><span className="text-[12px] opacity-70">1024px</span>
               </button>
               <button onClick={()=>download(2048)} data-testid="qr-download-large"
-                      className="bg-shGreen text-bgHeader py-2 rounded text-[12px] font-black uppercase tracking-widest shadow">
-                <i className="fas fa-download mr-1"/>Poster<br /><span className="text-[10px] opacity-70">2048px</span>
+                      className="bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow">
+                <i className="fas fa-download mr-1"/>Poster<br /><span className="text-[12px] opacity-70">2048px</span>
               </button>
             </div>
-            <p className="text-[11px] text-gray-500">Higher resolutions = sharper print at larger sizes. Use Poster for full-page flyers, Print for cards, Small for screen sharing.</p>
+            <p className="text-[13px] text-gray-500">Higher resolutions = sharper print at larger sizes. Use Poster for full-page flyers, Print for cards, Small for screen sharing.</p>
           </div>
         </div>
       </Section>
@@ -830,7 +830,7 @@ function PortalLinksPanel({ s, save, saving }) {
           data-testid="link-website-input"
           className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono"
         />
-        <p className="text-[11px] text-gray-500 mt-1">Shows up as a "Visit Our Website" button on the portal.</p>
+        <p className="text-[13px] text-gray-500 mt-1">Shows up as a "Visit Our Website" button on the portal.</p>
       </Section>
       <Section title={<span><i className="fas fa-images text-shGreen mr-2"/>Photo Gallery (Fallback Only)</span>}>
         <input
@@ -841,7 +841,7 @@ function PortalLinksPanel({ s, save, saving }) {
           data-testid="link-gallery-input"
           className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono"
         />
-        <p className="text-[11px] text-gray-500 mt-1">
+        <p className="text-[13px] text-gray-500 mt-1">
           <i className="fas fa-circle-info mr-1 text-shBlue"/>
           Photo galleries are now <span className="font-black text-white">per-client</span> — set each client's gallery URL on their record in the Clients screen. This field is only used as a fallback for clients who don't have their own gallery URL set.
         </p>
@@ -960,30 +960,30 @@ function ErrorsPanel() {
           <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-1">
             <i className="fas fa-triangle-exclamation mr-2"/>Recent Server Errors
           </h4>
-          <p className="text-[13px] text-gray-400 leading-relaxed">
+          <p className="text-[15px] text-gray-400 leading-relaxed">
             The last 20 unhandled API errors since the backend was started. Spot regressions before clients email you.
             Cleared automatically when the server restarts.
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
           <button onClick={load} disabled={loading} data-testid="errors-refresh-btn"
-                  className="bg-bgHover text-gray-200 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-bgBase disabled:opacity-50">
+                  className="bg-bgHover text-gray-200 px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgBase disabled:opacity-50">
             <i className={`fas fa-rotate ${loading?"fa-spin":""} mr-1.5`}/>Refresh
           </button>
           <button onClick={clearAll} disabled={loading || errors.length===0} data-testid="errors-clear-btn"
-                  className="bg-red-500/20 text-red-300 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-40">
+                  className="bg-red-500/20 text-red-300 px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-40">
             <i className="fas fa-trash mr-1.5"/>Clear
           </button>
         </div>
       </div>
 
-      {msg && <p className="text-[13px] text-gray-400">{msg}</p>}
+      {msg && <p className="text-[15px] text-gray-400">{msg}</p>}
 
       {errors.length === 0 && !loading ? (
         <div className="bg-bgBase border border-bgHover rounded p-6 text-center">
           <i className="fas fa-check-circle text-shGreen text-2xl mb-2 block"/>
           <p className="text-[14px] font-black text-gray-300 uppercase tracking-widest">All clear</p>
-          <p className="text-[12px] text-gray-500 mt-1">No unhandled errors recorded.</p>
+          <p className="text-[14px] text-gray-500 mt-1">No unhandled errors recorded.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -996,21 +996,21 @@ function ErrorsPanel() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[11px] font-black text-shOrange uppercase tracking-widest px-2 py-0.5 bg-shOrange/10 rounded">
+                        <span className="text-[13px] font-black text-shOrange uppercase tracking-widest px-2 py-0.5 bg-shOrange/10 rounded">
                           {er.type}
                         </span>
-                        <span className="text-[11px] font-mono text-gray-500">{er.method} {er.path}</span>
+                        <span className="text-[13px] font-mono text-gray-500">{er.method} {er.path}</span>
                       </div>
-                      <p className="text-[13px] text-gray-200 break-words">{er.message || "(no message)"}</p>
+                      <p className="text-[15px] text-gray-200 break-words">{er.message || "(no message)"}</p>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-[11px] text-gray-500">{fmtTs(er.ts)}</p>
-                      <i className={`fas fa-chevron-${isOpen?"up":"down"} text-gray-500 text-[11px] mt-1`}/>
+                      <p className="text-[13px] text-gray-500">{fmtTs(er.ts)}</p>
+                      <i className={`fas fa-chevron-${isOpen?"up":"down"} text-gray-500 text-[13px] mt-1`}/>
                     </div>
                   </div>
                 </button>
                 {isOpen && (
-                  <pre className="text-[11px] text-gray-400 bg-black/40 p-3 overflow-x-auto whitespace-pre-wrap border-t border-bgHover">
+                  <pre className="text-[13px] text-gray-400 bg-black/40 p-3 overflow-x-auto whitespace-pre-wrap border-t border-bgHover">
 {er.traceback || "(no traceback)"}
                   </pre>
                 )}
@@ -1338,7 +1338,7 @@ function BulkClaimEmailsSection() {
             <StatChip label="Already Linked" value={result.skipped_already_linked_count} color="text-gray-400" />
           </div>
           {result.errors_count > 0 && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded p-2 text-[13px]">
+            <div className="bg-red-500/10 border border-red-500/30 rounded p-2 text-[15px]">
               <p className="text-red-400 font-black uppercase tracking-widest mb-1">{result.errors_count} error{result.errors_count===1?"":"s"}:</p>
               <ul className="text-gray-300 space-y-0.5">
                 {result.errors.slice(0,5).map((e,i)=>(
@@ -1357,7 +1357,7 @@ function BulkClaimEmailsSection() {
 function StatChip({ label, value, color }) {
   return (
     <div className="bg-bgBase rounded px-2 py-2 flex flex-col items-center">
-      <span className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{label}</span>
+      <span className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{label}</span>
       <span className={`text-xl font-black ${color}`}>{value}</span>
     </div>
   );
@@ -1409,19 +1409,19 @@ function PhotoCompressionPanel() {
       {status && (
         <div className="bg-bgBase border border-bgHover rounded p-4 mb-3 grid grid-cols-2 md:grid-cols-4 gap-4 text-center" data-testid="photo-compress-stats">
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Scanned</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Scanned</p>
             <p className="text-shBlue text-2xl font-black">{status.scanned}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Compressed</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Compressed</p>
             <p className="text-shGreen text-2xl font-black">{status.compressed}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Skipped</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Skipped</p>
             <p className="text-gray-400 text-2xl font-black">{status.skipped}</p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Space saved</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Space saved</p>
             <p className="text-purple-400 text-2xl font-black">{status.mb_saved} MB</p>
           </div>
         </div>
@@ -1432,7 +1432,7 @@ function PhotoCompressionPanel() {
           <i className="fas fa-circle-notch fa-spin text-shBlue text-xl"/>
           <div className="flex-1">
             <p className="text-[14px] font-black text-shBlue uppercase tracking-widest">{stageLabel}</p>
-            <p className="text-[12px] text-gray-400 mt-0.5">Working in the background. You can leave this page and come back later.</p>
+            <p className="text-[14px] text-gray-400 mt-0.5">Working in the background. You can leave this page and come back later.</p>
           </div>
         </div>
       )}
@@ -1497,22 +1497,22 @@ function CommandsPanel() {
           <p className="text-[14px] text-gray-300 mt-1">Curate the master list every dog's curriculum is built from. Seeded with TADSAW service-dog commands.</p>
         </div>
         <button onClick={startNew} data-testid="cmd-new"
-                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New</button>
+                className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New</button>
       </div>
 
-      {err && <div className="text-[13px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
+      {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
 
       {grouped.map(g => (
         <div key={g.key} className="bg-bgBase/40 border border-bgHover rounded">
           <div className="px-3 py-2 border-b border-bgHover" style={{background: g.color + "12"}}>
-            <p className="text-[13px] font-black uppercase tracking-widest" style={{color: g.color}}>{g.label} · {g.items.length}</p>
+            <p className="text-[15px] font-black uppercase tracking-widest" style={{color: g.color}}>{g.label} · {g.items.length}</p>
           </div>
           <div className="divide-y divide-bgHover">
             {g.items.map(c => (
               <div key={c.id} className="px-3 py-2 flex items-center gap-3">
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white truncate">{c.name} {c.is_default && <span className="text-[11px] text-gray-500 font-black tracking-widest ml-2">(default)</span>}</p>
-                  <p className="text-[13px] text-gray-400 truncate">{c.description}</p>
+                  <p className="text-sm font-black text-white truncate">{c.name} {c.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">(default)</span>}</p>
+                  <p className="text-[15px] text-gray-400 truncate">{c.description}</p>
                 </div>
                 {c.video_url && <i className="fab fa-youtube text-red-500"/>}
                 <button onClick={()=>setEdit({...c})} data-testid={`cmd-edit-${c.id}`} className="text-shBlue hover:text-white text-sm"><i className="fas fa-pen"/></button>
@@ -1532,32 +1532,32 @@ function CommandsPanel() {
             </div>
             <div className="space-y-3">
               <div>
-                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Name *</label>
+                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Name *</label>
                 <input value={edit.name} onChange={(e)=>setEdit({...edit, name:e.target.value})} data-testid="cmd-name"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Category</label>
+                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Category</label>
                 <select value={edit.category} onChange={(e)=>setEdit({...edit, category:e.target.value})}
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                   {meta.categories.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Description</label>
+                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Description</label>
                 <textarea value={edit.description||""} onChange={(e)=>setEdit({...edit, description:e.target.value})} rows={2}
                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div>
-                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">YouTube video URL (optional)</label>
+                <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">YouTube video URL (optional)</label>
                 <input value={edit.video_url||""} onChange={(e)=>setEdit({...edit, video_url:e.target.value})} data-testid="cmd-video"
                        placeholder="https://youtu.be/..."
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
               <div className="flex justify-end gap-3 pt-2">
-                <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+                <button onClick={()=>setEdit(null)} className="text-gray-500 font-black uppercase text-[15px] tracking-widest">Cancel</button>
                 <button onClick={save} data-testid="cmd-save"
-                        className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">Save</button>
+                        className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">Save</button>
               </div>
             </div>
           </div>
@@ -1585,7 +1585,7 @@ function AutomationPanel() {
     <div className="space-y-5 max-w-2xl" data-testid="automation-panel">
       <div>
         <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Email Automation</h4>
-        <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1 normal-case">Background jobs that run automatically at most once per day, triggered the first time the admin dashboard loads each morning.</p>
+        <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1 normal-case">Background jobs that run automatically at most once per day, triggered the first time the admin dashboard loads each morning.</p>
       </div>
 
       <div className="space-y-3">
@@ -1593,39 +1593,39 @@ function AutomationPanel() {
           <i className="fas fa-cake-candles text-shGreen text-xl mt-1 w-7 text-center"/>
           <div className="flex-1">
             <p className="text-white font-black text-[14px] uppercase tracking-widest">Dog Birthday Cards</p>
-            <p className="text-[12px] text-gray-500 normal-case mt-1">Emails the owner a celebratory card with their dog's photo on the dog's birthday. De-duped per dog per year.</p>
+            <p className="text-[14px] text-gray-500 normal-case mt-1">Emails the owner a celebratory card with their dog's photo on the dog's birthday. De-duped per dog per year.</p>
           </div>
-          <span className="bg-shGreen/15 text-shGreen text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+          <span className="bg-shGreen/15 text-shGreen text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
         </div>
         <div className="bg-bgBase border border-bgHover rounded-lg p-4 flex items-start gap-3">
           <i className="fas fa-syringe text-shOrange text-xl mt-1 w-7 text-center"/>
           <div className="flex-1">
             <p className="text-white font-black text-[14px] uppercase tracking-widest">Vaccine Renewal Nudge</p>
-            <p className="text-[12px] text-gray-500 normal-case mt-1">30 days before any vaccine expires, the owner gets a single email listing which renewals are due with a link to upload the updated record.</p>
+            <p className="text-[14px] text-gray-500 normal-case mt-1">30 days before any vaccine expires, the owner gets a single email listing which renewals are due with a link to upload the updated record.</p>
           </div>
-          <span className="bg-shOrange/15 text-shOrange text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+          <span className="bg-shOrange/15 text-shOrange text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
         </div>
       </div>
 
       <div className="bg-bgBase border border-bgHover rounded-lg p-4">
-        <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Manual trigger</p>
-        <p className="text-[12px] text-gray-500 normal-case mt-1">Force-runs all daily jobs right now (clears today's "already ran" flag). Useful for testing.</p>
+        <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Manual trigger</p>
+        <p className="text-[14px] text-gray-500 normal-case mt-1">Force-runs all daily jobs right now (clears today's "already ran" flag). Useful for testing.</p>
         <button onClick={run} disabled={busy} data-testid="run-daily-jobs-btn"
-                className="mt-3 bg-shBlue text-white px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                className="mt-3 bg-shBlue text-white px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
           {busy ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Running…</> : <><i className="fas fa-play mr-2"/>Run Daily Jobs Now</>}
         </button>
-        {err && <p className="text-red-400 text-[12px] mt-2 normal-case">{err}</p>}
+        {err && <p className="text-red-400 text-[14px] mt-2 normal-case">{err}</p>}
         {last && (
-          <div className="mt-3 grid grid-cols-2 gap-3 text-[12px] font-black uppercase tracking-widest">
+          <div className="mt-3 grid grid-cols-2 gap-3 text-[14px] font-black uppercase tracking-widest">
             <div className="bg-bgPanel rounded p-3">
               <p className="text-gray-500">Birthdays</p>
-              <p className="text-shGreen text-[20px]">{last.birthdays?.sent ?? 0}<span className="text-gray-500 text-[12px] ml-1">sent</span></p>
-              <p className="text-gray-600 text-[11px]">{last.birthdays?.skipped ?? 0} skipped</p>
+              <p className="text-shGreen text-[20px]">{last.birthdays?.sent ?? 0}<span className="text-gray-500 text-[14px] ml-1">sent</span></p>
+              <p className="text-gray-600 text-[13px]">{last.birthdays?.skipped ?? 0} skipped</p>
             </div>
             <div className="bg-bgPanel rounded p-3">
               <p className="text-gray-500">Vaccine Renewals</p>
-              <p className="text-shOrange text-[20px]">{last.vaccine_expiry?.sent ?? 0}<span className="text-gray-500 text-[12px] ml-1">sent</span></p>
-              <p className="text-gray-600 text-[11px]">{last.vaccine_expiry?.skipped ?? 0} skipped</p>
+              <p className="text-shOrange text-[20px]">{last.vaccine_expiry?.sent ?? 0}<span className="text-gray-500 text-[14px] ml-1">sent</span></p>
+              <p className="text-gray-600 text-[13px]">{last.vaccine_expiry?.skipped ?? 0} skipped</p>
             </div>
           </div>
         )}

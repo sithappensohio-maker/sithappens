@@ -85,7 +85,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
               <>
                 <Field label="Age">
                   <div className="w-full bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center gap-2">
-                    <i className="fas fa-magic-wand-sparkles text-shGreen text-[11px]"/>
+                    <i className="fas fa-magic-wand-sparkles text-shGreen text-[13px]"/>
                     <span>{dogAgeLabel(form)}</span>
                   </div>
                 </Field>
@@ -95,7 +95,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
                 </Field>
                 <Field label="">
                   <button type="button" onClick={()=>set({birthday:""})}
-                          className="w-full mt-1 text-[11px] text-gray-500 hover:text-gray-300 underline">Clear birthday</button>
+                          className="w-full mt-1 text-[13px] text-gray-500 hover:text-gray-300 underline">Clear birthday</button>
                 </Field>
               </>
             ) : (
@@ -133,14 +133,14 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
 
           <div className="bg-bgBase/50 border border-bgHover rounded-lg p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-[13px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-shield-virus mr-2"/>Vaccinations</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-shield-virus mr-2"/>Vaccinations</p>
               {form.vaccines.rabies && (
-                <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-1 rounded ${rabiesValid?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>
+                <span className={`text-[15px] font-black uppercase tracking-widest px-2 py-1 rounded ${rabiesValid?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>
                   Rabies {rabiesValid?"Valid":"Expired"}
                 </span>
               )}
             </div>
-            <p className="text-[13px] text-gray-400">Enter the <span className="text-shOrange font-black">expiration date</span> from your vet's certificate. Rabies is required to book daycare or boarding.</p>
+            <p className="text-[15px] text-gray-400">Enter the <span className="text-shOrange font-black">expiration date</span> from your vet's certificate. Rabies is required to book daycare or boarding.</p>
             <Field label="Rabies expiration *">
               <input type="date" value={form.vaccines.rabies} onChange={(e)=>setVax({rabies:e.target.value})} data-testid="pd-rabies"
                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
@@ -201,7 +201,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
 function Field({ label, required = false, children }) {
   return (
     <div>
-      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{label}{required && <span className="text-shOrange ml-1">*</span>}</label>
+      <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{label}{required && <span className="text-shOrange ml-1">*</span>}</label>
       <div className="mt-1">{children}</div>
     </div>
   );

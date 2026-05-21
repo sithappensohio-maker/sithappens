@@ -94,7 +94,7 @@ export function RefreshSpinner({ progress = 0, pulling = false }) {
         className="bg-bgPanel border border-bgHover rounded-full w-9 h-9 flex items-center justify-center shadow-lg"
         style={{ transform: `rotate(${progress * 360}deg)` }}
       >
-        <i className={`fas fa-arrow-down text-shGreen text-[13px] transition-transform ${progress >= 1 ? "rotate-180" : ""}`} />
+        <i className={`fas fa-arrow-down text-shGreen text-[15px] transition-transform ${progress >= 1 ? "rotate-180" : ""}`} />
       </div>
     </div>
   );

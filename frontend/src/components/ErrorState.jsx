@@ -46,11 +46,11 @@ export default function ErrorState({
       <h3 className={`font-black text-white uppercase italic tracking-tight ${compact ? "text-base" : "text-xl"}`}>
         {headline}
       </h3>
-      <p className={`text-gray-400 font-black uppercase tracking-widest ${compact ? "text-[12px]" : "text-[14px]"} max-w-md`}>
+      <p className={`text-gray-400 font-black uppercase tracking-widest ${compact ? "text-[14px]" : "text-[14px]"} max-w-md`}>
         {message}
       </p>
       {detail && (
-        <pre className="text-[12px] text-red-400 bg-bgBase border border-bgHover rounded p-2 mt-2 max-w-md w-full text-left whitespace-pre-wrap break-all">
+        <pre className="text-[14px] text-red-400 bg-bgBase border border-bgHover rounded p-2 mt-2 max-w-md w-full text-left whitespace-pre-wrap break-all">
           {detail}
         </pre>
       )}
@@ -58,7 +58,7 @@ export default function ErrorState({
         <button
           onClick={action.onClick}
           data-testid="error-state-action"
-          className="mt-2 bg-shGreen text-bgHeader px-6 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-lg"
+          className="mt-2 bg-shGreen text-bgHeader px-6 py-2.5 rounded font-black text-[15px] uppercase tracking-widest shadow-lg"
         >
           {action.label}
         </button>

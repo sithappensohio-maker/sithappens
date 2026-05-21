@@ -86,11 +86,11 @@ function TrophySection({ title, trophies, onEdit, onDelete }) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <h5 className="text-sm font-black text-white uppercase">{t.name}</h5>
-                <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{t.tier}</span>
-                {!t.active && <span className="text-[10px] font-black text-red-400 uppercase">Inactive</span>}
+                <span className="text-[12px] font-black uppercase tracking-widest text-gray-500">{t.tier}</span>
+                {!t.active && <span className="text-[12px] font-black text-red-400 uppercase">Inactive</span>}
               </div>
-              <p className="text-[12px] text-gray-400 mt-1 leading-tight">{t.description}</p>
-              <div className="text-[11px] text-gray-500 mt-2">
+              <p className="text-[14px] text-gray-400 mt-1 leading-tight">{t.description}</p>
+              <div className="text-[13px] text-gray-500 mt-2">
                 {t.trigger_type === "auto" ? (
                   <span><i className="fas fa-robot mr-1"/>Auto · {t.trigger_kind} ≥ {t.threshold}</span>
                 ) : (
@@ -99,9 +99,9 @@ function TrophySection({ title, trophies, onEdit, onDelete }) {
               </div>
               <div className="flex gap-2 mt-3">
                 <button onClick={()=>onEdit(t)} data-testid={`edit-trophy-${t.code}`}
-                        className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-shBlue/80">Edit</button>
+                        className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-shBlue/80">Edit</button>
                 <button onClick={()=>onDelete(t)} data-testid={`delete-trophy-${t.code}`}
-                        className="text-[11px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">{t.is_default ? "Deactivate" : "Delete"}</button>
+                        className="text-[13px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">{t.is_default ? "Deactivate" : "Delete"}</button>
               </div>
             </div>
           </div>
@@ -154,7 +154,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
         </div>
         <div className="flex items-center gap-4 mb-4 bg-bgBase rounded p-3">
           <TrophyBadge definition={form} size="lg"/>
-          <div className="flex-1 text-[12px] text-gray-400">Live preview</div>
+          <div className="flex-1 text-[14px] text-gray-400">Live preview</div>
         </div>
         <div className="space-y-3">
           {isNew && (
@@ -212,12 +212,12 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
             {form.custom_image && (
               <div className="mt-2 flex items-center gap-2">
                 <img src={form.custom_image} alt="preview" className="w-12 h-12 rounded-full object-cover"/>
-                <button onClick={()=>setForm({...form, custom_image: ""})} className="text-[11px] text-red-400 font-black uppercase">Remove</button>
+                <button onClick={()=>setForm({...form, custom_image: ""})} className="text-[13px] text-red-400 font-black uppercase">Remove</button>
               </div>
             )}
           </Field>
           {!isNew && (
-            <label className="flex items-center gap-2 text-[13px] text-gray-300">
+            <label className="flex items-center gap-2 text-[15px] text-gray-300">
               <input type="checkbox" checked={form.active !== false} onChange={(e)=>setForm({...form, active: e.target.checked})}/>
               Active (uncheck to stop awarding without losing history)
             </label>
@@ -225,7 +225,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
         </div>
         {err && <div className="bg-red-500/10 text-red-400 rounded p-3 text-sm mt-3">{err}</div>}
         <div className="flex justify-end gap-3 mt-5">
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-[15px] font-black uppercase tracking-widest">Cancel</button>
           <button onClick={save} disabled={busy || !form.name || (isNew && !form.code)} data-testid="save-trophy-button"
                   className="bg-shOrange text-white px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shOrange/90 disabled:opacity-50">
             {busy ? "Saving…" : "Save"}
@@ -239,7 +239,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
 function Field({ label, required, children }) {
   return (
     <label className="block">
-      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}{required && <span className="text-red-400 ml-1">*</span>}</span>
+      <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{label}{required && <span className="text-red-400 ml-1">*</span>}</span>
       <div className="mt-1">{children}</div>
     </label>
   );

@@ -46,7 +46,7 @@ export default function InstallAppButton({ className = "", label = "Install App"
               <img src="/icon-192.png" alt="" className="h-12 w-12 rounded-lg" />
               <div>
                 <h3 className="text-white font-black text-lg uppercase tracking-tight leading-tight">Install Sit Happens</h3>
-                <p className="text-gray-400 text-[13px]">Lives on your home screen like a real app.</p>
+                <p className="text-gray-400 text-[15px]">Lives on your home screen like a real app.</p>
               </div>
             </div>
 
@@ -64,12 +64,12 @@ export default function InstallAppButton({ className = "", label = "Install App"
               </ol>
             )}
 
-            <p className="text-gray-500 text-[12px] mt-4 leading-snug">
+            <p className="text-gray-500 text-[14px] mt-4 leading-snug">
               Tip: in Chrome the prompt sometimes only appears after you've used the site a couple of times — keep this tab open and try again in a minute.
             </p>
 
             <button onClick={()=>setHowToOpen(false)} data-testid="install-howto-close"
-                    className="mt-4 w-full bg-bgHover text-white py-2 rounded font-black uppercase tracking-widest text-[13px] hover:bg-bgHover/70">
+                    className="mt-4 w-full bg-bgHover text-white py-2 rounded font-black uppercase tracking-widest text-[15px] hover:bg-bgHover/70">
               Got it
             </button>
           </div>

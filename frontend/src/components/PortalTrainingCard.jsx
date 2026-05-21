@@ -39,7 +39,7 @@ export default function PortalTrainingCard({ dog }) {
           <i className="fas fa-graduation-cap text-gray-600 text-2xl"/>
           <div>
             <p className="text-sm font-black text-white uppercase italic tracking-tight">{dog.name}</p>
-            <p className="text-[13px] text-gray-500">Not currently enrolled in a training program.</p>
+            <p className="text-[15px] text-gray-500">Not currently enrolled in a training program.</p>
           </div>
         </div>
       </div>
@@ -51,7 +51,7 @@ export default function PortalTrainingCard({ dog }) {
       {live.length === 0 && (
         <div className="px-5 py-4 border-b border-bgHover">
           <p className="text-sm font-black text-white">{dog.name}</p>
-          <p className="text-[13px] text-gray-500">No active programs — see completed programs below.</p>
+          <p className="text-[15px] text-gray-500">No active programs — see completed programs below.</p>
         </div>
       )}
 
@@ -70,17 +70,17 @@ export default function PortalTrainingCard({ dog }) {
 
       {completed.length > 0 && (
         <div className="px-5 py-3 border-t border-bgHover">
-          <p className="text-[13px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-flag-checkered mr-2"/>Completed Programs</p>
+          <p className="text-[15px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-flag-checkered mr-2"/>Completed Programs</p>
           <div className="space-y-2">
             {completed.map(c => (
               <div key={c.id} className="bg-bgBase/60 border border-bgHover rounded p-3 flex items-center gap-3">
                 <i className="fas fa-medal text-shGreen text-xl shrink-0"/>
                 <div className="flex-1 min-w-0">
                   <p className="text-[14px] font-black text-white truncate">{c.program_snapshot.name}</p>
-                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Completed {c.completed_at?.slice(0,10)} · {c.mastered_goals}/{c.total_goals} goals mastered</p>
+                  <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">Completed {c.completed_at?.slice(0,10)} · {c.mastered_goals}/{c.total_goals} goals mastered</p>
                 </div>
                 <button onClick={()=>printCertificate(dog, c, typeByKey)} data-testid={`portal-cert-${c.id}`}
-                        className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white"><i className="fas fa-print mr-1"/>Cert</button>
+                        className="text-[14px] font-black uppercase tracking-widest text-shGreen hover:text-white"><i className="fas fa-print mr-1"/>Cert</button>
               </div>
             ))}
           </div>
@@ -106,9 +106,9 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
                       label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-[11px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+            <p className="text-[13px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
             {onHold && (
-              <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
+              <span className="text-[12px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
                 On Hold
               </span>
             )}
@@ -118,13 +118,13 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
             <CollapsibleText text={snap.focus} maxChars={70} className="mt-1"
                              testid={`portal-enrollment-focus-${enrollment.id}`} />
           )}
-          <p className="text-[11px] sm:text-[12px] text-gray-500 font-black uppercase tracking-widest mt-2">Started {enrollment.started_at} · {snap.format?.count} {snap.format?.unit}</p>
+          <p className="text-[13px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest mt-2">Started {enrollment.started_at} · {snap.format?.count} {snap.format?.unit}</p>
         </div>
       </div>
 
       <div className="px-5 py-3 flex justify-between items-center">
         <button onClick={()=>setExpanded(!expanded)} data-testid={`portal-training-toggle-${enrollment.id}`}
-                className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                className="text-[15px] font-black uppercase tracking-widest text-shBlue hover:text-white">
           <i className={`fas fa-chevron-${expanded?"up":"down"} mr-2`}/>{expanded?"Hide":"View"} progress
         </button>
       </div>
@@ -134,15 +134,15 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
           {modulesWithProgress.map(m => (
             <div key={m.id} className="bg-bgBase/50 border border-bgHover rounded">
               <div className="px-3 py-2 border-b border-bgHover" style={{background: color + "10"}}>
-                <p className="text-[13px] font-black uppercase tracking-widest" style={{color}}>{m.name}</p>
+                <p className="text-[15px] font-black uppercase tracking-widest" style={{color}}>{m.name}</p>
               </div>
               <div className="divide-y divide-bgHover">
                 {m.goals.map(g => (
                   <div key={g.id} className="px-3 py-2 flex items-center justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <p className="text-[14px] font-black text-white">{g.name}</p>
-                      {g.description && <p className="text-[13px] text-gray-400">{g.description}</p>}
-                      {g.notes && <p className="text-[12px] text-gray-500 italic mt-1">Trainer: "{g.notes}"</p>}
+                      {g.description && <p className="text-[15px] text-gray-400">{g.description}</p>}
+                      {g.notes && <p className="text-[14px] text-gray-500 italic mt-1">Trainer: "{g.notes}"</p>}
                     </div>
                     <GoalChip score={g.score || 0} />
                   </div>
@@ -161,7 +161,7 @@ function GoalChip({ score }) {
   const labels = ["Not Started","Intro","Learning","Emerging","Proficient","Mastered"];
   const c = colors[score] || colors[0];
   return (
-    <span className="shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border"
+    <span className="shrink-0 text-[14px] font-black uppercase tracking-widest px-2 py-0.5 rounded border"
           style={{color: c, borderColor: c+"80", background: c+"10"}}>
       {score}/5 · {labels[score]}
     </span>

@@ -51,7 +51,7 @@ export default function PortalFilesSection({ dogs }) {
           const dog = key === "_general" ? null : dogById[key];
           return (
             <div key={key} className="bg-bgPanel rounded-xl border border-bgHover shadow-lg p-4">
-              <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-2">
+              <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2">
                 {dog ? <><i className="fas fa-paw mr-2"/>For {dog.name}</> : <><i className="fas fa-house mr-2"/>General</>}
               </p>
               <div className="space-y-2">
@@ -62,10 +62,10 @@ export default function PortalFilesSection({ dogs }) {
                     <i className={`${iconFor(f.content_type)} text-shBlue text-xl mt-0.5 shrink-0`}/>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-black text-white truncate">{f.name}</p>
-                      <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">
+                      <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">
                         {humanSize(f.size_bytes)} · {f.uploaded_at?.slice(0,10)}
                       </p>
-                      {f.note && <p className="text-[13px] text-gray-300 italic mt-1">"{f.note}"</p>}
+                      {f.note && <p className="text-[15px] text-gray-300 italic mt-1">"{f.note}"</p>}
                     </div>
                     <i className="fas fa-download text-shBlue mt-1 shrink-0"/>
                   </button>

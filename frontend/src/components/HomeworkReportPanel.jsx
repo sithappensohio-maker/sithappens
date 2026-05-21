@@ -33,12 +33,12 @@ export default function HomeworkReportPanel({ homeworkId }) {
     return () => { mounted = false; };
   }, [homeworkId]);
 
-  if (loading) return <div className="text-[13px] text-gray-500 uppercase font-black tracking-widest">Loading report…</div>;
+  if (loading) return <div className="text-[15px] text-gray-500 uppercase font-black tracking-widest">Loading report…</div>;
   if (!report) return null;
 
   if (report.total_logs === 0) {
     return (
-      <div className="bg-bgBase border border-bgHover rounded p-4 text-center text-[13px] text-gray-400 uppercase font-black tracking-widest">
+      <div className="bg-bgBase border border-bgHover rounded p-4 text-center text-[15px] text-gray-400 uppercase font-black tracking-widest">
         No client logs yet.
       </div>
     );
@@ -46,7 +46,7 @@ export default function HomeworkReportPanel({ homeworkId }) {
 
   return (
     <div className="space-y-3" data-testid={`hw-report-${homeworkId}`}>
-      <div className="flex flex-wrap gap-3 text-[12px] font-black uppercase tracking-widest">
+      <div className="flex flex-wrap gap-3 text-[14px] font-black uppercase tracking-widest">
         <span className="bg-shGreen/15 text-shGreen px-3 py-1.5 rounded"><i className="fas fa-list-check mr-1"/>{report.total_logs} entries</span>
         <span className="bg-shBlue/15 text-shBlue px-3 py-1.5 rounded"><i className="fas fa-calendar mr-1"/>{report.days_logged} days logged</span>
       </div>
@@ -55,7 +55,7 @@ export default function HomeworkReportPanel({ homeworkId }) {
         <div key={section.section_id} className="bg-bgBase border border-bgHover rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h6 className="text-white font-black text-[14px] uppercase tracking-tight">{section.title}</h6>
-            <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">{section.log_count} log{section.log_count===1?"":"s"} · last {section.last_logged}</span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{section.log_count} log{section.log_count===1?"":"s"} · last {section.last_logged}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
             {section.fields.map(f => <FieldTile key={f.field_id} field={f} />)}
@@ -72,10 +72,10 @@ function FieldTile({ field }) {
     if (!field.latest) return null;
     return (
       <div className="bg-bgPanel/60 border border-bgHover rounded p-2.5 col-span-2 md:col-span-3">
-        <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{field.label}</p>
-        <p className="text-[13px] text-gray-200 mt-1 italic line-clamp-3">"{field.latest}"</p>
+        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">{field.label}</p>
+        <p className="text-[15px] text-gray-200 mt-1 italic line-clamp-3">"{field.latest}"</p>
         {field.entries && field.entries.length > 1 && (
-          <p className="text-[11px] text-gray-500 mt-1">{field.entries.length} total entries</p>
+          <p className="text-[13px] text-gray-500 mt-1">{field.entries.length} total entries</p>
         )}
       </div>
     );
@@ -86,7 +86,7 @@ function FieldTile({ field }) {
     const tot = field.entry_count || 0;
     return (
       <div className="bg-bgPanel/60 border border-bgHover rounded p-2.5">
-        <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{field.label}</p>
+        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">{field.label}</p>
         <p className="text-[16px] font-black text-white mt-1">{yes} / {tot}</p>
       </div>
     );
@@ -109,13 +109,13 @@ function FieldTile({ field }) {
 
   return (
     <div className="bg-bgPanel/60 border border-bgHover rounded p-2.5">
-      <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 line-clamp-2 leading-tight min-h-[28px]">{field.label}</p>
+      <p className="text-[13px] font-black uppercase tracking-widest text-gray-500 line-clamp-2 leading-tight min-h-[28px]">{field.label}</p>
       <div className="flex items-baseline gap-2 mt-1.5">
         <span className="text-[18px] font-black text-white">{field.avg}</span>
-        <span className="text-[11px] text-gray-500">avg{unit ? " " + unit : ""}</span>
-        <i className={`fas ${trendEffective.icon} ${trendEffective.color} text-[12px] ml-auto`} title={`${trendEffective.label} over time`} />
+        <span className="text-[13px] text-gray-500">avg{unit ? " " + unit : ""}</span>
+        <i className={`fas ${trendEffective.icon} ${trendEffective.color} text-[14px] ml-auto`} title={`${trendEffective.label} over time`} />
       </div>
-      <div className="flex items-center justify-between mt-1 text-[11px] text-gray-500">
+      <div className="flex items-center justify-between mt-1 text-[13px] text-gray-500">
         <span>total {field.total}</span>
         {target !== undefined && target !== null && (
           <span className={hitTarget ? "text-shGreen" : "text-shOrange"}>
