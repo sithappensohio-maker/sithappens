@@ -900,3 +900,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - **P1** Auto-email client when admin creates a Pup Report Card
 - **P2** "We've moved" announcement email blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
 - **Refactor** Split `server.py` (~6000 lines) into route modules
+
+## Sprint 83 — Portal shows ALL active training enrollments (2026-02)
+- 🐛 **Bug fix**: `PortalTrainingCard.jsx` used `enrollments.find(e => e.status === "active")` which returned only the FIRST active enrollment, hiding any others.
+- ✅ **Now renders all `active` + `on_hold` enrollments** per dog, sorted newest-first, with a divider between each. On-hold enrollments get a yellow "On Hold" badge so clients understand the state.
+- ✅ Each enrollment has its own expand/collapse — `expandedId` state replaces the boolean `expanded` so opening one doesn't close another.
+- ✅ Backend already supported this — `POST /dogs/{dog_id}/programs` inserts new active enrollments without deactivating existing ones. Verified via curl: 3 concurrent active enrollments on one dog returned correctly.
+- ✅ E2E screenshot-verified on testclient's portal: Rocky now displays "1-Week Fundamentals", "2-Week Essential Obedience", AND "Puppy Preschool" simultaneously, each with its own progress ring + View Progress toggle.
+
+## Backlog / Next Up
+- **P1** Public booking page
+- **P1** Vaccine expiry email blast
+- **P1** Auto-email client when admin creates a Pup Report Card
+- **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
+- **Refactor** Split `server.py` (~6000 lines) into route modules

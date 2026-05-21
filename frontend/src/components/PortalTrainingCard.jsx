@@ -4,11 +4,13 @@ import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
 
 /** Per-dog training summary shown on the client portal.
- *  Read-only view of the dog's active enrollment + history + completed certs. */
+ *  Read-only view of every active enrollment + history + completed certs.
+ *  (Was previously only showing ONE active enrollment even when admin had
+ *  assigned several — Sprint 83.) */
 export default function PortalTrainingCard({ dog }) {
   const [enrollments, setEnrollments] = useState(null);
   const [meta, setMeta] = useState(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -23,7 +25,10 @@ export default function PortalTrainingCard({ dog }) {
   }, [dog.id]);
 
   if (!enrollments || !meta) return null;
-  const active = enrollments.find(e => e.status === "active");
+  // Show ALL active + on_hold enrollments (not just one). Sort newest-first.
+  const live = enrollments
+    .filter(e => e.status === "active" || e.status === "on_hold")
+    .sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
   const completed = enrollments.filter(e => e.status === "completed");
   const typeByKey = Object.fromEntries(meta.types.map(t => [t.key, t]));
 
@@ -43,14 +48,25 @@ export default function PortalTrainingCard({ dog }) {
 
   return (
     <div className="bg-bgPanel rounded-xl border border-bgHover shadow-lg overflow-hidden" data-testid={`portal-training-${dog.id}`}>
-      {active && <ActiveSection enrollment={active} typeMeta={typeByKey[active.program_snapshot.type]}
-                                  dogName={dog.name} expanded={expanded} setExpanded={setExpanded} />}
-      {!active && (
+      {live.length === 0 && (
         <div className="px-5 py-4 border-b border-bgHover">
           <p className="text-sm font-black text-white">{dog.name}</p>
-          <p className="text-[13px] text-gray-500">No active program — see completed programs below.</p>
+          <p className="text-[13px] text-gray-500">No active programs — see completed programs below.</p>
         </div>
       )}
+
+      {/* Render EVERY active/on-hold enrollment — divider between each. */}
+      {live.map((enr, idx) => (
+        <div key={enr.id} className={idx > 0 ? "border-t-4 border-bgBase" : ""}>
+          <ActiveSection
+            enrollment={enr}
+            typeMeta={typeByKey[enr.program_snapshot.type]}
+            dogName={dog.name}
+            expanded={expandedId === enr.id}
+            setExpanded={(v) => setExpandedId(v ? enr.id : null)}
+          />
+        </div>
+      ))}
 
       {completed.length > 0 && (
         <div className="px-5 py-3 border-t border-bgHover">
@@ -77,7 +93,7 @@ export default function PortalTrainingCard({ dog }) {
 function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
-  const homework = []; // not tied to programs currently — leave for future
+  const onHold = enrollment.status === "on_hold";
   const modulesWithProgress = snap.modules.map(m => ({
     ...m,
     goals: m.goals.map(g => ({ ...g, ...(enrollment.goal_progress?.[g.id] || {}) })),
@@ -89,7 +105,14 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
         <ProgressRing percent={enrollment.mastered_pct} size={72} stroke={7} color={color}
                       label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
         <div className="flex-1 min-w-0">
-          <p className="text-[11px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[11px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
+            {onHold && (
+              <span className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-yellow-500/15 text-yellow-300 border border-yellow-500/30">
+                On Hold
+              </span>
+            )}
+          </div>
           <p className="text-sm sm:text-base font-black text-white uppercase italic tracking-tight">{dogName} · {snap.name}</p>
           {snap.focus && (
             <CollapsibleText text={snap.focus} maxChars={70} className="mt-1"
@@ -99,15 +122,15 @@ function ActiveSection({ enrollment, typeMeta, dogName, expanded, setExpanded })
         </div>
       </div>
 
-      <div className="px-5 py-3 flex justify-between items-center border-b border-bgHover">
-        <button onClick={()=>setExpanded(e=>!e)} data-testid={`portal-training-toggle-${enrollment.id}`}
+      <div className="px-5 py-3 flex justify-between items-center">
+        <button onClick={()=>setExpanded(!expanded)} data-testid={`portal-training-toggle-${enrollment.id}`}
                 className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
           <i className={`fas fa-chevron-${expanded?"up":"down"} mr-2`}/>{expanded?"Hide":"View"} progress
         </button>
       </div>
 
       {expanded && (
-        <div className="px-5 py-3 space-y-3">
+        <div className="px-5 pb-3 space-y-3">
           {modulesWithProgress.map(m => (
             <div key={m.id} className="bg-bgBase/50 border border-bgHover rounded">
               <div className="px-3 py-2 border-b border-bgHover" style={{background: color + "10"}}>
@@ -158,8 +181,6 @@ function printCertificate(dog, enrollment, typeByKey) {
   const tm = typeByKey[snap.type] || { color: "#8cc63f", label: snap.type };
   const today = new Date().toLocaleDateString();
   const completed = (enrollment.completed_at || "").slice(0,10) || today;
-  // Use a Blob URL rather than document.write — avoids the XSS-prone API entirely.
-  // All interpolations are HTML-escaped above the line.
   const html = `<!doctype html><html><head><title>${escHtml(dog.name)} · ${escHtml(snap.name)}</title>
     <style>
       @page { size: landscape; margin: 0.5in; }
@@ -192,6 +213,5 @@ function printCertificate(dog, enrollment, typeByKey) {
     URL.revokeObjectURL(url);
     return;
   }
-  // Release the blob URL after the new tab has had time to load.
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
