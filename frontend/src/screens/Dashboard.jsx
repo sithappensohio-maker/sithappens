@@ -15,7 +15,7 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onNavigate = () => {} }) {
   const [stats, setStats] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
@@ -242,10 +242,14 @@ export default function Dashboard() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" />
-        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" />
-        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" />
-        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" />
+        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />
+        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />
+        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" onClick={()=>{
+          const el = document.querySelector('[data-testid="vaccine-alerts-banner"]');
+          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+          else onNavigate("dogs");  // no flags visible on this page → take them to Dogs to filter
+        }} />
+        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
       </div>
 
       {programs && programs.total > 0 && (
@@ -421,9 +425,27 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ label, value, accent, gradClass = "", textColor, testId }) {
+function StatCard({ label, value, accent, gradClass = "", textColor, testId, onClick }) {
+  const base = `bg-bgPanel ${gradClass} p-6 rounded-xl border-t-4 ${accent} shadow-lg text-left w-full transition`;
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        data-testid={testId}
+        className={`${base} hover:scale-[1.02] hover:shadow-xl active:scale-100 cursor-pointer focus:outline-none focus:ring-2 focus:ring-shGreen/60`}
+        title="Click to view details"
+      >
+        <div className="flex items-start justify-between">
+          <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">{label}</p>
+          <i className="fas fa-arrow-right text-[14px] text-gray-500 opacity-0 group-hover:opacity-100"></i>
+        </div>
+        <p className={`text-3xl font-black mt-2 ${textColor}`}>{value}</p>
+      </button>
+    );
+  }
   return (
-    <div className={`bg-bgPanel ${gradClass} p-6 rounded-xl border-t-4 ${accent} shadow-lg`} data-testid={testId}>
+    <div className={base} data-testid={testId}>
       <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest">{label}</p>
       <p className={`text-3xl font-black mt-2 ${textColor}`}>{value}</p>
     </div>
