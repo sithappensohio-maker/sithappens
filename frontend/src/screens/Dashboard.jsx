@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
+import VaccineCenterModal from "../components/VaccineCenterModal";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 
@@ -27,6 +28,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [programs, setPrograms] = useState(null);
   const [pendingVax, setPendingVax] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
+  const [vaccineCenterOpen, setVaccineCenterOpen] = useState(false);
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const [quoteRequests, setQuoteRequests] = useState([]);
   const confirm = useConfirm();
@@ -89,6 +91,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="vaccine-alerts-banner">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-black text-shOrange uppercase tracking-widest flex items-center gap-2"><i className="fas fa-shield-virus"/> Vaccine Alerts · {alerts.length}</h3>
+            <button onClick={()=>setVaccineCenterOpen(true)} data-testid="open-vaccine-center"
+                    className="bg-shOrange text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-[12px] shadow hover:bg-shOrange/90">
+              <i className="fas fa-shield-heart mr-1"/>Manage All
+            </button>
           </div>
           <div className="space-y-2">
             {alerts.map(a => (
@@ -244,11 +250,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />
         <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />
-        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" onClick={()=>{
-          const el = document.querySelector('[data-testid="vaccine-alerts-banner"]');
-          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-          else onNavigate("dogs");  // no flags visible on this page → take them to Dogs to filter
-        }} />
+        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" onClick={()=>setVaccineCenterOpen(true)} />
         <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
       </div>
 
@@ -420,6 +422,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
+      <VaccineCenterModal open={vaccineCenterOpen} onClose={()=>setVaccineCenterOpen(false)} onChanged={load} />
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
