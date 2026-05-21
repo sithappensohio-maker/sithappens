@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
@@ -292,39 +293,29 @@ export default function Income() {
             No expenses logged in this range.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-[15px]">
-              <thead>
-                <tr className="text-[13px] text-gray-500 uppercase tracking-widest border-b border-bgHover">
-                  <th className="text-left py-2 pr-3">Date</th>
-                  <th className="text-left py-2 pr-3">What</th>
-                  <th className="text-left py-2 pr-3">Category</th>
-                  <th className="text-left py-2 pr-3">Method</th>
-                  <th className="text-right py-2 pr-3">Amount</th>
-                  <th className="text-right py-2"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {expenses.map(e => (
-                  <tr key={e.id} className="border-b border-bgHover/40 hover:bg-bgBase/40" data-testid={`expense-row-${e.id}`}>
-                    <td className="py-2 pr-3 text-gray-300">{e.date}</td>
-                    <td className="py-2 pr-3 text-white">{e.description}</td>
-                    <td className="py-2 pr-3 text-gray-400">{e.category || "—"}</td>
-                    <td className="py-2 pr-3 text-gray-500 capitalize">{e.payment_method || "—"}</td>
-                    <td className="py-2 pr-3 text-right text-red-300 font-black">−{fmt(e.amount)}</td>
-                    <td className="py-2 text-right">
-                      <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[13px] text-gray-400 hover:text-shBlue mr-3" data-testid={`expense-edit-${e.id}`}>
-                        <i className="fas fa-pen"/>
-                      </button>
-                      <button onClick={()=>removeExpense(e)} className="text-[13px] text-gray-400 hover:text-red-400" data-testid={`expense-delete-${e.id}`}>
-                        <i className="fas fa-trash"/>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <CollapsibleDateGroups
+            rows={expenses}
+            getDate={(e) => e.date}
+            getAmount={(e) => -Math.abs(Number(e.amount) || 0)}
+            fmtAmount={(n) => n === 0 ? "—" : `${n < 0 ? "−" : ""}${fmt(Math.abs(n))}`}
+            testid="expenses-groups"
+            emptyText="No expenses logged in this range."
+            renderRow={(e) => (
+              <div key={e.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`expense-row-${e.id}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-white truncate">{e.description}</p>
+                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                    {e.category || "—"} · <span className="capitalize">{e.payment_method || "—"}</span>
+                  </p>
+                </div>
+                <span className="text-sm font-black text-red-300 whitespace-nowrap">−{fmt(e.amount)}</span>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[14px] text-gray-400 hover:text-shBlue p-1" data-testid={`expense-edit-${e.id}`}><i className="fas fa-pen"/></button>
+                  <button onClick={()=>removeExpense(e)} className="text-[14px] text-gray-400 hover:text-red-400 p-1" data-testid={`expense-delete-${e.id}`}><i className="fas fa-trash"/></button>
+                </div>
+              </div>
+            )}
+          />
         )}
       </div>
 

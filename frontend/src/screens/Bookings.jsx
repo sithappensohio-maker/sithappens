@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
+import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 
 export default function Bookings() {
@@ -64,6 +65,31 @@ export default function Bookings() {
       </div>
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
+        {showHistory ? (
+          <div className="p-4">
+            <CollapsibleDateGroups
+              rows={visible}
+              getDate={(b) => b.date}
+              getAmount={() => 1}
+              fmtAmount={(n) => `${n} booking${n === 1 ? "" : "s"}`}
+              testid="bookings-history-groups"
+              emptyText="No history yet."
+              renderRow={(b) => (
+                <div key={b.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2" data-testid={`booking-history-row-${b.id}`}>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-black text-white uppercase truncate">{b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span></p>
+                    <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
+                      {b.service_type} · {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
+                    </p>
+                  </div>
+                  <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                  <button onClick={()=>setEditing(b)} className="text-[13px] font-black uppercase text-shBlue hover:underline shrink-0">Open</button>
+                </div>
+              )}
+            />
+          </div>
+        ) : (
+        <>
         {/* Desktop: table */}
         <table className="w-full text-left text-sm hidden md:table">
           <thead className="text-[14px] text-gray-500 font-black uppercase">
@@ -121,6 +147,8 @@ export default function Bookings() {
             </div>
           ))}
         </div>
+        </>
+        )}
       </div>
       {showModal && <AdminBookingModal onClose={()=>setShowModal(false)} onCreated={load} />}
       {editing && <AdminBookingModal existing={editing} onClose={()=>setEditing(null)} onCreated={load} />}

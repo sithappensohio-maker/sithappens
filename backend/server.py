@@ -718,6 +718,66 @@ async def delete_file(file_id: str, _: dict = Depends(require_admin)):
 
 
 
+# -------- Bookings cold-storage archive (Sprint 88) --------
+# Completed / cancelled / rejected bookings older than ARCHIVE_AFTER_DAYS get
+# moved out of the hot `bookings` collection into `bookings_archive`. Keeps
+# the main collection snappy and the active queue uncluttered while preserving
+# every historical record for tax/legal/customer-history lookups.
+ARCHIVE_AFTER_DAYS = 90
+ARCHIVE_TERMINAL_STATUSES = ["completed", "cancelled", "canceled", "rejected"]
+
+async def _archive_old_bookings_once() -> dict:
+    """Move terminal-status bookings whose `date` is older than the cutoff out
+    of `bookings` and into `bookings_archive`. Idempotent — safe to call as
+    often as you like."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=ARCHIVE_AFTER_DAYS)).strftime("%Y-%m-%d")
+    cursor = db.bookings.find(
+        {"status": {"$in": ARCHIVE_TERMINAL_STATUSES}, "date": {"$lt": cutoff}},
+        {"_id": 0},
+    )
+    moved = 0
+    async for b in cursor:
+        b["archived_at"] = now_iso()
+        try:
+            await db.bookings_archive.insert_one(b)
+            await db.bookings.delete_one({"id": b["id"]})
+            moved += 1
+        except Exception as e:
+            logger.warning("archive: failed for booking %s: %s", b.get("id"), e)
+    return {"moved": moved, "cutoff_date": cutoff}
+
+@api.post("/admin/bookings/archive-now")
+async def archive_now(_: dict = Depends(require_admin)):
+    """Manual trigger. Background scheduler also runs this nightly."""
+    return await _archive_old_bookings_once()
+
+# Once-per-UTC-day guard so we don't re-archive on every dashboard load.
+async def _maybe_archive_today():
+    try:
+        today = date.today().isoformat()
+        marker = await db.system_runs.find_one({"_id": "archive_bookings"})
+        if marker and marker.get("date") == today:
+            return
+        result = await _archive_old_bookings_once()
+        await db.system_runs.update_one(
+            {"_id": "archive_bookings"},
+            {"$set": {"date": today, "ran_at": now_iso(), "moved": result["moved"]}},
+            upsert=True,
+        )
+        if result["moved"]:
+            logger.info("Archived %d old bookings (cutoff %s)", result["moved"], result["cutoff_date"])
+    except Exception as e:
+        logger.warning("auto-archive failed (non-fatal): %s", e)
+
+@api.get("/admin/bookings/archive")
+async def list_archived(skip: int = 0, limit: int = 100, _: dict = Depends(require_admin)):
+    """Paged read of the archive. Newest archived first."""
+    total = await db.bookings_archive.count_documents({})
+    items = await db.bookings_archive.find({}, {"_id": 0}).sort("archived_at", -1).skip(int(skip)).limit(int(limit)).to_list(int(limit))
+    return {"total": total, "skip": skip, "limit": limit, "items": items}
+
+
+
 
 @api.post("/clients/send-claim-emails/bulk")
 async def send_claim_emails_bulk(_: dict = Depends(require_admin)):
@@ -4316,6 +4376,8 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         asyncio.create_task(maybe_run_daily(db))
     except Exception as e:
         logger.warning("daily_jobs trigger failed (non-fatal): %s", e)
+    # Same lazy-daily pattern for cold-storage archival of old bookings.
+    asyncio.create_task(_maybe_archive_today())
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
