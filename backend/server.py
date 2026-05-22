@@ -175,6 +175,15 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def require_employee_or_admin(user: dict = Depends(get_current_user)) -> dict:
+    """Allow employees and admins through; clients are blocked.
+    Use this on any endpoint that staff need (clock-in, today's roster, etc.).
+    Sensitive endpoints (income, P&L, settings, billing) keep `require_admin`."""
+    if user.get("role") not in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Staff access required")
+    return user
+
+
 # -------- Models --------
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -5827,6 +5836,402 @@ async def pl_report_email_now(
     except Exception as e:
         logger.warning("PL email send failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Email send failed: {e}")
+
+
+# ────────────────────────── Employees + Time Clock (Sprint 92) ──────────────────────────
+# Employees are stored in the same `users` collection (role="employee") so
+# auth/JWT logic stays consistent. Extra employee-only profile fields live
+# alongside the standard ones (display_name, hourly_rate, active).
+# Time clock entries live in `time_clock_entries`.
+
+class EmployeeIn(BaseModel):
+    email: EmailStr
+    name: str
+    display_name: Optional[str] = ""  # Short name shown on the run sheet / time card
+    hourly_rate: float = 0.0
+    active: bool = True
+    phone: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+class EmployeeCreateIn(EmployeeIn):
+    password: str = Field(min_length=6)
+
+
+class EmployeeOut(EmployeeIn):
+    id: str
+    role: str = "employee"
+    created_at: Optional[str] = None
+    last_login_at: Optional[str] = None
+
+
+def _employee_doc_to_out(u: dict) -> dict:
+    """Strip sensitive fields and shape a user doc as EmployeeOut."""
+    return {
+        "id": u["id"],
+        "email": u.get("email", ""),
+        "name": u.get("name", ""),
+        "display_name": u.get("display_name", "") or u.get("name", ""),
+        "hourly_rate": float(u.get("hourly_rate") or 0),
+        "active": u.get("active", True),
+        "phone": u.get("phone", ""),
+        "notes": u.get("notes", ""),
+        "role": "employee",
+        "created_at": u.get("created_at"),
+        "last_login_at": u.get("last_login_at"),
+    }
+
+
+@api.get("/admin/employees")
+async def list_employees(_: dict = Depends(require_admin)):
+    rows = await db.users.find(
+        {"role": "employee"}, {"_id": 0, "password_hash": 0}
+    ).sort("name", 1).to_list(500)
+    return [_employee_doc_to_out(u) for u in rows]
+
+
+@api.post("/admin/employees", response_model=EmployeeOut)
+async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admin)):
+    existing = await db.users.find_one({"email": body.email.lower()}, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(status_code=400, detail="A user with this email already exists.")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "email": body.email.lower(),
+        "name": body.name,
+        "display_name": body.display_name or body.name,
+        "hourly_rate": float(body.hourly_rate or 0),
+        "active": body.active,
+        "phone": body.phone or "",
+        "notes": body.notes or "",
+        "role": "employee",
+        "password_hash": hash_password(body.password),
+        "created_at": now_iso(),
+        "login_count": 0,
+    }
+    await db.users.insert_one(doc)
+    return _employee_doc_to_out(doc)
+
+
+@api.put("/admin/employees/{user_id}", response_model=EmployeeOut)
+async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(require_admin)):
+    u = await db.users.find_one({"id": user_id, "role": "employee"}, {"_id": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    update = {
+        "email": body.email.lower(),
+        "name": body.name,
+        "display_name": body.display_name or body.name,
+        "hourly_rate": float(body.hourly_rate or 0),
+        "active": body.active,
+        "phone": body.phone or "",
+        "notes": body.notes or "",
+    }
+    await db.users.update_one({"id": user_id}, {"$set": update})
+    u.update(update)
+    return _employee_doc_to_out(u)
+
+
+@api.post("/admin/employees/{user_id}/reset-password")
+async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depends(require_admin)):
+    new_pw = (body or {}).get("password", "")
+    if len(new_pw) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    res = await db.users.update_one(
+        {"id": user_id, "role": "employee"},
+        {"$set": {"password_hash": hash_password(new_pw)}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return {"ok": True}
+
+
+@api.delete("/admin/employees/{user_id}")
+async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
+    """Soft-deactivate (sets active=False). Never hard-delete so historical
+    time-clock entries keep a referenceable owner."""
+    res = await db.users.update_one(
+        {"id": user_id, "role": "employee"}, {"$set": {"active": False}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    return {"ok": True}
+
+
+# ── Time clock ──
+class ClockInIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy_m: Optional[float] = None
+    note: Optional[str] = ""
+
+
+class ClockOutIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy_m: Optional[float] = None
+    break_minutes: Optional[float] = 0
+    note: Optional[str] = ""
+
+
+def _ensure_employee(user: dict) -> None:
+    if user.get("role") not in ("admin", "employee"):
+        raise HTTPException(status_code=403, detail="Staff access required")
+
+
+@api.get("/time-clock/current")
+async def time_clock_current(user: dict = Depends(require_employee_or_admin)):
+    """Returns the currently-open clock entry for the calling user (or None)."""
+    open_entry = await db.time_clock_entries.find_one(
+        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
+    )
+    return {"open": open_entry}
+
+
+@api.post("/time-clock/clock-in")
+async def time_clock_in(body: ClockInIn, user: dict = Depends(require_employee_or_admin)):
+    # Prevent double clock-in
+    existing = await db.time_clock_entries.find_one(
+        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0, "id": 1}
+    )
+    if existing:
+        raise HTTPException(status_code=400, detail="You're already clocked in. Clock out first.")
+    entry = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": user.get("display_name") or user.get("name", ""),
+        "clock_in_at": now_iso(),
+        "clock_in_lat": body.lat,
+        "clock_in_lng": body.lng,
+        "clock_in_accuracy_m": body.accuracy_m,
+        "clock_in_note": (body.note or "").strip(),
+        "clock_out_at": None,
+        "break_minutes": 0,
+        "hours": None,
+        "created_at": now_iso(),
+    }
+    await db.time_clock_entries.insert_one(entry)
+    entry.pop("_id", None)
+    return entry
+
+
+@api.post("/time-clock/clock-out")
+async def time_clock_out(body: ClockOutIn, user: dict = Depends(require_employee_or_admin)):
+    open_entry = await db.time_clock_entries.find_one(
+        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
+    )
+    if not open_entry:
+        raise HTTPException(status_code=400, detail="No open clock-in to close.")
+    out_iso = now_iso()
+    ci = datetime.fromisoformat(open_entry["clock_in_at"].replace("Z", "+00:00"))
+    co = datetime.fromisoformat(out_iso.replace("Z", "+00:00"))
+    break_min = float(body.break_minutes or 0)
+    hours = max((co - ci).total_seconds() / 3600.0 - (break_min / 60.0), 0.0)
+    update = {
+        "clock_out_at": out_iso,
+        "clock_out_lat": body.lat,
+        "clock_out_lng": body.lng,
+        "clock_out_accuracy_m": body.accuracy_m,
+        "clock_out_note": (body.note or "").strip(),
+        "break_minutes": break_min,
+        "hours": round(hours, 3),
+    }
+    await db.time_clock_entries.update_one({"id": open_entry["id"]}, {"$set": update})
+    open_entry.update(update)
+    return open_entry
+
+
+@api.get("/time-clock/me")
+async def time_clock_me(
+    days: int = 30,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Return the calling user's clock entries from the last N days plus totals."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
+    entries = await db.time_clock_entries.find(
+        {"user_id": user["id"], "clock_in_at": {"$gte": cutoff}},
+        {"_id": 0},
+    ).sort("clock_in_at", -1).to_list(2000)
+    total_hours = round(sum(float(e.get("hours") or 0) for e in entries if e.get("clock_out_at")), 2)
+    return {"entries": entries, "total_hours": total_hours, "days": days}
+
+
+@api.get("/admin/time-clock")
+async def admin_time_clock_list(
+    start_date: str,
+    end_date: str,
+    user_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Admin view: all clock entries in a date window, optionally filtered to one employee.
+    Returns entries + per-employee subtotals + grand total + estimated payroll cost."""
+    q: Dict[str, Any] = {
+        "clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"}
+    }
+    if user_id:
+        q["user_id"] = user_id
+    entries = await db.time_clock_entries.find(q, {"_id": 0}).sort("clock_in_at", -1).to_list(5000)
+    # Pull rate per user for payroll cost
+    user_ids = list({e["user_id"] for e in entries})
+    users = await db.users.find(
+        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1}
+    ).to_list(1000) if user_ids else []
+    user_map = {u["id"]: u for u in users}
+
+    per_user: Dict[str, Dict[str, Any]] = {}
+    grand_hours = 0.0
+    grand_cost = 0.0
+    for e in entries:
+        u = user_map.get(e["user_id"], {})
+        name = u.get("display_name") or u.get("name") or "Unknown"
+        rate = float(u.get("hourly_rate") or 0)
+        slot = per_user.setdefault(e["user_id"], {
+            "user_id": e["user_id"], "name": name, "hourly_rate": rate,
+            "hours": 0.0, "cost": 0.0, "entry_count": 0,
+        })
+        hrs = float(e.get("hours") or 0)
+        slot["hours"] = round(slot["hours"] + hrs, 2)
+        slot["cost"] = round(slot["cost"] + hrs * rate, 2)
+        slot["entry_count"] += 1
+        grand_hours += hrs
+        grand_cost += hrs * rate
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "entries": entries,
+        "per_user": sorted(per_user.values(), key=lambda x: -x["hours"]),
+        "grand_hours": round(grand_hours, 2),
+        "grand_cost": round(grand_cost, 2),
+    }
+
+
+class TimeClockEditIn(BaseModel):
+    clock_in_at: Optional[str] = None
+    clock_out_at: Optional[str] = None
+    break_minutes: Optional[float] = None
+    note: Optional[str] = None
+
+
+@api.put("/admin/time-clock/{entry_id}")
+async def admin_edit_time_clock(
+    entry_id: str, body: TimeClockEditIn, admin: dict = Depends(require_admin),
+):
+    """Admin override — fix a missed clock-out, adjust times, etc. Stamps edit metadata."""
+    entry = await db.time_clock_entries.find_one({"id": entry_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    update: Dict[str, Any] = {
+        "edited_by_admin_at": now_iso(),
+        "edited_by_admin_id": admin["id"],
+    }
+    if body.clock_in_at is not None:
+        update["clock_in_at"] = body.clock_in_at
+    if body.clock_out_at is not None:
+        update["clock_out_at"] = body.clock_out_at
+    if body.break_minutes is not None:
+        update["break_minutes"] = float(body.break_minutes)
+    if body.note is not None:
+        update["admin_note"] = body.note
+    # Recompute hours
+    ci_raw = update.get("clock_in_at", entry.get("clock_in_at"))
+    co_raw = update.get("clock_out_at", entry.get("clock_out_at"))
+    brk = update.get("break_minutes", entry.get("break_minutes") or 0)
+    if ci_raw and co_raw:
+        try:
+            ci = datetime.fromisoformat(ci_raw.replace("Z", "+00:00"))
+            co = datetime.fromisoformat(co_raw.replace("Z", "+00:00"))
+            update["hours"] = round(max((co - ci).total_seconds() / 3600.0 - (float(brk) / 60.0), 0.0), 3)
+        except Exception:
+            pass
+    await db.time_clock_entries.update_one({"id": entry_id}, {"$set": update})
+    entry.update(update)
+    return entry
+
+
+@api.delete("/admin/time-clock/{entry_id}")
+async def admin_delete_time_clock(entry_id: str, _: dict = Depends(require_admin)):
+    res = await db.time_clock_entries.delete_one({"id": entry_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"ok": True}
+
+
+# ── Employee-portal helpers (read-only data the staff need to do their job) ──
+@api.get("/employee/me")
+async def employee_me(user: dict = Depends(require_employee_or_admin)):
+    """Self-profile + today's clock status for the employee dashboard."""
+    open_entry = await db.time_clock_entries.find_one(
+        {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
+    )
+    today = date.today().isoformat()
+    today_entries = await db.time_clock_entries.find(
+        {"user_id": user["id"], "clock_in_at": {"$gte": f"{today}T00:00:00"}},
+        {"_id": 0},
+    ).sort("clock_in_at", -1).to_list(50)
+    today_hours = round(sum(float(e.get("hours") or 0) for e in today_entries if e.get("clock_out_at")), 2)
+    return {
+        "user": {
+            "id": user["id"],
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "display_name": user.get("display_name") or user.get("name"),
+            "role": user.get("role"),
+            "hourly_rate": float(user.get("hourly_rate") or 0),
+        },
+        "open_entry": open_entry,
+        "today_entries": today_entries,
+        "today_hours": today_hours,
+    }
+
+
+@api.get("/employee/roster-today")
+async def employee_roster_today(user: dict = Depends(require_employee_or_admin)):
+    """Today's run-sheet roster — dogs on-site + emergency contact phone for each.
+    Strips financial/credit/owner-PII fields the employee doesn't need."""
+    today = date.today().isoformat()
+    bookings = await db.bookings.find(
+        {"date": today, "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0},
+    ).sort("dropoff_time", 1).to_list(500)
+    # Pull dog + client info for each booking
+    dog_ids = list({b["dog_id"] for b in bookings if b.get("dog_id")})
+    client_ids = list({b["client_id"] for b in bookings if b.get("client_id")})
+    dogs = await db.dogs.find(
+        {"id": {"$in": dog_ids}},
+        {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0},
+    ).to_list(1000) if dog_ids else []
+    clients = await db.clients.find(
+        {"id": {"$in": client_ids}},
+        {"_id": 0, "id": 1, "name": 1, "phone": 1, "emerg": 1, "address": 1},
+    ).to_list(1000) if client_ids else []
+    dog_map = {d["id"]: d for d in dogs}
+    client_map = {c["id"]: c for c in clients}
+    roster = []
+    for b in bookings:
+        d = dog_map.get(b.get("dog_id"), {})
+        c = client_map.get(b.get("client_id"), {})
+        roster.append({
+            "booking_id": b["id"],
+            "dog_id": b.get("dog_id"),
+            "dog_name": b.get("dog_name") or d.get("name"),
+            "breed": d.get("breed"),
+            "service_type": b.get("service_type"),
+            "kennel": b.get("kennel"),
+            "dropoff_time": b.get("dropoff_time"),
+            "pickup_time": b.get("pickup_time"),
+            "checked_in_at": b.get("checked_in_at"),
+            "checked_out_at": b.get("checked_out_at"),
+            "status": b.get("status"),
+            "notes": b.get("notes"),
+            "feeding_schedule": d.get("feeding_schedule") or [],
+            "medications": d.get("medications") or [],
+            "vet_name": d.get("vet_name"),
+            "vet_phone": d.get("vet_phone"),
+            "client_name": b.get("client_name") or c.get("name"),
+            "client_phone": c.get("phone"),
+            "client_emergency": c.get("emerg"),
+        })
+    return {"date": today, "roster": roster}
 
 
 # ────────────────────────── Expenses ──────────────────────────

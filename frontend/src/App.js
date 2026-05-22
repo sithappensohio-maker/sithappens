@@ -8,6 +8,7 @@ import Clients from "./screens/Clients";
 import Dogs from "./screens/Dogs";
 import Bookings from "./screens/Bookings";
 import Portal from "./screens/Portal";
+import EmployeePortal from "./screens/EmployeePortal";
 import Settings from "./screens/Settings";
 import Incidents from "./screens/Incidents";
 import RunSheet from "./screens/RunSheet";
@@ -15,6 +16,7 @@ import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Trophies from "./screens/Trophies";
+import Staff from "./screens/Staff";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import Claim from "./screens/Claim";
@@ -64,6 +66,7 @@ function AdminShell() {
     { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy" },
     { id: "income", label: "Income", icon: "fa-dollar-sign" },
+    { id: "staff", label: "Staff", icon: "fa-users-gear" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
@@ -148,6 +151,7 @@ function AdminShell() {
           {tab === "homework" && <Homework />}
           {tab === "trophies" && <Trophies />}
           {tab === "income" && <Income />}
+          {tab === "staff" && <Staff />}
           {tab === "incidents" && <Incidents />}
           {tab === "settings" && <Settings />}
           {tab === "tutorials" && <Tutorials role="admin" />}
@@ -163,6 +167,7 @@ function Gate() {
   if (user === null) return <div className="h-screen w-screen flex items-center justify-center bg-bgBase text-gray-400 text-sm font-black uppercase tracking-widest">Loading…</div>;
   if (!user) return <Login />;
   if (user.role === "admin") return <AdminShell />;
+  if (user.role === "employee") return <EmployeePortal />;
   return <Portal />;
 }
 

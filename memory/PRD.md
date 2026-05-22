@@ -353,6 +353,36 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 ## Sprint 47 — Boarding pack UI + seed defaults (2026-02)
 - ✅ **Seed data** (`credit_packs_data.py`): added 3 boarding packs to `SEED_CREDIT_PACKS` — single $55, 5-night $250, 10-night $475.
 - ✅ **Settings → Credit Packs** (`CreditPacksSettings.jsx`): new "Boarding nights" option in the pool dropdown; chip color uses `text-shOrange` to match the rest of the app. Seed button now shows always (label flips to "Add Missing Defaults" when packs already exist) so existing installs get the 3 new boarding packs idempotently.
+## Sprint 91 — Fixed P&L staff hours + mobile portrait overlap fixes (2026-02)
+- ✅ **Bug fix: P&L staff hours were inflated** — the old logic multiplied per-service rates by booking count, so 10 dogs at daycare on Monday counted as 90h (10×9h). New logic groups bookings by date, finds `min(checked_in_at)` and `max(checked_out_at)` across all on-site bookings that day, and totals `(max_out - min_in)` per day for the real daily shift length. Boarding kept separate at 4h/night (overnight rounds). Daily breakdown table added to the PDF showing first-in/last-out/hours per day for spotting outliers.
+- ✅ **Mobile portrait overlap fixes**:
+  - `Bookings.jsx` header — inner button row now `flex flex-wrap` so Show History + Group by Date + New Booking wrap on phones instead of overlapping.
+  - `Income.jsx` week navigator — added `flex-wrap` so the date input + prev/next/Today buttons stack cleanly on narrow screens.
+  - `Homework.jsx` — both button rows (Assign from Template / Custom + filter chips) got `flex-wrap`.
+  - `Dashboard.jsx` — top KPI grid now `grid-cols-2 md:grid-cols-4` (was 1→4) — smoother step at portrait phone widths so the 4 tiles fit as 2×2.
+
+## Sprint 92 — Employee Portal + RBAC Phase 1 (2026-02)
+- ✅ **New role `employee`** alongside existing `admin`/`client`. Re-uses the same `users` collection + JWT — no breaking changes. New `require_employee_or_admin` middleware; sensitive routes (Income, P&L, Settings, Backup, Programs, Credit Packs CRUD) stay `require_admin`.
+- ✅ **Employee fields on users**: `display_name`, `hourly_rate`, `active`, `phone`, `notes` (all optional).
+- ✅ **New `time_clock_entries` collection** — `{user_id, clock_in_at, clock_in_lat, clock_in_lng, clock_in_accuracy_m, clock_in_note, clock_out_at, clock_out_*, break_minutes, hours, edited_by_admin_at, edited_by_admin_id}`. Geolocation captured (HTML5 geolocation API) on every clock action for management visibility — no enforcement, just record.
+- ✅ **Backend endpoints**:
+  - Admin: `GET/POST /api/admin/employees`, `PUT /api/admin/employees/{id}`, `POST /api/admin/employees/{id}/reset-password`, `DELETE /api/admin/employees/{id}` (soft-deactivate)
+  - Time clock (employee or admin): `POST /api/time-clock/clock-in`, `POST /api/time-clock/clock-out`, `GET /api/time-clock/current`, `GET /api/time-clock/me?days=30`
+  - Admin time clock: `GET /api/admin/time-clock?start_date=&end_date=&user_id=` (per-user totals + payroll cost + grand total + entry list), `PUT /api/admin/time-clock/{id}` (override times/break/note with audit metadata), `DELETE /api/admin/time-clock/{id}`
+  - Employee-portal helpers: `GET /api/employee/me` (self profile + today's clock status + today's entries), `GET /api/employee/roster-today` (today's on-site dogs with feeding/meds/owner phone/emergency contact/vet — financial data stripped)
+- ✅ **Employee Portal frontend** (`EmployeePortal.jsx`) — mobile-first separate shell. 4 tabs:
+  1. **Clock** — live elapsed-time display, big green Clock In / red Clock Out CTA, optional note + break minutes input, today's entries log. Geolocation captured automatically (`navigator.geolocation.getCurrentPosition`) with each action.
+  2. **Roster** — today's dogs on-site with breed, service, kennel, drop-off/pickup times, owner phone (tappable `tel:` link), emergency contact, vet info, feeding schedule, medications, notes. Status pill (On-site / Out / Not in).
+  3. **Timecard** — last 30/14/7/90 days picker, total hours headline, grouped by date with daily totals, individual entries with in/out times.
+  4. **Profile** — view name/email/role, change own password.
+- ✅ **Admin Staff screen** (`Staff.jsx`) — new "Staff" sidebar item:
+  - Employee CRUD (Add / Edit / Reset PW / Deactivate). Deactivate is soft (preserves historical clock entries).
+  - Time clock viewer with date range + per-employee filter; 3 KPI tiles (hours / payroll cost / entries); per-employee subtotals (`hours · cost · rate`); entry table with location-pin icons indicating clock-in/clock-out geo was recorded.
+  - Click "Edit" on any entry to override clock-in/out times, break minutes, add admin note. Records `edited_by_admin_at` + `edited_by_admin_id` for audit.
+- ✅ **App routing**: login auto-routes by role — admin → AdminShell, employee → EmployeePortal, client → existing Portal.
+- ✅ **Test employee seeded**: `alex@sithappens.com` / `emp1234` at $18.50/hr. Verified end-to-end: created via admin API, login routes to employee portal, clock in/out captures geo (40.7128, -74.0060), employee blocked from `/api/reports/pl` with 403, admin sees per-user totals + payroll cost. Backend + frontend lint clean.
+
+
 - ✅ **Sell Pack modal** (`Clients.jsx`): added "Boarding" filter chip, refactored pack-row color/unit logic to support 3 pools (sessions / nights / credits), cart summary expanded from 3 to 4 columns (Daycare / Training / Boarding / Charge).
 - ✅ **Receipt** (`ReceiptModal`): per-line unit label now branches on boarding ("boarding nights"); totals grid shows the third pool when present.
 - ✅ Verified end-to-end: seed endpoint added 3 boarding packs, Sell modal filters/cart/totals all render correctly with boarding pool.
