@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import MultiDatePicker from "./MultiDatePicker";
 
 /**
  * Client-portal Book Service wizard.
@@ -43,6 +44,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [closedDates, setClosedDates] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState("");
+  // Multi-date mode — book several non-consecutive days at once (non-boarding only)
+  const [isMultiDate, setIsMultiDate] = useState(false);
+  const [multiDates, setMultiDates] = useState([]);
 
   // Date guard rails
   const minDate = todayISO();
@@ -88,7 +92,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const selectedDog = useMemo(() => dogs.find(d => d.id === dogId) || null, [dogs, dogId]);
   const svcMeta = SERVICE_OPTIONS.find(s => s.key === serviceType);
 
+  // Reset multi-date when service is not daycare (only daycare supports multi-date in portal).
+  useEffect(() => {
+    if (serviceType !== "daycare") {
+      setIsMultiDate(false);
+      setMultiDates([]);
+    }
+  }, [serviceType]);
+
   const canProceedFromStep2 = useMemo(() => {
+    if (isMultiDate && serviceType === "daycare") {
+      return multiDates.length > 0;
+    }
     if (!date) return false;
     if (dateIsClosed) return false;
     if (serviceType === "boarding") {
@@ -99,11 +114,28 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     if (TIME_SLOTTED.has(serviceType)) return !!time;
     if (serviceType === "daycare") return !!avail && avail.vaccine_ok && avail.open_slots > 0;
     return true;
-  }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed]);
+  }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed, isMultiDate, multiDates]);
 
   const book = async () => {
     setErr(""); setSubmitting(true);
     try {
+      if (isMultiDate && serviceType === "daycare") {
+        const { data } = await api.post("/bookings/multi-dates", {
+          dog_id: dogId,
+          dates: multiDates,
+          service_type: "daycare",
+          notes,
+        });
+        const c = data.created?.length || 0;
+        const s = data.skipped?.length || 0;
+        if (c === 0) {
+          setErr(`No bookings created — all ${s} day(s) were skipped: ${(data.skipped || []).slice(0,3).map(x=>`${x.date} (${x.reason})`).join("; ")}${s>3?"…":""}`);
+          setSubmitting(false);
+          return;
+        }
+        onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped });
+        return;
+      }
       const body = {
         dog_id: dogId,
         date,
@@ -184,29 +216,57 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <i className={`fas ${svcMeta?.icon} mr-2`}/>{svcMeta?.label} · {selectedDog?.name}
             </div>
 
-            {/* Boarding: two dates */}
-            {serviceType === "boarding" && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
-                  <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
-                </div>
-                <div>
-                  <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup date</label>
-                  <input type="date" value={endDate} min={date} onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-end" />
-                </div>
-              </div>
+            {/* Multi-date toggle — daycare only (time-slotted services have per-date slots) */}
+            {serviceType === "daycare" && (
+              <label className="flex items-center gap-3 cursor-pointer bg-shGreen/5 border border-shGreen/30 rounded p-2.5" data-testid="wiz-multidate-toggle-row">
+                <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
+                       data-testid="wiz-multidate-toggle"
+                       className="accent-shGreen w-4 h-4" />
+                <span className="text-[14px] font-black uppercase tracking-widest text-shGreen">
+                  <i className="fas fa-calendar-days mr-2"/>Book multiple specific days
+                </span>
+                {isMultiDate && multiDates.length > 0 && (
+                  <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-white bg-shGreen/20 px-2 py-0.5 rounded">
+                    {multiDates.length} picked
+                  </span>
+                )}
+              </label>
             )}
 
-            {/* Daycare or time-slotted: single date */}
-            {serviceType !== "boarding" && (
-              <div>
-                <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
-                <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
-              </div>
+            {/* MULTI-DATE PICKER */}
+            {isMultiDate && serviceType === "daycare" ? (
+              <MultiDatePicker
+                value={multiDates}
+                onChange={setMultiDates}
+                closedDates={closedDates}
+                testid="wiz-multidate"
+              />
+            ) : (
+              <>
+                {serviceType === "boarding" && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
+                      <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
+                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+                    </div>
+                    <div>
+                      <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup date</label>
+                      <input type="date" value={endDate} min={date} onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
+                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-end" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Daycare or time-slotted: single date */}
+                {serviceType !== "boarding" && (
+                  <div>
+                    <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+                    <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
+                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+                  </div>
+                )}
+              </>
             )}
 
             {/* Closed-day warnings — Settings → Closed Days is the source */}
@@ -313,6 +373,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                   <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Drop-off</span><span className="text-white font-black">{fmt(date)}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Pickup</span><span className="text-white font-black">{fmt(endDate)}</span></div>
                 </>
+              ) : isMultiDate && serviceType === "daycare" ? (
+                <div data-testid="wiz-review-multidate">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Days</span>
+                    <span className="text-shGreen font-black">{multiDates.length} day{multiDates.length===1?"":"s"}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {multiDates.map(d => (
+                      <span key={d} className="bg-shGreen/15 border border-shGreen/40 text-shGreen rounded px-2 py-0.5 text-[12px] font-black">{fmt(d)}</span>
+                    ))}
+                  </div>
+                </div>
               ) : (
                 <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Date</span><span className="text-white font-black">{fmt(date)}</span></div>
               )}
@@ -337,7 +409,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </button>
               <button onClick={book} disabled={submitting} data-testid="wiz-confirm"
                       className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
-                {submitting ? "Booking…" : "Confirm booking"}
+                {submitting ? "Booking…" : (isMultiDate && serviceType==="daycare" ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}` : "Confirm booking")}
               </button>
             </div>
           </div>

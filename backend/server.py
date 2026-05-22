@@ -7797,8 +7797,10 @@ async def list_client_receipts(client_id: str, _: dict = Depends(require_admin))
 class MultiDateBookingIn(BaseModel):
     dog_id: str
     dates: List[str] = Field(min_length=1, max_length=60)  # YYYY-MM-DD strings
-    service_type: Literal["daycare", "training", "grooming"] = "daycare"
+    service_type: Literal["daycare", "training", "grooming", "photography"] = "daycare"
     notes: Optional[str] = ""
+    grooming_type: Optional[Literal["bath", "nail_trim"]] = None
+    time: Optional[str] = ""  # HH:MM — used by time-slotted services (training/grooming/photography)
     override_capacity: Optional[bool] = False  # admin only
     override_vaccines: Optional[bool] = False  # admin only
 
@@ -7831,6 +7833,8 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
                     date=d,
                     service_type=body.service_type,
                     notes=body.notes or "",
+                    grooming_type=body.grooming_type if body.service_type == "grooming" else None,
+                    time=body.time or "" if body.service_type in ("training", "grooming", "photography") else "",
                     override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
                     override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
                 )

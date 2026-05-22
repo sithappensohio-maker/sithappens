@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import MultiDatePicker from "./MultiDatePicker";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -7,6 +8,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [kennels, setKennels] = useState([]);
+  const [closedDates, setClosedDates] = useState([]);
   const [clientId, setClientId] = useState(existing?.client_id || "");
   const [dogId, setDogId] = useState(existing?.dog_id || "");
   // Quick Check-in mode: dog-first selection (the common drop-off flow).
@@ -15,6 +17,11 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [serviceType, setServiceType] = useState(existing?.service_type || "daycare");
   const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
   const [endDate, setEndDate] = useState(existing?.end_date || "");
+  // Multi-date mode: book several non-consecutive days at once (daycare /
+  // training / grooming / photography). Not allowed for boarding (spans dates)
+  // and not allowed when editing an existing booking.
+  const [isMultiDate, setIsMultiDate] = useState(false);
+  const [multiDates, setMultiDates] = useState([]);
   const [kennel, setKennel] = useState(existing?.kennel || "");
   const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "");
   const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "");
@@ -40,6 +47,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setClients(cRes.data);
         setDogs(dRes.data);
         setKennels(sRes.data.kennels || []);
+        setClosedDates(Array.isArray(sRes.data?.closed_dates) ? sRes.data.closed_dates : []);
         if (!existing) {
           if (isQuickCheckin) {
             // Pre-select the first dog and its owner so the form is ready to submit.
@@ -96,9 +104,47 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const rabies = selectedDog?.vaccines?.rabies || "";
   const rabiesOk = rabies && rabies >= todayISO();
 
+  // Force-off multi-date when service becomes boarding (multi-date isn't valid
+  // for spanning stays) or when editing (you edit a single booking at a time).
+  useEffect(() => {
+    if (serviceType === "boarding" || isEdit) {
+      setIsMultiDate(false);
+    }
+  }, [serviceType, isEdit]);
+
   const submit = async () => {
     setErr("");
     if (!dogId) { setErr("Pick a dog"); return; }
+    if (isMultiDate && !isEdit) {
+      if (multiDates.length === 0) { setErr("Pick at least one date"); return; }
+      setSaving(true);
+      try {
+        const { data } = await api.post("/bookings/multi-dates", {
+          dog_id: dogId,
+          dates: multiDates,
+          service_type: serviceType,
+          grooming_type: serviceType === "grooming" ? groomingType : null,
+          time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+          notes,
+          override_capacity: overrideCapacity,
+          override_vaccines: overrideVaccines,
+        });
+        const c = data.created?.length || 0;
+        const s = data.skipped?.length || 0;
+        if (c === 0) {
+          setErr(`No bookings created — all ${s} day(s) were skipped (${(data.skipped || []).map(x => `${x.date}: ${x.reason}`).join("; ")})`);
+          setSaving(false);
+          return;
+        }
+        onCreated?.({
+          summary: `${c} booking${c===1?"":"s"} created${s ? `, ${s} skipped` : ""}`,
+          skipped: data.skipped,
+        });
+        onClose();
+      } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
+      setSaving(false);
+      return;
+    }
     if (serviceType === "boarding" && endDate && endDate < date) { setErr("End date must be after start date"); return; }
     setSaving(true);
     try {
@@ -242,20 +288,48 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
-              <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+          {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
+          {!isEdit && serviceType !== "boarding" && (
+            <label className="flex items-center gap-3 cursor-pointer bg-shGreen/5 border border-shGreen/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
+              <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
+                     data-testid="ab-multidate-toggle"
+                     className="accent-shGreen w-4 h-4" />
+              <span className="text-[14px] font-black uppercase tracking-widest text-shGreen">
+                <i className="fas fa-calendar-days mr-2"/>Book multiple specific days
+              </span>
+              {isMultiDate && multiDates.length > 0 && (
+                <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-white bg-shGreen/20 px-2 py-0.5 rounded">
+                  {multiDates.length} picked
+                </span>
+              )}
+            </label>
+          )}
+
+          {isMultiDate && !isEdit ? (
+            <div data-testid="ab-multidate-section">
+              <MultiDatePicker
+                value={multiDates}
+                onChange={setMultiDates}
+                closedDates={closedDates}
+                testid="ab-multidate"
+              />
             </div>
-            {serviceType==="boarding" && (
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Date</label>
-                <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
+                <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
               </div>
-            )}
-          </div>
+              {serviceType==="boarding" && (
+                <div>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Date</label>
+                  <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                </div>
+              )}
+            </div>
+          )}
 
           {serviceType==="boarding" && kennels.length > 0 && (
             <div>
@@ -302,10 +376,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           </div>
 
           <div className="border-t border-bgHover pt-4 space-y-3">
-            <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shGreen w-4 h-4" />
-              <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-clock-rotate-left mr-2 text-shGreen"/>Check in immediately (stamps arrival time)</span>
-            </label>
+            {!isMultiDate && (
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shGreen w-4 h-4" />
+                <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-clock-rotate-left mr-2 text-shGreen"/>Check in immediately (stamps arrival time)</span>
+              </label>
+            )}
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shOrange w-4 h-4" />
               <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-shield-virus mr-2 text-shOrange"/>Override vaccine requirements (admin override)</span>
@@ -320,9 +396,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           <div className="flex justify-end gap-3 pt-2">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-            <button onClick={submit} disabled={saving || !dogId} data-testid="ab-submit"
+            <button onClick={submit} disabled={saving || !dogId || (isMultiDate && multiDates.length === 0)} data-testid="ab-submit"
                     className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
-              {saving ? "Saving…" : (isEdit ? "Save Changes" : (checkInNow ? "Book & Check In" : "Create Booking"))}
+              {saving ? "Saving…" : (isEdit ? "Save Changes" : (isMultiDate ? `Book ${multiDates.length || ""} day${multiDates.length===1?"":"s"}` : (checkInNow ? "Book & Check In" : "Create Booking")))}
             </button>
           </div>
         </div>

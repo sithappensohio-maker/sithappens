@@ -1108,6 +1108,15 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Clients screen** displays a tiny chip under the "Portal" column: "Just now" / "5 min ago" / "3h ago" / "5d ago" / "2w ago" / "Never logged in". Color-coded: green <7d, blue <30d, gray <90d, red >90d, gray for never. Hover reveals exact timestamp + total login count.
 - ✅ E2E tested via curl + screenshot: login bumped `last_login_at` and `login_count`, list endpoint returned both fields, UI renders the chip in the right colors.
 
+## Sprint 96 — Multi-Date Booking (Admin + Portal) (2026-02)
+- ✅ **Shared `MultiDatePicker` component** (`/app/frontend/src/components/MultiDatePicker.jsx`) — 3-month forward calendar grid with Prev/Next month navigation, past-day greying, closed-day line-through, multi-select tap-to-toggle. Selected days render as removable green chips with "Clear all" and a live "N picked" counter. Used by both admin and portal so the UX is identical across roles.
+- ✅ **`AdminBookingModal` multi-date mode** — new "📅 Book multiple specific days" toggle row (green theme). Shows for daycare/training/grooming/photography; auto-hidden for boarding (spans multiple dates) and when editing an existing booking. Submit button label dynamically becomes `Book N days`. POSTs to `/api/bookings/multi-dates` with admin override flags propagated. Closed-day list loaded from settings so the picker greys out non-operating days.
+- ✅ **`PortalBookWizard` Step 2 multi-date mode** — same toggle + picker but scoped to daycare only (time-slotted services have per-date slot conflicts that don't generalise). Step 3 review shows chip list of selected days and "Submit N bookings" CTA. Error path surfaces skipped-day reasons inline if all picks fail.
+- ✅ **Backend `POST /api/bookings/multi-dates`** — added `photography` to allowed `service_type` literal, new optional `grooming_type` and `time` fields propagated to each created `BookingIn`. Admin override flags (`override_vaccines`/`override_capacity`) only applied for admin role; clients passing them are silently ignored (defence-in-depth).
+- ✅ **Single summary email** still fires once per multi-date action (not per booking) for client portal triggers; admins skip the summary because they triggered it themselves.
+- ✅ **7/7 new regression tests pass** (`/app/backend/tests/test_multi_date_bookings.py` 3 tests + retail 4 tests). Verified end-to-end via Playwright: admin picks 3 days → 3 bookings created; client portal wizard picks 2 days → review shows chip list → "Submit 2 bookings" → both created.
+
+
 ## Sprint 95 — Retail Sales Logging (External POS → Income) (2026-02)
 - ✅ **Lightweight retail revenue ledger** — user has their own POS, so this is a simple "log a sale → flows into Income + P&L" pattern rather than a built-in checkout.
 - ✅ **`retail_sales` collection** (new) with full admin CRUD: `GET/POST/PUT/DELETE /api/retail-sales` + `GET /api/retail-sales/categories` for autocomplete. Fields: `date, description, amount, category, notes, payment_method (cash/card/transfer/check/credits/other), client_id (optional), client_name (resolved on save)`.
