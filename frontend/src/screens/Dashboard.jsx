@@ -28,6 +28,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [programs, setPrograms] = useState(null);
   const [pendingVax, setPendingVax] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
+  const [todayPnl, setTodayPnl] = useState(null);
+  const [pnlExpanded, setPnlExpanded] = useState(false);
   const [vaccineCenterOpen, setVaccineCenterOpen] = useState(false);
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const [quoteRequests, setQuoteRequests] = useState([]);
@@ -35,7 +37,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
   const load = async () => {
     try {
-      const [s, a, st, pg, sv, vx, lb, qr] = await Promise.all([
+      const [s, a, st, pg, sv, vx, lb, qr, pnl] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/vaccine-alerts"),
         api.get("/settings"),
@@ -44,6 +46,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
         api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
+        api.get("/admin/today-pnl").catch(()=>({data:null})),
       ]);
       setStats(s.data);
       setAlerts(a.data);
@@ -53,6 +56,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
+      setTodayPnl(pnl.data);
     } catch {}
   };
   useEffect(() => { load(); }, []);
@@ -254,6 +258,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
       </div>
 
+      {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} />}
+
+
       {programs && programs.total > 0 && (
         <div className="bg-bgPanel rounded-xl border border-bgHover p-4" data-testid="programs-tile">
           <div className="flex items-center justify-between mb-2">
@@ -442,6 +449,74 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
               <img src={vaxPhoto.photo} alt="vaccine cert" className="max-h-[75vh] object-contain"/>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function TodayPnlTile({ data, expanded, onToggle, onNavStaff }) {
+  const fmt = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n)||0).toFixed(2)}`;
+  const isProfit = data.net >= 0;
+  const accent = isProfit ? "text-shGreen border-shGreen/40" : "text-red-300 border-red-500/40";
+  const bg = isProfit ? "bg-shGreen/5" : "bg-red-500/5";
+  return (
+    <div className={`rounded-xl border ${accent} ${bg} p-4`} data-testid="today-pnl-tile">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-[12px] font-black uppercase tracking-widest text-gray-400">
+            <i className={`fas ${isProfit ? "fa-arrow-trend-up text-shGreen" : "fa-arrow-trend-down text-red-400"} mr-2`}/>
+            Today's P&amp;L · {data.date}
+          </p>
+          <p className={`text-3xl font-black ${isProfit ? "text-shGreen" : "text-red-300"} mt-1`} data-testid="pnl-net">{fmt(data.net)}</p>
+          <p className="text-[13px] text-gray-400 mt-0.5">
+            {fmt(data.revenue)} revenue − {fmt(data.labor_cost)} labor
+            {data.margin_pct != null && <span className="ml-2 font-black">({data.margin_pct}% margin)</span>}
+          </p>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <div className="bg-bgBase/60 border border-bgHover rounded px-3 py-2 text-center min-w-[88px]">
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Booked</p>
+            <p className="text-base font-black text-white">{data.booked_count}</p>
+          </div>
+          <div className="bg-bgBase/60 border border-bgHover rounded px-3 py-2 text-center min-w-[88px]">
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Hours</p>
+            <p className="text-base font-black text-white">{data.labor_hours}</p>
+          </div>
+          {data.open_shifts > 0 && (
+            <div className="bg-shGreen/15 border border-shGreen/40 rounded px-3 py-2 text-center min-w-[88px]" data-testid="pnl-open-shifts">
+              <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Clocked in</p>
+              <p className="text-base font-black text-shGreen">{data.open_shifts}</p>
+            </div>
+          )}
+          <button onClick={onToggle} data-testid="pnl-toggle"
+                  className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline px-2 py-1">
+            <i className={`fas fa-chevron-${expanded ? "up" : "down"} mr-1`}/>{expanded ? "Less" : "Details"}
+          </button>
+        </div>
+      </div>
+      {expanded && (
+        <div className="mt-3 border-t border-bgHover/60 pt-3" data-testid="pnl-details">
+          {data.per_employee.length === 0 ? (
+            <p className="text-[14px] text-gray-500">No staff clocked in today.</p>
+          ) : (
+            <div className="space-y-1">
+              <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Labor breakdown</p>
+              {data.per_employee.map(e => (
+                <div key={e.user_id} className="flex justify-between items-center gap-2 text-[14px]" data-testid={`pnl-emp-${e.user_id}`}>
+                  <span className="text-gray-200 truncate">
+                    {e.name}
+                    {e.is_clocked_in && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/15 border border-shGreen/40 px-1.5 py-0.5 rounded">live</span>}
+                  </span>
+                  <span className="text-gray-400 shrink-0">{e.hours}h · ${e.cost.toFixed(2)} · ${e.hourly_rate.toFixed(2)}/hr</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <button onClick={onNavStaff} className="mt-3 text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline" data-testid="pnl-open-staff">
+            Open Staff <i className="fas fa-arrow-right ml-1"/>
+          </button>
         </div>
       )}
     </div>

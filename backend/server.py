@@ -6184,6 +6184,103 @@ async def employee_me(user: dict = Depends(require_employee_or_admin)):
     }
 
 
+@api.get("/admin/today-pnl")
+async def today_pnl(_: dict = Depends(require_admin)):
+    """Live 'am I profitable today?' gauge — expected revenue minus labor cost
+    for today. Bookings count if approved or completed; price falls back to the
+    service catalog `base_price` when actual_price isn't set yet. Labor uses
+    real clocked hours; any currently-open shift is projected to "now"."""
+    today = date.today().isoformat()
+    now_dt = datetime.now(timezone.utc)
+    # ── Expected revenue today
+    bookings = await db.bookings.find(
+        {"date": today, "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1},
+    ).to_list(2000)
+    # Build a service-id → base_price lookup for fallback pricing
+    svc_ids = list({b.get("service_id") for b in bookings if b.get("service_id")})
+    svcs = await db.services.find(
+        {"id": {"$in": svc_ids}}, {"_id": 0, "id": 1, "base_price": 1}
+    ).to_list(200) if svc_ids else []
+    svc_price = {s["id"]: float(s.get("base_price") or 0) for s in svcs}
+    revenue = 0.0
+    booked_count = 0
+    completed_count = 0
+    for b in bookings:
+        booked_count += 1
+        if b.get("status") == "completed":
+            completed_count += 1
+        # Use the strongest signal available
+        price = float(b.get("actual_price") or 0)
+        if not price:
+            price = float(b.get("credit_value") or 0)
+        if not price and b.get("service_id"):
+            price = svc_price.get(b["service_id"], 0)
+        revenue += price
+    revenue = round(revenue, 2)
+
+    # ── Labor cost today
+    today_start = f"{today}T00:00:00"
+    today_end = f"{today}T23:59:59.999Z"
+    entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": today_start, "$lte": today_end}},
+        {"_id": 0},
+    ).to_list(500)
+    user_ids = list({e["user_id"] for e in entries})
+    users = await db.users.find(
+        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1}
+    ).to_list(500) if user_ids else []
+    user_map = {u["id"]: u for u in users}
+    labor_cost = 0.0
+    labor_hours = 0.0
+    open_shifts = 0
+    per_employee: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        u = user_map.get(e["user_id"], {})
+        rate = float(u.get("hourly_rate") or 0)
+        if e.get("clock_out_at"):
+            hrs = float(e.get("hours") or 0)
+        else:
+            # Project an open shift to "now" for live cost
+            try:
+                ci = datetime.fromisoformat(e["clock_in_at"].replace("Z", "+00:00"))
+                break_min = float(e.get("break_minutes") or 0)
+                hrs = max((now_dt - ci).total_seconds() / 3600.0 - (break_min / 60.0), 0.0)
+                open_shifts += 1
+            except Exception:
+                hrs = 0
+        cost = hrs * rate
+        labor_cost += cost
+        labor_hours += hrs
+        slot = per_employee.setdefault(e["user_id"], {
+            "user_id": e["user_id"],
+            "name": u.get("display_name") or u.get("name") or "Unknown",
+            "hourly_rate": rate, "hours": 0.0, "cost": 0.0, "is_clocked_in": False,
+        })
+        slot["hours"] = round(slot["hours"] + hrs, 2)
+        slot["cost"] = round(slot["cost"] + cost, 2)
+        if not e.get("clock_out_at"):
+            slot["is_clocked_in"] = True
+    labor_cost = round(labor_cost, 2)
+    labor_hours = round(labor_hours, 2)
+    net = round(revenue - labor_cost, 2)
+    margin_pct = round((net / revenue * 100.0), 1) if revenue > 0 else None
+
+    return {
+        "date": today,
+        "revenue": revenue,
+        "labor_cost": labor_cost,
+        "labor_hours": labor_hours,
+        "net": net,
+        "margin_pct": margin_pct,
+        "booked_count": booked_count,
+        "completed_count": completed_count,
+        "open_shifts": open_shifts,
+        "per_employee": sorted(per_employee.values(), key=lambda x: -x["cost"]),
+    }
+
+
+
 @api.get("/employee/roster-today")
 async def employee_roster_today(user: dict = Depends(require_employee_or_admin)):
     """Today's run-sheet roster — dogs on-site + emergency contact phone for each.
