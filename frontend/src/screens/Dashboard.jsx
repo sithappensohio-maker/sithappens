@@ -86,6 +86,24 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
 
+  // Auto-refresh today's P&L every 30s so check-ins / clock-ins reflect live
+  useEffect(() => {
+    const t = setInterval(async () => {
+      try {
+        const r = await api.get("/admin/today-pnl");
+        setTodayPnl(r.data);
+      } catch { /* silent */ }
+    }, 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  const refreshPnl = async () => {
+    try {
+      const r = await api.get("/admin/today-pnl");
+      setTodayPnl(r.data);
+    } catch { /* silent */ }
+  };
+
   if (!stats) return <div className="text-gray-400 text-sm">Loading dashboard…</div>;
 
   return (
@@ -258,7 +276,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
       </div>
 
-      {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} />}
+      {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
 
 
       {programs && programs.total > 0 && (
@@ -456,7 +474,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 }
 
 
-function TodayPnlTile({ data, expanded, onToggle, onNavStaff }) {
+function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
   const fmt = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n)||0).toFixed(2)}`;
   const isProfit = data.net >= 0;
   const accent = isProfit ? "text-shGreen border-shGreen/40" : "text-red-300 border-red-500/40";
@@ -493,6 +511,11 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff }) {
           <button onClick={onToggle} data-testid="pnl-toggle"
                   className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline px-2 py-1">
             <i className={`fas fa-chevron-${expanded ? "up" : "down"} mr-1`}/>{expanded ? "Less" : "Details"}
+          </button>
+          <button onClick={onRefresh} data-testid="pnl-refresh"
+                  className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-2 py-1"
+                  title="Refresh (auto every 30s)">
+            <i className="fas fa-rotate"/>
           </button>
         </div>
       </div>

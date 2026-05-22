@@ -6661,14 +6661,27 @@ async def today_pnl(_: dict = Depends(require_admin)):
     # ── Expected revenue today
     bookings = await db.bookings.find(
         {"date": today, "status": {"$in": ["approved", "completed"]}},
-        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1},
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1},
     ).to_list(2000)
-    # Build a service-id → base_price lookup for fallback pricing
+    # Build a service-id → base_price lookup
     svc_ids = list({b.get("service_id") for b in bookings if b.get("service_id")})
-    svcs = await db.services.find(
+    svcs_by_id = await db.services.find(
         {"id": {"$in": svc_ids}}, {"_id": 0, "id": 1, "base_price": 1}
     ).to_list(200) if svc_ids else []
-    svc_price = {s["id"]: float(s.get("base_price") or 0) for s in svcs}
+    svc_price = {s["id"]: float(s.get("base_price") or 0) for s in svcs_by_id}
+    # Build a service_type → default active service for fallback when booking
+    # has no service_id (legacy/quick-add bookings)
+    default_svcs = await db.services.find(
+        {"active": True}, {"_id": 0, "service_type": 1, "base_price": 1, "is_default": 1}
+    ).to_list(500)
+    default_by_type: Dict[str, float] = {}
+    for s in default_svcs:
+        st = s.get("service_type")
+        if not st:
+            continue
+        # Prefer explicit defaults; otherwise first active service for that type
+        if s.get("is_default") or st not in default_by_type:
+            default_by_type[st] = float(s.get("base_price") or 0)
     revenue = 0.0
     booked_count = 0
     completed_count = 0
@@ -6676,12 +6689,23 @@ async def today_pnl(_: dict = Depends(require_admin)):
         booked_count += 1
         if b.get("status") == "completed":
             completed_count += 1
-        # Use the strongest signal available
+        # Strongest signal wins
         price = float(b.get("actual_price") or 0)
         if not price:
             price = float(b.get("credit_value") or 0)
         if not price and b.get("service_id"):
             price = svc_price.get(b["service_id"], 0)
+        if not price and b.get("service_type"):
+            price = default_by_type.get(b["service_type"], 0)
+            # Boarding is per-night — multiply by nights between date and end_date
+            if price and b.get("service_type") == "boarding":
+                try:
+                    d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
+                    d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
+                    nights = max((d2 - d1).days, 1)
+                    price = price * nights
+                except Exception:
+                    pass
         revenue += price
     revenue = round(revenue, 2)
 
