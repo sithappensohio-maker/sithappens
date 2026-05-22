@@ -47,7 +47,7 @@ export default function Homework() {
           <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Training Homework</h3>
           <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Assign exercises to clients between sessions</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={()=>setPickerOpen(true)} data-testid="assign-from-template-button" className="bg-shGreen text-black px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/80">
             <i className="fas fa-clipboard-list mr-2"/>Assign from Template
           </button>
@@ -57,7 +57,7 @@ export default function Homework() {
         </div>
       </div>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 flex-wrap">
         {["all","assigned","completed"].map(k => (
           <button key={k} onClick={()=>setFilter(k)} data-testid={`hw-filter-${k}`}
                   className={`px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest ${filter===k?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>

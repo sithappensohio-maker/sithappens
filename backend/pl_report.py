@@ -4,12 +4,15 @@ Builds a JSON snapshot first (`build_pl_data`) so the same data can power
 both the JSON preview endpoint and the PDF render. PDF is rendered with
 ReportLab — no external binaries needed.
 
-Staff hours estimate is calculated from booking counts using these rules:
-    daycare day      -> 9 hours
-    boarding night   -> 4 hours (overnight care includes feeding + walks)
-    training session -> 1 hour
-    grooming session -> 1 hour
-This is documented inline in the PDF so the reader knows where it came from.
+Employee/staff hours calculation:
+    For each day we look at every completed booking with real check-in
+    and check-out timestamps. The "operating window" for that day is
+    (earliest check-in → latest check-out) — that's the shift length one
+    employee covered. Summing those daily windows across the period gives
+    a true labor-hours estimate.
+
+    Boarding gets a separate fixed estimate (overnight care) since it spans
+    multiple days and would otherwise inflate the daycare/training window.
 """
 from __future__ import annotations
 
@@ -21,13 +24,8 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-STAFF_HOURS_PER = {
-    "daycare": 9,
-    "boarding": 4,
-    "training": 1,
-    "grooming": 1,
-    "photography": 1,
-}
+# Hours per night for boarding (overnight rounds, not a continuous shift)
+BOARDING_HOURS_PER_NIGHT = 4
 
 
 def _fmt_money(n: float) -> str:
@@ -39,6 +37,17 @@ def _fmt_date(iso: str) -> str:
         return datetime.strptime(iso, "%Y-%m-%d").strftime("%b %-d, %Y")
     except Exception:
         return iso
+
+
+
+def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO 8601 timestamp tolerantly (with or without Z suffix)."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
 
 
 def _booking_nights(b: dict) -> int:
@@ -117,18 +126,49 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     top_dogs = sorted(by_dog_map.values(), key=lambda x: -x["visits"])[:10]
 
     # ── Staff hours estimate
-    staff_hours = 0.0
-    staff_breakdown: Dict[str, float] = defaultdict(float)
+    # New logic (Sprint 91 fix):
+    #   1) Daycare/training/grooming/photography share the same "shift window".
+    #      For each day, find earliest check-in and latest check-out across
+    #      all bookings on that date. Shift hours = max(checkout) - min(checkin).
+    #      One employee covering all dogs on Monday from 7am to 6pm = 11 hours,
+    #      not (11h × number_of_dogs).
+    #   2) Boarding gets a fixed 4 hr / night allowance (overnight rounds).
+    daily_windows: Dict[str, Dict[str, Optional[datetime]]] = {}  # date -> {min_in, max_out}
+    boarding_hours_total = 0.0
+    untimed_bookings = 0  # completed bookings missing check-in/check-out times
     for b in completed:
         svc = b.get("service_type", "other")
-        rate = STAFF_HOURS_PER.get(svc, 0)
         if svc == "boarding":
-            hours = rate * _booking_nights(b)
-        else:
-            hours = rate
-        staff_hours += hours
-        staff_breakdown[svc] += hours
-    staff_hours = round(staff_hours, 1)
+            boarding_hours_total += BOARDING_HOURS_PER_NIGHT * _booking_nights(b)
+            continue
+        ci = _parse_iso(b.get("checked_in_at"))
+        co = _parse_iso(b.get("checked_out_at"))
+        if not ci or not co:
+            untimed_bookings += 1
+            continue
+        day = b.get("date") or ci.date().isoformat()
+        slot = daily_windows.setdefault(day, {"min_in": None, "max_out": None})
+        if slot["min_in"] is None or ci < slot["min_in"]:
+            slot["min_in"] = ci
+        if slot["max_out"] is None or co > slot["max_out"]:
+            slot["max_out"] = co
+
+    shift_hours_total = 0.0
+    daily_shifts: List[Dict[str, Any]] = []
+    for day, w in sorted(daily_windows.items()):
+        if not (w["min_in"] and w["max_out"] and w["max_out"] > w["min_in"]):
+            continue
+        hours = (w["max_out"] - w["min_in"]).total_seconds() / 3600.0
+        shift_hours_total += hours
+        daily_shifts.append({
+            "date": day,
+            "first_in": w["min_in"].isoformat(),
+            "last_out": w["max_out"].isoformat(),
+            "hours": round(hours, 2),
+        })
+    shift_hours_total = round(shift_hours_total, 1)
+    boarding_hours_total = round(boarding_hours_total, 1)
+    staff_hours_total = round(shift_hours_total + boarding_hours_total, 1)
 
     # ── Expenses
     expenses_total = round(sum(float(e.get("amount") or 0) for e in expenses), 2)
@@ -178,9 +218,15 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         "top_clients": top_clients,
         "top_dogs": top_dogs,
         "staff_hours": {
-            "total": staff_hours,
-            "by_service": {k: round(v, 1) for k, v in staff_breakdown.items()},
-            "assumptions": STAFF_HOURS_PER,
+            "total": staff_hours_total,
+            "shift_hours": shift_hours_total,
+            "boarding_hours": boarding_hours_total,
+            "untimed_bookings": untimed_bookings,
+            "daily_shifts": daily_shifts,
+            "assumptions": {
+                "rule": "shift_window = max(checkout) - min(checkin) per day across all on-site bookings",
+                "boarding_hours_per_night": BOARDING_HOURS_PER_NIGHT,
+            },
         },
         "ytd": {
             "start_date": ytd_start,
@@ -369,15 +415,34 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     # ── Staff hours
     story.append(Paragraph("Estimated Staff Hours", h2))
     sh = data["staff_hours"]
-    sh_rows = [["Service", "Hours"]]
-    for svc, hrs in sh["by_service"].items():
-        sh_rows.append([svc.title(), f"{hrs:.1f}"])
-    sh_rows.append(["TOTAL", f"{sh['total']:.1f}"])
+    sh_rows = [
+        ["On-site shift hours (min check-in → max check-out)", f"{sh['shift_hours']:.1f}"],
+        ["Boarding overnight care", f"{sh['boarding_hours']:.1f}"],
+        ["TOTAL", f"{sh['total']:.1f}"],
+    ]
     t = Table(sh_rows, colWidths=[3.5 * inch, 2.5 * inch])
-    t.setStyle(_table_style(INK, LINE, BLUE))
+    t.setStyle(_table_style(INK, LINE, BLUE, header=False))
     story.append(t)
-    assumptions = ", ".join(f"{k}={v}h" for k, v in sh["assumptions"].items())
-    story.append(Paragraph(f"Assumptions per session: {assumptions}", small))
+    story.append(Paragraph(
+        f"Shift rule: one employee covers all on-site dogs each day; daily hours = "
+        f"latest check-out minus earliest check-in. Boarding adds "
+        f"<b>{sh['assumptions']['boarding_hours_per_night']}h</b> per night for overnight rounds. "
+        + (f"{sh['untimed_bookings']} completed booking(s) lacked check-in/out timestamps and were excluded."
+           if sh['untimed_bookings'] else ""),
+        small,
+    ))
+
+    # Daily breakdown table — useful for spotting outliers
+    if sh.get("daily_shifts"):
+        daily_rows = [["Date", "First in", "Last out", "Hours"]]
+        for d in sh["daily_shifts"][-31:]:  # last 31 days max
+            first_in = d["first_in"][11:16] if len(d["first_in"]) >= 16 else d["first_in"]
+            last_out = d["last_out"][11:16] if len(d["last_out"]) >= 16 else d["last_out"]
+            daily_rows.append([d["date"], first_in, last_out, f"{d['hours']:.2f}"])
+        t2 = Table(daily_rows, colWidths=[1.4 * inch, 1.3 * inch, 1.3 * inch, 1.0 * inch])
+        t2.setStyle(_table_style(INK, LINE, BLUE))
+        story.append(Spacer(1, 4))
+        story.append(t2)
 
     # ── YTD running totals
     ytd = data["ytd"]

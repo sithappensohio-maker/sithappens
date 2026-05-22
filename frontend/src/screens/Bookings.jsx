@@ -66,9 +66,9 @@ export default function Bookings() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
       <RefreshSpinner pulling={pulling} progress={progress} />
-      <div className="flex justify-between items-center flex-wrap gap-2">
+      <div className="flex justify-between items-start flex-wrap gap-2">
         <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Bookings</h3>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {hiddenCount > 0 && !showHistory && (
             <button onClick={()=>setShowHistory(true)} data-testid="show-history-btn"
                     className="text-[15px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-3 py-2 bg-bgPanel rounded border border-bgHover">

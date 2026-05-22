@@ -248,7 +248,7 @@ export default function Income() {
               <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">This Week (Mon–Sun)</p>
               <p className="text-white font-black uppercase italic tracking-tight">{summary.week_start} → {summary.week_end}</p>
             </div>
-            <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-center flex-wrap">
               <button onClick={()=>setRefDate(new Date(new Date(refDate).getTime() - 7*86400000).toISOString().split("T")[0])}
                       className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
                 <i className="fas fa-chevron-left"/>
