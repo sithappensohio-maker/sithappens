@@ -5826,13 +5826,60 @@ async def summary_range(
         b = by_category.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
         b["count"] += 1
         b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
+
+    # Labor cost in the same window — uses the payroll tax estimator so the
+    # Income page shows TRUE cost (gross + employer burden), not just gross wages.
+    tax = await _get_payroll_tax_settings()
+    tc_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(10000)
+    uids = list({e["user_id"] for e in tc_entries})
+    rate_users = await db.users.find(
+        {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1, "name": 1, "display_name": 1}
+    ).to_list(500) if uids else []
+    rate_map = {u["id"]: u for u in rate_users}
+    # YTD pre-period for cap math
+    try:
+        ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
+    except Exception:
+        ytd_start = f"{date.today().year}-01-01"
+    pre = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lt": f"{start_date}T00:00:00"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+    pre_hours: Dict[str, float] = {}
+    for e in pre:
+        pre_hours[e["user_id"]] = pre_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    period_hours: Dict[str, float] = {}
+    for e in tc_entries:
+        period_hours[e["user_id"]] = period_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    labor_gross = 0.0
+    labor_burden = 0.0
+    for uid, hrs in period_hours.items():
+        u = rate_map.get(uid, {})
+        rate = float(u.get("hourly_rate") or 0)
+        ytd = pre_hours.get(uid, 0) * rate
+        c = _compute_payroll_tax(hrs, rate, ytd, tax)
+        labor_gross += c["gross"]
+        labor_burden += c["employer_burden"]
+    labor_gross = round(labor_gross, 2)
+    labor_burden = round(labor_burden, 2)
+    labor_total = round(labor_gross + labor_burden, 2)
+
     return {
         "start_date": start_date,
         "end_date": end_date,
         "completed_total": round(completed_total, 2),
         "paid_total": round(paid_total, 2),
         "expenses_total": expenses_total,
-        "net_total": round(completed_total - expenses_total, 2),
+        "labor_gross": labor_gross,
+        "labor_burden": labor_burden,
+        "labor_total": labor_total,
+        "net_total": round(completed_total - expenses_total - labor_total, 2),
+        "net_before_labor": round(completed_total - expenses_total, 2),
         "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
         "expense_count": len(exp_rows),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
@@ -7024,13 +7071,26 @@ async def today_pnl(_: dict = Depends(require_admin)):
             slot["is_clocked_in"] = True
     labor_cost = round(labor_cost, 2)
     labor_hours = round(labor_hours, 2)
-    net = round(revenue - labor_cost, 2)
+    # Add employer tax burden (~12-14%) for the true cost basis on the dashboard
+    tax = await _get_payroll_tax_settings()
+    # Effective combined rate as a rough multiplier (no YTD cap math here — today
+    # is a single day, caps almost never hit; the proper period-based math lives
+    # in /transactions/summary-range and /admin/payroll/estimate)
+    burden_rate = (
+        tax["employer_social_security_pct"] + tax["employer_medicare_pct"]
+        + tax["futa_pct"] + tax["suta_pct"] + tax["workers_comp_pct"]
+    ) / 100.0
+    labor_burden = round(labor_cost * burden_rate, 2)
+    labor_total = round(labor_cost + labor_burden, 2)
+    net = round(revenue - labor_total, 2)
     margin_pct = round((net / revenue * 100.0), 1) if revenue > 0 else None
 
     return {
         "date": today,
         "revenue": revenue,
-        "labor_cost": labor_cost,
+        "labor_cost": labor_cost,        # gross wages (legacy field name kept for back-compat)
+        "labor_burden": labor_burden,    # employer-side payroll tax + workers comp
+        "labor_total": labor_total,      # gross + burden
         "labor_hours": labor_hours,
         "net": net,
         "margin_pct": margin_pct,

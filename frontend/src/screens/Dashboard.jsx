@@ -505,7 +505,8 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
           </p>
           <p className={`text-3xl font-black ${isProfit ? "text-shGreen" : "text-red-300"} mt-1`} data-testid="pnl-net">{fmt(data.net)}</p>
           <p className="text-[13px] text-gray-400 mt-0.5">
-            {fmt(data.revenue)} revenue − {fmt(data.labor_cost)} labor
+            {fmt(data.revenue)} revenue − {fmt(data.labor_total || data.labor_cost)} labor
+            {data.labor_burden ? <span className="text-gray-500"> ({fmt(data.labor_cost)} + {fmt(data.labor_burden)} taxes)</span> : null}
             {data.margin_pct != null && <span className="ml-2 font-black">({data.margin_pct}% margin)</span>}
           </p>
         </div>

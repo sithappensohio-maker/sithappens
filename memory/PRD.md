@@ -514,6 +514,24 @@ Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls 
 - ✅ **Frontend component** (`components/ClientPortalPreview.jsx`): full-screen modal with a red "VIEWING AS {Name} (READ-ONLY)" banner + "Return to Admin" button. Shows credits tiles, waiver status, My Dogs cards, Upcoming bookings, Training Progress rings, Homework list, and Recent visits. No interactive controls — admin can't book/sign/edit on the client's behalf.
 - ✅ **Wired** into `Clients.jsx`: each client card now has a blue "👁 Preview Client Portal" button at the top. Tap → opens the modal.
 - ✅ Verified end-to-end at 1440×900 and 390×844: clicking Alex Owner's preview shows their actual credits (10/5), waiver status, Buddy dog card, and recent cancelled booking — exactly what Alex would see.
+## Sprint 98 — Client Portal UX sweep + Income labor cost (2026-02)
+**Income tab — labor cost now visible:**
+- ✅ `/api/transactions/summary-range` extended with `labor_gross`, `labor_burden`, `labor_total`, `net_total`, `net_before_labor`. Uses the same `_compute_payroll_tax()` from Sprint 96 so the period-by-period Income view shows TRUE employer cost (gross + taxes + workers comp), respecting YTD wage caps for FICA/FUTA/SUTA.
+- ✅ Income screen KPI row grew from 4 → 5 tiles: **Completed (revenue) · Expenses · Labor (w/ taxes) · Net (after labor) · Avg / day**. Labor tile shows `$X.XX  ($Y gross + $Z taxes)` so you can see the breakdown. Net is now revenue − expenses − labor (true bottom line).
+- ✅ Dashboard "Today's P&L" tile also now adds `labor_burden` (using effective rate, since 1-day windows almost never hit YTD caps) and shows formula `$X revenue − $Y labor ($Z gross + $W taxes)`.
+
+**Client Portal — 6 polish items shipped:**
+- ✅ **Quick Contacts row on dog cards** — when `vet_phone` or `vet_name` is on file, a new ribbon appears at the bottom of the dog card with `[📞 Call]` and `[💬 Text]` buttons (`tel:` / `sms:` links — opens phone dialer / messages app on mobile). Stops event propagation so taps don't trigger the dog detail modal.
+- ✅ **First-time tutorial banner** — when `bookings.length === 0 && dogs.length > 0`, a green-accented 3-step illustrated card appears above the bookings tabs: "Pack the basics · Drop off 7-10am · You'll get a Pup Report Card." Drops first-time-call anxiety.
+- ✅ **Multi-dog quick switcher** — when client has >1 dog, a pill row appears above the bookings list: `[All Dogs] [🐶 Rocky] [🐶 Daisy]` — filters bookings to one dog's history when clicked. Dog photo thumbnail used inside the pill.
+- ✅ **"Book Again" button** on every past/completed/cancelled booking — pre-seeds the BookWizard with the same `dog_id` + `service_type` and scrolls to it. Repeat-booking friction drops to one tap.
+- ✅ **Birthday reminders confirmed wired** — `run_birthday_job(db)` in `daily_jobs.py` already fires daily via the lazy-trigger pattern, calls `notify_client_dog_birthday`, and is idempotent via `notification_log` (key `birthday:{dog_id}:{year}`).
+- ✅ **Mobile camera capture confirmed** — single `VaccineUploadModal` at Portal.jsx:323 has `<input type="file" accept="image/*" capture="environment">`, used by all 4 vaccine types (DHPP, Rabies, Bordetella, Lepto). Triggers the native camera app on iOS/Android instead of the file picker.
+- ✅ **Trophies confirmed visible** — `<PortalTrophiesSection>` already renders `client_trophies + dog_trophies` from `/api/portal/trophies` with a gold "Trophy Wall" panel. No work needed.
+
+Lint clean. Income screenshot verified live ($604.99 net after labor with the new 5-tile layout).
+
+
 
 ## Sprint 42 — Collapsible descriptions + editable service info (2026-02)
 - ✅ **`CollapsibleText` component** (`components/CollapsibleText.jsx`): single-line preview + inline "More" toggle. Used wherever short blurbs would otherwise wrap into 8-line vertical walls on mobile.

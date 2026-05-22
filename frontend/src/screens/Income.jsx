@@ -315,10 +315,11 @@ export default function Income() {
                      className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
             </div>
           )}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <StatTile label="Completed (revenue earned)" value={fmt(rangeSummary.completed_total)} sub={`over ${rangeSummary.by_day?.length || 0} active days`} color="text-shGreen" icon="fa-circle-check" big />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <StatTile label="Completed (revenue)" value={fmt(rangeSummary.completed_total)} sub={`${rangeSummary.by_day?.length || 0} active days`} color="text-shGreen" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
-            <StatTile label="Net (income − expenses)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
+            <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shOrange" icon="fa-user-clock" />
+            <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
             <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
           </div>
           {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}

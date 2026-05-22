@@ -693,6 +693,8 @@ export default function Portal() {
   const [credits, setCredits] = useState(0);
   const [visitCounts, setVisitCounts] = useState({});
   const [referralCode, setReferralCode] = useState(null);
+  const [dogFilter, setDogFilter] = useState("");  // empty = show all dogs' bookings
+  const [rebookSeed, setRebookSeed] = useState(null);  // {dog_id, service_type} preselected when "Book Again" tapped
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
   // Onboarding checklist — auto-pops on portal load when any required vaccine
@@ -1088,6 +1090,28 @@ export default function Portal() {
                       </button>
                     </div>
                   )}
+                  {(d.vet_phone || d.vet_name) && (
+                    <div className="border-t border-bgHover/60 px-4 py-2 flex flex-wrap gap-x-3 gap-y-1 items-center" data-testid={`quick-contacts-${d.id}`}>
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">
+                        <i className="fas fa-stethoscope text-shBlue mr-1"/>Vet
+                      </span>
+                      {d.vet_name && <span className="text-[13px] text-gray-300 truncate">{d.vet_name}</span>}
+                      {d.vet_phone && (
+                        <>
+                          <a href={`tel:${d.vet_phone}`} data-testid={`vet-call-${d.id}`}
+                             onClick={(e)=>e.stopPropagation()}
+                             className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                            <i className="fas fa-phone mr-1"/>Call
+                          </a>
+                          <a href={`sms:${d.vet_phone}`} data-testid={`vet-sms-${d.id}`}
+                             onClick={(e)=>e.stopPropagation()}
+                             className="text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-white">
+                            <i className="fas fa-message mr-1"/>Text
+                          </a>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
                 );
               })}
@@ -1171,6 +1195,17 @@ export default function Portal() {
           )}
 
           <div id="portal-bookings-anchor">
+            {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (
+              <div className="bg-shGreen/10 border border-shGreen/30 rounded-xl p-5 mb-4" data-testid="first-time-tutorial">
+                <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-paw mr-1"/>What to expect on your first visit</p>
+                <ol className="space-y-2 text-[14px] text-gray-300 list-decimal list-inside">
+                  <li><span className="font-black text-white">Pack the basics:</span> leash, any meds, and your dog's regular food if boarding overnight.</li>
+                  <li><span className="font-black text-white">Drop off between 7–10am</span> (or your scheduled time). We'll do a quick intake at the front desk.</li>
+                  <li><span className="font-black text-white">You'll get a Pup Report Card</span> by end of day — photos, mood, and a note about how the day went.</li>
+                </ol>
+                <p className="text-[12px] text-gray-500 mt-3 italic">Questions? Text us anytime — we love new pups.</p>
+              </div>
+            )}
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Bookings</h2>
               {/* Tabbed filter — keeps the list short. Counts shown on each tab. */}
@@ -1211,6 +1246,20 @@ export default function Portal() {
                 );
               })()}
             </div>
+            {dogs.length > 1 && (
+              <div className="flex items-center gap-2 flex-wrap mb-3" data-testid="dog-filter-pills">
+                <span className="text-[12px] font-black uppercase tracking-widest text-gray-500">Filter:</span>
+                <button onClick={()=>setDogFilter("")} data-testid="dog-filter-all"
+                        className={`px-3 py-1 rounded-full text-[12px] font-black uppercase tracking-widest border ${!dogFilter ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>All Dogs</button>
+                {dogs.map(d => (
+                  <button key={d.id} onClick={()=>setDogFilter(d.id)} data-testid={`dog-filter-${d.id}`}
+                          className={`px-3 py-1 rounded-full text-[12px] font-black uppercase tracking-widest border flex items-center gap-1.5 ${dogFilter === d.id ? "bg-shGreen text-bgHeader border-shGreen" : "border-bgHover text-gray-400 hover:text-white"}`}>
+                    {d.photo && <img src={d.photo} alt="" className="w-4 h-4 rounded-full object-cover"/>}
+                    <span>{d.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
             {(() => {
               const todayIso = new Date().toISOString().slice(0,10);
               const isPast = (b) => {
@@ -1221,6 +1270,7 @@ export default function Portal() {
               let filtered = bookingsTab === "upcoming" ? bookings.filter(b => !isPast(b))
                               : bookingsTab === "past"   ? bookings.filter(b => isPast(b))
                               : bookings;
+              if (dogFilter) filtered = filtered.filter(b => b.dog_id === dogFilter);
               // Build a unique sorted list of YYYY-MM stamps for the dropdown.
               const monthsAvailable = Array.from(new Set(
                 bookings.map(b => (b.date || "").slice(0, 7)).filter(Boolean)
@@ -1272,6 +1322,17 @@ export default function Portal() {
                     <div className="flex items-center gap-3">
                       <span className={`text-[14px] font-black uppercase px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
                       {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase text-red-400 hover:underline tracking-widest">Cancel</button>}
+                      {["completed","cancelled","rejected"].includes(b.status) && (
+                        <button onClick={()=>{
+                                  setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type });
+                                  setShowBookWizard(true);
+                                  document.getElementById("portal-book-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                }}
+                                data-testid={`book-again-${b.id}`}
+                                className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:text-white px-2 py-1 rounded border border-shBlue/40">
+                          <i className="fas fa-rotate-right mr-1"/>Book Again
+                        </button>
+                      )}
                     </div>
                   </div>
                   {b.report_card && (
@@ -1343,8 +1404,9 @@ export default function Portal() {
       {showBookWizard && (
         <PortalBookWizard
           dogs={dogs}
-          onClose={()=>setShowBookWizard(false)}
-          onBooked={()=>{ setShowBookWizard(false); loadAll(); setSuccess("Booking submitted!"); setTimeout(()=>setSuccess(""), 4000); }} />
+          seed={rebookSeed}
+          onClose={()=>{ setShowBookWizard(false); setRebookSeed(null); }}
+          onBooked={()=>{ setShowBookWizard(false); setRebookSeed(null); loadAll(); setSuccess("Booking submitted!"); setTimeout(()=>setSuccess(""), 4000); }} />
       )}
 
       {hwModal && (
