@@ -393,6 +393,46 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - ✅ **New endpoints** (`server.py`):
   - `POST /api/clients/{id}/adjust-credits` — `{daycare, training, boarding, note}` with signed deltas. Refuses negatives that'd take a balance below zero. Writes a `credit_adjustments` collection entry (before/delta/after per pool + note + admin name + timestamp) for audit.
   - `GET /api/clients/{id}/credit-adjustments` — list the audit log.
+## Sprint 93 — Employee System Phase 2 + Phase 3 (2026-02)
+
+**Phase 2 — Scheduled shifts + payroll**
+- ✅ **New `shift_templates` collection** — `{user_id, day_of_week (0=Mon..6=Sun), start_time HH:MM, end_time HH:MM, role, active}`. Recurring weekly schedule.
+- ✅ **New `shifts` collection** — `{user_id, date YYYY-MM-DD, start_time, end_time, role, notes, source ("template"|"manual"), template_id, status}`. Individual scheduled shifts.
+- ✅ **Endpoints** (all admin):
+  - `GET/POST /api/admin/shift-templates`, `PUT/DELETE /api/admin/shift-templates/{id}`
+  - `GET/POST /api/admin/shifts`, `PUT/DELETE /api/admin/shifts/{id}`
+  - `POST /api/admin/shifts/generate` — idempotent batch: applies all active templates over a date range, skips dates where the same user already has a shift starting at that time
+  - `GET /api/admin/shifts/scheduled-vs-actual` — for each shift, matches against `time_clock_entries` for the same user+date, computes variance, flags `> 30 min` deviation (configurable via `VARIANCE_FLAG_MINUTES`)
+  - `GET /api/admin/payroll/csv` — pay-period CSV: Employee · Email · Period · Hours · Hourly rate · Gross pay · Shifts · Flags
+- ✅ **Employee endpoint**: `GET /api/employee/my-shifts?start_date=&end_date=` (defaults to next 14 days)
+- ✅ **Admin UI** (Staff page sub-tabs): **Employees / Timecards / Schedule / Tasks / Payroll**
+  - Schedule tab: Recurring weekly templates list with CRUD; date range picker; "Generate from Templates" button (one-click batch); "+ One-off Shift" button; per-day shift list; "Scheduled vs Actual" table with flagged rows in red, missed shifts highlighted, variance shown as ±N min with flag icon
+  - Payroll tab: period picker + Download CSV button
+- ✅ **Employee Portal** new tab: **Schedule** — upcoming shifts for next 14 days grouped by date with template-source icon
+
+**Phase 3 — Task assignment**
+- ✅ **New `tasks` collection** — `{kind ("todo"|"vaccine_review"), title, description, ref_id, ref_label, assigned_to, status, due_at, created_by, claimed_at, completed_at, completed_by}`
+- ✅ **Assignment fields**:
+  - `bookings.assigned_to` (employee user_id) — for run-sheet ownership
+  - `dogs.vaccine_certs.{vac}.assigned_to` — for vaccine review assignment
+- ✅ **Endpoints**:
+  - Admin: `GET/POST /api/admin/tasks`, `PUT/DELETE /api/admin/tasks/{id}`
+  - Admin assign: `PUT /api/admin/bookings/{id}/assign`, `PUT /api/admin/vaccine-cert-uploads/assign`
+  - Employee or admin: `POST /api/tasks/{id}/claim` (self-claim unassigned), `POST /api/tasks/{id}/complete`
+  - Employee aggregator: `GET /api/employee/my-tasks` returns `{tasks (mine), unassigned_tasks (claimable), today_bookings (assigned), vaccine_reviews (assigned)}`
+- ✅ **Admin UI** (Staff → Tasks sub-tab): filter chips (open/in_progress/done/all), "+ Task" button, full CRUD with employee dropdown (— Unassigned —, anyone can claim)
+- ✅ **Employee Portal** new tab: **My Tasks** — 4 sections: Assigned to me (with "Mark done" buttons), Today's bookings on me, Vaccine reviews on me, Unassigned · claim if you can take it (with "Claim" buttons that auto-claim and move to "Assigned to me"). Internal log only — no notification emails.
+
+**Verified end-to-end via curl:**
+- Created Mon 07:00–17:00 template for Alex → batch-generated 2 shifts (next Mondays)
+- `scheduled-vs-actual` returns shifts with `flagged: true` for variance > 30min
+- Payroll CSV: `Alex,alex@sithappens.com,2026-05-22,2026-06-05,0.00,18.50,0.02,2,2`
+- Task created unassigned → employee claimed → moved to `in_progress` → completed by employee returns 200
+- Employee `/my-shifts` returns the 2 generated shifts; `/my-tasks` returns 1 mine, 0 unassigned
+
+Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls horizontally; portal nav same pattern).
+
+
 - ✅ **Frontend**:
   - Client card credit grid now shows **Daycare/Training/Boarding/Portal** (4 cols on `sm:`, stacked 2x2 on phones). Boarding uses `text-shOrange` for consistent color coding.
   - New "± Adjust Credits" button between Sell Pack and Receipts on every client card.

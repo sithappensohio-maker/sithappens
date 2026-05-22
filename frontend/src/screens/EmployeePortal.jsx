@@ -67,6 +67,8 @@ export default function EmployeePortal() {
         {[
           ["clock", "Clock", "fa-clock"],
           ["roster", "Roster", "fa-paw"],
+          ["tasks", "My Tasks", "fa-list-check"],
+          ["schedule", "Schedule", "fa-calendar-week"],
           ["timecard", "Timecard", "fa-receipt"],
           ["profile", "Profile", "fa-user"],
         ].map(([k, label, icon]) => (
@@ -80,6 +82,8 @@ export default function EmployeePortal() {
       <main className="flex-1 p-3 sm:p-5 pb-safe max-w-3xl w-full mx-auto">
         {tab === "clock" && <ClockTab />}
         {tab === "roster" && <RosterTab />}
+        {tab === "tasks" && <MyTasksTab />}
+        {tab === "schedule" && <MyScheduleTab />}
         {tab === "timecard" && <TimecardTab />}
         {tab === "profile" && <ProfileTab user={user} />}
       </main>
@@ -387,3 +391,125 @@ function ProfileTab({ user }) {
     </div>
   );
 }
+
+// ─────────────────────── My Tasks tab ───────────────────────
+function MyTasksTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    try { const r = await api.get("/employee/my-tasks"); setData(r.data); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  useEffect(() => { load(); }, []);
+  const claim = async (id) => {
+    setBusy(true);
+    try { await api.post(`/tasks/${id}/claim`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setBusy(false); }
+  };
+  const complete = async (id) => {
+    setBusy(true);
+    try { await api.post(`/tasks/${id}/complete`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setBusy(false); }
+  };
+  if (err) return <p className="text-red-400 text-sm">{err}</p>;
+  if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
+
+  return (
+    <div className="space-y-5" data-testid="my-tasks-tab">
+      <Section title="Assigned to me" testid="mine-list">
+        {data.tasks.length === 0 && <p className="text-gray-500 text-sm">Nothing assigned yet.</p>}
+        {data.tasks.map(t => (
+          <div key={t.id} className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid={`mine-task-${t.id}`}>
+            <p className="font-black text-white">{t.title}</p>
+            {t.description && <p className="text-[13px] text-gray-400 mt-1">{t.description}</p>}
+            <button onClick={()=>complete(t.id)} disabled={busy} data-testid={`complete-${t.id}`}
+                    className="mt-2 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest">
+              <i className="fas fa-check mr-1"/>Mark done
+            </button>
+          </div>
+        ))}
+      </Section>
+      <Section title="Today's bookings on me" testid="my-bookings">
+        {data.today_bookings.length === 0 && <p className="text-gray-500 text-sm">No bookings assigned today.</p>}
+        {data.today_bookings.map(b => (
+          <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={`my-booking-${b.id}`}>
+            <p className="font-black text-white">{b.dog_name} <span className="text-gray-500 text-[14px] font-normal">· {b.service_type}</span></p>
+            <p className="text-[13px] text-gray-400">{b.dropoff_time ? `drop ${b.dropoff_time}` : ""}{b.pickup_time ? ` · pick ${b.pickup_time}` : ""}</p>
+          </div>
+        ))}
+      </Section>
+      {data.vaccine_reviews.length > 0 && (
+        <Section title="Vaccine reviews on me" testid="my-vax">
+          {data.vaccine_reviews.map((v, i) => (
+            <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-3">
+              <p className="font-black text-white">{v.dog_name} · {v.vaccine}</p>
+              <p className="text-[12px] text-gray-500">Uploaded {fmtDateTime(v.uploaded_at)}</p>
+            </div>
+          ))}
+        </Section>
+      )}
+      <Section title="Unassigned · claim if you can take it" testid="unassigned-list">
+        {data.unassigned_tasks.length === 0 && <p className="text-gray-500 text-sm">Nothing to claim.</p>}
+        {data.unassigned_tasks.map(t => (
+          <div key={t.id} className="bg-bgPanel border border-shGreen/30 rounded-xl p-4" data-testid={`claimable-${t.id}`}>
+            <p className="font-black text-white">{t.title}</p>
+            {t.description && <p className="text-[13px] text-gray-400 mt-1">{t.description}</p>}
+            <button onClick={()=>claim(t.id)} disabled={busy} data-testid={`claim-${t.id}`}
+                    className="mt-2 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest">
+              <i className="fas fa-hand mr-1"/>Claim
+            </button>
+          </div>
+        ))}
+      </Section>
+    </div>
+  );
+}
+
+function Section({ title, testid, children }) {
+  return (
+    <div data-testid={testid}>
+      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-2">{title}</p>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+// ─────────────────────── My Schedule tab ───────────────────────
+function MyScheduleTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    (async () => {
+      try { const r = await api.get("/employee/my-shifts"); setData(r.data); }
+      catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    })();
+  }, []);
+  if (err) return <p className="text-red-400 text-sm">{err}</p>;
+  if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
+  const grouped = {};
+  for (const s of data.shifts) (grouped[s.date] = grouped[s.date] || []).push(s);
+
+  return (
+    <div className="space-y-3" data-testid="my-schedule-tab">
+      <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Next 14 days</p>
+      {data.shifts.length === 0 && (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No upcoming shifts.</div>
+      )}
+      {Object.entries(grouped).map(([d, list]) => (
+        <div key={d} className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={`my-sched-${d}`}>
+          <p className="text-[13px] font-black uppercase tracking-widest text-white mb-1">{d}</p>
+          {list.map(s => (
+            <div key={s.id} className="bg-bgBase/60 rounded p-2 text-sm flex justify-between items-center gap-2">
+              <span className="text-gray-200">{s.start_time}–{s.end_time}{s.role ? ` · ${s.role}` : ""}</span>
+              {s.source === "template" && <i className="fas fa-repeat text-shGreen text-[11px]" title="From weekly template"/>}
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+

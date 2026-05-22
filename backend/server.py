@@ -6184,6 +6184,472 @@ async def employee_me(user: dict = Depends(require_employee_or_admin)):
     }
 
 
+# ────────────────────────── Shifts + Tasks (Sprint 93 — Phase 2 & 3) ──────────────────────────
+# Schema:
+#   shift_templates: {id, user_id, day_of_week (0=Mon..6=Sun), start_time HH:MM, end_time HH:MM, role, active}
+#   shifts:           {id, user_id, date (YYYY-MM-DD), start_time, end_time, source ("template"|"manual"),
+#                      template_id, notes, status, created_by, created_at}
+#   tasks:            {id, kind ("todo"|"vaccine_review"), title, description, ref_id, ref_label,
+#                      assigned_to, status ("open"|"in_progress"|"done"|"cancelled"),
+#                      due_at, created_by, claimed_at, completed_at, completed_by, created_at}
+#   bookings.assigned_to: optional employee user_id (for run-sheet ownership)
+#   dogs.vaccine_certs.{vac}.assigned_to: optional employee user_id
+
+VARIANCE_FLAG_MINUTES = 30  # |scheduled - actual| > this many minutes flips a "flag"
+
+
+class ShiftTemplateIn(BaseModel):
+    user_id: str
+    day_of_week: int = Field(ge=0, le=6)  # 0=Mon..6=Sun
+    start_time: str  # HH:MM
+    end_time: str
+    role: Optional[str] = ""
+    active: bool = True
+
+
+class ShiftIn(BaseModel):
+    user_id: str
+    date: str  # YYYY-MM-DD
+    start_time: str
+    end_time: str
+    role: Optional[str] = ""
+    notes: Optional[str] = ""
+
+
+@api.get("/admin/shift-templates")
+async def list_shift_templates(_: dict = Depends(require_admin)):
+    rows = await db.shift_templates.find({}, {"_id": 0}).sort([("user_id", 1), ("day_of_week", 1)]).to_list(500)
+    return rows
+
+
+@api.post("/admin/shift-templates")
+async def create_shift_template(body: ShiftTemplateIn, _: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["created_at"] = now_iso()
+    await db.shift_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/shift-templates/{tid}")
+async def update_shift_template(tid: str, body: ShiftTemplateIn, _: dict = Depends(require_admin)):
+    res = await db.shift_templates.update_one({"id": tid}, {"$set": body.model_dump()})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"ok": True}
+
+
+@api.delete("/admin/shift-templates/{tid}")
+async def delete_shift_template(tid: str, _: dict = Depends(require_admin)):
+    await db.shift_templates.delete_one({"id": tid})
+    return {"ok": True}
+
+
+@api.get("/admin/shifts")
+async def list_shifts(
+    start_date: str,
+    end_date: str,
+    user_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {"date": {"$gte": start_date, "$lte": end_date}}
+    if user_id:
+        q["user_id"] = user_id
+    rows = await db.shifts.find(q, {"_id": 0}).sort([("date", 1), ("start_time", 1)]).to_list(2000)
+    return rows
+
+
+@api.post("/admin/shifts")
+async def create_shift(body: ShiftIn, admin: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["source"] = "manual"
+    doc["template_id"] = None
+    doc["status"] = "scheduled"
+    doc["created_by"] = admin["id"]
+    doc["created_at"] = now_iso()
+    await db.shifts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/shifts/{sid}")
+async def update_shift(sid: str, body: ShiftIn, _: dict = Depends(require_admin)):
+    res = await db.shifts.update_one({"id": sid}, {"$set": body.model_dump()})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    return {"ok": True}
+
+
+@api.delete("/admin/shifts/{sid}")
+async def delete_shift(sid: str, _: dict = Depends(require_admin)):
+    await db.shifts.delete_one({"id": sid})
+    return {"ok": True}
+
+
+@api.post("/admin/shifts/generate")
+async def generate_shifts_from_templates(body: dict, _: dict = Depends(require_admin)):
+    """Apply all active shift_templates to every weekday in [start_date, end_date].
+    Idempotent: skips dates where the same user already has a shift covering the same
+    start_time (so re-running won't duplicate)."""
+    start_date = body.get("start_date")
+    end_date = body.get("end_date")
+    if not start_date or not end_date:
+        raise HTTPException(status_code=400, detail="start_date and end_date required")
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    if end < start:
+        raise HTTPException(status_code=400, detail="end_date must be after start_date")
+    templates = await db.shift_templates.find({"active": True}, {"_id": 0}).to_list(500)
+    created = 0
+    skipped = 0
+    d = start
+    while d <= end:
+        dow = d.weekday()  # 0=Mon..6=Sun
+        for t in templates:
+            if t["day_of_week"] != dow:
+                continue
+            iso = d.isoformat()
+            existing = await db.shifts.find_one(
+                {"user_id": t["user_id"], "date": iso, "start_time": t["start_time"]},
+                {"_id": 0, "id": 1},
+            )
+            if existing:
+                skipped += 1
+                continue
+            doc = {
+                "id": str(uuid.uuid4()),
+                "user_id": t["user_id"],
+                "date": iso,
+                "start_time": t["start_time"],
+                "end_time": t["end_time"],
+                "role": t.get("role", ""),
+                "notes": "",
+                "source": "template",
+                "template_id": t["id"],
+                "status": "scheduled",
+                "created_at": now_iso(),
+            }
+            await db.shifts.insert_one(doc)
+            created += 1
+        d = d + timedelta(days=1)
+    return {"created": created, "skipped": skipped, "start_date": start_date, "end_date": end_date}
+
+
+@api.get("/admin/shifts/scheduled-vs-actual")
+async def shifts_scheduled_vs_actual(
+    start_date: str, end_date: str,
+    user_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """For each scheduled shift in the range, find the matching clock entry (same
+    user, same date) and compute variance. Flags shifts where |sched - actual|
+    > VARIANCE_FLAG_MINUTES."""
+    qs: Dict[str, Any] = {"date": {"$gte": start_date, "$lte": end_date}}
+    if user_id:
+        qs["user_id"] = user_id
+    shifts = await db.shifts.find(qs, {"_id": 0}).sort("date", 1).to_list(2000)
+    # Pull all entries in window
+    entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"}},
+        {"_id": 0},
+    ).to_list(5000)
+    # Group entries by (user_id, date)
+    entries_by_key: Dict[tuple, List[dict]] = {}
+    for e in entries:
+        ci = e.get("clock_in_at", "")
+        dt = ci[:10] if len(ci) >= 10 else ""
+        entries_by_key.setdefault((e["user_id"], dt), []).append(e)
+
+    def parse_hhmm(s):
+        try:
+            h, m = s.split(":")
+            return int(h) * 60 + int(m)
+        except Exception:
+            return None
+
+    rows = []
+    for s in shifts:
+        sched_start_min = parse_hhmm(s["start_time"])
+        sched_end_min = parse_hhmm(s["end_time"])
+        sched_minutes = (sched_end_min - sched_start_min) if (sched_start_min is not None and sched_end_min is not None) else 0
+        matches = entries_by_key.get((s["user_id"], s["date"]), [])
+        actual_minutes = 0
+        first_in = None
+        last_out = None
+        for e in matches:
+            if e.get("clock_out_at"):
+                actual_minutes += round(float(e.get("hours") or 0) * 60)
+                if not first_in or e["clock_in_at"] < first_in:
+                    first_in = e["clock_in_at"]
+                if not last_out or e["clock_out_at"] > last_out:
+                    last_out = e["clock_out_at"]
+        variance_min = actual_minutes - sched_minutes
+        flagged = abs(variance_min) > VARIANCE_FLAG_MINUTES
+        status = "missed" if actual_minutes == 0 else ("matched" if not flagged else ("over" if variance_min > 0 else "under"))
+        rows.append({
+            **s,
+            "scheduled_minutes": sched_minutes,
+            "actual_minutes": actual_minutes,
+            "variance_minutes": variance_min,
+            "flagged": flagged,
+            "match_status": status,
+            "first_in": first_in,
+            "last_out": last_out,
+        })
+    return {"shifts": rows, "variance_threshold_minutes": VARIANCE_FLAG_MINUTES}
+
+
+@api.get("/admin/payroll/csv")
+async def payroll_csv(
+    start_date: str, end_date: str, _: dict = Depends(require_admin),
+):
+    """Export a payroll-ready CSV for the given pay period.
+    Columns: Employee · Email · Pay period start · Pay period end · Hours ·
+    Hourly rate · Gross pay · Shifts · Late/early flags."""
+    from fastapi.responses import Response
+    entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0},
+    ).to_list(5000)
+    user_ids = list({e["user_id"] for e in entries})
+    users = await db.users.find(
+        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "display_name": 1, "hourly_rate": 1}
+    ).to_list(500) if user_ids else []
+    user_map = {u["id"]: u for u in users}
+
+    # Pull scheduled-vs-actual to count flags
+    sva = await db.shifts.find(
+        {"date": {"$gte": start_date, "$lte": end_date}}, {"_id": 0}
+    ).to_list(2000)
+    entries_by_key: Dict[tuple, List[dict]] = {}
+    for e in entries:
+        ci = e.get("clock_in_at", "")
+        dt = ci[:10] if len(ci) >= 10 else ""
+        entries_by_key.setdefault((e["user_id"], dt), []).append(e)
+
+    flags_per_user: Dict[str, int] = {}
+    shifts_per_user: Dict[str, int] = {}
+    for s in sva:
+        shifts_per_user[s["user_id"]] = shifts_per_user.get(s["user_id"], 0) + 1
+        try:
+            sh, sm = s["start_time"].split(":")
+            eh, em = s["end_time"].split(":")
+            sched_min = int(eh)*60 + int(em) - (int(sh)*60 + int(sm))
+        except Exception:
+            sched_min = 0
+        actual_min = sum(round(float(e.get("hours") or 0) * 60) for e in entries_by_key.get((s["user_id"], s["date"]), []) if e.get("clock_out_at"))
+        if abs(actual_min - sched_min) > VARIANCE_FLAG_MINUTES:
+            flags_per_user[s["user_id"]] = flags_per_user.get(s["user_id"], 0) + 1
+
+    per_user: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        u = user_map.get(e["user_id"], {})
+        slot = per_user.setdefault(e["user_id"], {
+            "name": u.get("display_name") or u.get("name") or "Unknown",
+            "email": u.get("email", ""),
+            "rate": float(u.get("hourly_rate") or 0),
+            "hours": 0.0,
+        })
+        slot["hours"] = round(slot["hours"] + float(e.get("hours") or 0), 3)
+
+    # Build CSV
+    lines = ["Employee,Email,Period Start,Period End,Hours,Hourly Rate,Gross Pay,Shifts,Flags"]
+    for uid, p in sorted(per_user.items(), key=lambda x: x[1]["name"]):
+        gross = round(p["hours"] * p["rate"], 2)
+        lines.append(",".join([
+            f'"{p["name"]}"', f'"{p["email"]}"', start_date, end_date,
+            f"{p['hours']:.2f}", f"{p['rate']:.2f}", f"{gross:.2f}",
+            str(shifts_per_user.get(uid, 0)),
+            str(flags_per_user.get(uid, 0)),
+        ]))
+    csv = "\n".join(lines)
+    filename = f"payroll_{start_date}_to_{end_date}.csv"
+    return Response(content=csv, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+# ────────────────────────── Tasks (Phase 3) ──────────────────────────
+class TaskIn(BaseModel):
+    kind: Literal["todo", "vaccine_review"] = "todo"
+    title: str = Field(min_length=1, max_length=300)
+    description: Optional[str] = ""
+    ref_id: Optional[str] = None  # e.g. dog_id for vaccine_review
+    ref_label: Optional[str] = ""
+    assigned_to: Optional[str] = None  # employee user_id; None means unassigned
+    due_at: Optional[str] = None  # ISO
+
+
+@api.get("/admin/tasks")
+async def list_tasks(
+    status: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {}
+    if status:
+        q["status"] = status
+    if assigned_to:
+        q["assigned_to"] = assigned_to if assigned_to != "unassigned" else None
+    rows = await db.tasks.find(q, {"_id": 0}).sort([("status", 1), ("created_at", -1)]).to_list(1000)
+    return rows
+
+
+@api.post("/admin/tasks")
+async def create_task(body: TaskIn, admin: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = str(uuid.uuid4())
+    doc["status"] = "open"
+    doc["created_by"] = admin["id"]
+    doc["created_at"] = now_iso()
+    doc["claimed_at"] = None
+    doc["completed_at"] = None
+    doc["completed_by"] = None
+    await db.tasks.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/tasks/{tid}")
+async def update_task(tid: str, body: TaskIn, _: dict = Depends(require_admin)):
+    res = await db.tasks.update_one({"id": tid}, {"$set": body.model_dump()})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"ok": True}
+
+
+@api.delete("/admin/tasks/{tid}")
+async def delete_task(tid: str, _: dict = Depends(require_admin)):
+    await db.tasks.delete_one({"id": tid})
+    return {"ok": True}
+
+
+@api.post("/tasks/{tid}/claim")
+async def claim_task(tid: str, user: dict = Depends(require_employee_or_admin)):
+    """Employee self-claims an unassigned task."""
+    res = await db.tasks.update_one(
+        {"id": tid, "assigned_to": None, "status": "open"},
+        {"$set": {"assigned_to": user["id"], "claimed_at": now_iso(), "status": "in_progress"}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=400, detail="Task is not available to claim")
+    return {"ok": True}
+
+
+@api.post("/tasks/{tid}/complete")
+async def complete_task(tid: str, user: dict = Depends(require_employee_or_admin)):
+    """Mark task done. Admins can complete anyone's; employees only their own."""
+    task = await db.tasks.find_one({"id": tid}, {"_id": 0})
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if user.get("role") != "admin" and task.get("assigned_to") != user["id"]:
+        raise HTTPException(status_code=403, detail="Not your task")
+    await db.tasks.update_one(
+        {"id": tid},
+        {"$set": {"status": "done", "completed_at": now_iso(), "completed_by": user["id"]}},
+    )
+    return {"ok": True}
+
+
+# ── Assignment on existing entities ──
+class AssignBookingIn(BaseModel):
+    assigned_to: Optional[str] = None  # None = unassigned
+
+
+@api.put("/admin/bookings/{booking_id}/assign")
+async def assign_booking(booking_id: str, body: AssignBookingIn, _: dict = Depends(require_admin)):
+    res = await db.bookings.update_one(
+        {"id": booking_id}, {"$set": {"assigned_to": body.assigned_to}}
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    return {"ok": True}
+
+
+class AssignVaxIn(BaseModel):
+    dog_id: str
+    vaccine: str
+    assigned_to: Optional[str] = None
+
+
+@api.put("/admin/vaccine-cert-uploads/assign")
+async def assign_vaccine_review(body: AssignVaxIn, _: dict = Depends(require_admin)):
+    field = f"vaccine_certs.{body.vaccine}.assigned_to"
+    res = await db.dogs.update_one(
+        {"id": body.dog_id, f"vaccine_certs.{body.vaccine}": {"$exists": True}},
+        {"$set": {field: body.assigned_to}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Vaccine cert not found")
+    return {"ok": True}
+
+
+# ── Employee aggregator ──
+@api.get("/employee/my-tasks")
+async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
+    """Everything assigned to (or claimable by) the calling employee:
+        - generic tasks assigned to them
+        - bookings on the run-sheet assigned to them
+        - vaccine reviews assigned to them
+        - plus a list of unassigned/open tasks they can claim"""
+    today = date.today().isoformat()
+    mine_tasks = await db.tasks.find(
+        {"assigned_to": user["id"], "status": {"$in": ["open", "in_progress"]}},
+        {"_id": 0},
+    ).to_list(500)
+    unassigned = await db.tasks.find(
+        {"assigned_to": None, "status": "open"}, {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+    mine_bookings = await db.bookings.find(
+        {"date": today, "assigned_to": user["id"], "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0},
+    ).to_list(200)
+    # Vaccine reviews assigned to me
+    dogs_with_vax = await db.dogs.find(
+        {"vaccine_certs": {"$exists": True}},
+        {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
+    ).to_list(500)
+    my_vax = []
+    for d in dogs_with_vax:
+        for vac, info in (d.get("vaccine_certs") or {}).items():
+            if not isinstance(info, dict):
+                continue
+            if info.get("assigned_to") == user["id"] and not info.get("reviewed_at"):
+                my_vax.append({
+                    "dog_id": d["id"],
+                    "dog_name": d["name"],
+                    "vaccine": vac,
+                    "uploaded_at": info.get("uploaded_at"),
+                    "expires_on": info.get("expires_on"),
+                })
+    return {
+        "tasks": mine_tasks,
+        "unassigned_tasks": unassigned,
+        "today_bookings": mine_bookings,
+        "vaccine_reviews": my_vax,
+    }
+
+
+# ── Employee schedule view ──
+@api.get("/employee/my-shifts")
+async def employee_my_shifts(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Upcoming + recent shifts for the calling user. Defaults to next 14 days."""
+    s = start_date or date.today().isoformat()
+    e = end_date or (date.today() + timedelta(days=14)).isoformat()
+    rows = await db.shifts.find(
+        {"user_id": user["id"], "date": {"$gte": s, "$lte": e}},
+        {"_id": 0},
+    ).sort([("date", 1), ("start_time", 1)]).to_list(500)
+    return {"start_date": s, "end_date": e, "shifts": rows}
+
+
+
 @api.get("/admin/today-pnl")
 async def today_pnl(_: dict = Depends(require_admin)):
     """Live 'am I profitable today?' gauge — expected revenue minus labor cost
