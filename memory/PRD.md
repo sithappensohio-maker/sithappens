@@ -1108,6 +1108,21 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Clients screen** displays a tiny chip under the "Portal" column: "Just now" / "5 min ago" / "3h ago" / "5d ago" / "2w ago" / "Never logged in". Color-coded: green <7d, blue <30d, gray <90d, red >90d, gray for never. Hover reveals exact timestamp + total login count.
 - ✅ E2E tested via curl + screenshot: login bumped `last_login_at` and `login_count`, list endpoint returned both fields, UI renders the chip in the right colors.
 
+## Sprint 95 — Retail Sales Logging (External POS → Income) (2026-02)
+- ✅ **Lightweight retail revenue ledger** — user has their own POS, so this is a simple "log a sale → flows into Income + P&L" pattern rather than a built-in checkout.
+- ✅ **`retail_sales` collection** (new) with full admin CRUD: `GET/POST/PUT/DELETE /api/retail-sales` + `GET /api/retail-sales/categories` for autocomplete. Fields: `date, description, amount, category, notes, payment_method (cash/card/transfer/check/credits/other), client_id (optional), client_name (resolved on save)`.
+- ✅ **`/api/transactions/weekly-summary` extended** with `retail_total`, `retail_count`, `service_total`, `gross_total` — services and retail tracked separately so the user can see exactly how much came from each stream.
+- ✅ **`/api/transactions/summary-range` folds retail** into `completed_total` (gross), `paid_total`, `net_total`, `net_before_labor`, and `by_day` series. Also exposes standalone `retail_total` / `retail_count` and `service_total` for breakdowns.
+- ✅ **`/api/admin/today-pnl`** now adds today's retail to `revenue` and exposes `service_revenue` + `retail_revenue` + `retail_count` for the dashboard tile.
+- ✅ **`/api/admin/income/export.csv`** includes retail rows as positive-amount "Retail" type lines so the year-end CSV nets correctly with services and expenses.
+- ✅ **P&L PDF (`pl_report.py`)** — `build_pl_data()` adds `retail.total / count / by_category` + `income.retail_total / gross_total` and updates `net` and YTD figures to use gross. PDF: KPI tile renamed "Income (gross)", subtitle splits into Services / Retail with counts, new "Retail Sales (External POS)" table grouped by category (purple-accent header), YTD section breaks out Service vs Retail vs Gross.
+- ✅ **P&L email** (Resend) now lists Service income, Retail income, Gross income, Expenses, Net separately.
+- ✅ **Backup & Restore** — `retail_sales` added to `BACKUP_COLLECTIONS` so JSON snapshot + merge/replace restore handle the new collection automatically.
+- ✅ **Frontend `Income.jsx`** — new "+ Log Retail Sale" (purple) button next to "+ Log Service" in the header. Weekly tile shows a purple retail chip with `Retail $X · N sales · Gross w/ retail $Y` when any retail logged. Range tile "Income (gross)" subtitle splits Services / Retail. New "Retail Sales" card with date-grouped collapsible list (purple `+$X` row chips, edit/delete buttons). `RetailSaleModal` mirrors the Expense modal with optional type-to-search client picker.
+- ✅ **Frontend `Dashboard.jsx`** — Today's P&L tile shows a small purple `🛍 RETAIL $X (N)` chip under the labor row when retail sales exist today.
+- ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
+
+
 ## Backlog / Next Up
 - **P1** Public booking page
 - **P1** Vaccine expiry email blast

@@ -76,6 +76,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
     ).to_list(20000)
+    retail_sales = await db.retail_sales.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0},
+    ).to_list(20000)
 
     # ── Income totals
     completed = [b for b in bookings if b.get("status") == "completed"]
@@ -86,10 +90,13 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     paid_total = round(sum(float(b.get("actual_price") or 0) for b in paid), 2)
     unpaid_total = round(sum(float(b.get("actual_price") or 0) for b in unpaid), 2)
 
-    # ── Daily revenue (completed bookings only)
+    # ── Daily revenue (completed bookings + retail sales)
     by_day_map: Dict[str, float] = defaultdict(float)
     for b in completed:
         by_day_map[b["date"]] += float(b.get("actual_price") or 0)
+    for r in retail_sales:
+        if r.get("date"):
+            by_day_map[r["date"]] += float(r.get("amount") or 0)
     by_day = [{"date": d, "total": round(v, 2)} for d, v in sorted(by_day_map.items())]
 
     # ── Income by service (completed)
@@ -180,6 +187,16 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         c["total"] = round(c["total"] + float(e.get("amount") or 0), 2)
     expenses_by_category = sorted(exp_by_cat_map.values(), key=lambda x: -x["total"])
 
+    # ── Retail sales aggregations
+    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_sales), 2)
+    retail_by_cat_map: Dict[str, Dict[str, Any]] = {}
+    for r in retail_sales:
+        cat = (r.get("category") or "Retail").strip() or "Retail"
+        c = retail_by_cat_map.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
+        c["count"] += 1
+        c["total"] = round(c["total"] + float(r.get("amount") or 0), 2)
+    retail_by_category = sorted(retail_by_cat_map.values(), key=lambda x: -x["total"])
+
     # ── Year-to-date totals (Jan 1 of end_date's year through end_date)
     try:
         end_year = datetime.strptime(end_date, "%Y-%m-%d").year
@@ -194,8 +211,16 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             {"_id": 0, "amount": 1},
         ).to_list(50000)
         ytd_expenses = round(sum(float(e.get("amount") or 0) for e in ytd_exp_rows), 2)
+        ytd_retail_rows = await db.retail_sales.find(
+            {"date": {"$gte": ytd_start, "$lte": end_date}},
+            {"_id": 0, "amount": 1},
+        ).to_list(50000)
+        ytd_retail = round(sum(float(r.get("amount") or 0) for r in ytd_retail_rows), 2)
     except Exception:
-        ytd_start, ytd_income, ytd_expenses = end_date, 0.0, 0.0
+        ytd_start, ytd_income, ytd_expenses, ytd_retail = end_date, 0.0, 0.0, 0.0
+
+    gross_income = round(completed_total + retail_total, 2)
+    ytd_gross = round(ytd_income + ytd_retail, 2)
 
     return {
         "start_date": start_date,
@@ -208,13 +233,20 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "completed_count": len(completed),
             "by_service": by_service,
             "by_day": by_day,
+            "retail_total": retail_total,
+            "gross_total": gross_income,
+        },
+        "retail": {
+            "total": retail_total,
+            "count": len(retail_sales),
+            "by_category": retail_by_category,
         },
         "expenses": {
             "total": expenses_total,
             "count": len(expenses),
             "by_category": expenses_by_category,
         },
-        "net": round(completed_total - expenses_total, 2),
+        "net": round(gross_income - expenses_total, 2),
         "top_clients": top_clients,
         "top_dogs": top_dogs,
         "staff_hours": {
@@ -230,9 +262,11 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         },
         "ytd": {
             "start_date": ytd_start,
-            "income": ytd_income,
+            "income": ytd_gross,
+            "service_income": ytd_income,
+            "retail_income": ytd_retail,
             "expenses": ytd_expenses,
-            "net": round(ytd_income - ytd_expenses, 2),
+            "net": round(ytd_gross - ytd_expenses, 2),
         },
     }
 
@@ -292,7 +326,9 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     ))
 
     # ── KPI tiles (4 across)
-    income_total = data["income"]["completed_total"]
+    service_income = data["income"]["completed_total"]
+    retail_income = float(data.get("retail", {}).get("total") or 0)
+    income_total = data["income"].get("gross_total") or (service_income + retail_income)
     exp_total = data["expenses"]["total"]
     net = data["net"]
     net_color = colors.HexColor("#16a34a") if net >= 0 else colors.HexColor("#dc2626")
@@ -316,7 +352,7 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
 
     kpi_row = Table(
         [[
-            tile("INCOME (COMPLETED)", _fmt_money(income_total), BRAND),
+            tile("INCOME (GROSS)", _fmt_money(income_total), BRAND),
             tile("EXPENSES", _fmt_money(exp_total), colors.HexColor("#dc2626")),
             tile("NET PROFIT", _fmt_money(net), net_color),
             tile("AVG / ACTIVE DAY", _fmt_money(avg_per_day), BLUE),
@@ -327,7 +363,8 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     story.append(kpi_row)
     story.append(Spacer(1, 6))
     story.append(Paragraph(
-        f"<b>{data['income']['completed_count']}</b> completed bookings · "
+        f"<b>Services:</b> {_fmt_money(service_income)} ({data['income']['completed_count']} bookings) &nbsp;·&nbsp; "
+        f"<b>Retail:</b> {_fmt_money(retail_income)} ({data.get('retail',{}).get('count',0)} sales) &nbsp;·&nbsp; "
         f"<b>{_fmt_money(data['income']['paid_total'])}</b> received · "
         f"<b>{_fmt_money(data['income']['unpaid_total'])}</b> outstanding",
         small,
@@ -371,6 +408,21 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         story.append(t)
     else:
         story.append(Paragraph("<i>No completed bookings in this period.</i>", small))
+
+    # ── Retail sales (external POS)
+    rc = data.get("retail", {}).get("by_category") or []
+    if rc or retail_income > 0:
+        story.append(Paragraph("Retail Sales (External POS)", h2))
+        if rc:
+            rows = [["Category", "Items", "Total"]] + [
+                [c["name"], str(c["count"]), _fmt_money(c["total"])] for c in rc
+            ]
+            rows.append(["TOTAL", str(data["retail"]["count"]), _fmt_money(data["retail"]["total"])])
+            t = Table(rows, colWidths=[3.5 * inch, 1.0 * inch, 1.5 * inch])
+            t.setStyle(_table_style(INK, LINE, colors.HexColor("#a855f7")))
+            story.append(t)
+        else:
+            story.append(Paragraph("<i>No retail sales logged.</i>", small))
 
     # ── Expenses by category
     story.append(Paragraph("Expenses by Category", h2))
@@ -448,7 +500,9 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
     ytd = data["ytd"]
     story.append(Paragraph("Year-to-Date", h2))
     ytd_rows = [
-        ["YTD income (since " + ytd["start_date"] + ")", _fmt_money(ytd["income"])],
+        ["YTD service income (since " + ytd["start_date"] + ")", _fmt_money(ytd.get("service_income") or ytd["income"])],
+        ["YTD retail income", _fmt_money(ytd.get("retail_income") or 0)],
+        ["YTD gross income", _fmt_money(ytd["income"])],
         ["YTD expenses", _fmt_money(ytd["expenses"])],
         ["YTD net", _fmt_money(ytd["net"])],
     ]

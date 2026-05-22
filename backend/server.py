@@ -4693,6 +4693,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
 BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "incidents", "homework",
     "waiver_signatures", "vaccine_dismissals", "settings", "expenses",
+    "retail_sales",
 ]
 BACKUP_VERSION = 1
 
@@ -4866,6 +4867,11 @@ async def admin_income_csv(
         {"date": {"$gte": start, "$lte": end}},
         {"_id": 0},
     ).to_list(50000)
+    # Retail sales in the same year
+    retail_sales = await db.retail_sales.find(
+        {"date": {"$gte": start, "$lte": end}},
+        {"_id": 0},
+    ).to_list(50000)
 
     out_rows: List[List[str]] = [
         ["Date", "Type", "Client", "Dog", "Service / Pack", "Amount (USD)", "Payment method", "Payment status", "Booking/Lot ID"]
@@ -4896,6 +4902,17 @@ async def admin_income_csv(
             e.get("description", "") + (f" ({e.get('category')})" if e.get("category") else ""),
             f"-{amt:.2f}",
             e.get("payment_method", "") or "", "paid", e.get("id", ""),
+        ])
+    # Retail sales — positive revenue rows
+    for s in retail_sales:
+        amt = float(s.get("amount") or 0)
+        if amt <= 0:
+            continue
+        out_rows.append([
+            s.get("date", ""), "Retail", s.get("client_name", "") or "", "",
+            s.get("description", "") + (f" ({s.get('category')})" if s.get("category") else ""),
+            f"{amt:.2f}",
+            s.get("payment_method", "") or "", "paid", s.get("id", ""),
         ])
 
     # Trailing summary row keeps the totals visible in Excel without a pivot.
@@ -5777,6 +5794,15 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         b["count"] += 1
         b["total"] += price
 
+    # Retail sales in the same week — fold gross retail into the weekly tile so
+    # the user's "total revenue" includes their external-POS sales.
+    retail_rows = await db.retail_sales.find(
+        {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
+        {"_id": 0, "amount": 1},
+    ).to_list(2000)
+    retail_total = round(sum(float(x.get("amount") or 0) for x in retail_rows), 2)
+    retail_count = len(retail_rows)
+
     return {
         "week_start": monday_iso,
         "week_end": sunday_iso,
@@ -5788,6 +5814,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         "completed_count": completed_count,
         "booked_count": booked_count,
         "by_service": sorted(by_service.values(), key=lambda x: -x["total"]),
+        "retail_total": retail_total,
+        "retail_count": retail_count,
+        "service_total": round(completed_total, 2),
+        "gross_total": round(completed_total + retail_total, 2),
     }
 
 
@@ -5826,6 +5856,18 @@ async def summary_range(
         b = by_category.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
         b["count"] += 1
         b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
+
+    # Retail sales in the same window — folded into completed_total + by_day
+    # so NET maths include external-POS retail revenue too.
+    retail_rows = await db.retail_sales.find(
+        {"date": {"$gte": start_date, "$lte": end_date}},
+        {"_id": 0},
+    ).to_list(5000)
+    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_rows), 2)
+    for r in retail_rows:
+        d = r.get("date")
+        if d:
+            by_day[d] = round(by_day.get(d, 0) + float(r.get("amount") or 0), 2)
 
     # Labor cost in the same window — uses the payroll tax estimator so the
     # Income page shows TRUE cost (gross + employer burden), not just gross wages.
@@ -5872,14 +5914,17 @@ async def summary_range(
     return {
         "start_date": start_date,
         "end_date": end_date,
-        "completed_total": round(completed_total, 2),
-        "paid_total": round(paid_total, 2),
+        "completed_total": round(completed_total + retail_total, 2),
+        "service_total": round(completed_total, 2),
+        "retail_total": retail_total,
+        "retail_count": len(retail_rows),
+        "paid_total": round(paid_total + retail_total, 2),
         "expenses_total": expenses_total,
         "labor_gross": labor_gross,
         "labor_burden": labor_burden,
         "labor_total": labor_total,
-        "net_total": round(completed_total - expenses_total - labor_total, 2),
-        "net_before_labor": round(completed_total - expenses_total, 2),
+        "net_total": round(completed_total + retail_total - expenses_total - labor_total, 2),
+        "net_before_labor": round(completed_total + retail_total - expenses_total, 2),
         "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
         "expense_count": len(exp_rows),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],
@@ -7027,6 +7072,14 @@ async def today_pnl(_: dict = Depends(require_admin)):
         revenue += price
     revenue = round(revenue, 2)
 
+    # ── Retail sales today (external POS — adds to gross revenue)
+    retail_rows = await db.retail_sales.find(
+        {"date": today}, {"_id": 0, "amount": 1},
+    ).to_list(2000)
+    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_rows), 2)
+    retail_count = len(retail_rows)
+    revenue = round(revenue + retail_total, 2)
+
     # ── Labor cost today
     today_start = f"{today}T00:00:00"
     today_end = f"{today}T23:59:59.999Z"
@@ -7088,6 +7141,9 @@ async def today_pnl(_: dict = Depends(require_admin)):
     return {
         "date": today,
         "revenue": revenue,
+        "service_revenue": round(revenue - retail_total, 2),
+        "retail_revenue": retail_total,
+        "retail_count": retail_count,
         "labor_cost": labor_cost,        # gross wages (legacy field name kept for back-compat)
         "labor_burden": labor_burden,    # employer-side payroll tax + workers comp
         "labor_total": labor_total,      # gross + burden
@@ -7231,6 +7287,107 @@ async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
 async def expense_categories(_: dict = Depends(require_admin)):
     """Unique category strings seen so far — used to power autocomplete."""
     cats = await db.expenses.distinct("category")
+    cats = sorted([c for c in cats if c])
+    return {"categories": cats}
+
+
+# ────────────────────────── Retail Sales ──────────────────────────
+# User has an external POS for actual checkout. This is just a lightweight
+# revenue ledger so retail $$ flows into the same Income / P&L tally as
+# services. No inventory, no checkout, no tax math — just a row per sale.
+class RetailSaleIn(BaseModel):
+    date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
+    description: str = Field(min_length=1, max_length=200)
+    amount: float = Field(ge=0)
+    category: Optional[str] = ""
+    notes: Optional[str] = ""
+    payment_method: Optional[Literal["cash", "card", "transfer", "check", "credits", "other"]] = "card"
+    client_id: Optional[str] = None  # optional — link a sale to a specific client
+
+
+@api.get("/retail-sales")
+async def list_retail_sales(
+    _: dict = Depends(require_admin),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """List retail sales, optionally filtered to a date window. Newest first."""
+    q: Dict[str, Any] = {}
+    if start_date or end_date:
+        q["date"] = {}
+        if start_date:
+            q["date"]["$gte"] = start_date
+        if end_date:
+            q["date"]["$lte"] = end_date
+    cursor = db.retail_sales.find(q, {"_id": 0}).sort([("date", -1), ("created_at", -1)])
+    return await cursor.to_list(2000)
+
+
+@api.post("/retail-sales")
+async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_admin)):
+    """Log a retail sale (treats, leash, food bag, etc.) from your external POS.
+    Flows into the Income screen + P&L PDF alongside service revenue."""
+    client_name = ""
+    if body.client_id:
+        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
+        if c:
+            client_name = c.get("name") or ""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": body.date,
+        "description": body.description.strip(),
+        "amount": round(float(body.amount), 2),
+        "category": (body.category or "").strip(),
+        "notes": (body.notes or "").strip(),
+        "payment_method": body.payment_method or "card",
+        "client_id": body.client_id or None,
+        "client_name": client_name,
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+    }
+    await db.retail_sales.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/retail-sales/{sale_id}")
+async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends(require_admin)):
+    existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Retail sale not found")
+    client_name = existing.get("client_name") or ""
+    if body.client_id and body.client_id != existing.get("client_id"):
+        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
+        client_name = (c or {}).get("name") or ""
+    elif not body.client_id:
+        client_name = ""
+    patch = {
+        "date": body.date,
+        "description": body.description.strip(),
+        "amount": round(float(body.amount), 2),
+        "category": (body.category or "").strip(),
+        "notes": (body.notes or "").strip(),
+        "payment_method": body.payment_method or "card",
+        "client_id": body.client_id or None,
+        "client_name": client_name,
+        "updated_at": now_iso(),
+    }
+    await db.retail_sales.update_one({"id": sale_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.delete("/retail-sales/{sale_id}")
+async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin)):
+    res = await db.retail_sales.delete_one({"id": sale_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Retail sale not found")
+    return {"ok": True}
+
+
+@api.get("/retail-sales/categories")
+async def retail_sale_categories(_: dict = Depends(require_admin)):
+    """Unique category strings seen so far — used to power autocomplete."""
+    cats = await db.retail_sales.distinct("category")
     cats = sorted([c for c in cats if c])
     return {"categories": cats}
 

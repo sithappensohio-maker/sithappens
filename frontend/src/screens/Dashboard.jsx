@@ -509,6 +509,11 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
             {data.labor_burden ? <span className="text-gray-500"> ({fmt(data.labor_cost)} + {fmt(data.labor_burden)} taxes)</span> : null}
             {data.margin_pct != null && <span className="ml-2 font-black">({data.margin_pct}% margin)</span>}
           </p>
+          {(data.retail_revenue > 0 || data.retail_count > 0) && (
+            <p className="text-[12px] text-purple-300 font-black uppercase tracking-widest mt-1" data-testid="pnl-retail-chip">
+              <i className="fas fa-bag-shopping mr-1"/>Retail {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})
+            </p>
+          )}
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           <div className="bg-bgBase/60 border border-bgHover rounded px-3 py-2 text-center min-w-[88px]">

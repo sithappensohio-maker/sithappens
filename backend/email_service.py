@@ -772,13 +772,17 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         logger.warning("RESEND_API_KEY not set — skipping P&L email")
         return
 
-    income = summary.get("income", {}).get("completed_total", 0)
+    service_income = summary.get("income", {}).get("completed_total", 0)
+    retail_income = summary.get("retail", {}).get("total", 0)
+    income = summary.get("income", {}).get("gross_total") or (service_income + retail_income)
     expenses = summary.get("expenses", {}).get("total", 0)
     net = summary.get("net", 0)
     net_color = "#16a34a" if net >= 0 else "#dc2626"
     rows = [
         ("Period", f"{start_date} → {end_date}"),
-        ("Income (completed)", f"${income:,.2f}"),
+        ("Service income", f"${service_income:,.2f}"),
+        ("Retail income", f"${retail_income:,.2f}"),
+        ("Gross income", f"${income:,.2f}"),
         ("Expenses", f"${expenses:,.2f}"),
         ("Net profit", f"${net:,.2f}"),
         ("Completed bookings", str(summary.get("income", {}).get("completed_count", 0))),

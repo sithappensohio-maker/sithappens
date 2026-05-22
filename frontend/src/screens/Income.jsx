@@ -42,6 +42,13 @@ export default function Income() {
   const [expOpen, setExpOpen] = useState(false);
   const [expEditing, setExpEditing] = useState(null);
 
+  // ── Retail sales (external POS — flows into the same NET total above)
+  const [retailSales, setRetailSales] = useState([]);
+  const [retailCategories, setRetailCategories] = useState([]);
+  const [retailOpen, setRetailOpen] = useState(false);
+  const [retailEditing, setRetailEditing] = useState(null);
+  const [clients, setClients] = useState([]);
+
   const loadExpenses = async () => {
     if (!rangeStart || !rangeEnd) return;
     try {
@@ -55,6 +62,24 @@ export default function Income() {
   };
   useEffect(() => { loadExpenses(); /* eslint-disable-next-line */ }, [rangeStart, rangeEnd]);
 
+  const loadRetail = async () => {
+    if (!rangeStart || !rangeEnd) return;
+    try {
+      const [{ data }, { data: cats }] = await Promise.all([
+        api.get("/retail-sales", { params: { start_date: rangeStart, end_date: rangeEnd } }),
+        api.get("/retail-sales/categories"),
+      ]);
+      setRetailSales(data || []);
+      setRetailCategories(cats?.categories || []);
+    } catch (e) { console.warn("retail load failed", e); }
+  };
+  useEffect(() => { loadRetail(); /* eslint-disable-next-line */ }, [rangeStart, rangeEnd]);
+
+  // Clients list (loaded once) — used by the retail-sale modal to optionally tag a sale to a client
+  useEffect(() => {
+    api.get("/clients").then(r => setClients(r.data || [])).catch(()=>{});
+  }, []);
+
   const refreshAfterExpenseChange = () => {
     loadExpenses();
     // re-pull range summary so the Net tile updates
@@ -65,11 +90,32 @@ export default function Income() {
     }
   };
 
+  const refreshAfterRetailChange = () => {
+    loadRetail();
+    if (rangeStart && rangeEnd) {
+      api.get("/transactions/summary-range", { params: { start_date: rangeStart, end_date: rangeEnd } })
+         .then(r => setRangeSummary(r.data))
+         .catch(()=>{});
+    }
+    // weekly tile also needs a refresh so the retail count chip updates
+    api.get("/transactions/weekly-summary", { params: { ref_date: refDate } })
+       .then(r => setSummary(r.data))
+       .catch(()=>{});
+  };
+
   const removeExpense = async (e) => {
     if (!(await confirm({ title: "Remove expense?", body: `"${e.description}" on ${e.date} (${fmt(e.amount)}) will be permanently removed.`, confirmText: "Remove", tone: "danger" }))) return;
     try {
       await api.delete(`/expenses/${e.id}`);
       refreshAfterExpenseChange();
+    } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
+  };
+
+  const removeRetail = async (r) => {
+    if (!(await confirm({ title: "Remove retail sale?", body: `"${r.description}" on ${r.date} (${fmt(r.amount)}) will be permanently removed.`, confirmText: "Remove", tone: "danger" }))) return;
+    try {
+      await api.delete(`/retail-sales/${r.id}`);
+      refreshAfterRetailChange();
     } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
   };
 
@@ -228,6 +274,10 @@ export default function Income() {
                   className="bg-bgPanel border border-shOrange/40 text-shOrange px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/10 disabled:opacity-50">
             <i className="fas fa-envelope mr-1"/>Email Me
           </button>
+          <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn"
+                  className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30">
+            <i className="fas fa-bag-shopping mr-1"/>Log Retail Sale
+          </button>
           <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
                   className="bg-shGreen text-black px-5 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
             <i className="fas fa-plus mr-1"/>Log Service
@@ -271,6 +321,16 @@ export default function Income() {
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)} sub="outstanding" color="text-shOrange" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
           </div>
+          {(summary.retail_total > 0 || summary.retail_count > 0) && (
+            <div className="mt-3 flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded px-4 py-2.5" data-testid="weekly-retail-chip">
+              <i className="fas fa-bag-shopping text-purple-300"/>
+              <span className="text-[14px] font-black uppercase tracking-widest text-purple-300">Retail</span>
+              <span className="text-white font-black text-[18px]">{fmt(summary.retail_total || 0)}</span>
+              <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.retail_count || 0} sale{(summary.retail_count===1)?"":"s"}</span>
+              <span className="text-gray-500 text-[13px] mx-1">·</span>
+              <span className="text-gray-400 text-[13px] font-black uppercase tracking-widest">Gross w/ retail: <span className="text-white">{fmt(summary.gross_total || summary.completed_total)}</span></span>
+            </div>
+          )}
           {summary.by_service?.length > 0 && (
             <div className="mt-4">
               <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mb-2">Breakdown by service</p>
@@ -316,7 +376,7 @@ export default function Income() {
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatTile label="Completed (revenue)" value={fmt(rangeSummary.completed_total)} sub={`${rangeSummary.by_day?.length || 0} active days`} color="text-shGreen" icon="fa-circle-check" big />
+            <StatTile label="Income (gross)" value={fmt(rangeSummary.completed_total)} sub={`Services ${fmt(rangeSummary.service_total ?? rangeSummary.completed_total)} · Retail ${fmt(rangeSummary.retail_total || 0)}`} color="text-shGreen" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
             <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shOrange" icon="fa-user-clock" />
             <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
@@ -324,6 +384,60 @@ export default function Income() {
           </div>
           {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}
         </div>
+      )}
+
+      {/* Retail Sales (external POS) — date range matches Range View above */}
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="retail-card">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+          <div>
+            <h4 className="text-sm font-black text-purple-300 uppercase tracking-widest"><i className="fas fa-bag-shopping mr-2"/>Retail Sales</h4>
+            <p className="text-[14px] text-gray-500 mt-1">External POS revenue · logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · added to gross above.</p>
+          </div>
+          <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn-card"
+                  className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30">
+            <i className="fas fa-plus mr-1.5"/>Log Sale
+          </button>
+        </div>
+        {retailSales.length === 0 ? (
+          <div className="text-center py-6 text-gray-500 text-[15px]">
+            <i className="fas fa-bag-shopping text-2xl mb-2 block opacity-40"/>
+            No retail sales logged in this range.
+          </div>
+        ) : (
+          <CollapsibleDateGroups
+            rows={retailSales}
+            getDate={(r) => r.date}
+            getAmount={(r) => Number(r.amount) || 0}
+            fmtAmount={(n) => fmt(n)}
+            testid="retail-groups"
+            emptyText="No retail sales logged in this range."
+            renderRow={(r) => (
+              <div key={r.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`retail-row-${r.id}`}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-black text-white truncate">{r.description}</p>
+                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                    {r.category || "—"} · <span className="capitalize">{r.payment_method || "—"}</span>
+                    {r.client_name && <> · <span className="text-purple-300">{r.client_name}</span></>}
+                  </p>
+                </div>
+                <span className="text-sm font-black text-purple-300 whitespace-nowrap">+{fmt(r.amount)}</span>
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={()=>{ setRetailEditing(r); setRetailOpen(true); }} className="text-[14px] text-gray-400 hover:text-shBlue p-1" data-testid={`retail-edit-${r.id}`}><i className="fas fa-pen"/></button>
+                  <button onClick={()=>removeRetail(r)} className="text-[14px] text-gray-400 hover:text-red-400 p-1" data-testid={`retail-delete-${r.id}`}><i className="fas fa-trash"/></button>
+                </div>
+              </div>
+            )}
+          />
+        )}
+      </div>
+
+      {retailOpen && (
+        <RetailSaleModal sale={retailEditing}
+                         categories={retailCategories}
+                         clients={clients}
+                         onClose={()=>{ setRetailOpen(false); setRetailEditing(null); }}
+                         onSaved={()=>{ setRetailOpen(false); setRetailEditing(null); refreshAfterRetailChange(); }}
+                         onError={(msg)=>setEditErr(msg)} />
       )}
 
       {/* Expenses (date range matches Range View above) */}
@@ -800,6 +914,158 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
           <button onClick={save} disabled={busy} data-testid="expense-save"
                   className="bg-red-500/20 text-red-300 border border-red-500/40 px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-50">
             {busy ? "Saving…" : (isEdit ? "Save changes" : "Add expense")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError }) {
+  const isEdit = !!sale;
+  const [form, setForm] = useState({
+    date: sale?.date || todayISO(),
+    description: sale?.description || "",
+    amount: sale?.amount ?? "",
+    category: sale?.category || "",
+    payment_method: sale?.payment_method || "card",
+    notes: sale?.notes || "",
+    client_id: sale?.client_id || "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [clientQuery, setClientQuery] = useState("");
+
+  const selectedClient = clients?.find(c => c.id === form.client_id);
+  const clientResults = clientQuery.trim()
+    ? (clients || []).filter(c => (c.name + " " + (c.email || "")).toLowerCase().includes(clientQuery.toLowerCase())).slice(0, 8)
+    : [];
+
+  const save = async () => {
+    if (!form.description.trim()) { onError && onError("Description is required"); return; }
+    if (form.amount === "" || isNaN(Number(form.amount)) || Number(form.amount) <= 0) {
+      onError && onError("Amount must be greater than zero"); return;
+    }
+    setBusy(true);
+    try {
+      const body = {
+        date: form.date,
+        description: form.description.trim(),
+        amount: Number(form.amount),
+        category: (form.category || "").trim(),
+        notes: (form.notes || "").trim(),
+        payment_method: form.payment_method,
+        client_id: form.client_id || null,
+      };
+      if (isEdit) await api.put(`/retail-sales/${sale.id}`, body);
+      else await api.post("/retail-sales", body);
+      onSaved && onSaved();
+    } catch (e) {
+      onError && onError(`Save failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 z-[80] flex items-center justify-center p-4" onClick={onClose} data-testid="retail-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <h3 className="text-lg font-black text-white uppercase italic tracking-tight">
+            <i className="fas fa-bag-shopping text-purple-300 mr-2"/>{isEdit ? "Edit Retail Sale" : "Log Retail Sale"}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white" data-testid="retail-modal-close"><i className="fas fa-times"/></button>
+        </div>
+
+        <p className="text-[13px] text-gray-500 leading-relaxed">
+          Manually log a sale from your external POS so it counts toward your Income totals and the monthly P&amp;L PDF.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+            <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} style={{colorScheme:"dark"}}
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-date" />
+          </div>
+          <div>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
+            <input type="number" step="0.01" min="0" value={form.amount} onChange={(e)=>setForm({...form, amount:e.target.value})}
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-purple-300 font-black text-sm" data-testid="retail-amount" />
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">What did you sell</label>
+          <input type="text" value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})}
+                 placeholder="e.g., 40lb kibble bag, retractable leash, chew toy"
+                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-description" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Category</label>
+            <input type="text" value={form.category} onChange={(e)=>setForm({...form, category:e.target.value})}
+                   list="retail-categories" placeholder="e.g., Food, Treats, Toys, Gear"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-category" />
+            <datalist id="retail-categories">
+              {categories.map(c => <option key={c} value={c}/>)}
+            </datalist>
+          </div>
+          <div>
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
+            <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-payment-method">
+              <option value="card">Card</option>
+              <option value="cash">Cash</option>
+              <option value="transfer">Transfer</option>
+              <option value="check">Check</option>
+              <option value="credits">Credits</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Tag to client (optional)</label>
+          <div className="relative">
+            {form.client_id ? (
+              <div className="w-full mt-1 bg-bgBase border border-purple-500/40 rounded p-2 flex items-center gap-2" data-testid="retail-client-selected">
+                <i className="fas fa-user text-purple-300 text-[12px]"/>
+                <span className="text-white text-sm font-black flex-1">{selectedClient?.name || "Unknown"}</span>
+                <button onClick={()=>{ setForm({...form, client_id:""}); setClientQuery(""); }} className="text-gray-400 hover:text-red-400 text-[12px]" data-testid="retail-client-clear">
+                  <i className="fas fa-times"/>
+                </button>
+              </div>
+            ) : (
+              <>
+                <input value={clientQuery} onChange={(e)=>setClientQuery(e.target.value)}
+                       placeholder="Type to search clients…" data-testid="retail-client-search"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                {clientResults.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full bg-bgPanel border border-bgHover rounded shadow-2xl max-h-48 overflow-y-auto">
+                    {clientResults.map(c => (
+                      <button key={c.id} onClick={()=>{ setForm({...form, client_id:c.id}); setClientQuery(""); }}
+                              data-testid={`retail-client-pick-${c.id}`}
+                              className="w-full text-left px-3 py-2 hover:bg-bgHover text-white text-[15px]">
+                        <span className="font-black">{c.name}</span> <span className="text-gray-500 text-[13px]">· {c.email || "—"}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        <div>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+          <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" data-testid="retail-notes" />
+        </div>
+
+        <div className="flex gap-2 justify-end pt-2">
+          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+          <button onClick={save} disabled={busy} data-testid="retail-save"
+                  className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30 disabled:opacity-50">
+            {busy ? "Saving…" : (isEdit ? "Save changes" : "Log sale")}
           </button>
         </div>
       </div>
