@@ -444,6 +444,17 @@ Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls 
 - ✅ When inserting the marketing-qr endpoint above the portal-snapshot endpoint, the `@api.get("/admin/clients/{client_id}/portal-snapshot")` decorator got accidentally consumed by the search/replace — the function body remained but it was no longer wired to a route, so the snapshot endpoint silently returned FastAPI's default 404.
 - ✅ Restored the decorator. Verified preview: snapshot for Alex Owner returns full payload (1 dog, 1 booking, waiver signed). Production needs a redeploy to clear the same bug.
 
+## Sprint 94 — Employees can check dogs in/out (2026-02)
+- ✅ **Permission lifted** on `POST /api/bookings/{id}/check-in` and `POST /api/bookings/{id}/check-out` from `require_admin` → `require_employee_or_admin`. The checkout endpoint still preserves all its admin business logic (credit deduction, add-ons, payment status, actual_price calculation) — employees just get to trigger it.
+- ✅ **Fixed `GET /api/bookings` permission bug**: previously assumed `role != admin` meant client → filtered by `client_id`, which would have given employees an empty list. Now: admin + employee see everything, clients see only their own.
+- ✅ **Employee Portal Roster cards** now show:
+  - Green **Check In** button when `!checked_in_at`
+  - Blue **Check Out** button when `checked_in_at && !checked_out_at`
+  - "Out at HH:MM" with green checkmark when `checked_out_at`
+- ✅ Verified end-to-end via curl as Alex (employee): GET /bookings → 200/82 records; POST check-in → records `checked_in_at`; POST check-out → records `checked_out_at` + flips status to `completed`.
+- ✅ UI verified via screenshot: button state correctly flips based on booking state.
+
+
 ## Sprint 44 — Downloadable marketing QR code (2026-02)
 - ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/marketing-qr?size=N&ref=tag`. Generates a high-error-correction PNG QR pointing at `APP_PUBLIC_URL`, optional `?ref=` query param baked into the encoded URL for future scan analytics. Returns the PNG as `attachment` with a friendly filename and an `X-QR-Target-Url` header so the UI can show what's encoded.
 - ✅ **Frontend** (`Settings.jsx`): new "Marketing QR" tab with a `MarketingQRPanel` component. Live PNG preview, debounced tracking-tag input (regenerates preview as you type), three download buttons (Small 512px / Print 1024px / Poster 2048px) sized for different print use cases. Uses `responseType: "blob"` + `URL.createObjectURL` + auto-clicked anchor for the download.

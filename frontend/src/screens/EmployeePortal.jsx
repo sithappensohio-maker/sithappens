@@ -210,11 +210,25 @@ function ClockTab() {
 function RosterTab() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
   const load = async () => {
     try { const r = await api.get("/employee/roster-today"); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { load(); }, []);
+
+  const checkIn = async (bid) => {
+    setBusyId(bid); setErr("");
+    try { await api.post(`/bookings/${bid}/check-in`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setBusyId(null); }
+  };
+  const checkOut = async (bid) => {
+    setBusyId(bid); setErr("");
+    try { await api.post(`/bookings/${bid}/check-out`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setBusyId(null); }
+  };
 
   if (err) return <p className="text-red-400 text-sm">{err}</p>;
   if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
@@ -282,8 +296,30 @@ function RosterTab() {
             </div>
           )}
           {r.notes && <p className="text-[13px] text-gray-400 italic border-t border-bgHover/60 pt-2">"{r.notes}"</p>}
+          <div className="border-t border-bgHover/60 pt-2 flex gap-2 flex-wrap" data-testid={`roster-actions-${r.booking_id}`}>
+            {!r.checked_in_at && (
+              <button onClick={()=>checkIn(r.booking_id)} disabled={busyId === r.booking_id}
+                      data-testid={`emp-checkin-${r.booking_id}`}
+                      className="flex-1 min-w-[140px] bg-shGreen text-bgHeader py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
+                <i className={`fas ${busyId === r.booking_id ? "fa-spinner fa-spin" : "fa-arrow-right-to-bracket"} mr-1`}/>Check In
+              </button>
+            )}
+            {r.checked_in_at && !r.checked_out_at && (
+              <button onClick={()=>checkOut(r.booking_id)} disabled={busyId === r.booking_id}
+                      data-testid={`emp-checkout-${r.booking_id}`}
+                      className="flex-1 min-w-[140px] bg-shBlue text-white py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                <i className={`fas ${busyId === r.booking_id ? "fa-spinner fa-spin" : "fa-arrow-right-from-bracket"} mr-1`}/>Check Out
+              </button>
+            )}
+            {r.checked_out_at && (
+              <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">
+                <i className="fas fa-check-circle text-shGreen mr-1"/>Out at {fmtTime(r.checked_out_at)}
+              </p>
+            )}
+          </div>
         </div>
       ))}
+      {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest" data-testid="roster-err">{err}</p>}
     </div>
   );
 }

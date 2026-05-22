@@ -1210,7 +1210,9 @@ async def list_bookings(
     q: Dict = {}
     if status_filter:
         q["status"] = status_filter
-    if user.get("role") != "admin":
+    # Admins + employees see all bookings (employees need this to run the
+    # facility). Clients see only their own.
+    if user.get("role") == "client":
         q["client_id"] = user.get("client_id")
     if not include_all:
         if not start_date:
@@ -2247,7 +2249,7 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
 
 
 @api.post("/bookings/{booking_id}/check-in", response_model=BookingOut)
-async def check_in(booking_id: str, _: dict = Depends(require_admin)):
+async def check_in(booking_id: str, _: dict = Depends(require_employee_or_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -2260,7 +2262,7 @@ async def check_in(booking_id: str, _: dict = Depends(require_admin)):
 async def check_out(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_employee_or_admin),
 ):
     """Check the dog out, optionally adding services or switching the payment.
     All body fields are optional — calling with no body keeps the prior behaviour."""
