@@ -331,6 +331,8 @@ class ReportCard(BaseModel):
     mood_tags: List[str] = []
     note: Optional[str] = ""
     created_at: Optional[str] = ""
+    created_by: Optional[str] = None
+    created_by_name: Optional[str] = None
 
 class BookingOut(BaseModel):
     id: str
@@ -2017,7 +2019,8 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     b = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not b:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if user.get("role") != "admin" and b.get("client_id") != user.get("client_id"):
+    # Admins + employees can fetch any booking; clients only their own.
+    if user.get("role") == "client" and b.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
     return b
 
@@ -2620,11 +2623,18 @@ async def check_out(
     return booking
 
 @api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
-async def save_report_card(booking_id: str, body: ReportCardIn, _: dict = Depends(require_admin)):
+async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Depends(require_employee_or_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    rc = {"photos": body.photos, "mood_tags": body.mood_tags, "note": body.note or "", "created_at": now_iso()}
+    rc = {
+        "photos": body.photos,
+        "mood_tags": body.mood_tags,
+        "note": body.note or "",
+        "created_at": now_iso(),
+        "created_by": user["id"],
+        "created_by_name": user.get("display_name") or user.get("name"),
+    }
     await db.bookings.update_one({"id": booking_id}, {"$set": {"report_card": rc}})
     booking["report_card"] = rc
     return booking

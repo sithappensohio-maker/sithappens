@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
+import ReportCardModal from "../components/ReportCardModal";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -211,6 +212,7 @@ function RosterTab() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
+  const [reportFor, setReportFor] = useState(null);
   const load = async () => {
     try { const r = await api.get("/employee/roster-today"); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -319,8 +321,17 @@ function RosterTab() {
                 <i className={`fas ${busyId === r.booking_id ? "fa-spinner fa-spin" : "fa-arrow-right-from-bracket"} mr-1`}/>Check Out
               </button>
             )}
+            <button onClick={async()=>{
+                      // Always fetch fresh booking so the modal sees the latest report_card
+                      try { const fr = await api.get(`/bookings/${r.booking_id}`); setReportFor(fr.data); }
+                      catch { setReportFor({ id: r.booking_id, dog_name: r.dog_name, client_name: r.client_name, date: data?.date }); }
+                    }}
+                    data-testid={`emp-report-${r.booking_id}`}
+                    className={`min-w-[140px] py-2 px-3 rounded font-black text-[13px] uppercase tracking-widest border ${r.checked_out_at ? "bg-shGreen text-bgHeader border-shGreen hover:bg-shGreen/90" : "bg-bgBase border-bgHover text-shGreen hover:border-shGreen"}`}>
+              <i className="fas fa-clipboard mr-1"/>{r.checked_out_at ? "Add Report" : "Notes"}
+            </button>
             {r.checked_out_at && (
-              <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">
+              <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest self-center">
                 <i className="fas fa-check-circle text-shGreen mr-1"/>Out at {fmtTime(r.checked_out_at)}
               </p>
             )}
@@ -328,6 +339,7 @@ function RosterTab() {
         </div>
       ))}
       {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest" data-testid="roster-err">{err}</p>}
+      {reportFor && <ReportCardModal booking={reportFor} onClose={()=>{ setReportFor(null); load(); }} />}
     </div>
   );
 }

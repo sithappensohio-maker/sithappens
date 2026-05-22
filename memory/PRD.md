@@ -494,6 +494,21 @@ Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls 
 - ✅ Sanity-tested with 40h @ $18.50: gross $740 / burden $92.13 (12.4%) / total $832.13 / withholdings $176.86 / take-home $563.14 — matches industry-standard 13-14% employer markup for Ohio.
 
 
+## Sprint 97 — Employees can create report cards + notes on any booking (2026-02)
+- ✅ **`POST /api/bookings/{id}/report-card`** opened from `require_admin` → `require_employee_or_admin`. Now stamps `created_by` (user_id) + `created_by_name` on the report_card for audit.
+- ✅ **`GET /api/bookings/{id}`** opened so employees can fetch any booking detail. Clients still restricted to their own.
+- ✅ **`ReportCard` Pydantic model** extended with `created_by` + `created_by_name`.
+- ✅ **Shared `<ReportCardModal>` component** extracted to `/app/frontend/src/components/ReportCardModal.jsx`:
+  - Photos (up to 3, image-compressed)
+  - Mood/highlights chips (loaded from settings.mood_tags, falls back to API fetch if not passed)
+  - Note for owner (free-text)
+  - Edit-and-resave compatible — existing values pre-populated when modal opens
+- ✅ **Dashboard.jsx refactored** to use the shared component (removed 97 lines of duplicate code).
+- ✅ **Employee Portal Roster** — every dog card now has a **"Notes" / "Add Report"** button (color shifts to filled green once checked out, hinting "do this now"). Opens the same shared modal with full edit capability.
+- ✅ Works for **all service types** — daycare, boarding, training, grooming, photography, other. No service-specific gating.
+- ✅ Verified end-to-end as Alex: GET /api/bookings/{id} → 200; POST report-card → saved with `created_by_name: "Alex"`. Modal opens correctly from roster card with all fields populated.
+
+
 ## Sprint 43 — "Preview as client" read-only portal viewer (2026-02)
 - ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/clients/{client_id}/portal-snapshot`. Single aggregated payload — `{client, dogs, bookings, enrollments_by_dog, homework, waiver, waiver_required}`. Read-only, no state changes. Same data shape Portal.jsx fetches but pulled by client_id instead of from the JWT.
 - ✅ **Frontend component** (`components/ClientPortalPreview.jsx`): full-screen modal with a red "VIEWING AS {Name} (READ-ONLY)" banner + "Return to Admin" button. Shows credits tiles, waiver status, My Dogs cards, Upcoming bookings, Training Progress rings, Homework list, and Recent visits. No interactive controls — admin can't book/sign/edit on the client's behalf.
