@@ -374,6 +374,17 @@ class BookingOut(BaseModel):
     # count, credits used, billed nights, per-night rate and total charge so
     # admin UI / income reports can render the extension cleanly.
     extra_nights: Optional[Dict[str, Any]] = None
+    # Sprint 94 — silent audit: who/where the check-in / check-out happened.
+    checked_in_by: Optional[str] = None
+    checked_in_by_name: Optional[str] = None
+    checked_in_lat: Optional[float] = None
+    checked_in_lng: Optional[float] = None
+    checked_in_accuracy_m: Optional[float] = None
+    checked_out_by: Optional[str] = None
+    checked_out_by_name: Optional[str] = None
+    checked_out_lat: Optional[float] = None
+    checked_out_lng: Optional[float] = None
+    checked_out_accuracy_m: Optional[float] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -405,6 +416,18 @@ class CheckoutIn(BaseModel):
     extra_nights: int = Field(default=0, ge=0, le=60)
     extra_nights_use_credits: bool = True  # if client has boarding credits, draw from them first
     extra_nights_rate: Optional[float] = None  # per-night rate override; if not provided + credits exhausted, uses booking_rules.boarding_rate
+    # ── Geolocation (silent capture) ──
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy_m: Optional[float] = None
+
+
+class CheckInIn(BaseModel):
+    """Body for `POST /bookings/{id}/check-in` — all optional; carries silent
+    geolocation when the caller (admin/employee) provides it."""
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    accuracy_m: Optional[float] = None
 
 
 # -------- Auth --------
@@ -2249,20 +2272,33 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
 
 
 @api.post("/bookings/{booking_id}/check-in", response_model=BookingOut)
-async def check_in(booking_id: str, _: dict = Depends(require_employee_or_admin)):
+async def check_in(
+    booking_id: str,
+    body: Optional[CheckInIn] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    body = body or CheckInIn()
     ts = now_iso()
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"checked_in_at": ts}})
-    booking["checked_in_at"] = ts
+    update = {
+        "checked_in_at": ts,
+        "checked_in_by": user["id"],
+        "checked_in_by_name": user.get("display_name") or user.get("name"),
+        "checked_in_lat": body.lat,
+        "checked_in_lng": body.lng,
+        "checked_in_accuracy_m": body.accuracy_m,
+    }
+    await db.bookings.update_one({"id": booking_id}, {"$set": update})
+    booking.update(update)
     return booking
 
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
 async def check_out(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
-    _: dict = Depends(require_employee_or_admin),
+    user: dict = Depends(require_employee_or_admin),
 ):
     """Check the dog out, optionally adding services or switching the payment.
     All body fields are optional — calling with no body keeps the prior behaviour."""
@@ -2271,7 +2307,15 @@ async def check_out(
         raise HTTPException(status_code=404, detail="Booking not found")
     body = body or CheckoutIn()
     ts = now_iso()
-    update: Dict[str, Any] = {"checked_out_at": ts, "status": "completed"}
+    update: Dict[str, Any] = {
+        "checked_out_at": ts,
+        "status": "completed",
+        "checked_out_by": user["id"],
+        "checked_out_by_name": user.get("display_name") or user.get("name"),
+        "checked_out_lat": body.lat,
+        "checked_out_lng": body.lng,
+        "checked_out_accuracy_m": body.accuracy_m,
+    }
 
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)

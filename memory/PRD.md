@@ -460,6 +460,19 @@ Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls 
 - ✅ **Frontend** (`Settings.jsx`): new "Marketing QR" tab with a `MarketingQRPanel` component. Live PNG preview, debounced tracking-tag input (regenerates preview as you type), three download buttons (Small 512px / Print 1024px / Poster 2048px) sized for different print use cases. Uses `responseType: "blob"` + `URL.createObjectURL` + auto-clicked anchor for the download.
 - ✅ Initial JSX nesting bug (MarketingQRPanel ended up inside WaiverPanel because of a missing close brace + orphan brace) caught and fixed.
 - ✅ Verified end-to-end: preview renders, ref input updates the encoded URL live (`https://sit-happens-crm.emergent.host?ref=flyer`), all 3 download sizes serve correct content-disposition headers.
+## Sprint 95 — Silent geo + audit on dog check-in/out (2026-02)
+- ✅ **New booking fields**: `checked_in_by`, `checked_in_by_name`, `checked_in_lat`, `checked_in_lng`, `checked_in_accuracy_m`, and the matching `checked_out_*` family. Optional, backward-compatible.
+- ✅ **`POST /api/bookings/{id}/check-in`** now accepts optional `{lat, lng, accuracy_m}` body, records who triggered it (user ID + display name) and where.
+- ✅ **`POST /api/bookings/{id}/check-out`** — same geo fields added to `CheckoutIn`; all existing checkout business logic (credit deduction, add-ons, billing) untouched.
+- ✅ **Frontend silently captures geo**:
+  - Employee Portal Roster — already captured via existing `getGeo()` helper, now sent in the body
+  - Admin Dashboard Check-in button — captures on click via inline `captureGeo()` helper
+  - Admin Dashboard Check-out modal — captures geo right before submitting alongside payment data
+  - All captures are best-effort: no permission? no signal? → geo just stays null and the action still goes through
+- ✅ **Admin audit display**: Dashboard "In · Out" column now shows the staff name (e.g. `🛡️ Alex`) with a green location-pin if geo was captured. Hovering the badge shows the full lat/lng for in + out.
+- ✅ Verified end-to-end via curl: employee check-in/out correctly stamps user_id + name + lat/lng; backward-compat (no body) returns HTTP 200 with geo null. Backend + frontend lint clean.
+
+
 
 ## Sprint 43 — "Preview as client" read-only portal viewer (2026-02)
 - ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/clients/{client_id}/portal-snapshot`. Single aggregated payload — `{client, dogs, bookings, enrollments_by_dog, homework, waiver, waiver_required}`. Read-only, no state changes. Same data shape Portal.jsx fetches but pulled by client_id instead of from the JWT.

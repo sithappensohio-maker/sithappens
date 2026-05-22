@@ -219,13 +219,21 @@ function RosterTab() {
 
   const checkIn = async (bid) => {
     setBusyId(bid); setErr("");
-    try { await api.post(`/bookings/${bid}/check-in`); await load(); }
+    try {
+      const geo = await getGeo();
+      await api.post(`/bookings/${bid}/check-in`, geo);
+      await load();
+    }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setBusyId(null); }
   };
   const checkOut = async (bid) => {
     setBusyId(bid); setErr("");
-    try { await api.post(`/bookings/${bid}/check-out`); await load(); }
+    try {
+      const geo = await getGeo();
+      await api.post(`/bookings/${bid}/check-out`, geo);
+      await load();
+    }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setBusyId(null); }
   };

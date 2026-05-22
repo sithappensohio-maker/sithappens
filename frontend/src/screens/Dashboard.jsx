@@ -61,7 +61,15 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   };
   useEffect(() => { load(); }, []);
 
-  const checkIn = async (id) => { try { await api.post(`/bookings/${id}/check-in`); load(); } catch {} };
+  const captureGeo = () => new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve({});
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy_m: pos.coords.accuracy }),
+      () => resolve({}),
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
+    );
+  });
+  const checkIn = async (id) => { try { const geo = await captureGeo(); await api.post(`/bookings/${id}/check-in`, geo); load(); } catch {} };
   const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
   const approveVax = async (v) => {
@@ -357,6 +365,13 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                   <div className="text-right hidden md:block">
                     <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">In · Out</p>
                     <p className="text-xs text-gray-300 font-mono">{fmtTime(b.checked_in_at)} · {fmtTime(b.checked_out_at)}</p>
+                    {(b.checked_in_by_name || b.checked_out_by_name) && (
+                      <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest"
+                         title={`In by ${b.checked_in_by_name||"—"}${b.checked_in_lat?` (${b.checked_in_lat.toFixed(4)},${b.checked_in_lng.toFixed(4)})`:""}${b.checked_out_by_name?`\nOut by ${b.checked_out_by_name}`:""}${b.checked_out_lat?` (${b.checked_out_lat.toFixed(4)},${b.checked_out_lng.toFixed(4)})`:""}`}>
+                        <i className="fas fa-user-shield mr-1 text-shBlue"/>{b.checked_in_by_name || "—"}
+                        {b.checked_in_lat && <i className="fas fa-location-dot ml-1 text-shGreen"/>}
+                      </p>
+                    )}
                   </div>
                   {!b.checked_in_at && (
                     <button onClick={()=>checkIn(b.id)} data-testid={`checkin-${b.id}`}
@@ -814,6 +829,20 @@ function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         // admin overrode it so the income line reflects the day's value.
         if (basePrice !== "") body.base_price = Number(basePrice);
       }
+      // Silent geolocation capture (Sprint 94 — audit trail)
+      try {
+        if (navigator.geolocation) {
+          const pos = await new Promise((resolve) => navigator.geolocation.getCurrentPosition(
+            (p) => resolve(p), () => resolve(null),
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
+          ));
+          if (pos) {
+            body.lat = pos.coords.latitude;
+            body.lng = pos.coords.longitude;
+            body.accuracy_m = pos.coords.accuracy;
+          }
+        }
+      } catch { /* silent */ }
       await api.post(`/bookings/${booking.id}/check-out`, body);
       onClose();
     } catch (e) {
