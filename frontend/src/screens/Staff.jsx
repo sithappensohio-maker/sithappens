@@ -67,6 +67,7 @@ export default function Staff() {
           ["schedule", "Schedule", "fa-calendar-week"],
           ["tasks", "Tasks", "fa-list-check"],
           ["payroll", "Payroll", "fa-file-csv"],
+          ["taxes", "Tax Estimator", "fa-calculator"],
         ].map(([k, label, icon]) => (
           <button key={k} onClick={()=>setSubtab(k)} data-testid={`staff-subtab-${k}`}
                   className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`}>
@@ -211,6 +212,7 @@ export default function Staff() {
       {subtab === "schedule" && <ScheduleTab employees={employees} />}
       {subtab === "tasks" && <TasksTab employees={employees} />}
       {subtab === "payroll" && <PayrollTab employees={employees} />}
+      {subtab === "taxes" && <TaxEstimatorTab />}
 
       {modal && <EmployeeFormModal mode={modal.mode} emp={modal.emp}
                                   onClose={()=>setModal(null)}
@@ -781,3 +783,195 @@ function PayrollTab() {
     </div>
   );
 }
+
+const TAX_FIELD_GROUPS = [
+  {
+    label: "Employer-paid (added on top of gross wage)",
+    color: "shOrange",
+    fields: [
+      ["employer_social_security_pct", "Social Security %", "Capped at SS wage cap"],
+      ["social_security_wage_cap", "Social Security wage cap $", "2026: $176,100"],
+      ["employer_medicare_pct", "Medicare %", "No cap"],
+      ["futa_pct", "FUTA % (effective)", "Federal unemployment after state credit"],
+      ["futa_wage_cap", "FUTA wage cap $", "Federal limit: $7,000"],
+      ["suta_pct", "Ohio SUTA %", "Ohio re-rates yearly — update when you get yours"],
+      ["suta_wage_cap", "Ohio SUTA wage cap $", "Ohio 2026: $9,000"],
+      ["workers_comp_pct", "Workers' Comp %", "Ohio BWC — depends on policy/class code"],
+    ],
+  },
+  {
+    label: "Employee-withheld (employer remits but doesn't pay)",
+    color: "shBlue",
+    fields: [
+      ["employee_social_security_pct", "Social Security %", "Employee side of FICA"],
+      ["employee_medicare_pct", "Medicare %", "Employee side of FICA"],
+      ["federal_income_tax_pct", "Federal income tax %", "Effective rate estimate — depends on W-4"],
+      ["ohio_income_tax_pct", "Ohio income tax %", "Effective state rate estimate"],
+      ["warren_city_tax_pct", "Warren city tax %", "Municipal income tax"],
+    ],
+  },
+];
+
+function TaxEstimatorTab() {
+  const [start, setStart] = useState(daysAgoISO(13));
+  const [end, setEnd] = useState(todayISO());
+  const [data, setData] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [tax, setTax] = useState(null);
+  const [defaults, setDefaults] = useState(null);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const loadEstimate = async () => {
+    setErr("");
+    try {
+      const r = await api.get("/admin/payroll/estimate", { params: { start_date: start, end_date: end } });
+      setData(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  const loadTax = async () => {
+    try {
+      const r = await api.get("/admin/payroll-tax-settings");
+      setTax(r.data.current);
+      setDefaults(r.data.defaults);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  useEffect(() => { loadTax(); }, []);
+  useEffect(() => { loadEstimate(); /* eslint-disable-next-line */ }, [start, end]);
+
+  const saveTax = async () => {
+    setSaving(true);
+    try { await api.put("/admin/payroll-tax-settings", tax); await loadEstimate(); setSettingsOpen(false); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setSaving(false); }
+  };
+  const resetDefaults = () => setTax({ ...defaults });
+
+  return (
+    <div className="space-y-4" data-testid="tax-estimator-tab">
+      <div className="bg-shOrange/10 border border-shOrange/40 rounded p-3 text-[13px] text-gray-300" data-testid="tax-disclaimer">
+        <i className="fas fa-triangle-exclamation text-shOrange mr-2"/>
+        <strong className="text-shOrange">Estimator only.</strong> Sensible 2026 Warren, OH defaults — not a substitute for payroll software (Gusto, QB) or your CPA. Withholding varies by W-4, exemptions, YTD. Verify before issuing checks.
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400">
+          <span className="block mb-1">Period start</span>
+          <input type="date" value={start} onChange={(e)=>setStart(e.target.value)} style={{colorScheme:"dark"}}
+                 data-testid="tax-start"
+                 className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm"/>
+        </label>
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400">
+          <span className="block mb-1">Period end</span>
+          <input type="date" value={end} onChange={(e)=>setEnd(e.target.value)} style={{colorScheme:"dark"}}
+                 data-testid="tax-end"
+                 className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm"/>
+        </label>
+        <button onClick={()=>setSettingsOpen(s=>!s)} data-testid="tax-settings-toggle"
+                className="bg-bgPanel border border-bgHover px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-shGreen">
+          <i className="fas fa-sliders mr-1"/>Edit Tax Rates
+        </button>
+      </div>
+
+      {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px]">{err}</div>}
+
+      {settingsOpen && tax && (
+        <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-4 space-y-4" data-testid="tax-settings-panel">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <h4 className="text-white font-black uppercase italic"><i className="fas fa-sliders text-shGreen mr-2"/>Tax & Wage Cap Rates</h4>
+            <div className="flex gap-2">
+              <button onClick={resetDefaults} data-testid="tax-reset-defaults"
+                      className="text-[13px] text-gray-400 hover:text-shOrange font-black uppercase tracking-widest">
+                <i className="fas fa-rotate-left mr-1"/>Reset to defaults
+              </button>
+              <button onClick={saveTax} disabled={saving} data-testid="tax-save"
+                      className="bg-shGreen text-bgHeader px-4 py-1.5 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+          {TAX_FIELD_GROUPS.map(group => (
+            <div key={group.label}>
+              <p className={`text-[12px] font-black uppercase tracking-widest text-${group.color} mb-2`}>{group.label}</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {group.fields.map(([key, label, hint]) => (
+                  <label key={key} className="block">
+                    <span className="text-[13px] text-gray-300">{label}</span>
+                    <input type="number" step="0.01" value={tax[key]}
+                           onChange={(e)=>setTax({...tax, [key]: Number(e.target.value)})}
+                           data-testid={`tax-${key}`}
+                           className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                    <span className="text-[11px] text-gray-500">{hint}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="tax-totals">
+            <TaxKpi label="Gross" value={data.totals.gross} color="white"/>
+            <TaxKpi label="Employer burden" value={data.totals.employer_burden} color="shOrange"/>
+            <TaxKpi label="TOTAL EMPLOYER COST" value={data.totals.total_cost} color="shGreen" emphasis/>
+            <TaxKpi label="Employee withholdings" value={data.totals.employee_withholdings} color="gray-400"/>
+            <TaxKpi label="Est. employee take-home" value={data.totals.estimated_take_home} color="shBlue"/>
+          </div>
+
+          <div className="bg-bgPanel border border-bgHover rounded-xl p-4 overflow-x-auto">
+            <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-calculator text-shGreen mr-2"/>Per-employee breakdown</h4>
+            <table className="w-full text-[13px]">
+              <thead className="text-[11px] font-black uppercase tracking-widest text-gray-500 border-b border-bgHover">
+                <tr>
+                  <th className="px-2 py-1.5 text-left">Employee</th>
+                  <th className="px-2 py-1.5 text-right">Hours</th>
+                  <th className="px-2 py-1.5 text-right">Gross</th>
+                  <th className="px-2 py-1.5 text-right text-shOrange">+ Burden</th>
+                  <th className="px-2 py-1.5 text-right text-shGreen">= Total Cost</th>
+                  <th className="px-2 py-1.5 text-right text-shBlue">Est. Net</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.per_user.map(u => (
+                  <tr key={u.user_id} className="border-b border-bgHover/40 hover:bg-bgBase/40" data-testid={`tax-row-${u.user_id}`}>
+                    <td className="px-2 py-2">
+                      <span className="text-gray-200 font-black">{u.name}</span>
+                      <span className="text-gray-500 text-[11px] block">${u.hourly_rate.toFixed(2)}/hr · YTD before period: ${u.ytd_gross_before_period.toFixed(2)}</span>
+                    </td>
+                    <td className="px-2 py-2 text-right text-gray-300">{u.hours}</td>
+                    <td className="px-2 py-2 text-right text-white">${u.gross.toFixed(2)}</td>
+                    <td className="px-2 py-2 text-right text-shOrange" title={`SS ${u.employer_breakdown.social_security.toFixed(2)} · Medicare ${u.employer_breakdown.medicare.toFixed(2)} · FUTA ${u.employer_breakdown.futa.toFixed(2)} · SUTA ${u.employer_breakdown.suta.toFixed(2)} · WC ${u.employer_breakdown.workers_comp.toFixed(2)}`}>
+                      ${u.employer_burden.toFixed(2)}
+                      <i className="fas fa-circle-info ml-1 text-[10px] opacity-50"/>
+                    </td>
+                    <td className="px-2 py-2 text-right text-shGreen font-black">${u.total_cost.toFixed(2)}</td>
+                    <td className="px-2 py-2 text-right text-shBlue" title={`SS ${u.employee_breakdown.social_security.toFixed(2)} · Medicare ${u.employee_breakdown.medicare.toFixed(2)} · Fed ${u.employee_breakdown.federal_income_tax.toFixed(2)} · OH ${u.employee_breakdown.ohio_income_tax.toFixed(2)} · Warren ${u.employee_breakdown.warren_city_tax.toFixed(2)}`}>
+                      ${u.estimated_take_home.toFixed(2)}
+                      <i className="fas fa-circle-info ml-1 text-[10px] opacity-50"/>
+                    </td>
+                  </tr>
+                ))}
+                {data.per_user.length === 0 && (
+                  <tr><td colSpan="6" className="px-2 py-6 text-center text-gray-500 text-[14px] uppercase font-black tracking-widest">No clocked hours in this period.</td></tr>
+                )}
+              </tbody>
+            </table>
+            <p className="text-[12px] text-gray-500 mt-3 italic">{data.disclaimer}</p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TaxKpi({ label, value, color, emphasis = false }) {
+  return (
+    <div className={`bg-bgPanel border ${emphasis ? "border-shGreen/40" : "border-bgHover"} rounded-xl p-3 ${emphasis ? "md:col-span-1" : ""}`}>
+      <p className={`text-[11px] font-black uppercase tracking-widest text-${color}`}>{label}</p>
+      <p className={`text-${emphasis ? "2xl" : "xl"} font-black text-${color} mt-1`}>${value.toFixed(2)}</p>
+    </div>
+  );
+}
+

@@ -474,6 +474,26 @@ Backend + frontend lint clean. Mobile responsive (all admin sub-tab bar scrolls 
 
 
 
+## Sprint 96 — Payroll Tax Estimator (Warren OH, 2026 defaults) (2026-02)
+- ✅ **New backend module** with `DEFAULT_PAYROLL_TAX_SETTINGS` defaulting to Warren, OH 2026 estimates:
+  - Employer: SS 6.2% (cap $176.1k), Medicare 1.45%, FUTA 0.6% (cap $7k), Ohio SUTA 2.7% new-employer rate (cap $9k), Workers' Comp 1.5% (pet-care class estimate)
+  - Employee: SS 6.2%, Medicare 1.45%, Federal income tax ~11% effective, Ohio income tax ~2.75%, Warren city tax 2.5%
+- ✅ **YTD wage-cap math** — FUTA / SUTA / SS caps correctly stop accruing once YTD-before-period exceeds the wage cap (verified: 40h @ $18.50 with YTD = $15k → FUTA/SUTA = $0)
+- ✅ **`_compute_payroll_tax(hours, rate, ytd_gross, tax_settings)`** — single function that powers both the estimate endpoint and the CSV export
+- ✅ **Endpoints**:
+  - `GET /api/admin/payroll-tax-settings` — returns defaults + current saved rates
+  - `PUT /api/admin/payroll-tax-settings` — whitelisted update (only known keys can be set)
+  - `GET /api/admin/payroll/estimate?start_date=&end_date=` — per-employee + totals: gross, employer burden (with full breakdown), total cost, employee withholdings (with breakdown), estimated take-home pay. Includes disclaimer.
+- ✅ **Extended `/api/admin/payroll/csv`** with 3 new columns: Employer Burden, Total Cost, Est. Net Pay — same wage-cap-aware math
+- ✅ **Frontend: new "Tax Estimator" sub-tab on Staff page**:
+  - Orange disclaimer banner ("not a substitute for payroll software or CPA")
+  - Period start/end pickers
+  - 5 KPI tiles (Gross · Employer Burden · TOTAL Employer Cost · Employee Withholdings · Est. Employee Take-home)
+  - Per-employee breakdown table with hover-tooltips showing the breakdown of burden (SS / Medicare / FUTA / SUTA / WC) and withholdings (SS / Medicare / Fed / OH / Warren) for each row
+  - "Edit Tax Rates" toggle reveals an inline settings panel — all 13 rates editable with hints per field, "Reset to defaults" + Save buttons. Changes immediately re-compute the estimate.
+- ✅ Sanity-tested with 40h @ $18.50: gross $740 / burden $92.13 (12.4%) / total $832.13 / withholdings $176.86 / take-home $563.14 — matches industry-standard 13-14% employer markup for Ohio.
+
+
 ## Sprint 43 — "Preview as client" read-only portal viewer (2026-02)
 - ✅ **Backend** (`server.py`): new admin endpoint `GET /api/admin/clients/{client_id}/portal-snapshot`. Single aggregated payload — `{client, dogs, bookings, enrollments_by_dog, homework, waiver, waiver_required}`. Read-only, no state changes. Same data shape Portal.jsx fetches but pulled by client_id instead of from the JWT.
 - ✅ **Frontend component** (`components/ClientPortalPreview.jsx`): full-screen modal with a red "VIEWING AS {Name} (READ-ONLY)" banner + "Return to Admin" button. Shows credits tiles, waiver status, My Dogs cards, Upcoming bookings, Training Progress rings, Homework list, and Recent visits. No interactive controls — admin can't book/sign/edit on the client's behalf.

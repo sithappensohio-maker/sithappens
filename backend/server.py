@@ -6447,6 +6447,202 @@ async def shifts_scheduled_vs_actual(
     return {"shifts": rows, "variance_threshold_minutes": VARIANCE_FLAG_MINUTES}
 
 
+# ────────────────────────── Payroll Tax Estimator (Sprint 96) ──────────────────────────
+# Sensible defaults for Warren, Ohio (2026 rates). Every rate is editable via
+# /api/admin/payroll-tax-settings so the owner can adjust as they get rated
+# (e.g. Ohio SUTA changes yearly, BWC rate depends on policy/class code).
+#
+# IMPORTANT: This is an ESTIMATOR for budgeting only — not a substitute for
+# payroll software or a CPA. Withholding amounts vary by W-4 selections,
+# YTD totals, exemptions, etc. The take-home estimate uses simple flat brackets.
+
+DEFAULT_PAYROLL_TAX_SETTINGS = {
+    # Employer-paid (added on top of gross)
+    "employer_social_security_pct": 6.2,
+    "social_security_wage_cap": 176100,  # 2026 estimate
+    "employer_medicare_pct": 1.45,
+    "futa_pct": 0.6,  # effective (after state credit)
+    "futa_wage_cap": 7000,
+    "suta_pct": 2.7,  # Ohio new-employer rate
+    "suta_wage_cap": 9000,
+    "workers_comp_pct": 1.5,  # estimate for pet care class
+
+    # Employee-withheld (shown for take-home calc; employer doesn't pay these)
+    "employee_social_security_pct": 6.2,
+    "employee_medicare_pct": 1.45,
+    "federal_income_tax_pct": 11.0,  # rough 12% bracket - standard ded effective
+    "ohio_income_tax_pct": 2.75,
+    "warren_city_tax_pct": 2.5,
+}
+
+
+async def _get_payroll_tax_settings() -> Dict[str, float]:
+    """Load saved tax settings, merge with defaults so missing keys still work."""
+    row = await db.settings.find_one({"id": "payroll_tax"}, {"_id": 0}) or {}
+    out = dict(DEFAULT_PAYROLL_TAX_SETTINGS)
+    for k, v in row.items():
+        if k in out and isinstance(v, (int, float)):
+            out[k] = float(v)
+    return out
+
+
+@api.get("/admin/payroll-tax-settings")
+async def get_payroll_tax_settings(_: dict = Depends(require_admin)):
+    settings = await _get_payroll_tax_settings()
+    return {"defaults": DEFAULT_PAYROLL_TAX_SETTINGS, "current": settings}
+
+
+@api.put("/admin/payroll-tax-settings")
+async def update_payroll_tax_settings(body: dict, _: dict = Depends(require_admin)):
+    # Whitelist only known keys
+    update: Dict[str, Any] = {}
+    for k in DEFAULT_PAYROLL_TAX_SETTINGS.keys():
+        if k in body:
+            try:
+                update[k] = float(body[k])
+            except (TypeError, ValueError):
+                pass
+    update["id"] = "payroll_tax"
+    await db.settings.update_one({"id": "payroll_tax"}, {"$set": update}, upsert=True)
+    return await _get_payroll_tax_settings()
+
+
+def _compute_payroll_tax(hours: float, rate: float, ytd_gross: float, tax: Dict[str, float]) -> Dict[str, float]:
+    """Compute employer burden + employee withholdings for a single pay period.
+    YTD gross is used to respect wage caps on FICA / FUTA / SUTA."""
+    gross = round(hours * rate, 2)
+
+    # Wage-capped employer FICA + unemployment
+    ss_cap_left = max(tax["social_security_wage_cap"] - ytd_gross, 0)
+    ss_taxable = min(gross, ss_cap_left)
+    futa_cap_left = max(tax["futa_wage_cap"] - ytd_gross, 0)
+    futa_taxable = min(gross, futa_cap_left)
+    suta_cap_left = max(tax["suta_wage_cap"] - ytd_gross, 0)
+    suta_taxable = min(gross, suta_cap_left)
+
+    emp_ss = ss_taxable * tax["employer_social_security_pct"] / 100
+    emp_medi = gross * tax["employer_medicare_pct"] / 100
+    emp_futa = futa_taxable * tax["futa_pct"] / 100
+    emp_suta = suta_taxable * tax["suta_pct"] / 100
+    emp_wc = gross * tax["workers_comp_pct"] / 100
+    employer_burden = round(emp_ss + emp_medi + emp_futa + emp_suta + emp_wc, 2)
+    total_cost = round(gross + employer_burden, 2)
+
+    # Employee withholdings (estimate — not actual payroll calc)
+    ee_ss = ss_taxable * tax["employee_social_security_pct"] / 100
+    ee_medi = gross * tax["employee_medicare_pct"] / 100
+    ee_fed = gross * tax["federal_income_tax_pct"] / 100
+    ee_state = gross * tax["ohio_income_tax_pct"] / 100
+    ee_local = gross * tax["warren_city_tax_pct"] / 100
+    employee_withholdings = round(ee_ss + ee_medi + ee_fed + ee_state + ee_local, 2)
+    take_home = round(gross - employee_withholdings, 2)
+
+    return {
+        "gross": gross,
+        "employer_breakdown": {
+            "social_security": round(emp_ss, 2),
+            "medicare": round(emp_medi, 2),
+            "futa": round(emp_futa, 2),
+            "suta": round(emp_suta, 2),
+            "workers_comp": round(emp_wc, 2),
+        },
+        "employer_burden": employer_burden,
+        "total_cost": total_cost,
+        "employee_breakdown": {
+            "social_security": round(ee_ss, 2),
+            "medicare": round(ee_medi, 2),
+            "federal_income_tax": round(ee_fed, 2),
+            "ohio_income_tax": round(ee_state, 2),
+            "warren_city_tax": round(ee_local, 2),
+        },
+        "employee_withholdings": employee_withholdings,
+        "estimated_take_home": take_home,
+    }
+
+
+@api.get("/admin/payroll/estimate")
+async def payroll_estimate(
+    start_date: str, end_date: str, _: dict = Depends(require_admin),
+):
+    """Estimate per-employee employer cost (gross + taxes + workers comp) and
+    employee take-home pay for the given pay period. Uses YTD gross from
+    completed clock entries since Jan 1 to respect FICA/FUTA/SUTA wage caps."""
+    tax = await _get_payroll_tax_settings()
+    period_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(5000)
+    user_ids = list({e["user_id"] for e in period_entries})
+    users = await db.users.find(
+        {"id": {"$in": user_ids}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "display_name": 1, "hourly_rate": 1},
+    ).to_list(500) if user_ids else []
+    user_map = {u["id"]: u for u in users}
+
+    # YTD gross per user — for wage cap math
+    try:
+        ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
+    except Exception:
+        ytd_start = f"{date.today().year}-01-01"
+    ytd_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+    ytd_hours: Dict[str, float] = {}
+    for e in ytd_entries:
+        ytd_hours[e["user_id"]] = ytd_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+
+    # Tally period hours per user
+    period_hours: Dict[str, float] = {}
+    for e in period_entries:
+        period_hours[e["user_id"]] = period_hours.get(e["user_id"], 0) + float(e.get("hours") or 0)
+
+    per_user = []
+    grand_gross = 0.0
+    grand_burden = 0.0
+    grand_total_cost = 0.0
+    grand_withhold = 0.0
+    grand_take_home = 0.0
+    for uid, hrs in period_hours.items():
+        u = user_map.get(uid, {})
+        rate = float(u.get("hourly_rate") or 0)
+        ytd_gross = ytd_hours.get(uid, 0) * rate
+        calc = _compute_payroll_tax(hrs, rate, ytd_gross, tax)
+        per_user.append({
+            "user_id": uid,
+            "name": u.get("display_name") or u.get("name") or "Unknown",
+            "email": u.get("email", ""),
+            "hourly_rate": rate,
+            "hours": round(hrs, 2),
+            "ytd_gross_before_period": round(ytd_gross, 2),
+            **calc,
+        })
+        grand_gross += calc["gross"]
+        grand_burden += calc["employer_burden"]
+        grand_total_cost += calc["total_cost"]
+        grand_withhold += calc["employee_withholdings"]
+        grand_take_home += calc["estimated_take_home"]
+
+    per_user.sort(key=lambda x: -x["total_cost"])
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "tax_settings": tax,
+        "per_user": per_user,
+        "totals": {
+            "gross": round(grand_gross, 2),
+            "employer_burden": round(grand_burden, 2),
+            "total_cost": round(grand_total_cost, 2),
+            "employee_withholdings": round(grand_withhold, 2),
+            "estimated_take_home": round(grand_take_home, 2),
+        },
+        "disclaimer": "Estimator only — not a substitute for payroll software or a CPA. Withholding varies by W-4, YTD wages, exemptions. Verify with your accountant before issuing checks.",
+    }
+
+
+@api.get("/admin/payroll/csv")
 @api.get("/admin/payroll/csv")
 async def payroll_csv(
     start_date: str, end_date: str, _: dict = Depends(require_admin),
@@ -6501,13 +6697,32 @@ async def payroll_csv(
         })
         slot["hours"] = round(slot["hours"] + float(e.get("hours") or 0), 3)
 
-    # Build CSV
-    lines = ["Employee,Email,Period Start,Period End,Hours,Hourly Rate,Gross Pay,Shifts,Flags"]
+    # Pull tax settings + YTD gross per user for accurate cap math
+    tax = await _get_payroll_tax_settings()
+    try:
+        ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
+    except Exception:
+        ytd_start = f"{date.today().year}-01-01"
+    ytd_pre = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+    ytd_hours_pre: Dict[str, float] = {}
+    for e in ytd_pre:
+        ytd_hours_pre[e["user_id"]] = ytd_hours_pre.get(e["user_id"], 0) + float(e.get("hours") or 0)
+
+    # Build CSV with tax columns
+    lines = ["Employee,Email,Period Start,Period End,Hours,Hourly Rate,Gross Pay,Employer Burden,Total Cost,Est. Net Pay,Shifts,Flags"]
     for uid, p in sorted(per_user.items(), key=lambda x: x[1]["name"]):
-        gross = round(p["hours"] * p["rate"], 2)
+        ytd_gross = ytd_hours_pre.get(uid, 0) * p["rate"]
+        calc = _compute_payroll_tax(p["hours"], p["rate"], ytd_gross, tax)
         lines.append(",".join([
             f'"{p["name"]}"', f'"{p["email"]}"', start_date, end_date,
-            f"{p['hours']:.2f}", f"{p['rate']:.2f}", f"{gross:.2f}",
+            f"{p['hours']:.2f}", f"{p['rate']:.2f}", f"{calc['gross']:.2f}",
+            f"{calc['employer_burden']:.2f}",
+            f"{calc['total_cost']:.2f}",
+            f"{calc['estimated_take_home']:.2f}",
             str(shifts_per_user.get(uid, 0)),
             str(flags_per_user.get(uid, 0)),
         ]))
