@@ -586,9 +586,10 @@ async def update_client(client_id: str, body: ClientIn, _: dict = Depends(requir
     return existing
 
 @api.get("/clients/{client_id}", response_model=ClientOut)
-async def get_client(client_id: str, _: dict = Depends(require_admin)):
-    """Fetch a single client doc. Used by the checkout modal to read live
-    credit balances when deciding whether to offer 'pay with credits'."""
+async def get_client(client_id: str, _: dict = Depends(require_employee_or_admin)):
+    """Fetch a single client doc. Used by the checkout modal (admin AND
+    employee) to read live credit balances when deciding whether to offer
+    'pay with credits'."""
     existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -1828,10 +1829,11 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
-    if user.get("role") != "admin" and booking["client_id"] != user.get("client_id"):
+    # Admins + employees can cancel any booking; clients only their own.
+    if user.get("role") == "client" and booking["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
-    # Cancellation cutoff for clients
-    if user.get("role") != "admin":
+    # Cancellation cutoff for clients only (admins + employees bypass)
+    if user.get("role") == "client":
         settings = await get_settings()
         cutoff_hours = int(settings.get("booking_rules", {}).get("cancellation_cutoff_hours", 24))
         try:
@@ -5460,6 +5462,283 @@ def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:
             continue
     out.sort(key=lambda x: x["days"])
     return out
+
+
+# -------- Today's Brain — Unified Admin Action Queue (Sprint 102) --------
+@api.get("/admin/today-brain")
+async def admin_today_brain(_: dict = Depends(require_admin)):
+    """Single prioritized 'what needs my attention' feed for the admin
+    dashboard. Auto-resolving — items disappear when the underlying
+    condition is resolved (no manual dismiss). Returns items grouped
+    only by priority+kind for fast UI rendering.
+
+    Priorities:
+        urgent  → red    (overdue vaccines, no-checkin past 10 AM, pending hw reviews)
+        warn    → orange (expiring vaccines, unanswered hw questions, low credits, pending bookings)
+        info    → green  (pipeline ready for cert, new signups, monday digest preview)
+    """
+    today_iso = date.today().isoformat()
+    now_dt = datetime.now(timezone.utc)
+    items: List[dict] = []
+
+    # 1. Homework day-submissions waiting for review (urgent)
+    pending_count = 0
+    async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "section_logs": 1, "title": 1}):
+        for lo in hw.get("section_logs") or []:
+            if lo.get("submission_status") == "submitted":
+                pending_count += 1
+    if pending_count > 0:
+        items.append({
+            "id": f"hw-reviews:{pending_count}",
+            "kind": "hw_review",
+            "priority": "urgent",
+            "title": f"{pending_count} homework day-submission{'s' if pending_count != 1 else ''} waiting for review",
+            "subtitle": "Tap to open the review queue",
+            "ts": now_dt.isoformat(),
+            "cta": {"type": "open_screen", "screen": "homework"},
+            "icon": "fa-clipboard-check",
+        })
+
+    # 2. Vaccines expiring/expired (urgent if expired, warn if expiring)
+    try:
+        settings = await get_settings()
+        required = settings.get("required_vaccines", ["rabies"])
+        warn_days = int(settings.get("vaccine_warning_days", 30))
+        in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
+        dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
+        dismissed = set()
+        for d in dismissals:
+            try:
+                if datetime.fromisoformat(d["until"]) > now_dt:
+                    dismissed.add(d["dog_id"])
+            except Exception:
+                continue
+        clients_map = {c["id"]: c["name"] for c in await db.clients.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(2000)}
+        async for d in db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
+            if d["id"] in dismissed:
+                continue
+            vaccines = d.get("vaccines") or {}
+            for v in required:
+                r = vaccines.get(v, "")
+                if not r:
+                    items.append({
+                        "id": f"vax-missing:{d['id']}:{v}",
+                        "kind": "vaccine_missing",
+                        "priority": "urgent",
+                        "title": f"{d['name']} · {v.upper()} missing",
+                        "subtitle": f"Owner: {clients_map.get(d['owner_id'], '—')}",
+                        "ts": "0000",  # sort to bottom of urgent group
+                        "cta": {"type": "open_dog", "id": d["id"]},
+                        "icon": "fa-shield-virus",
+                    })
+                    break
+                elif r < today_iso:
+                    items.append({
+                        "id": f"vax-expired:{d['id']}:{v}",
+                        "kind": "vaccine_expired",
+                        "priority": "urgent",
+                        "title": f"{d['name']} · {v.upper()} expired",
+                        "subtitle": f"Owner: {clients_map.get(d['owner_id'], '—')} · expired {r}",
+                        "ts": r,
+                        "cta": {"type": "open_dog", "id": d["id"]},
+                        "icon": "fa-shield-virus",
+                    })
+                    break
+                elif r <= in_warn:
+                    items.append({
+                        "id": f"vax-warn:{d['id']}:{v}",
+                        "kind": "vaccine_expiring",
+                        "priority": "warn",
+                        "title": f"{d['name']} · {v.upper()} expires {r}",
+                        "subtitle": f"Owner: {clients_map.get(d['owner_id'], '—')}",
+                        "ts": r,
+                        "cta": {"type": "open_dog", "id": d["id"]},
+                        "icon": "fa-shield-virus",
+                    })
+                    break
+    except Exception as e:
+        logger.warning("today-brain vaccines query failed: %s", e)
+
+    # 3. Dogs booked today not checked in (urgent if past 10 AM local-ish; using UTC hour as proxy)
+    try:
+        hour_utc = now_dt.hour  # admin reads this dashboard mid-day; rough heuristic
+        if hour_utc >= 14:  # ~10 AM ET / 7 AM PT
+            no_in = []
+            async for b in db.bookings.find(
+                {"date": today_iso, "status": "approved", "checked_in_at": {"$in": [None, ""]}},
+                {"_id": 0, "id": 1, "dog_name": 1, "client_name": 1, "service_type": 1, "dropoff_time": 1},
+            ):
+                no_in.append(b)
+            if no_in:
+                items.append({
+                    "id": f"no-checkin:{today_iso}:{len(no_in)}",
+                    "kind": "no_checkin",
+                    "priority": "urgent",
+                    "title": f"{len(no_in)} dog{'s' if len(no_in) != 1 else ''} booked today not yet checked in",
+                    "subtitle": ", ".join(b.get("dog_name", "?") for b in no_in[:4]) + (f" · +{len(no_in)-4} more" if len(no_in) > 4 else ""),
+                    "ts": now_dt.isoformat(),
+                    "cta": {"type": "open_screen", "screen": "dashboard"},
+                    "icon": "fa-circle-exclamation",
+                })
+    except Exception as e:
+        logger.warning("today-brain no-checkin query failed: %s", e)
+
+    # 4. Low credits (warn) — any client with any pool ≤ 2
+    try:
+        low_clients = []
+        async for c in db.clients.find(
+            {"$or": [{"credits": {"$lte": 2}}, {"training_credits": {"$lte": 2}}, {"boarding_credits": {"$lte": 2}}]},
+            {"_id": 0, "id": 1, "name": 1, "credits": 1, "training_credits": 1, "boarding_credits": 1},
+        ):
+            pools = []
+            if (c.get("credits") or 0) <= 2:
+                pools.append(f"{c.get('credits') or 0} daycare")
+            if (c.get("training_credits") or 0) <= 2:
+                pools.append(f"{c.get('training_credits') or 0} training")
+            if (c.get("boarding_credits") or 0) <= 2:
+                pools.append(f"{c.get('boarding_credits') or 0} boarding")
+            low_clients.append((c, pools))
+        # Only flag clients with at least one daycare/training/boarding booking in last 60d
+        # so we don't spam alerts for inactive prospects.
+        if low_clients:
+            cutoff = (date.today() - timedelta(days=60)).isoformat()
+            active_ids = set()
+            async for b in db.bookings.find(
+                {"date": {"$gte": cutoff}, "status": {"$in": ["approved", "completed"]}},
+                {"_id": 0, "client_id": 1},
+            ):
+                active_ids.add(b.get("client_id"))
+            for c, pools in low_clients[:12]:  # cap to avoid 100-line list on big DBs
+                if c["id"] not in active_ids:
+                    continue
+                items.append({
+                    "id": f"low-credits:{c['id']}",
+                    "kind": "low_credits",
+                    "priority": "warn",
+                    "title": f"{c['name']} · {' · '.join(pools)} left",
+                    "subtitle": "Active client — consider offering a credit pack",
+                    "ts": now_dt.isoformat(),
+                    "cta": {"type": "open_client", "id": c["id"]},
+                    "icon": "fa-coins",
+                })
+    except Exception as e:
+        logger.warning("today-brain low-credits query failed: %s", e)
+
+    # 5. Pending bookings awaiting admin approval (warn)
+    try:
+        pending = await db.bookings.count_documents({"status": "pending"})
+        if pending > 0:
+            items.append({
+                "id": f"booking-pending:{pending}",
+                "kind": "booking_pending",
+                "priority": "warn",
+                "title": f"{pending} booking request{'s' if pending != 1 else ''} awaiting approval",
+                "subtitle": "Tap to open the Bookings queue",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "bookings"},
+                "icon": "fa-hourglass-half",
+            })
+    except Exception as e:
+        logger.warning("today-brain pending-bookings failed: %s", e)
+
+    # 6. Unanswered homework questions (warn)
+    try:
+        unanswered = 0
+        async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0, "section_logs": 1}):
+            for lo in hw.get("section_logs") or []:
+                for q in lo.get("questions") or []:
+                    if not q.get("answer"):
+                        unanswered += 1
+        if unanswered > 0:
+            items.append({
+                "id": f"hw-questions:{unanswered}",
+                "kind": "hw_question",
+                "priority": "warn",
+                "title": f"{unanswered} unanswered client question{'s' if unanswered != 1 else ''}",
+                "subtitle": "Daily-tracker homework questions need a reply",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "homework"},
+                "icon": "fa-comments",
+            })
+    except Exception as e:
+        logger.warning("today-brain hw-questions failed: %s", e)
+
+    # 7. Pipeline enrollments ready for certificate (info — ≥95% overall)
+    try:
+        ready = []
+        async for ep in db.dog_programs.find(
+            {"status": "active", "overall_pct": {"$gte": 95}},
+            {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "program_name": 1, "overall_pct": 1},
+        ):
+            ready.append(ep)
+        for ep in ready[:8]:
+            items.append({
+                "id": f"pipeline-ready:{ep['id']}",
+                "kind": "pipeline_ready",
+                "priority": "info",
+                "title": f"{ep.get('dog_name', '?')} · {ep.get('program_name', '?')} at {int(ep.get('overall_pct') or 0)}%",
+                "subtitle": "Eligible for certificate — finish & print",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_dog", "id": ep.get("dog_id")},
+                "icon": "fa-medal",
+            })
+    except Exception as e:
+        logger.warning("today-brain pipeline-ready failed: %s", e)
+
+    # 8. New client signups in last 24h (info)
+    try:
+        yesterday = (now_dt - timedelta(hours=24)).isoformat()
+        signups = []
+        async for c in db.clients.find(
+            {"created_at": {"$gte": yesterday}},
+            {"_id": 0, "id": 1, "name": 1, "created_at": 1, "email": 1},
+        ).sort("created_at", -1).limit(8):
+            signups.append(c)
+        for c in signups:
+            items.append({
+                "id": f"new-signup:{c['id']}",
+                "kind": "new_signup",
+                "priority": "info",
+                "title": f"New signup · {c.get('name', '—')}",
+                "subtitle": c.get("email", ""),
+                "ts": c.get("created_at") or now_dt.isoformat(),
+                "cta": {"type": "open_client", "id": c["id"]},
+                "icon": "fa-user-plus",
+            })
+    except Exception as e:
+        logger.warning("today-brain new-signups failed: %s", e)
+
+    # 9. Trainer Monday digest hint (info, Mondays only)
+    if now_dt.weekday() == 0:  # Monday
+        items.append({
+            "id": f"monday-digest:{today_iso}",
+            "kind": "monday_digest",
+            "priority": "info",
+            "title": "Monday digest is ready to send",
+            "subtitle": "Tap to preview the week-ahead summary email",
+            "ts": now_dt.isoformat(),
+            "cta": {"type": "send_monday_digest"},
+            "icon": "fa-envelope-open-text",
+        })
+
+    # Sort: priority (urgent=0, warn=1, info=2) then within priority newest-first
+    prio_order = {"urgent": 0, "warn": 1, "info": 2}
+    items.sort(key=lambda it: (prio_order.get(it["priority"], 9), -1 * len(it.get("ts", ""))))
+    # Within priority, sort by ts descending (string compare works for ISO dates)
+    items.sort(key=lambda it: (prio_order.get(it["priority"], 9), it.get("ts", "") or ""), reverse=False)
+    # Stable two-pass: priority asc, then ts desc within
+    items.sort(key=lambda it: it.get("ts", ""), reverse=True)
+    items.sort(key=lambda it: prio_order.get(it["priority"], 9))
+
+    counts = {
+        "urgent": sum(1 for it in items if it["priority"] == "urgent"),
+        "warn":   sum(1 for it in items if it["priority"] == "warn"),
+        "info":   sum(1 for it in items if it["priority"] == "info"),
+        "total":  len(items),
+    }
+    return {"items": items, "counts": counts, "generated_at": now_dt.isoformat()}
+
+
 
 
 @api.get("/bookings/conflicts")

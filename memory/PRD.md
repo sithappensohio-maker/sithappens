@@ -1173,6 +1173,42 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 102 — "Today's Brain" Unified Action Queue (2026-02)
+- ✅ **`GET /api/admin/today-brain`** — single endpoint aggregates 9 alert sources into one prioritized feed:
+  1. Homework day-submissions waiting for review (urgent)
+  2. Vaccines missing/expired (urgent) + expiring within `vaccine_warning_days` (warn)
+  3. Dogs booked today not yet checked in past 10 AM ET (urgent)
+  4. Clients ≤2 credits in any pool (daycare/training/boarding) WITH a booking in last 60d (warn — filters out inactive prospects)
+  5. Bookings in `pending` status (warn)
+  6. Unanswered homework questions (warn)
+  7. Pipeline enrollments at ≥95% overall (info — eligible for cert)
+  8. New client signups in last 24h (info)
+  9. Monday-digest hint (info — Mondays only)
+- ✅ **Auto-resolving**: every item disappears when the underlying condition is fixed (no manual dismiss). Each item carries a stable `id`, `kind`, `priority`, `title`, `subtitle`, `cta` (`open_dog`/`open_client`/`open_screen`/`send_monday_digest`), `icon`, and `ts`. Counts (`urgent`/`warn`/`info`/`total`) returned alongside.
+- ✅ **Sort**: priority-first (urgent → warn → info), then newest-first within priority.
+- ✅ **Permissions**: admin-only. Verified employees + unauthenticated get 401/403.
+- ✅ **`TodaysBrainTile.jsx`** — compact tile at the top of the admin dashboard (right after the StatCard row) showing top 3 items + priority count chips + "See all N →" link. Mobile shows the same compact 3 (no separate mobile variant needed since the tile already fits portrait).
+- ✅ **`TodaysBrainModal`** (inside the same file) — full-screen modal opened by "See all" with filter chips (All/Urgent/Warn/Info · N) and the full feed. Clicking any row fires the CTA: `open_dog` → jump-to-dog · `open_client` → jump-to-client · `open_screen` → sidebar nav · `send_monday_digest` → POST to the force-fire endpoint.
+- ✅ **7/7 backend tests pass** (`backend/tests/test_todays_brain.py`): shape validation, required-fields check, priority sort, admin-only guard, employee-blocked, pending-booking surface check, vaccine-alert cross-check against the existing dedicated endpoint.
+- ✅ **Verified end-to-end via 2 smoke screenshots**: tile renders 2 urgent + 3 warn + 5 info → "See all 10" opens modal with filter chips + all 10 items grouped (vaccines + low credits + pending bookings + Monday digest + 4 new signups). Each row CTA wired and chevroned.
+
+
+## Sprint 101 — Employee Checkout Parity (2026-02)
+- ✅ **Employees now use the exact same Check-Out modal as admins** — credit deduction (FIFO from packs), add-on services (bath / nail trim / boarding extension), payment method selector, base-price override for income tracking, "Cancel booking instead" escape hatch. Rolls together what was previously a 1-click silent `POST /check-out`.
+- ✅ **Extracted `<CheckoutModal>` and `<CancelBookingModal>`** from `Dashboard.jsx` into the shared `/app/frontend/src/components/CheckoutModal.jsx` so both `AdminShell.Dashboard` and `EmployeePortal.RosterTab` import the same component. No duplicated logic.
+- ✅ **Permission lifts** (backend `server.py`):
+  - `GET /api/clients/{id}` → `require_employee_or_admin` (modal reads live credit balance to decide "pay with credits" path)
+  - `DELETE /api/bookings/{id}` → admins + employees can now cancel-with-refund; clients still restricted to their own + cutoff
+- ✅ **EmployeePortal.RosterTab wiring** — fetches `/services` on mount (drives add-on chips + default price), `openCheckout(bid)` grabs the full booking record then opens the modal; on close we reload the roster so the row flips to "Out at HH:MM" automatically.
+- ✅ **5/5 new regression tests pass** (`/app/backend/tests/test_employee_checkout.py`):
+  - employee can `GET /clients/{id}` (perm lift)
+  - employee can run the full checkout body (credits + base_price override) → booking.status flips to `completed`, `actual_price=42.50`, `payment_method=credits`, client.credits decremented
+  - employee can `DELETE /bookings/{id}` → credits restored to client
+  - employee can `GET /services` (needed for add-on chips)
+  - **regression guard**: clients are STILL blocked from `GET /clients/{otherId}` (perm lift did not leak to clients)
+- ✅ **Verified end-to-end via smoke screenshot** — Alex (employee) opens Roster → Check Out → identical modal as admin, with credit-deduction radio, 8 add-on chips, service-value override at $35.00 default, Payment section. All `data-testid`s round-trip.
+
+
 ## Sprint 100 — Unified System Tier 1: Dog Hub + Trainer Monday Digest (2026-02)
 - ✅ **`GET /api/dogs/{id}/timeline`** — unified per-dog activity stream merging bookings (visit/checked-in/booked variants), report cards, homework assigned/completed, daily-tracker day approvals (with mood emoji surfaced), photo-gallery summary, and incidents. Newest-first sort, default limit 80, client perm-gated so portal users only see their own dogs. Helper `_fmt_service()` formats booking titles.
 - ✅ **`GET /api/dogs/{id}/behavior-trend`** — mood (1-5) sparkline aggregation from daily-tracker `__mood` field values over the last N days (default 60). Returns `{points[{date,mood,plan}], avg, trend (up/down/flat), count}`. Split-half compare with ±0.4 threshold for trend detection.

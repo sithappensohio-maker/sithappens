@@ -13,6 +13,7 @@ import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
 import ReportCardModal from "../components/ReportCardModal";
+import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -213,11 +214,18 @@ function RosterTab() {
   const [err, setErr] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [reportFor, setReportFor] = useState(null);
+  const [services, setServices] = useState([]);
+  const [checkoutFor, setCheckoutFor] = useState(null); // full booking row
+  const [cancelFor, setCancelFor] = useState(null);
   const load = async () => {
     try { const r = await api.get("/employee/roster-today"); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { load(); }, []);
+  // Services drive the add-on chips + default base prices in the checkout modal.
+  useEffect(() => {
+    api.get("/services").then(r => setServices(r.data || [])).catch(() => setServices([]));
+  }, []);
 
   const checkIn = async (bid) => {
     setBusyId(bid); setErr("");
@@ -229,14 +237,15 @@ function RosterTab() {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setBusyId(null); }
   };
-  const checkOut = async (bid) => {
+  // Open the same checkout modal admins use — credits, add-ons, payment method,
+  // boarding extension, price override. Fetches the full booking record first
+  // so we have credit_value / credit_service_type / end_date for the modal.
+  const openCheckout = async (bid) => {
     setBusyId(bid); setErr("");
     try {
-      const geo = await getGeo();
-      await api.post(`/bookings/${bid}/check-out`, geo);
-      await load();
-    }
-    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+      const r = await api.get(`/bookings/${bid}`);
+      setCheckoutFor(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setBusyId(null); }
   };
 
@@ -315,7 +324,7 @@ function RosterTab() {
               </button>
             )}
             {r.checked_in_at && !r.checked_out_at && (
-              <button onClick={()=>checkOut(r.booking_id)} disabled={busyId === r.booking_id}
+              <button onClick={()=>openCheckout(r.booking_id)} disabled={busyId === r.booking_id}
                       data-testid={`emp-checkout-${r.booking_id}`}
                       className="flex-1 min-w-[140px] bg-shBlue text-white py-2 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
                 <i className={`fas ${busyId === r.booking_id ? "fa-spinner fa-spin" : "fa-arrow-right-from-bracket"} mr-1`}/>Check Out
@@ -340,6 +349,10 @@ function RosterTab() {
       ))}
       {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest" data-testid="roster-err">{err}</p>}
       {reportFor && <ReportCardModal booking={reportFor} onClose={()=>{ setReportFor(null); load(); }} />}
+      {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
+                                     onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
+                                     onClose={()=>{ setCheckoutFor(null); load(); }} />}
+      {cancelFor && <CancelBookingModal booking={cancelFor} onClose={()=>{ setCancelFor(null); load(); }} />}
     </div>
   );
 }
