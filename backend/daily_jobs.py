@@ -378,6 +378,132 @@ async def run_homework_practice_reminder_job(db) -> dict:
     return {"sent": sent, "attempted": attempted, "errors": errors, "weekday": today_dow}
 
 
+async def run_trainer_monday_digest_job(db) -> dict:
+    """Monday-morning digest to the admin/operator.
+    Wraps the week ahead: streak leaders, stale review queue, unanswered
+    questions, lost-the-streak nudge list, just-completed plans, vaccines
+    expiring this week, this-week booking forecast.
+
+    Sent to ADMIN_NOTIFICATION_EMAIL (a single recipient — the operator).
+    """
+    today = datetime.now(timezone.utc).date()
+    week_start = today.isoformat()
+    week_end = (today + timedelta(days=6)).isoformat()
+    key = f"trainer_monday_digest:{week_start}"
+    if await _already_notified(db, key):
+        return {"skipped_already_sent": True, "key": key}
+
+    streak_leaders: list = []
+    lost_streak: list = []
+    just_completed: list = []
+    pending_reviews: list = []
+    unanswered_qs: list = []
+    expiring_vax: list = []
+    week_bookings = 0
+    week_revenue_forecast = 0.0
+
+    # ── Walk all daily-tracker homework
+    async for hw in db.homework.find({"daily_tracker": True}, {"_id": 0}):
+        sections = sorted(
+            [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
+            key=lambda s: int(s.get("day_number") or 0),
+        )
+        logs_by_day = {int(lo.get("day_number") or 0): lo for lo in (hw.get("section_logs") or [])}
+        streak = 0
+        for s in sections:
+            st = (logs_by_day.get(int(s["day_number"])) or {}).get("submission_status")
+            if st in ("approved", "rest"):
+                streak += 1
+            else:
+                break
+        if streak >= 3 and hw.get("status") != "completed":
+            streak_leaders.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "streak": streak})
+        # Lost-the-streak: had >= 3 approved days, but last 2 days idle
+        last_two_idle = True
+        last_two = sections[max(0, len(sections) - 2):]
+        for s in last_two:
+            lo = logs_by_day.get(int(s["day_number"]))
+            if lo and lo.get("submission_status") in ("approved", "submitted", "rest"):
+                last_two_idle = False
+                break
+        if streak >= 3 and last_two_idle and hw.get("status") != "completed":
+            lost_streak.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "streak_was": streak})
+        # Pending reviews
+        for lo in hw.get("section_logs") or []:
+            if lo.get("submission_status") == "submitted":
+                pending_reviews.append({
+                    "dog": hw.get("dog_name", ""),
+                    "client": hw.get("client_name", ""),
+                    "title": hw.get("title", ""),
+                    "day": int(lo.get("day_number") or 0),
+                    "submitted_at": lo.get("logged_at"),
+                })
+            for q in (lo.get("questions") or []):
+                if not q.get("answer"):
+                    unanswered_qs.append({
+                        "dog": hw.get("dog_name", ""),
+                        "client": hw.get("client_name", ""),
+                        "day": int(lo.get("day_number") or 0),
+                        "text": q.get("text", ""),
+                        "asked_at": q.get("asked_at"),
+                    })
+        # Just-completed (in past 7 days, no cert yet uploaded)
+        if hw.get("status") == "completed" and not hw.get("certificate"):
+            ca = hw.get("completed_at") or ""
+            if ca and ca[:10] >= (today - timedelta(days=7)).isoformat():
+                just_completed.append({"dog": hw.get("dog_name", ""), "client": hw.get("client_name", ""), "title": hw.get("title", ""), "completed_at": ca[:10], "homework_id": hw["id"]})
+
+    streak_leaders.sort(key=lambda x: -x["streak"])
+    pending_reviews.sort(key=lambda x: x.get("submitted_at") or "")
+    unanswered_qs.sort(key=lambda x: x.get("asked_at") or "")
+
+    # ── Vaccines expiring this week
+    in_week = (today + timedelta(days=7)).isoformat()
+    today_iso = today.isoformat()
+    dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
+    dismissed = {d["dog_id"] for d in dismissals if d.get("until", "") > datetime.now(timezone.utc).isoformat()}
+    async for dog in db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1, "vaccines": 1}):
+        if dog["id"] in dismissed:
+            continue
+        vac = dog.get("vaccines") or {}
+        for v in ["rabies", "dhpp", "bordetella"]:
+            r = vac.get(v, "")
+            if r and today_iso <= r <= in_week:
+                owner = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0, "name": 1}) or {}
+                expiring_vax.append({"dog": dog["name"], "client": owner.get("name", ""), "vaccine": v, "expires": r})
+                break
+
+    # ── This week's bookings + revenue forecast
+    async for b in db.bookings.find({"date": {"$gte": week_start, "$lte": week_end}, "status": {"$ne": "cancelled"}}, {"_id": 0, "actual_price": 1, "base_price": 1}):
+        week_bookings += 1
+        week_revenue_forecast += float(b.get("actual_price") or b.get("base_price") or 0)
+    week_revenue_forecast = round(week_revenue_forecast, 2)
+
+    if not (streak_leaders or lost_streak or just_completed or pending_reviews or unanswered_qs or expiring_vax or week_bookings):
+        return {"sent": 0, "reason": "nothing_to_report", "week_start": week_start}
+
+    try:
+        ok = await email_service.notify_trainer_monday_digest({
+            "week_start": week_start,
+            "week_end": week_end,
+            "streak_leaders": streak_leaders[:8],
+            "lost_streak": lost_streak[:8],
+            "just_completed": just_completed[:8],
+            "pending_reviews": pending_reviews[:10],
+            "unanswered_qs": unanswered_qs[:10],
+            "expiring_vax": expiring_vax[:8],
+            "week_bookings": week_bookings,
+            "week_revenue_forecast": week_revenue_forecast,
+        })
+        if ok:
+            await _mark_notified(db, key, {"job": "trainer_monday_digest", "week_start": week_start})
+            return {"sent": 1, "week_start": week_start, "week_end": week_end}
+        return {"sent": 0, "reason": "email_send_failed", "week_start": week_start}
+    except Exception as exc:
+        logger.warning("trainer_monday_digest failed: %s", exc)
+        return {"sent": 0, "reason": str(exc)[:200], "week_start": week_start}
+
+
 async def maybe_run_daily(db) -> dict | None:
     """Run every daily job at most once per UTC day. Returns a summary dict
     on the first call of the day, or None if already ran today.
@@ -397,6 +523,9 @@ async def maybe_run_daily(db) -> dict | None:
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
         results["hw_reminder"] = await run_homework_practice_reminder_job(db)
+        # Monday-only: trainer's weekly digest (weekday() returns 0 for Monday).
+        if datetime.now(timezone.utc).date().weekday() == 0:
+            results["trainer_monday_digest"] = await run_trainer_monday_digest_job(db)
         # Sunday-only: homework weekly digest (weekday() returns 6 for Sunday).
         if datetime.now(timezone.utc).date().weekday() == 6:
             results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)

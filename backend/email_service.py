@@ -463,6 +463,98 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     )
 
 
+async def notify_trainer_monday_digest(data: dict) -> bool:
+    """Monday-morning digest to the operator (admin email)."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return False
+    week_start = data.get("week_start", "")
+    week_end = data.get("week_end", "")
+
+    def section(title: str, icon: str, rows_html: str, empty: str = "") -> str:
+        if not rows_html and not empty:
+            return ""
+        return f"""
+        <div style='margin:18px 0;'>
+          <h3 style='margin:0 0 8px 0;color:{BRAND_DARK};font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>
+            {icon} {title}
+          </h3>
+          {rows_html or f"<p style='margin:0;color:#94a3b8;font-style:italic;font-size:14px;'>{empty}</p>"}
+        </div>
+        """
+
+    leaders_rows = "".join(
+        f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"<strong style='color:{BRAND_GREEN};'>🔥 {it['streak']}-day</strong> · <strong>{it['dog']}</strong> ({it['client']}) — {it['title']}</div>"
+        for it in data.get("streak_leaders", [])
+    )
+
+    lost_rows = "".join(
+        f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"<strong>{it['dog']}</strong> ({it['client']}) lost a <strong>{it['streak_was']}-day</strong> streak on {it['title']}</div>"
+        for it in data.get("lost_streak", [])
+    )
+
+    pending_rows = "".join(
+        f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"<strong>Day {it['day']}</strong> · {it['dog']} ({it['client']}) · {it['title']} "
+        f"<span style='color:#94a3b8;font-size:12px;'>· submitted {(it.get('submitted_at') or '')[:10]}</span></div>"
+        for it in data.get("pending_reviews", [])
+    )
+
+    qs_rows = "".join(
+        f"<div style='padding:8px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"<strong>{it['dog']}</strong> ({it['client']}) · Day {it['day']}<br/>"
+        f"<em style='color:#475569;'>\"{it.get('text','')[:240]}\"</em></div>"
+        for it in data.get("unanswered_qs", [])
+    )
+
+    done_rows = "".join(
+        f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"🎓 <strong>{it['dog']}</strong> ({it['client']}) finished <strong>{it['title']}</strong> on {it['completed_at']} "
+        f"<span style='color:#dc2626;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>· upload cert</span></div>"
+        for it in data.get("just_completed", [])
+    )
+
+    vax_rows = "".join(
+        f"<div style='padding:6px 0;border-bottom:1px solid #e2e8f0;font-size:14px;color:{BRAND_DARK};'>"
+        f"<strong>{it['dog']}</strong> ({it['client']}) · {it['vaccine']} expires {it['expires']}</div>"
+        for it in data.get("expiring_vax", [])
+    )
+
+    bookings_block = ""
+    if data.get("week_bookings"):
+        bookings_block = f"""
+        <div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin:18px 0;'>
+          <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>This week</p>
+          <p style='margin:0;color:{BRAND_DARK};font-size:18px;font-weight:900;'>
+            {data['week_bookings']} bookings · ${data.get('week_revenue_forecast', 0):,.2f} forecast
+          </p>
+        </div>
+        """
+
+    body_html = (
+        bookings_block
+        + section("Streak leaders 🔥", "🔥", leaders_rows, "No active streaks ≥ 3 days.")
+        + section("Lost-the-streak nudges 📉", "📉", lost_rows, "Nobody needs a nudge — nice.")
+        + section(f"Review queue ({len(data.get('pending_reviews', []))})", "⏳", pending_rows, "Inbox zero.")
+        + section(f"Unanswered questions ({len(data.get('unanswered_qs', []))})", "❓", qs_rows, "All caught up.")
+        + section(f"Just completed — upload certs ({len(data.get('just_completed', []))})", "🎓", done_rows, "No new completions this week.")
+        + section(f"Vaccines expiring this week ({len(data.get('expiring_vax', []))})", "🩺", vax_rows, "")
+    )
+
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"🐾 Your Monday brief · {week_start} → {week_end}",
+        intro="Here's your week ahead. Knock these out before the coffee gets cold.",
+        rows=[],
+        cta_text="Open Dashboard" if cta_url else None,
+        cta_url=cta_url,
+        show_install=False,
+        body_html=body_html,
+    )
+    return bool(await _send(ADMIN_NOTIFICATION_EMAIL, f"Monday brief · {week_start}", html))
+
+
 async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
     """Tell the client their completion certificate is ready to download."""
     to_email = client.get("email", "")

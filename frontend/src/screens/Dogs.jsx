@@ -6,6 +6,7 @@ import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
 import { Modal, Input } from "./Clients";
 import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
+import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 
 const empty = {
@@ -92,7 +93,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(empty);
-  const [tab, setTab] = useState("basics");
+  const [tab, setTab] = useState("timeline");
   const [err, setErr] = useState("");
   const [trainOpen, setTrainOpen] = useState(null);
   const [trainForm, setTrainForm] = useState({ date: todayISO(), note: "", tags: [] });
@@ -144,7 +145,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
     if (clients.length === 0) { alert("Add a client first."); return; }
     setEditing(null);
     setForm({ ...empty, owner_id: clients[0].id });
-    setTab("basics"); setOpen(true); setErr("");
+    setTab("timeline"); setOpen(true); setErr("");
   };
   const openEdit = async (d, initialTab = "basics") => {
     setEditing(d);
@@ -223,6 +224,7 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 
   const ownerName = (id) => clients.find(c => c.id === id)?.name || "—";
   const tabs = [
+    { id: "timeline", label: "Timeline", icon: "fa-clock-rotate-left" },
     { id: "basics", label: "Basics", icon: "fa-paw" },
     { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
     { id: "care", label: "Feeding & Meds", icon: "fa-bowl-food" },
@@ -379,6 +381,9 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
               ))}
             </nav>
             <div className="space-y-4">
+              {tab === "timeline" && editing?.id && (
+                <DogTimeline dogId={editing.id} dogName={form.name || editing.name} />
+              )}
               {tab === "basics" && (
                 <>
                   <div>

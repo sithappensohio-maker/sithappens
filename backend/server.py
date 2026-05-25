@@ -4168,6 +4168,159 @@ async def set_reminder_settings(body: ReminderSettingsIn, user: dict = Depends(g
     return {"ok": True}
 
 
+@api.get("/dogs/{dog_id}/timeline")
+async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_current_user)):
+    """Unified activity stream for a single dog: bookings (check-in/out, completed),
+    report cards, daily-tracker submissions/approvals, photos added, trophies,
+    vaccines updated, payments. Ordered newest-first."""
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    # Permission: clients only see their own dogs
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    events: List[dict] = []
+
+    # ── Bookings (one event per visit; report-card if present folds in)
+    async for b in db.bookings.find({"dog_id": dog_id}, {"_id": 0}).sort("date", -1).limit(limit):
+        evt = {
+            "id": f"booking-{b['id']}",
+            "ts": b.get("check_in_at") or (b.get("date", "") + "T00:00:00"),
+            "kind": "booking",
+            "service": b.get("service_type"),
+            "status": b.get("status"),
+            "title": _fmt_service(b),
+            "date": b.get("date"),
+            "end_date": b.get("end_date"),
+            "report_card": b.get("report_card") or None,
+            "actual_price": b.get("actual_price"),
+            "paid": b.get("paid", False),
+        }
+        events.append(evt)
+
+    # ── Homework: assigned, day approvals, completions, certificate issued
+    async for hw in db.homework.find({"dog_id": dog_id}, {"_id": 0}).sort("created_at", -1).limit(50):
+        events.append({
+            "id": f"hw-assigned-{hw['id']}",
+            "ts": hw.get("created_at"),
+            "kind": "homework_assigned",
+            "title": hw.get("title", "Homework"),
+            "homework_id": hw["id"],
+            "daily_tracker": bool(hw.get("daily_tracker")),
+        })
+        if hw.get("status") == "completed":
+            events.append({
+                "id": f"hw-completed-{hw['id']}",
+                "ts": hw.get("completed_at") or hw.get("created_at"),
+                "kind": "homework_completed",
+                "title": hw.get("title", ""),
+                "homework_id": hw["id"],
+                "has_cert": bool(hw.get("certificate")),
+            })
+        # Daily-tracker individual approved days
+        if hw.get("daily_tracker"):
+            for log in hw.get("section_logs") or []:
+                if log.get("submission_status") == "approved":
+                    events.append({
+                        "id": f"day-approved-{hw['id']}-{log.get('day_number')}",
+                        "ts": log.get("reviewed_at") or log.get("logged_at"),
+                        "kind": "day_approved",
+                        "title": f"Day {log.get('day_number')} approved — {hw.get('title','')}",
+                        "homework_id": hw["id"],
+                        "day_number": log.get("day_number"),
+                        "mood": (log.get("field_values") or {}).get("__mood"),
+                    })
+
+    # ── Photo gallery additions (we don't store per-photo timestamps in the
+    # array, so we surface a single rolled-up event if the dog has photos)
+    photo_count = len(dog.get("photos") or [])
+    if photo_count:
+        events.append({
+            "id": f"photos-{dog_id}",
+            "ts": dog.get("updated_at") or dog.get("created_at"),
+            "kind": "photos_added",
+            "title": f"{photo_count} photo{'s' if photo_count != 1 else ''} on file",
+            "count": photo_count,
+        })
+
+    # ── Incident log
+    async for inc in db.incidents.find({"dog_id": dog_id}, {"_id": 0}).sort("date", -1).limit(20):
+        events.append({
+            "id": f"incident-{inc['id']}",
+            "ts": inc.get("date") + "T00:00:00" if inc.get("date") else inc.get("created_at"),
+            "kind": "incident",
+            "title": inc.get("title", "Incident"),
+            "severity": inc.get("severity"),
+            "notes": inc.get("notes"),
+        })
+
+    # Sort newest-first by timestamp (treat missing as oldest)
+    events.sort(key=lambda e: e.get("ts") or "0000", reverse=True)
+    return events[:limit]
+
+
+@api.get("/dogs/{dog_id}/behavior-trend")
+async def dog_behavior_trend(dog_id: str, days: int = 60, user: dict = Depends(get_current_user)):
+    """Aggregate mood (1-5) data points from daily-tracker submissions over the
+    last N days into a sparkline-friendly series. Used by the Dog Hub + portal."""
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "owner_id": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    cutoff = (date.today() - timedelta(days=int(days))).isoformat()
+    points: List[dict] = []
+    async for hw in db.homework.find({"dog_id": dog_id, "daily_tracker": True}, {"_id": 0, "section_logs": 1, "title": 1}):
+        for log in hw.get("section_logs") or []:
+            m = (log.get("field_values") or {}).get("__mood")
+            if not m:
+                continue
+            d = log.get("date") or ""
+            if d < cutoff:
+                continue
+            points.append({"date": d, "mood": int(m), "plan": hw.get("title", "")})
+    points.sort(key=lambda p: p["date"])
+    if not points:
+        return {"points": [], "avg": None, "trend": "flat", "count": 0}
+    moods = [p["mood"] for p in points]
+    avg = round(sum(moods) / len(moods), 2)
+    # Simple trend: compare first half avg vs last half avg
+    half = max(1, len(moods) // 2)
+    first_half = sum(moods[:half]) / half
+    last_half = sum(moods[-half:]) / half
+    if last_half >= first_half + 0.4:
+        trend = "up"
+    elif last_half <= first_half - 0.4:
+        trend = "down"
+    else:
+        trend = "flat"
+    return {"points": points, "avg": avg, "trend": trend, "count": len(points)}
+
+
+def _fmt_service(b: dict) -> str:
+    """Format a booking row into a short timeline title."""
+    svc = b.get("service_type") or "visit"
+    date_s = b.get("date") or ""
+    if b.get("status") == "completed":
+        return f"{svc.capitalize()} on {date_s}"
+    if b.get("check_in_at") and not b.get("check_out_at"):
+        return f"Checked in for {svc} on {date_s}"
+    return f"{svc.capitalize()} booked for {date_s}"
+
+
+@api.post("/admin/homework/send-monday-digest")
+async def admin_force_monday_digest(_: dict = Depends(require_admin)):
+    """Force-fire the trainer Monday digest now (bypasses dedup for this week).
+    Use this to preview the email or re-send after fixing something."""
+    from daily_jobs import run_trainer_monday_digest_job
+    from datetime import datetime, timezone as _tz
+    today = datetime.now(_tz.utc).date().isoformat()
+    await db.notification_log.delete_many({"key": {"$regex": f"^trainer_monday_digest:{today}$"}})
+    return await run_trainer_monday_digest_job(db)
+
+
 @api.post("/admin/homework/send-weekly-digest")
 async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
     """Force-fire the homework weekly digest (ignores the once-per-week dedup).

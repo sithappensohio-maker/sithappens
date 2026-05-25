@@ -32,6 +32,28 @@ export default function Homework() {
   useEffect(() => { load(); }, []);
 
   const [digestBusy, setDigestBusy] = useState(false);
+  const [mondayBusy, setMondayBusy] = useState(false);
+
+  const sendMondayBrief = async () => {
+    if (!(await confirm({
+      title: "Send the Monday brief now?",
+      body: "Fires your weekly trainer brief immediately (streak leaders, review queue, unanswered questions, expiring vaccines, week's bookings). Normally auto-fires every Monday morning.",
+      confirmText: "Send now",
+    }))) return;
+    setMondayBusy(true);
+    try {
+      const { data } = await api.post("/admin/homework/send-monday-digest");
+      let msg;
+      if (data.sent === 1) msg = "Monday brief sent! Check the admin email.";
+      else if (data.reason === "nothing_to_report") msg = "Nothing to report this week — no email sent.";
+      else if (data.skipped_already_sent) msg = "Already sent this week. Run the dedup-clear and try again.";
+      else if (data.reason === "email_send_failed") msg = "Email send failed — check Resend domain verification.";
+      else msg = `Result: ${JSON.stringify(data)}`;
+      alert(msg);
+    } catch (e) {
+      alert(`Failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setMondayBusy(false); }
+  };
 
   const sendWeeklyDigest = async () => {
     if (!(await confirm({
