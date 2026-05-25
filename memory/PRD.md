@@ -1173,11 +1173,26 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 100 — Unified System Tier 1: Dog Hub + Trainer Monday Digest (2026-02)
+- ✅ **`GET /api/dogs/{id}/timeline`** — unified per-dog activity stream merging bookings (visit/checked-in/booked variants), report cards, homework assigned/completed, daily-tracker day approvals (with mood emoji surfaced), photo-gallery summary, and incidents. Newest-first sort, default limit 80, client perm-gated so portal users only see their own dogs. Helper `_fmt_service()` formats booking titles.
+- ✅ **`GET /api/dogs/{id}/behavior-trend`** — mood (1-5) sparkline aggregation from daily-tracker `__mood` field values over the last N days (default 60). Returns `{points[{date,mood,plan}], avg, trend (up/down/flat), count}`. Split-half compare with ±0.4 threshold for trend detection.
+- ✅ **`POST /api/admin/homework/send-monday-digest`** — admin-only force-fire that bypasses dedup so the operator can preview/re-send. Underlying `run_trainer_monday_digest_job` (in `daily_jobs.py`) gathers streak leaders, lost-streak nudges, pending reviews, unanswered questions, just-completed plans w/o cert, vaccines expiring this week, and the week's booking + revenue forecast. Sends via Resend to `ADMIN_NOTIFICATION_EMAIL`.
+- ✅ **Frontend `DogTimeline.jsx`** — renders the unified stream inside the Dogs edit modal under a new **Timeline** tab (first tab). Color-coded event chips (visit/homework/day_approved/photos/incident), report-card note line, mood emoji on approval rows, "cert ready" badge on completion events.
+- ✅ **Frontend `BehaviorTrendChart.jsx`** — pure-SVG sparkline (60-day default), gradient fill, hover tooltips per point with date · mood · plan name, big-number avg next to a trend chip (up/down/flat). Compact prop for portal usage.
+- ✅ **Dogs.jsx wired** — added `Timeline` tab as the default initialTab on new dogs (`openNew`), tab item with `dog-tab-timeline` test id, conditional render under `tab === "timeline"`.
+- ✅ **8/8 new regression tests pass** (`/app/backend/tests/test_unified_dog_hub.py`): timeline empty shape, timeline picks up homework+day_approved events with mood round-trip + newest-first sort, behavior-trend empty state, behavior-trend mood detection, 404 on unknown dog (both endpoints), Monday digest force-fire 200 shape, unauthenticated digest blocked. Adjacent daily-tracker + weekly-digest suites (15 tests) still pass — no regressions.
+- ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
+
+
 ## Backlog / Next Up
-- **P1** Public booking page
+- **P1** Public booking page (`yourdomain.com/book` — no login required)
 - **P1** Vaccine expiry email blast
 - **P1** Auto-email client when admin creates a Pup Report Card / uploads new file
 - **P1** Cold-storage auto-prune of completed/cancelled bookings 90+ days old
+- **P2** "Today's brain" dashboard tile (actionable queue replacing scattered alert dots)
+- **P2** Client "Family Wall" — chronological feed in the client portal
 - **P2** Sort Clients by last-login (so the admin can easily find the most inactive ones to re-engage)
 - **P2** "We've moved" email-blast, Duplicate-clients merger UI, Light mode, Twilio SMS, photo→disk migration, waitlist
-- **Refactor** Split `server.py` (~6300 lines) into route modules
+- **P3** Smart credit-pack suggester in client portal
+- **P3** Universal Cmd-K search v2 (currently scoped to dogs/clients — extend to bookings/income/homework)
+- **Refactor** Split `server.py` (~8700 lines) into route modules
