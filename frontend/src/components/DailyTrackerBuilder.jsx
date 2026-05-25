@@ -33,6 +33,7 @@ function blankDay(dayNumber) {
     day_number: dayNumber,
     day_focus: "",
     instructions: "",
+    equipment: [],
     fields: [
       { id: `f-${dayNumber}-mood`, label: "How'd it go?", kind: "mood_5" },
       { id: `f-${dayNumber}-notes`, label: "Anything to flag for your trainer?", kind: "longtext" },
@@ -123,6 +124,7 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
           day_number: d.day_number,
           day_focus: d.day_focus.trim(),
           instructions: (d.instructions || "").trim(),
+          equipment: (d.equipment || []).map(e => (e || "").trim()).filter(Boolean),
           fields: (d.fields || []).map((f) => ({
             id: f.id,
             label: (f.label || "").trim() || "Untitled",
@@ -267,6 +269,16 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <textarea value={activeDay.instructions} onChange={(e) => setDay(activeDayIdx, { instructions: e.target.value })} rows={2} data-testid="dtb-day-instructions"
                           placeholder="Specifics for the client: warm-up, distractions to use, where to practice…"
                           className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest mt-3 block">
+                  <i className="fas fa-toolbox mr-1 text-shOrange"/>Equipment / treats needed (comma-separated)
+                </label>
+                <input value={(activeDay.equipment || []).join(", ")}
+                       onChange={(e) => setDay(activeDayIdx, { equipment: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                       data-testid="dtb-day-equipment"
+                       placeholder="e.g., high-value treats, 6-ft leash, target stick"
+                       className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                <p className="text-[12px] text-gray-500 mt-1">Shown to the client at the top of the day card so they don't show up empty-handed.</p>
               </div>
 
               {/* Steps list */}

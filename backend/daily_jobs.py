@@ -305,6 +305,79 @@ async def run_homework_weekly_digest_job(db) -> dict:
     }
 
 
+async def run_homework_practice_reminder_job(db) -> dict:
+    """Daily 'time to practice' nudge for clients who opted in and whose
+    reminder window includes today. Skips clients whose only open day was
+    already submitted/approved today (no point pinging if they already did it)."""
+    now = datetime.now(timezone.utc)
+    today_iso = now.date().isoformat()
+    weekday_keys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    today_dow = weekday_keys[now.date().weekday()]
+
+    # Find opt-in clients whose day-of-week matches today
+    cursor = db.clients.find({
+        "homework_reminder_enabled": True,
+        "homework_reminder_days": today_dow,
+        "email": {"$exists": True, "$ne": ""},
+    }, {"_id": 0})
+
+    sent = 0
+    attempted = 0
+    errors: list = []
+    async for client in cursor:
+        # De-dup: one reminder per client per day
+        key = f"hw_reminder:{client['id']}:{today_iso}"
+        if await _already_notified(db, key):
+            continue
+        # Find their active daily-trackers with a day that needs the client's action
+        hws = await db.homework.find(
+            {"client_id": client["id"], "daily_tracker": True, "status": {"$ne": "completed"}},
+            {"_id": 0},
+        ).to_list(50)
+        plans = []
+        for hw in hws:
+            sections = sorted(
+                [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
+                key=lambda s: int(s.get("day_number") or 0),
+            )
+            logs_by_day = {int(lo.get("day_number") or 0): lo for lo in (hw.get("section_logs") or [])}
+            # find first day that's available/needs_redo
+            prev_passed = True
+            for s in sections:
+                dn = int(s["day_number"])
+                lo = logs_by_day.get(dn)
+                status = (lo or {}).get("submission_status") or ("available" if prev_passed else "locked")
+                if status in ("available", "needs_redo"):
+                    # If they ALREADY logged today, don't ping
+                    if lo and (lo.get("logged_at") or "")[:10] == today_iso:
+                        prev_passed = status in ("approved", "rest")
+                        continue
+                    plans.append({
+                        "hw_title": hw.get("title", ""),
+                        "dog_name": hw.get("dog_name", ""),
+                        "today_focus": s.get("day_focus", ""),
+                        "day_number": dn,
+                        "total_days": len(sections),
+                    })
+                    break  # only the next-up day per plan
+                prev_passed = status in ("approved", "rest")
+        if not plans:
+            continue
+        attempted += 1
+        try:
+            ok = await email_service.notify_client_homework_reminder(client, plans)
+            if ok:
+                await _mark_notified(db, key, {"job": "hw_reminder", "client_id": client["id"], "plans": len(plans)})
+                sent += 1
+            else:
+                errors.append({"client_id": client["id"], "reason": "email_send_failed"})
+        except Exception as exc:
+            logger.warning("hw_reminder failed for client=%s: %s", client["id"], exc)
+            errors.append({"client_id": client["id"], "reason": str(exc)[:200]})
+
+    return {"sent": sent, "attempted": attempted, "errors": errors, "weekday": today_dow}
+
+
 async def maybe_run_daily(db) -> dict | None:
     """Run every daily job at most once per UTC day. Returns a summary dict
     on the first call of the day, or None if already ran today.
@@ -323,6 +396,7 @@ async def maybe_run_daily(db) -> dict | None:
         results = {}
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
+        results["hw_reminder"] = await run_homework_practice_reminder_job(db)
         # Sunday-only: homework weekly digest (weekday() returns 6 for Sunday).
         if datetime.now(timezone.utc).date().weekday() == 6:
             results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)

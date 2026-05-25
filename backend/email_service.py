@@ -463,6 +463,67 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     )
 
 
+async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
+    """Tell the client their completion certificate is ready to download."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return False
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    rows = [
+        ("Dog", hw.get("dog_name", "—")),
+        ("Plan", hw.get("title", "—")),
+        ("Completed", hw.get("completed_at", "")[:10] if hw.get("completed_at") else "—"),
+    ]
+    intro = (
+        f"🎓 Huge congrats, {first_name}! <strong>{hw.get('dog_name','')}</strong> just earned their "
+        f"<strong>{hw.get('title','')}</strong> certificate. Open the portal to download and share it."
+    )
+    html = _wrap(
+        title=f"🎓 Certificate ready · {hw.get('dog_name','')}",
+        intro=intro,
+        rows=rows,
+        cta_text="Download Certificate" if cta_url else None,
+        cta_url=cta_url,
+    )
+    return bool(await _send(to_email, f"🎓 Certificate ready · {hw.get('dog_name','')}", html))
+
+
+async def notify_client_homework_reminder(client: dict, plans: list) -> bool:
+    """Email the client a 'time to practice' nudge for their open daily-tracker
+    plans. `plans` is a list of {hw_title, dog_name, today_focus, day_number, total_days}."""
+    to_email = client.get("email", "")
+    if not to_email or not plans:
+        return False
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    body_rows = "".join(
+        f"""
+        <div style='border:1px solid #e2e8f0;border-radius:10px;padding:14px;margin:10px 0;background:#fff;'>
+          <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>
+            {p.get('dog_name','')} · Day {p.get('day_number',0)} of {p.get('total_days',0)}
+          </p>
+          <h3 style='margin:0 0 6px 0;color:{BRAND_DARK};font-size:17px;font-weight:900;'>{p.get('hw_title','')}</h3>
+          <p style='margin:0;color:#0f172a;font-size:14px;'>Today's focus: <strong>{p.get('today_focus','')}</strong></p>
+        </div>
+        """
+        for p in plans
+    )
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    intro = (
+        f"Hi {first_name} — it's training time. Here's what's on the schedule today. "
+        f"Even 5 minutes counts. 🐾"
+    )
+    html = _wrap(
+        title="⏰ Time to practice",
+        intro=intro,
+        rows=[],
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+        body_html=body_rows,
+    )
+    return bool(await _send(to_email, f"Practice nudge · {plans[0].get('dog_name','')} 🐾", html))
+
+
 async def notify_client_weekly_homework_digest(client: dict, items: list, week_start: str, week_end: str) -> bool:
     """Sunday-night digest of the client's daily-tracker progress for the week.
 

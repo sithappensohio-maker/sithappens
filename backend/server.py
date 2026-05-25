@@ -34,6 +34,7 @@ from email_service import (
     notify_admin_quote_request,
     notify_admin_pl_report,
     notify_client_booking_approved,
+    notify_client_certificate_issued,
     notify_client_day_reviewed,
     notify_client_homework_assigned,
     notify_client_low_credits,
@@ -3538,6 +3539,7 @@ class DailyTrackerSectionIn(BaseModel):
     day_number: int = Field(ge=1, le=120)
     day_focus: str = Field(min_length=1, max_length=200)
     instructions: Optional[str] = ""
+    equipment: Optional[List[str]] = []  # e.g., ["high-value treats", "6-ft leash"]
     fields: List[dict] = []  # [{id, label, kind, ...}] — same shape as legacy fields
 
 
@@ -3556,7 +3558,32 @@ class DaySubmitIn(BaseModel):
     field_values: Dict[str, object] = {}
     note: Optional[str] = ""
     mood: Optional[int] = None  # 1-5
-    photo: Optional[str] = ""   # base64 data-url
+    photo: Optional[str] = ""   # base64 data-url (small previews only)
+    video_media_id: Optional[str] = ""   # id of an uploaded video in homework_media
+
+
+class DayRestIn(BaseModel):
+    note: Optional[str] = ""  # optional reason ("vet visit", "sick", etc.)
+
+
+class DayQuestionIn(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+
+
+class DayAnswerIn(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+
+
+class CertificateUploadIn(BaseModel):
+    photo: str = Field(min_length=1)  # base64 data-url, image or pdf data
+    filename: Optional[str] = "certificate"
+
+
+class ReminderSettingsIn(BaseModel):
+    """Client-controlled practice reminders for daily-tracker homework."""
+    enabled: bool = False
+    days: List[Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]] = []
+    time: Optional[str] = ""  # HH:MM 24-hour local time
 
 
 class DayReviewIn(BaseModel):
@@ -3594,20 +3621,23 @@ def _compute_daily_progress(hw: dict) -> List[dict]:
             "day_focus": s.get("day_focus") or s.get("title", ""),
             "title": s.get("title", ""),
             "instructions": s.get("instructions", ""),
+            "equipment": s.get("equipment") or [],
             "fields": s.get("fields", []),
             "section_id": s.get("id"),
-            "status": status,           # locked | available | submitted | approved | needs_redo
+            "status": status,           # locked | available | submitted | approved | needs_redo | rest
+            "is_rest_day": bool(log and log.get("is_rest_day")),
+            "questions": (log or {}).get("questions") or [],
             "log": log,                  # full submission incl. mood/photo/note
         })
-        prev_passed = status == "approved"
+        prev_passed = status in ("approved", "rest")
     return progress
 
 
 def _streak_count(progress: List[dict]) -> int:
-    """Count consecutive approved days from Day 1 forward."""
+    """Count consecutive passed days from Day 1 forward — approved OR rest day."""
     n = 0
     for p in progress:
-        if p.get("status") == "approved":
+        if p.get("status") in ("approved", "rest"):
             n += 1
         else:
             break
@@ -3660,6 +3690,7 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
             "day_focus": d.day_focus.strip(),
             "title": f"Day {d.day_number} · {d.day_focus.strip()}",
             "instructions": (d.instructions or "").strip(),
+            "equipment": [(e or "").strip() for e in (d.equipment or []) if (e or "").strip()],
             "fields": fields,
         })
 
@@ -3757,6 +3788,8 @@ async def submit_day(
         field_values["__mood"] = max(1, min(5, int(body.mood)))
     if body.photo:
         field_values["__photo"] = body.photo  # base64 data-url; small previews ok
+    if body.video_media_id:
+        field_values["__video_id"] = body.video_media_id
 
     section_id = f"day-{day_number}"
     new_log = {
@@ -3767,11 +3800,21 @@ async def submit_day(
         "field_values": field_values,
         "note": (body.note or "").strip(),
         "submission_status": "submitted",
+        "is_rest_day": False,
+        "questions": [],  # preserved across resubmissions — see below
         "logged_by": user.get("name", ""),
         "logged_by_id": user.get("id"),
         "logged_by_role": user.get("role", "client"),
         "logged_at": now_iso(),
     }
+    # Preserve any existing questions on resubmit so the conversation thread
+    # doesn't reset when the client redoes a day.
+    existing_log = next(
+        (lo for lo in (hw.get("section_logs") or []) if int(lo.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    if existing_log and existing_log.get("questions"):
+        new_log["questions"] = existing_log["questions"]
     # Replace any existing log for that day (needs_redo flow).
     await db.homework.update_one(
         {"id": homework_id},
@@ -3857,6 +3900,272 @@ async def review_day(
         logger.warning("Daily tracker review notify failed: %s", exc)
 
     return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/rest")
+async def mark_rest_day(
+    homework_id: str,
+    day_number: int,
+    body: DayRestIn,
+    user: dict = Depends(get_current_user),
+):
+    """Client marks today as a rest day. Auto-passes (no admin approval needed),
+    preserves the streak, unlocks the next day. Used for sick days, vet visits,
+    travel, etc. — real life shouldn't break a training streak."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    prog = _compute_daily_progress(hw)
+    cur = next((p for p in prog if p["day_number"] == day_number), None)
+    if not cur:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    if cur["status"] == "locked":
+        raise HTTPException(status_code=400, detail="Previous day hasn't passed yet")
+    if cur["status"] == "approved":
+        raise HTTPException(status_code=400, detail="Day already approved")
+
+    # Preserve any prior question thread (resubmissions shouldn't wipe it)
+    existing_log = next(
+        (lo for lo in (hw.get("section_logs") or []) if int(lo.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    new_log = {
+        "id": str(uuid.uuid4()),
+        "section_id": f"day-{day_number}",
+        "day_number": int(day_number),
+        "date": date.today().isoformat(),
+        "field_values": {},
+        "note": (body.note or "").strip(),
+        "submission_status": "rest",   # special status → auto-passes
+        "is_rest_day": True,
+        "questions": (existing_log or {}).get("questions") or [],
+        "logged_by": user.get("name", ""),
+        "logged_by_id": user.get("id"),
+        "logged_by_role": user.get("role", "client"),
+        "logged_at": now_iso(),
+    }
+    await db.homework.update_one({"id": homework_id}, {"$pull": {"section_logs": {"day_number": int(day_number)}}})
+    await db.homework.update_one({"id": homework_id}, {"$push": {"section_logs": new_log}})
+
+    # If the rest day was the final day → mark hw complete (mirrors approve logic)
+    refreshed = await db.homework.find_one({"id": homework_id}, {"_id": 0}) or {}
+    new_prog = _compute_daily_progress(refreshed)
+    all_passed = bool(new_prog) and all(p["status"] in ("approved", "rest") for p in new_prog)
+    if all_passed and refreshed.get("status") != "completed":
+        await db.homework.update_one(
+            {"id": homework_id},
+            {"$set": {"status": "completed", "completed_at": now_iso()}},
+        )
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/ask")
+async def ask_question(
+    homework_id: str,
+    day_number: int,
+    body: DayQuestionIn,
+    user: dict = Depends(get_current_user),
+):
+    """Client (or admin) posts a question about a specific day. Threaded
+    conversation tied to that day's log entry."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+
+    log = next(
+        (lo for lo in (hw.get("section_logs") or []) if int(lo.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    question = {
+        "id": str(uuid.uuid4()),
+        "text": body.text.strip(),
+        "asked_at": now_iso(),
+        "asked_by": user.get("name", ""),
+        "asked_by_role": user.get("role", "client"),
+        "answer": "",
+        "answered_at": None,
+        "answered_by": "",
+    }
+    if log:
+        await db.homework.update_one(
+            {"id": homework_id, "section_logs.day_number": int(day_number)},
+            {"$push": {"section_logs.$.questions": question}},
+        )
+    else:
+        # No submission yet for this day → create a placeholder log so the
+        # question still has somewhere to live. Status stays "available" until
+        # the client actually submits.
+        placeholder = {
+            "id": str(uuid.uuid4()),
+            "section_id": f"day-{day_number}",
+            "day_number": int(day_number),
+            "date": date.today().isoformat(),
+            "field_values": {},
+            "note": "",
+            "submission_status": "draft",
+            "is_rest_day": False,
+            "questions": [question],
+            "logged_by": user.get("name", ""),
+            "logged_by_role": user.get("role", "client"),
+            "logged_at": now_iso(),
+        }
+        await db.homework.update_one({"id": homework_id}, {"$push": {"section_logs": placeholder}})
+
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/answer/{question_id}")
+async def answer_question(
+    homework_id: str,
+    day_number: int,
+    question_id: str,
+    body: DayAnswerIn,
+    user: dict = Depends(require_admin),
+):
+    """Admin answers a client's question on a specific day."""
+    res = await db.homework.update_one(
+        {"id": homework_id, "section_logs.day_number": int(day_number), "section_logs.questions.id": question_id},
+        {
+            "$set": {
+                "section_logs.$[d].questions.$[q].answer": body.text.strip(),
+                "section_logs.$[d].questions.$[q].answered_at": now_iso(),
+                "section_logs.$[d].questions.$[q].answered_by": user.get("name", "Admin"),
+            }
+        },
+        array_filters=[{"d.day_number": int(day_number)}, {"q.id": question_id}],
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return await get_homework_detail(homework_id, user)
+
+
+# ────────────────────────── Daily-tracker media (video) ──────────────────────────
+@api.post("/homework/{homework_id}/day/{day_number}/video")
+async def upload_day_video(
+    homework_id: str,
+    day_number: int,
+    body: CertificateUploadIn,  # reuse — single base64 payload
+    user: dict = Depends(get_current_user),
+):
+    """Upload a short clip (~10s recommended) for a day's check-in. Stored in
+    a separate `homework_media` collection so big payloads don't bloat the
+    homework doc (Mongo 16 MB per-doc cap)."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    media_id = str(uuid.uuid4())
+    await db.homework_media.insert_one({
+        "id": media_id,
+        "homework_id": homework_id,
+        "day_number": int(day_number),
+        "kind": "video",
+        "data": body.photo,
+        "filename": (body.filename or "video"),
+        "uploaded_at": now_iso(),
+        "uploaded_by": user.get("id"),
+    })
+    return {"media_id": media_id}
+
+
+@api.get("/homework/{homework_id}/media/{media_id}")
+async def get_day_media(homework_id: str, media_id: str, user: dict = Depends(get_current_user)):
+    """Stream back a media blob (video) belonging to a homework."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0, "client_id": 1})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    m = await db.homework_media.find_one({"id": media_id, "homework_id": homework_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Media not found")
+    return {"id": m["id"], "kind": m.get("kind"), "data": m.get("data"), "filename": m.get("filename")}
+
+
+# ────────────────────────── Daily-tracker completion certificate ──────────────────────────
+@api.post("/homework/{homework_id}/certificate")
+async def upload_certificate(
+    homework_id: str,
+    body: CertificateUploadIn,
+    user: dict = Depends(require_admin),
+):
+    """Trainer uploads a personalised certificate for a completed daily-tracker.
+    Stored as base64 (or PDF data-url). Surfaces in the client portal as a
+    'Download your certificate' CTA."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$set": {
+            "certificate": body.photo,
+            "certificate_filename": (body.filename or "certificate").strip(),
+            "certificate_uploaded_at": now_iso(),
+            "certificate_uploaded_by": user.get("name", "Admin"),
+        }},
+    )
+    # Email the client a notice
+    try:
+        client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
+        if client.get("email"):
+            await notify_client_certificate_issued(hw, client)
+    except Exception as exc:
+        logger.warning("Cert notify failed: %s", exc)
+    return {"ok": True}
+
+
+@api.delete("/homework/{homework_id}/certificate")
+async def remove_certificate(homework_id: str, _: dict = Depends(require_admin)):
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$unset": {"certificate": "", "certificate_filename": "", "certificate_uploaded_at": "", "certificate_uploaded_by": ""}},
+    )
+    return {"ok": True}
+
+
+# ────────────────────────── Client reminder settings ──────────────────────────
+@api.get("/portal/reminder-settings")
+async def get_reminder_settings(user: dict = Depends(get_current_user)):
+    """Client reads their own practice-reminder preferences."""
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client only")
+    c = await db.clients.find_one({"id": user["client_id"]}, {"_id": 0}) or {}
+    return {
+        "enabled": bool(c.get("homework_reminder_enabled")),
+        "days": c.get("homework_reminder_days") or [],
+        "time": c.get("homework_reminder_time") or "18:00",
+    }
+
+
+@api.put("/portal/reminder-settings")
+async def set_reminder_settings(body: ReminderSettingsIn, user: dict = Depends(get_current_user)):
+    """Client saves practice-reminder preferences. Sent as a daily email cron."""
+    if user.get("role") != "client" or not user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Client only")
+    # Light validation
+    t = (body.time or "").strip() or "18:00"
+    if t and (len(t) != 5 or t[2] != ":" or not t[:2].isdigit() or not t[3:].isdigit()):
+        raise HTTPException(status_code=400, detail="time must be HH:MM")
+    await db.clients.update_one(
+        {"id": user["client_id"]},
+        {"$set": {
+            "homework_reminder_enabled": bool(body.enabled),
+            "homework_reminder_days": body.days or [],
+            "homework_reminder_time": t,
+        }},
+    )
+    return {"ok": True}
 
 
 @api.post("/admin/homework/send-weekly-digest")

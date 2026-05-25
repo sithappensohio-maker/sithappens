@@ -164,7 +164,15 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
                   <img src={photo} alt="Day submission" loading="lazy" className="max-h-72 rounded border border-bgHover" data-testid="review-photo" />
                 </div>
               )}
+              {submission.field_values?.__video_id && (
+                <ReviewVideo homeworkId={active.homework_id} mediaId={submission.field_values.__video_id} />
+              )}
             </div>
+
+            {/* Question thread */}
+            <QuestionThreadAdmin homeworkId={active.homework_id} dayNumber={active.day_number}
+                                 questions={dayObj?.questions || []}
+                                 onAnswered={async () => { const { data } = await api.get(`/homework/${active.homework_id}`); setActiveDetail(data); }} />
 
             {/* Review action */}
             <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-3">
@@ -188,6 +196,82 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ReviewVideo({ homeworkId, mediaId }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get(`/homework/${homeworkId}/media/${mediaId}`);
+        setSrc(data.data || "");
+      } catch { /* ignore */ }
+    })();
+  }, [homeworkId, mediaId]);
+  if (!src) return <p className="text-[13px] text-gray-500 mt-2 font-black uppercase tracking-widest"><i className="fas fa-spinner fa-spin mr-1"/>Loading video…</p>;
+  return (
+    <div className="mt-2" data-testid="review-video">
+      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Video</p>
+      <video src={src} controls playsInline className="max-h-72 rounded border border-bgHover w-full"/>
+    </div>
+  );
+}
+
+function QuestionThreadAdmin({ homeworkId, dayNumber, questions, onAnswered }) {
+  const [openId, setOpenId] = useState(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const answer = async (qid) => {
+    if (!text.trim()) return;
+    setBusy(true);
+    try {
+      await api.post(`/homework/${homeworkId}/day/${dayNumber}/answer/${qid}`, { text });
+      setText(""); setOpenId(null);
+      await onAnswered?.();
+    } finally { setBusy(false); }
+  };
+
+  if (!questions.length) return null;
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-3" data-testid="admin-question-thread">
+      <p className="text-[13px] font-black uppercase tracking-widest text-shBlue">
+        <i className="fas fa-comments mr-1"/>Client's questions ({questions.length})
+      </p>
+      <div className="space-y-2">
+        {questions.map(q => (
+          <div key={q.id} className="bg-bgPanel/60 border border-bgHover rounded p-2.5">
+            <p className="text-gray-200 text-[14px]">
+              <span className="text-shBlue font-black uppercase text-[11px] tracking-widest mr-1">Q:</span>{q.text}
+            </p>
+            {q.answer ? (
+              <p className="text-gray-100 mt-2 pl-2 border-l-2 border-shGreen/50 text-[14px]">
+                <span className="text-shGreen font-black uppercase text-[11px] tracking-widest mr-1">A:</span>{q.answer}
+                <span className="text-gray-500 text-[11px] ml-2">— {q.answered_by}</span>
+              </p>
+            ) : openId === q.id ? (
+              <div className="flex gap-2 mt-2">
+                <input value={text} onChange={(e) => setText(e.target.value)}
+                       onKeyDown={(e) => e.key === "Enter" && answer(q.id)}
+                       placeholder="Type your answer…"
+                       data-testid={`answer-input-${q.id}`}
+                       className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                <button onClick={() => answer(q.id)} disabled={busy} data-testid={`answer-send-${q.id}`}
+                        className="bg-shBlue text-white px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/80 disabled:opacity-50">
+                  <i className="fas fa-paper-plane"/>
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => { setOpenId(q.id); setText(""); }} data-testid={`answer-btn-${q.id}`}
+                      className="text-shBlue hover:text-shBlue/80 text-[12px] font-black uppercase tracking-widest mt-2">
+                <i className="fas fa-reply mr-1"/>Reply
+              </button>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );

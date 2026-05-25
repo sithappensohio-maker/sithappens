@@ -1108,6 +1108,22 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Clients screen** displays a tiny chip under the "Portal" column: "Just now" / "5 min ago" / "3h ago" / "5d ago" / "2w ago" / "Never logged in". Color-coded: green <7d, blue <30d, gray <90d, red >90d, gray for never. Hover reveals exact timestamp + total login count.
 - ✅ E2E tested via curl + screenshot: login bumped `last_login_at` and `login_count`, list endpoint returned both fields, UI renders the chip in the right colors.
 
+## Sprint 99 — Daily Tracker Phase 2 + Health-Flag Fix (2026-02)
+
+**🐛 Bug fix:** Dashboard "Health Flags" counter now respects active vaccine dismissals. Previously, clicking "Hide 30d" in the Vaccine Center shrank the list but the dashboard counter stayed put. `/api/dashboard/stats` now reads `vaccine_dismissals` the same way `/api/vaccine-alerts` does so they stay in lock-step. Regression test at `/app/backend/tests/test_health_flags_dismiss.py`.
+
+**Six client-experience wins added to the daily tracker:**
+
+- ✅ **Equipment / treats checklist per day** — Admin enters comma-separated items at build time (`"high-value treats, 6-ft leash, target stick"`). Client sees an orange `🧰 YOU'LL NEED` checklist at the top of every open day card. Eliminates the #1 "I tried but didn't have the stuff" excuse.
+- ✅ **Rest day (preserves streak)** — `POST /homework/{id}/day/{N}/rest` marks a day as `submission_status="rest"`, auto-passes (no review needed), unlocks the next day, counts toward the streak. Client sees a blue "Rest day" button alongside "Submit for review." Real life shouldn't break consistency.
+- ✅ **Video upload per day** — Up to 15 MB clips stored in a separate `homework_media` collection (skirts Mongo's 16 MB per-doc cap). Client picks "Add video" → uploaded immediately, attached to the submission. Trainer plays it back inline in the review pane via `<video controls>`.
+- ✅ **Threaded "Ask your trainer" per day** — `POST /homework/{id}/day/{N}/ask` + `POST .../answer/{question_id}`. Each day card becomes its own conversation. Client sees a "QUESTIONS (n)" toggle with "WAITING FOR REPLY" or "Trainer replied" badges. Admin sees the same thread inline in the review queue with one-tap reply input.
+- ✅ **Completion certificate (admin-uploaded)** — User keeps full design control: upload a PNG/PDF/JPG (≤ 5 MB) after a daily-tracker hits 100% approved. `POST /homework/{id}/certificate`. Client sees a gradient orange→yellow→green "🎓 Download {dog}'s Certificate" CTA at the top of the daily-checkin card. Email notification fires when issued.
+- ✅ **Client-controlled practice reminders** — `GET/PUT /portal/reminder-settings` stores `{enabled, days[], time}` on the client doc. New cron `run_homework_practice_reminder_job` fires daily, only emails clients whose day-of-week matches today + have an active daily-tracker + haven't already logged today's day. Per-client per-day dedup via `notification_log`. Client UI: 🔔 "Reminders" button on the streak header → modal with day pills (Mon/Tue/.../Sun) + time picker.
+
+**Test coverage:** 7 new tests in `test_daily_tracker_phase2.py` + 1 health-flag test. Full suite now **24/24** passing across Sprints 95-99.
+
+
 ## Sprint 98 — Weekly Homework Digest Email (2026-02)
 - ✅ **Sunday-night cron job** (`run_homework_weekly_digest_job` in `daily_jobs.py`) — auto-fires every Sunday at the same time as the existing birthday/vaccine jobs. For each client with daily-tracker activity this week (Mon→Sun), packages a recap of every active plan: 🔥 streak, days approved this week vs total, photos from approved days (max 3), trainer's review notes (max 3), and the next-day focus to keep them on track.
 - ✅ **Idempotency** — keyed by `hw_digest:{client_id}:{week_start_iso}` in `notification_log` so it never double-sends. Activity-this-week filter prevents spamming clients who didn't train at all.

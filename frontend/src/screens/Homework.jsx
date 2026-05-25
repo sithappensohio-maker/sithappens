@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
@@ -140,6 +140,9 @@ export default function Homework() {
                       {h.completion_photo && <img src={h.completion_photo} alt="" loading="lazy" decoding="async" className="mt-2 h-32 rounded object-cover border border-bgHover" />}
                     </div>
                   )}
+                  {h.daily_tracker && h.status === "completed" && (
+                    <CertUploadInline homeworkId={h.id} hasCert={!!h.certificate} certFilename={h.certificate_filename} onChanged={load} />
+                  )}
                 </div>
                 <div className="flex flex-col gap-2 items-end">
                   <button onClick={()=>remove(h.id)} className="text-gray-400 hover:text-red-400 p-2"><i className="fas fa-trash text-sm" /></button>
@@ -213,6 +216,62 @@ export default function Homework() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+function CertUploadInline({ homeworkId, hasCert, certFilename, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const ref = useRef(null);
+
+  const pick = () => ref.current?.click();
+  const onFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { alert("Cert file too large — keep it under 5 MB."); return; }
+    setBusy(true);
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise((res, rej) => { reader.onload = () => res(reader.result); reader.onerror = rej; reader.readAsDataURL(f); });
+      await api.post(`/homework/${homeworkId}/certificate`, { photo: dataUrl, filename: f.name });
+      onChanged?.();
+    } catch (ex) { alert("Upload failed: " + (ex.response?.data?.detail || ex.message)); }
+    finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!window.confirm("Remove the certificate for this homework?")) return;
+    await api.delete(`/homework/${homeworkId}/certificate`);
+    onChanged?.();
+  };
+
+  return (
+    <div className="mt-2 bg-shOrange/5 border border-shOrange/30 rounded p-3 flex items-center gap-3 flex-wrap" data-testid={`cert-row-${homeworkId}`}>
+      <i className="fas fa-award text-shOrange text-xl"/>
+      <div className="flex-1 min-w-0">
+        <p className="text-[13px] font-black uppercase tracking-widest text-shOrange">Completion certificate</p>
+        <p className="text-[13px] text-gray-300 truncate">
+          {hasCert ? <><i className="fas fa-check text-shGreen mr-1"/>Uploaded · <span className="text-gray-400">{certFilename || "certificate"}</span></>
+                   : "Upload a personalised cert (PNG/PDF/JPG) — clients see a Download button in their portal."}
+        </p>
+      </div>
+      <input ref={ref} type="file" accept="image/*,.pdf" onChange={onFile} className="hidden" data-testid={`cert-input-${homeworkId}`} />
+      {hasCert ? (
+        <>
+          <button onClick={pick} disabled={busy} data-testid={`cert-replace-${homeworkId}`}
+                  className="bg-shOrange/15 text-shOrange border border-shOrange/40 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shOrange/25">
+            {busy ? "Uploading…" : "Replace"}
+          </button>
+          <button onClick={remove} className="text-gray-400 hover:text-red-400 text-[14px] px-2" data-testid={`cert-remove-${homeworkId}`}>
+            <i className="fas fa-trash"/>
+          </button>
+        </>
+      ) : (
+        <button onClick={pick} disabled={busy} data-testid={`cert-upload-${homeworkId}`}
+                className="bg-shOrange text-bgHeader px-4 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shOrange/80 disabled:opacity-50">
+          <i className="fas fa-upload mr-1"/>{busy ? "Uploading…" : "Upload cert"}
+        </button>
       )}
     </div>
   );
