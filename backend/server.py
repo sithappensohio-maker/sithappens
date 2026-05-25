@@ -4833,8 +4833,23 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     # photo arrays + raw training_logs are the bandwidth hogs.
     dog_proj = {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0}
     dogs = await db.dogs.find({}, dog_proj).to_list(2000)
+    # Build the same "active dismissal" map used by /vaccine-alerts so the
+    # Health Flags tile + the alert list stay in lock-step. (Bug fix: previously
+    # the tile counter didn't decrease when alerts were hidden/cleared.)
+    now_dt = datetime.now(timezone.utc)
+    dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
+    dismissed_dog_ids = set()
+    for d in dismissals:
+        try:
+            until = datetime.fromisoformat(d["until"])
+        except Exception:
+            continue
+        if until > now_dt:
+            dismissed_dog_ids.add(d["dog_id"])
     health_flags = 0
     for d in dogs:
+        if d["id"] in dismissed_dog_ids:
+            continue
         vac = d.get("vaccines") or {}
         flagged = False
         for v in required:
