@@ -34,6 +34,7 @@ from email_service import (
     notify_admin_quote_request,
     notify_admin_pl_report,
     notify_client_booking_approved,
+    notify_client_day_reviewed,
     notify_client_homework_assigned,
     notify_client_low_credits,
     notify_client_pack_receipt,
@@ -3525,6 +3526,382 @@ def _trend(nums: List[float]) -> str:
     if last < first * 0.90:
         return "down"
     return "flat"
+
+
+# ────────────────────────── Daily Tracker (homework) ──────────────────────────
+# A homework can be authored as a "daily tracker": instead of section_logs being
+# free-form, each section has a `day_number` (1, 2, 3…). Days unlock sequentially
+# — the client submits a day's check-in, the admin reviews+approves, and then
+# day N+1 unlocks. This sits ON TOP of the existing template/section schema:
+# legacy templates without day_number continue to work in single-section logger.
+class DailyTrackerSectionIn(BaseModel):
+    day_number: int = Field(ge=1, le=120)
+    day_focus: str = Field(min_length=1, max_length=200)
+    instructions: Optional[str] = ""
+    fields: List[dict] = []  # [{id, label, kind, ...}] — same shape as legacy fields
+
+
+class DailyTrackerCreateIn(BaseModel):
+    dog_id: str
+    title: str = Field(min_length=2, max_length=120)
+    instructions: Optional[str] = ""
+    video_url: Optional[str] = ""
+    days: List[DailyTrackerSectionIn] = Field(min_length=1, max_length=120)
+    global_rules_this_week: Optional[List[str]] = []
+    save_as_template: Optional[bool] = False
+    template_name: Optional[str] = ""  # used if save_as_template=True
+
+
+class DaySubmitIn(BaseModel):
+    field_values: Dict[str, object] = {}
+    note: Optional[str] = ""
+    mood: Optional[int] = None  # 1-5
+    photo: Optional[str] = ""   # base64 data-url
+
+
+class DayReviewIn(BaseModel):
+    action: Literal["approve", "needs_redo"]
+    note: Optional[str] = ""
+
+
+def _compute_daily_progress(hw: dict) -> List[dict]:
+    """Walk template_snapshot.sections (sorted by day_number) and emit a
+    per-day status: locked / available / submitted / approved / needs_redo."""
+    snap = hw.get("template_snapshot") or {}
+    sections = sorted(
+        [s for s in snap.get("sections", []) if s.get("day_number")],
+        key=lambda s: int(s.get("day_number") or 0),
+    )
+    if not sections:
+        return []
+    logs_by_day: Dict[int, dict] = {}
+    for log in hw.get("section_logs") or []:
+        dn = log.get("day_number")
+        if dn:
+            logs_by_day[int(dn)] = log  # latest one wins (we never push duplicates per day)
+    progress: List[dict] = []
+    prev_passed = True
+    for s in sections:
+        dn = int(s["day_number"])
+        log = logs_by_day.get(dn)
+        status = "locked"
+        if prev_passed and not log:
+            status = "available"
+        if log:
+            status = log.get("submission_status") or "submitted"
+        progress.append({
+            "day_number": dn,
+            "day_focus": s.get("day_focus") or s.get("title", ""),
+            "title": s.get("title", ""),
+            "instructions": s.get("instructions", ""),
+            "fields": s.get("fields", []),
+            "section_id": s.get("id"),
+            "status": status,           # locked | available | submitted | approved | needs_redo
+            "log": log,                  # full submission incl. mood/photo/note
+        })
+        prev_passed = status == "approved"
+    return progress
+
+
+def _streak_count(progress: List[dict]) -> int:
+    """Count consecutive approved days from Day 1 forward."""
+    n = 0
+    for p in progress:
+        if p.get("status") == "approved":
+            n += 1
+        else:
+            break
+    return n
+
+
+@api.get("/homework/{homework_id}")
+async def get_homework_detail(homework_id: str, user: dict = Depends(get_current_user)):
+    """Single-homework detail. Enriched with `daily_progress` + `streak` when
+    the homework is a daily-tracker."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if hw.get("daily_tracker"):
+        prog = _compute_daily_progress(hw)
+        hw["daily_progress"] = prog
+        hw["streak"] = _streak_count(prog)
+        hw["total_days"] = len(prog)
+    return hw
+
+
+@api.post("/homework/daily-tracker")
+async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(require_admin)):
+    """Build a daily-tracker homework from a per-day plan. Optionally also
+    save the structure as a reusable template (for next time)."""
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0})
+
+    # Normalise each day into a section (with id, fields w/ id, day_number, day_focus)
+    sections: List[dict] = []
+    for d in sorted(body.days, key=lambda x: x.day_number):
+        sec_id = f"day-{d.day_number}"
+        fields: List[dict] = []
+        for f in d.fields or []:
+            fid = (f.get("id") or "").strip() or f"f-{uuid.uuid4().hex[:6]}"
+            fields.append({
+                "id": fid,
+                "label": (f.get("label") or "Untitled").strip(),
+                "kind": f.get("kind") or "text",
+                "target": f.get("target"),
+                "placeholder": f.get("placeholder") or "",
+            })
+        sections.append({
+            "id": sec_id,
+            "day_number": int(d.day_number),
+            "day_focus": d.day_focus.strip(),
+            "title": f"Day {d.day_number} · {d.day_focus.strip()}",
+            "instructions": (d.instructions or "").strip(),
+            "fields": fields,
+        })
+
+    due = (date.today() + timedelta(days=len(sections))).isoformat()
+    snapshot = {
+        "kind": "daily_tracker",
+        "name": body.title,
+        "description": body.instructions or "",
+        "global_rules_this_week": body.global_rules_this_week or [],
+        "sections": sections,
+    }
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog["id"],
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "title": body.title,
+        "instructions": body.instructions or "",
+        "video_url": body.video_url or "",
+        "due_date": due,
+        "status": "assigned",
+        "daily_tracker": True,
+        "total_days": len(sections),
+        "created_at": now_iso(),
+        "assigned_by": user.get("name", "Admin"),
+        "completed_at": None,
+        "completion_note": "",
+        "completion_photo": "",
+        "template_snapshot": snapshot,
+        "section_logs": [],
+    }
+    await db.homework.insert_one(doc)
+    doc.pop("_id", None)
+
+    if body.save_as_template and body.template_name:
+        # Persist as a reusable template (custom, not default).
+        tpl_doc = {
+            "id": str(uuid.uuid4()),
+            "slug": body.template_name.lower().replace(" ", "_")[:40],
+            "name": body.template_name,
+            "tier": "specialty",
+            "description": body.instructions or "",
+            "default_duration_days": len(sections),
+            "cover_color": "#22d3ee",
+            "icon": "fa-calendar-check",
+            "global_rules_this_week": body.global_rules_this_week or [],
+            "sections": sections,
+            "daily_tracker": True,
+            "is_default": False,
+            "active": True,
+            "created_at": now_iso(),
+            "created_by": user.get("name", "Admin"),
+        }
+        await db.homework_templates.insert_one(tpl_doc)
+
+    if client:
+        try:
+            await notify_client_homework_assigned(doc, client)
+        except Exception:
+            pass
+    return doc
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/submit")
+async def submit_day(
+    homework_id: str,
+    day_number: int,
+    body: DaySubmitIn,
+    user: dict = Depends(get_current_user),
+):
+    """Client (or admin on client's behalf) submits a day's check-in. Becomes
+    `submitted` and lands in the admin review queue. If the previous day isn't
+    yet approved, this is rejected. Resubmitting a `needs_redo` day re-queues it."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    prog = _compute_daily_progress(hw)
+    cur = next((p for p in prog if p["day_number"] == day_number), None)
+    if not cur:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    if cur["status"] == "locked":
+        raise HTTPException(status_code=400, detail="Previous day hasn't been approved yet")
+    if cur["status"] == "approved":
+        raise HTTPException(status_code=400, detail="Day already approved")
+
+    field_values = {}
+    for k, v in (body.field_values or {}).items():
+        field_values[str(k)] = v
+    if body.mood is not None:
+        field_values["__mood"] = max(1, min(5, int(body.mood)))
+    if body.photo:
+        field_values["__photo"] = body.photo  # base64 data-url; small previews ok
+
+    section_id = f"day-{day_number}"
+    new_log = {
+        "id": str(uuid.uuid4()),
+        "section_id": section_id,
+        "day_number": int(day_number),
+        "date": date.today().isoformat(),
+        "field_values": field_values,
+        "note": (body.note or "").strip(),
+        "submission_status": "submitted",
+        "logged_by": user.get("name", ""),
+        "logged_by_id": user.get("id"),
+        "logged_by_role": user.get("role", "client"),
+        "logged_at": now_iso(),
+    }
+    # Replace any existing log for that day (needs_redo flow).
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$pull": {"section_logs": {"day_number": int(day_number)}}},
+    )
+    await db.homework.update_one(
+        {"id": homework_id},
+        {"$push": {"section_logs": new_log}},
+    )
+
+    # Best-effort: notify the operator that there's a new review pending
+    if user.get("role") != "admin":
+        try:
+            client = await db.clients.find_one({"id": hw.get("client_id")}, {"_id": 0}) or {}
+            dog = await db.dogs.find_one({"id": hw.get("dog_id")}, {"_id": 0}) or {}
+            await notify_admin_homework_section_log(hw, new_log, client, dog)
+        except Exception as exc:
+            logger.warning("Daily tracker submit notify failed: %s", exc)
+
+    # Return the refreshed homework with progress.
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/review")
+async def review_day(
+    homework_id: str,
+    day_number: int,
+    body: DayReviewIn,
+    user: dict = Depends(require_admin),
+):
+    """Admin approves a submitted day (unlocks the next) or sends it back."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+    # Find the existing log for that day
+    log = next(
+        (lo for lo in (hw.get("section_logs") or []) if int(lo.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    if not log:
+        raise HTTPException(status_code=404, detail=f"No submission for Day {day_number}")
+    if log.get("submission_status") == "approved" and body.action == "approve":
+        # Idempotent — return current state
+        return await get_homework_detail(homework_id, user)
+
+    new_status = "approved" if body.action == "approve" else "needs_redo"
+    patch = {
+        "section_logs.$.submission_status": new_status,
+        "section_logs.$.review_note": (body.note or "").strip(),
+        "section_logs.$.reviewed_at": now_iso(),
+        "section_logs.$.reviewed_by": user.get("name", "Admin"),
+        "section_logs.$.reviewed_by_id": user.get("id"),
+    }
+    await db.homework.update_one(
+        {"id": homework_id, "section_logs.day_number": int(day_number)},
+        {"$set": patch},
+    )
+
+    # If this was the final day and admin approves → mark homework completed.
+    refreshed = await db.homework.find_one({"id": homework_id}, {"_id": 0}) or {}
+    prog = _compute_daily_progress(refreshed)
+    all_approved = bool(prog) and all(p["status"] == "approved" for p in prog)
+    if all_approved and refreshed.get("status") != "completed":
+        await db.homework.update_one(
+            {"id": homework_id},
+            {"$set": {"status": "completed", "completed_at": now_iso()}},
+        )
+        # Trophy re-evaluation for the client
+        try:
+            if refreshed.get("client_id"):
+                await check_client_trophies(db, refreshed["client_id"])
+        except Exception as exc:
+            logger.warning("Trophy check after daily-tracker completion failed: %s", exc)
+
+    # Notify the client of the review outcome
+    try:
+        client = await db.clients.find_one({"id": refreshed.get("client_id")}, {"_id": 0}) or {}
+        if client.get("email"):
+            await notify_client_day_reviewed(refreshed, day_number, new_status, body.note or "", client)
+    except Exception as exc:
+        logger.warning("Daily tracker review notify failed: %s", exc)
+
+    return await get_homework_detail(homework_id, user)
+
+
+@api.post("/admin/homework/send-weekly-digest")
+async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
+    """Force-fire the homework weekly digest (ignores the once-per-week dedup).
+    Useful for: testing, sending early, or re-sending after a fix."""
+    from daily_jobs import run_homework_weekly_digest_job
+    from datetime import datetime, timedelta, timezone as _tz
+    # Bust the dedup keys for THIS week so the job re-sends.
+    today = datetime.now(_tz.utc).date()
+    monday = today - timedelta(days=today.weekday())
+    week_start = monday.isoformat()
+    await db.notification_log.delete_many({"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
+    result = await run_homework_weekly_digest_job(db)
+    return result
+
+
+@api.get("/admin/homework/pending-reviews")
+async def list_pending_reviews(_: dict = Depends(require_admin)):
+    """All days across all daily-tracker homework that are awaiting admin
+    review (status=submitted). Ordered oldest-submitted first."""
+    items: List[dict] = []
+    cursor = db.homework.find(
+        {"daily_tracker": True, "section_logs.submission_status": "submitted"},
+        {"_id": 0},
+    )
+    async for hw in cursor:
+        for log in hw.get("section_logs") or []:
+            if log.get("submission_status") != "submitted":
+                continue
+            items.append({
+                "homework_id": hw["id"],
+                "dog_id": hw.get("dog_id"),
+                "dog_name": hw.get("dog_name"),
+                "client_id": hw.get("client_id"),
+                "client_name": hw.get("client_name"),
+                "title": hw.get("title"),
+                "day_number": int(log.get("day_number") or 0),
+                "total_days": int(hw.get("total_days") or 0),
+                "submitted_at": log.get("logged_at"),
+                "note": log.get("note"),
+                "has_photo": bool((log.get("field_values") or {}).get("__photo")),
+            })
+    items.sort(key=lambda x: x.get("submitted_at") or "")
+    return items
 
 
 # -------- Service-Dog Training Curriculum --------

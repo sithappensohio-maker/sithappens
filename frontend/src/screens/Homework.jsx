@@ -3,6 +3,8 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
 import HomeworkReportPanel from "../components/HomeworkReportPanel";
+import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
+import DailyReviewQueue from "../components/DailyReviewQueue";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -11,6 +13,9 @@ export default function Homework() {
   const [dogs, setDogs] = useState([]);
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [trackerOpen, setTrackerOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const [form, setForm] = useState({ dog_id: "", title: "", instructions: "", video_url: "", due_date: "" });
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("all");
@@ -19,8 +24,33 @@ export default function Homework() {
   const load = async () => {
     const [h, d] = await Promise.all([api.get("/homework"), api.get("/dogs")]);
     setList(h.data); setDogs(d.data);
+    try {
+      const r = await api.get("/admin/homework/pending-reviews");
+      setPendingCount(Array.isArray(r.data) ? r.data.length : 0);
+    } catch { setPendingCount(0); }
   };
   useEffect(() => { load(); }, []);
+
+  const [digestBusy, setDigestBusy] = useState(false);
+
+  const sendWeeklyDigest = async () => {
+    if (!(await confirm({
+      title: "Send weekly recap now?",
+      body: "Every client with a daily-tracker plan they touched this week will get a recap email with their streak, photos and your review notes. Normally this auto-fires every Sunday night.",
+      confirmText: "Send now",
+    }))) return;
+    setDigestBusy(true);
+    try {
+      const { data } = await api.post("/admin/homework/send-weekly-digest");
+      let msg = `Weekly digest fired · ${data.sent || 0} email${data.sent === 1 ? "" : "s"} sent`;
+      if (data.attempted && data.sent < data.attempted) {
+        msg += ` (${data.attempted - data.sent} email${data.attempted - data.sent === 1 ? "" : "s"} failed — check Resend domain verification)`;
+      }
+      alert(msg);
+    } catch (e) {
+      alert(`Failed: ${e.response?.data?.detail || e.message}`);
+    } finally { setDigestBusy(false); }
+  };
 
   const openNew = () => {
     if (dogs.length === 0) { alert("Add a dog first"); return; }
@@ -48,8 +78,23 @@ export default function Homework() {
           <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Assign exercises to clients between sessions</p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {pendingCount > 0 && (
+            <button onClick={() => setReviewOpen(true)} data-testid="review-queue-button"
+                    className="relative bg-shOrange text-bgHeader px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/80">
+              <i className="fas fa-clipboard-check mr-2" />Review · {pendingCount}
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px] font-black animate-pulse">{pendingCount}</span>
+            </button>
+          )}
+          <button onClick={() => setTrackerOpen(true)} data-testid="daily-tracker-button"
+                  className="bg-purple-500 text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-purple-500/80">
+            <i className="fas fa-calendar-check mr-2" />Daily Tracker
+          </button>
+          <button onClick={sendWeeklyDigest} disabled={digestBusy} data-testid="send-weekly-digest-button" title="Auto-fires every Sunday night"
+                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:border-purple-400 hover:text-purple-300 disabled:opacity-50">
+            <i className="fas fa-envelope-open-text mr-1.5" />{digestBusy ? "Sending…" : "Weekly recap"}
+          </button>
           <button onClick={()=>setPickerOpen(true)} data-testid="assign-from-template-button" className="bg-shGreen text-black px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/80">
-            <i className="fas fa-clipboard-list mr-2"/>Assign from Template
+            <i className="fas fa-clipboard-list mr-2"/>From Template
           </button>
           <button onClick={openNew} data-testid="add-homework-button" className="bg-shBlue text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
             + Custom
@@ -79,7 +124,8 @@ export default function Homework() {
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
                     <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                    {snap && <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${snap.icon || "fa-paw"} mr-1`}/>{tm.label}</span>}
+                    {h.daily_tracker && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-300"><i className="fas fa-calendar-check mr-1"/>Daily · {h.total_days || (h.template_snapshot?.sections?.length || 0)}d</span>}
+                    {h.template_snapshot && !h.daily_tracker && (() => { const tm = tierMeta(h.template_snapshot.tier); return <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${h.template_snapshot.icon || "fa-paw"} mr-1`}/>{tm.label}</span>; })()}
                     {h.due_date && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
                     {snap && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-list-check mr-1"/>{logCount} client log{logCount===1?"":"s"}</span>}
                   </div>
@@ -117,6 +163,14 @@ export default function Homework() {
 
       {pickerOpen && (
         <TemplatePicker dogs={dogs} onClose={()=>setPickerOpen(false)} onAssigned={()=>load()} />
+      )}
+
+      {trackerOpen && (
+        <DailyTrackerBuilder dogs={dogs} onClose={()=>setTrackerOpen(false)} onAssigned={()=>load()} />
+      )}
+
+      {reviewOpen && (
+        <DailyReviewQueue onClose={()=>setReviewOpen(false)} onReviewed={()=>load()} />
       )}
 
       {open && (

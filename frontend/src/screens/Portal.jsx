@@ -9,6 +9,7 @@ import PortalTrainingCard from "../components/PortalTrainingCard";
 import PortalFilesSection from "../components/PortalFilesSection";
 import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
+import DailyCheckInCard from "../components/DailyCheckInCard";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import TextSizePicker from "../components/TextSizePicker";
@@ -1166,20 +1167,26 @@ export default function Portal() {
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
                           <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
+                          {h.daily_tracker && <span className="text-[14px] text-purple-300 bg-purple-500/15 font-black uppercase px-2 py-0.5 rounded tracking-widest"><i className="fas fa-calendar-check mr-1"/>Daily Tracker</span>}
                           <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
                           {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
-                          {hasTemplate && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
+                          {hasTemplate && !h.daily_tracker && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
                         </div>
                         <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
                         {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
                         {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
                       </div>
-                      {h.status !== "completed" && (
+                      {h.status !== "completed" && !h.daily_tracker && (
                         <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
                                 className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
                       )}
                     </div>
-                    {hasTemplate && h.status !== "completed" && (
+                    {h.daily_tracker && h.status !== "completed" && (
+                      <div className="mt-4 pt-4 border-t border-bgHover">
+                        <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} />
+                      </div>
+                    )}
+                    {hasTemplate && !h.daily_tracker && h.status !== "completed" && (
                       <div className="mt-4 pt-4 border-t border-bgHover">
                         <HomeworkSectionLogger homework={h} onLogged={loadAll} />
                       </div>

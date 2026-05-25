@@ -161,6 +161,150 @@ async def run_pl_monthly_job(db) -> Dict[str, Any]:
 
 
 
+async def run_homework_weekly_digest_job(db) -> dict:
+    """Sunday-night digest: for every client with at least one active daily-tracker
+    homework, send a recap of streaks, photos, and your review notes.
+
+    De-duped per (client, week_start_iso) so it can't double-send if the dashboard
+    is hit twice on a Sunday.
+    """
+    today = datetime.now(timezone.utc).date()
+    # week_start = the Monday on or before today (always returns a Mon→Sun window)
+    monday = today - timedelta(days=today.weekday())
+    sunday = monday + timedelta(days=6)
+    week_start = monday.isoformat()
+    week_end = sunday.isoformat()
+
+    # Group active daily-tracker homework by client_id.
+    # Include any daily-tracker that's not yet completed OR was completed in the
+    # past 14 days (so a fresh "you finished!" recap goes out at week-end).
+    fortnight_ago = (today - timedelta(days=14)).isoformat()
+    by_client: Dict[str, list] = {}
+    async for hw in db.homework.find(
+        {
+            "daily_tracker": True,
+            "$or": [
+                {"status": {"$ne": "completed"}},
+                {"completed_at": {"$gte": fortnight_ago}},
+            ],
+        },
+        {"_id": 0},
+    ):
+        cid = hw.get("client_id")
+        if not cid:
+            continue
+        by_client.setdefault(cid, []).append(hw)
+
+    sent = 0
+    skipped = 0
+    attempted = 0
+    errors: list = []
+    for cid, hws in by_client.items():
+        key = f"hw_digest:{cid}:{week_start}"
+        if await _already_notified(db, key):
+            skipped += 1
+            continue
+        client = await db.clients.find_one({"id": cid}, {"_id": 0}) or {}
+        if not client.get("email"):
+            continue
+
+        items = []
+        for hw in hws:
+            sections = sorted(
+                [s for s in (hw.get("template_snapshot") or {}).get("sections", []) if s.get("day_number")],
+                key=lambda s: int(s.get("day_number") or 0),
+            )
+            if not sections:
+                continue
+            logs = hw.get("section_logs") or []
+            log_by_day = {int(lo.get("day_number") or 0): lo for lo in logs}
+            approved_days = [s for s in sections if (log_by_day.get(int(s["day_number"])) or {}).get("submission_status") == "approved"]
+            this_week_approved = [
+                lo for lo in logs
+                if lo.get("submission_status") == "approved"
+                and week_start <= (lo.get("date") or "") <= week_end
+            ]
+            # Streak = consecutive approved days from Day 1
+            streak = 0
+            for s in sections:
+                if (log_by_day.get(int(s["day_number"])) or {}).get("submission_status") == "approved":
+                    streak += 1
+                else:
+                    break
+            # Photos from this week's approved days
+            photos: list = []
+            for lo in this_week_approved:
+                p = (lo.get("field_values") or {}).get("__photo")
+                if p:
+                    photos.append(p)
+            # Trainer notes from this week
+            notes_collected = []
+            for lo in this_week_approved:
+                if lo.get("review_note"):
+                    sec = next((s for s in sections if int(s.get("day_number") or 0) == int(lo.get("day_number") or 0)), {})
+                    notes_collected.append({
+                        "day": int(lo.get("day_number") or 0),
+                        "focus": sec.get("day_focus", ""),
+                        "note": lo["review_note"],
+                    })
+            # Next focus = first available/locked day
+            next_focus = ""
+            for s in sections:
+                lo = log_by_day.get(int(s["day_number"]))
+                if not lo or lo.get("submission_status") in ("needs_redo",):
+                    next_focus = s.get("day_focus", "")
+                    break
+            items.append({
+                "hw_title": hw.get("title", ""),
+                "dog_name": hw.get("dog_name", ""),
+                "total_days": len(sections),
+                "approved_total": len(approved_days),
+                "approved_this_week": len(this_week_approved),
+                "streak": streak,
+                "photos": photos,
+                "notes": notes_collected,
+                "next_focus": next_focus,
+                "_activity_this_week": len(this_week_approved) + len([
+                    lo for lo in logs
+                    if week_start <= (lo.get("date") or "") <= week_end
+                ]),
+            })
+
+        # Keep only items that had actual activity this week so we don't spam.
+        items = [it for it in items if it.pop("_activity_this_week", 0) > 0]
+
+        if not items:
+            continue
+
+        try:
+            attempted += 1
+            ok = await email_service.notify_client_weekly_homework_digest(
+                client, items, week_start, week_end,
+            )
+            if ok:
+                await _mark_notified(db, key, {
+                    "job": "hw_weekly_digest",
+                    "client_id": cid,
+                    "week_start": week_start,
+                    "items": len(items),
+                })
+                sent += 1
+            else:
+                errors.append({"client_id": cid, "reason": "email_send_failed"})
+        except Exception as exc:
+            logger.warning("hw_weekly_digest failed for client=%s: %s", cid, exc)
+            errors.append({"client_id": cid, "reason": str(exc)[:200]})
+
+    return {
+        "sent": sent,
+        "attempted": attempted,
+        "skipped": skipped,
+        "errors": errors,
+        "week_start": week_start,
+        "week_end": week_end,
+    }
+
+
 async def maybe_run_daily(db) -> dict | None:
     """Run every daily job at most once per UTC day. Returns a summary dict
     on the first call of the day, or None if already ran today.
@@ -179,6 +323,9 @@ async def maybe_run_daily(db) -> dict | None:
         results = {}
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
+        # Sunday-only: homework weekly digest (weekday() returns 6 for Sunday).
+        if datetime.now(timezone.utc).date().weekday() == 6:
+            results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)
         # Monthly P&L only fires on the 1st of the month
         if date.today().day == 1:
             results["pl_monthly"] = await run_pl_monthly_job(db)

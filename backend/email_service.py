@@ -71,7 +71,7 @@ def _install_footer() -> str:
 </div>"""
 
 
-def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None, show_install: bool = True) -> str:
+def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None, show_install: bool = True, body_html: str = "") -> str:
     rows_html = "".join(
         f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;width:140px;">{k}</td>'
         f'<td style="padding:8px 0;color:#0f172a;font-size:15px;font-weight:600;">{v}</td></tr>'
@@ -83,6 +83,7 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
         if cta_text and cta_url else ""
     )
     install_html = _install_footer() if show_install else ""
+    rows_block = f'<table cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px 0;">{rows_html}</table>' if rows_html else ""
     return f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
@@ -94,7 +95,8 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
         </td></tr>
         <tr><td style="padding:28px 32px;">
           <p style="margin:0 0 18px 0;color:#334155;font-size:15px;line-height:1.5;">{intro}</p>
-          <table cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px 0;">{rows_html}</table>
+          {rows_block}
+          {body_html}
           {cta_html}
           {install_html}
         </td></tr>
@@ -118,13 +120,13 @@ def _date_range(start: str, end: str | None) -> str:
     return start
 
 
-async def _send(to_email: str, subject: str, html: str) -> None:
-    """Fire-and-forget send. Logs failures but never raises."""
+async def _send(to_email: str, subject: str, html: str) -> bool:
+    """Fire-and-forget send. Logs failures but never raises. Returns True on success."""
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping email to %s", to_email)
-        return
+        return False
     if not to_email:
-        return
+        return False
     try:
         params = {"from": SENDER_EMAIL, "to": [to_email], "subject": subject, "html": html}
         # Replies land in the admin inbox instead of the unmonitored sender address
@@ -132,8 +134,10 @@ async def _send(to_email: str, subject: str, html: str) -> None:
             params["reply_to"] = ADMIN_NOTIFICATION_EMAIL
         result = await asyncio.to_thread(resend.Emails.send, params)
         logger.info("Email sent to %s: %s", to_email, result.get("id") if isinstance(result, dict) else result)
+        return True
     except Exception as e:
         logger.warning("Email send to %s failed: %s", to_email, e)
+        return False
 
 
 async def notify_admin_new_booking(booking: dict, client: dict) -> None:
@@ -457,6 +461,114 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
         f"Homework completed · {hw.get('title','')} · {client.get('name','')}",
         html,
     )
+
+
+async def notify_client_weekly_homework_digest(client: dict, items: list, week_start: str, week_end: str) -> bool:
+    """Sunday-night digest of the client's daily-tracker progress for the week.
+
+    `items` is a list of dicts shaped:
+        {hw_title, dog_name, total_days, approved_total, approved_this_week,
+         streak, photos: [data_url, …], notes: [{day, focus, note}], next_focus}
+    Returns True if an email was actually sent."""
+    to_email = client.get("email", "")
+    if not to_email or not items:
+        return False
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    rows = []
+    for it in items:
+        streak_chip = f"<span style='display:inline-block;background:{BRAND_GREEN}15;color:{BRAND_GREEN};font-weight:900;font-size:12px;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border-radius:4px;'>🔥 {it['streak']}-day streak</span>" if it.get("streak", 0) > 0 else ""
+        progress = f"{it.get('approved_total', 0)} of {it.get('total_days', 0)} approved"
+        this_week = f"{it.get('approved_this_week', 0)} this week"
+        notes_html = ""
+        for n in (it.get("notes") or [])[:3]:
+            notes_html += f"""
+              <div style='background:#f8fafc;border-left:3px solid {BRAND_BLUE};padding:8px 12px;margin:6px 0;border-radius:4px;'>
+                <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;'>Day {n['day']} · {n.get('focus','')}</p>
+                <p style='margin:0;color:#0f172a;font-size:14px;font-style:italic;'>"{n['note']}"</p>
+              </div>
+            """
+        photos_html = ""
+        for p in (it.get("photos") or [])[:3]:
+            photos_html += f"<img src='{p}' alt='' width='110' height='110' style='display:inline-block;width:110px;height:110px;object-fit:cover;border-radius:6px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.08);margin-right:6px;' />"
+        next_html = ""
+        if it.get("next_focus"):
+            next_html = f"""
+              <p style='margin:12px 0 0 0;color:{BRAND_DARK};font-size:14px;'>
+                <span style='color:#64748b;font-weight:900;text-transform:uppercase;letter-spacing:.06em;font-size:11px;'>Up next:</span>
+                <strong>{it['next_focus']}</strong>
+              </p>
+            """
+        rows.append(f"""
+          <div style='border:1px solid #e2e8f0;border-radius:10px;padding:18px;margin:14px 0;background:#fff;'>
+            <p style='margin:0 0 4px 0;color:#64748b;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;'>{it.get('dog_name','')}</p>
+            <h3 style='margin:0 0 8px 0;color:{BRAND_DARK};font-size:18px;font-weight:900;'>{it.get('hw_title','')}</h3>
+            <p style='margin:0 0 10px 0;color:#475569;font-size:14px;'>
+              {streak_chip} <span style='color:#64748b;'>{progress} · {this_week}</span>
+            </p>
+            {photos_html and f"<div style='margin:10px 0;'>{photos_html}</div>" or ""}
+            {notes_html and f"<div style='margin-top:8px;'>{notes_html}</div>" or ""}
+            {next_html}
+          </div>
+        """)
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    intro = (
+        f"Hi {first_name}, here's your weekly training round-up for "
+        f"<strong>{week_start} → {week_end}</strong>. Keep stacking days — your dog notices."
+    )
+    html = _wrap(
+        title=f"🐾 Weekly Training Recap · {len(items)} plan{'s' if len(items)!=1 else ''} in flight",
+        intro=intro,
+        rows=[],  # custom body below
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+        body_html="".join(rows),
+    )
+    subject = f"Weekly training recap · {len(items)} plan{'s' if len(items)!=1 else ''} 🐾"
+    return bool(await _send(to_email, subject, html))
+
+
+async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, review_note: str, client: dict) -> None:
+    """Tell the client whether their Day-N submission was approved or needs a redo."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    first_name = (client.get('name') or 'there').split(' ')[0]
+    if action == "approved":
+        emoji = "✅"
+        verb = "approved your Day {n} check-in"
+        body_intro = (
+            f"Great work, {first_name}! Your trainer just <strong>approved Day {day_number}</strong> "
+            f"for <strong>{hw.get('dog_name', 'your pup')}</strong>. Day {day_number + 1} is now unlocked."
+        )
+    else:
+        emoji = "↩️"
+        verb = "asked you to redo Day {n}"
+        body_intro = (
+            f"Hi {first_name}, your trainer sent <strong>Day {day_number}</strong> back for a redo. "
+            f"Check the note below and re-submit when you're ready."
+        )
+    rows = [
+        ("Dog", hw.get("dog_name", "—")),
+        ("Plan", hw.get("title", "—")),
+        ("Day", f"Day {day_number} of {hw.get('total_days') or '?'}"),
+    ]
+    if review_note:
+        note = review_note if len(review_note) <= 400 else review_note[:400] + "…"
+        rows.append(("Note from your trainer", note))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    html = _wrap(
+        title=f"{emoji} {verb.format(n=day_number)} · {hw.get('dog_name','')}",
+        intro=body_intro,
+        rows=rows,
+        cta_text="Open Portal" if cta_url else None,
+        cta_url=cta_url,
+    )
+    subject = (
+        f"Day {day_number} approved · {hw.get('dog_name','')}"
+        if action == "approved"
+        else f"Day {day_number} needs a redo · {hw.get('dog_name','')}"
+    )
+    await _send(to_email, subject, html)
 
 
 async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
