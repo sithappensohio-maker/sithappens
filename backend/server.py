@@ -6561,6 +6561,163 @@ async def admin_backup_status(_: dict = Depends(require_admin)):
     return {"last": last, "history": history}
 
 
+@api.get("/admin/backup/detect-drives")
+async def admin_backup_detect_drives(_: dict = Depends(require_admin)):
+    """Scan common host-mount paths (`/run/media/*/*`, `/media/*/*`, `/mnt/*`)
+    plus `/proc/mounts` to find external/host disks the backend can actually
+    write to. Bazzite (and any GNOME-based distro) auto-mounts USB drives
+    via udisks2 to `/run/media/$USER/<LABEL>` — so once the container has
+    `/run/media:/run/media:rslave` bind-mounted, plugging in a drive Just
+    Works and shows up here automatically.
+
+    Returns:
+      - host_mount_visible: bool — is /run/media (or /media) bind-mounted into the container?
+      - drives: list of {path, fs_type, fs_source, free_bytes, writable, recommended}
+      - setup_snippet: the one-time bind-mount command the admin needs to add to their
+        docker run / docker compose to wire host drive discovery in.
+    """
+    import os
+    import shutil
+    from pathlib import Path
+
+    root_dev = os.stat("/").st_dev
+
+    # Parse /proc/mounts once
+    mounts: list = []
+    try:
+        with open("/proc/mounts", "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3:
+                    mounts.append({"source": parts[0], "mountpoint": parts[1], "fs_type": parts[2]})
+    except Exception:
+        pass
+
+    def _mount_info_for(p: str) -> dict:
+        best = -1
+        info = {"fs_type": None, "fs_source": None, "mountpoint": None}
+        for m in mounts:
+            mnt = m["mountpoint"]
+            if p == mnt or p.startswith(mnt.rstrip("/") + "/"):
+                if len(mnt) > best:
+                    best = len(mnt)
+                    info = {"fs_type": m["fs_type"], "fs_source": m["source"], "mountpoint": mnt}
+        return info
+
+    # Candidate roots to scan
+    scan_roots = ["/run/media", "/media", "/mnt", "/host/run/media", "/host/media", "/host/mnt"]
+    candidates: list = []
+    for root in scan_roots:
+        rp = Path(root)
+        if not rp.exists():
+            continue
+        # /run/media has a /run/media/<user>/<label> structure
+        if root in ("/run/media", "/host/run/media"):
+            try:
+                for user_dir in rp.iterdir():
+                    if not user_dir.is_dir():
+                        continue
+                    try:
+                        for drive in user_dir.iterdir():
+                            if drive.is_dir():
+                                candidates.append(drive)
+                    except PermissionError:
+                        continue
+            except Exception:
+                continue
+        else:
+            try:
+                for drive in rp.iterdir():
+                    if drive.is_dir() and not drive.name.startswith("."):
+                        candidates.append(drive)
+            except Exception:
+                continue
+
+    drives: list = []
+    for c in candidates:
+        try:
+            st = os.stat(c)
+        except Exception:
+            continue
+        # Skip anything that's still on the container root fs (i.e. an empty dir
+        # the container itself created, NOT a real host bind-mount).
+        if st.st_dev == root_dev:
+            continue
+        mi = _mount_info_for(str(c))
+        if mi["fs_type"] in ("overlay", "overlayfs", "tmpfs", "aufs"):
+            continue
+        try:
+            du = shutil.disk_usage(str(c))
+            free_bytes, total_bytes = du.free, du.total
+        except Exception:
+            free_bytes, total_bytes = 0, 0
+        writable = os.access(str(c), os.W_OK)
+        # Recommend the largest-free writable drive first.
+        drives.append({
+            "path": str(c),
+            "label": c.name,
+            "fs_type": mi["fs_type"],
+            "fs_source": mi["fs_source"],
+            "mountpoint": mi["mountpoint"] or str(c),
+            "free_bytes": free_bytes,
+            "total_bytes": total_bytes,
+            "writable": writable,
+            "device_id": st.st_dev,
+        })
+
+    # Recommend the writable drive with the most free space
+    drives.sort(key=lambda d: (-int(d["writable"]), -d["free_bytes"]))
+    if drives:
+        drives[0]["recommended"] = True
+
+    # Is /run/media (or /host/run/media) visible as a real host mount?
+    host_mount_visible = any(
+        Path(p).exists() and os.stat(p).st_dev != root_dev
+        for p in ("/run/media", "/host/run/media", "/media", "/host/media")
+    )
+
+    # Setup snippet — Bazzite ships with podman by default but the user said
+    # "we used docker". Include both so they can pick. `rslave` propagation
+    # makes new USB mounts on the host appear inside the container
+    # automatically (without restarting it).
+    setup_snippet_docker_compose = (
+        "services:\n"
+        "  sit-happens-backend:\n"
+        "    # … your existing config …\n"
+        "    volumes:\n"
+        "      - type: bind\n"
+        "        source: /run/media\n"
+        "        target: /run/media\n"
+        "        bind:\n"
+        "          propagation: rslave\n"
+        "      # optional fallback for older systems:\n"
+        "      - /media:/media:rslave\n"
+    )
+    setup_snippet_docker_run = (
+        "docker run \\\n"
+        "  --mount type=bind,src=/run/media,dst=/run/media,bind-propagation=rslave \\\n"
+        "  --mount type=bind,src=/media,dst=/media,bind-propagation=rslave \\\n"
+        "  # … your existing flags … \\\n"
+        "  sit-happens:latest"
+    )
+
+    return {
+        "host_mount_visible": host_mount_visible,
+        "drive_count": len(drives),
+        "drives": drives,
+        "setup_required": not host_mount_visible and not drives,
+        "setup_snippet_docker_compose": setup_snippet_docker_compose,
+        "setup_snippet_docker_run": setup_snippet_docker_run,
+        "setup_help": (
+            "Bazzite (GNOME / udisks2) auto-mounts USB drives to "
+            "/run/media/<user>/<LABEL> on the HOST the moment you plug them "
+            "in. To let the CRM see those drives, bind-mount /run/media into "
+            "this container ONCE. After that, plug in any external drive "
+            "and it will appear here automatically — no further setup."
+        ),
+    }
+
+
 @api.post("/admin/backup/inspect")
 async def admin_backup_inspect(body: dict, _: dict = Depends(require_admin)):
     """Pre-flight check for the configured backup path. Surfaces the REAL
@@ -7495,6 +7652,40 @@ async def startup():
         await seed_trophies_if_empty(db)
     except Exception as exc:
         logger.warning("Trophy seeding failed: %s", exc)
+
+    # Sprint 108c — log which external/host drives are visible to the
+    # container at boot. Helps the admin notice immediately when a Docker
+    # restart lost their bind-mount (without it, backups silently fall back
+    # to container ephemeral storage).
+    try:
+        import os as _os
+        from pathlib import Path as _Path
+        root_dev = _os.stat("/").st_dev
+        found: list = []
+        for root in ("/run/media", "/media", "/mnt"):
+            rp = _Path(root)
+            if not rp.exists():
+                continue
+            try:
+                # /run/media/<user>/<drive>
+                if root == "/run/media":
+                    for u in rp.iterdir():
+                        if u.is_dir():
+                            for d in u.iterdir():
+                                if d.is_dir() and _os.stat(d).st_dev != root_dev:
+                                    found.append(str(d))
+                else:
+                    for d in rp.iterdir():
+                        if d.is_dir() and not d.name.startswith(".") and _os.stat(d).st_dev != root_dev:
+                            found.append(str(d))
+            except Exception:
+                continue
+        if found:
+            logger.info("Auto-backup: %d external drive(s) visible at boot: %s", len(found), ", ".join(found))
+        else:
+            logger.info("Auto-backup: no host-bind-mounted drives visible. If you intend to back up to an external disk, ensure /run/media is bind-mounted into this container (see Settings → Backups → First-time setup).")
+    except Exception as exc:
+        logger.warning("Drive auto-detect at startup failed: %s", exc)
 
 
 @app.on_event("shutdown")

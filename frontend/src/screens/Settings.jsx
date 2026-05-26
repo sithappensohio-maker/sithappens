@@ -1035,6 +1035,7 @@ function AutoBackupPanel() {
   const [running, setRunning] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [inspect, setInspect] = useState(null);
+  const [detect, setDetect] = useState(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
@@ -1050,6 +1051,12 @@ function AutoBackupPanel() {
       const st = await api.get("/admin/backup/status");
       setLast(st.data.last);
       setHistory(st.data.history || []);
+      // Auto-discover external drives every time the panel opens so the admin
+      // doesn't have to click anything to see "plug in your drive, here it is".
+      try {
+        const d = await api.get("/admin/backup/detect-drives");
+        setDetect(d.data);
+      } catch { /* non-fatal */ }
     } catch (e) { setErr(e.response?.data?.detail || "Couldn't load"); }
   };
   useEffect(() => { loadAll(); }, []);
@@ -1119,6 +1126,68 @@ function AutoBackupPanel() {
       <p className="text-[14px] text-gray-300 leading-relaxed mb-4">
         Set a path on your external disk (e.g. <code className="text-shBlue">/mnt/backup/sit-happens</code>) and a time of day. The system will write a gzipped JSON of <strong>every collection</strong> there once per day. Old snapshots beyond the retention window are auto-pruned. You'll get an email if anything fails.
       </p>
+
+      {detect && (detect.drive_count > 0 || detect.setup_required) && (
+        <div className="bg-bgBase border border-shBlue/40 rounded p-3 mb-4" data-testid="auto-backup-detect">
+          {detect.drive_count > 0 ? (
+            <>
+              <p className="text-[12px] font-black text-shBlue uppercase tracking-widest mb-2">
+                <i className="fas fa-hard-drive mr-2"/>Detected external drives ({detect.drive_count})
+              </p>
+              <p className="text-[12px] text-gray-400 mb-2">
+                Bazzite auto-mounts USB drives on plug-in. Click one to use it.
+              </p>
+              <div className="space-y-1.5">
+                {detect.drives.map((d, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    data-testid={`auto-backup-drive-${i}`}
+                    onClick={() => setCfg(c => ({ ...c, auto_backup_path: `${d.path}/sit-happens-backups` }))}
+                    className={`w-full text-left px-3 py-2 rounded border transition flex flex-wrap items-center gap-2 ${
+                      d.recommended ? "bg-shGreen/10 border-shGreen/60 hover:bg-shGreen/20" : "bg-bgPanel border-bgHover hover:border-shBlue"
+                    }`}>
+                    {d.recommended && <span className="px-1.5 py-0.5 rounded bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[10px]">Recommended</span>}
+                    <span className="font-mono text-white text-[13px]">{d.path}</span>
+                    <span className="text-[11px] text-gray-400 font-mono">
+                      {d.fs_type || "fs?"} · {fmtBytes(d.free_bytes)} free
+                    </span>
+                    {!d.writable && <span className="text-red-300 text-[10px] font-black uppercase tracking-widest">read-only</span>}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-2">
+                <i className="fas fa-circle-info mr-1"/>
+                Don't see your drive? Plug it in — Bazzite auto-mounts to <code className="text-shBlue">/run/media/&lt;you&gt;/&lt;label&gt;</code> — then click <em>Verify Path</em> below to refresh.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-[12px] font-black text-yellow-300 uppercase tracking-widest mb-2">
+                <i className="fas fa-triangle-exclamation mr-2"/>First-time setup needed
+              </p>
+              <p className="text-[13px] text-gray-300 leading-relaxed mb-2">
+                The CRM container can't see any of your external drives yet. {detect.setup_help}
+              </p>
+              <details className="mb-1" data-testid="auto-backup-setup-compose">
+                <summary className="text-[12px] font-black text-shBlue uppercase tracking-widest cursor-pointer hover:text-white">
+                  Docker Compose (recommended for Bazzite auto-start)
+                </summary>
+                <pre className="bg-bgHeader text-shGreen text-[12px] p-3 rounded mt-1 overflow-x-auto whitespace-pre-wrap font-mono">{detect.setup_snippet_docker_compose}</pre>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Edit your <code className="text-shBlue">docker-compose.yml</code>, run <code className="text-shBlue">docker compose up -d</code> once, then plug in any drive — it'll show up here on next page load.
+                </p>
+              </details>
+              <details data-testid="auto-backup-setup-run">
+                <summary className="text-[12px] font-black text-shBlue uppercase tracking-widest cursor-pointer hover:text-white">
+                  Plain <code>docker run</code> alternative
+                </summary>
+                <pre className="bg-bgHeader text-shGreen text-[12px] p-3 rounded mt-1 overflow-x-auto whitespace-pre-wrap font-mono">{detect.setup_snippet_docker_run}</pre>
+              </details>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
         <label className="block md:col-span-2">

@@ -201,3 +201,33 @@ def test_run_now_response_includes_mount_diagnostics(admin_headers, configure_ba
     s = requests.get(f"{BASE}/api/admin/backup/status", headers=admin_headers, timeout=15).json()
     assert "mountpoint" in s["last"]
     assert "fs_type" in s["last"]
+
+
+
+def test_detect_drives_endpoint_shape(admin_headers):
+    """Sprint 108c — GET /admin/backup/detect-drives must return the
+    auto-discovery payload (drives list + setup snippets) so the Settings
+    UI can render a 'Detected drives' picker and a first-time-setup wizard."""
+    r = requests.get(f"{BASE}/api/admin/backup/detect-drives", headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # Shape contract — every field the UI consumes must exist
+    assert "host_mount_visible" in data
+    assert "drive_count" in data
+    assert isinstance(data["drives"], list)
+    assert "setup_required" in data
+    assert data["setup_snippet_docker_compose"]
+    assert "/run/media" in data["setup_snippet_docker_compose"]
+    assert "rslave" in data["setup_snippet_docker_compose"]
+    assert data["setup_snippet_docker_run"]
+    assert "docker run" in data["setup_snippet_docker_run"]
+    assert data["setup_help"]
+    # Each drive (if any are found) must have the keys the picker needs
+    for d in data["drives"]:
+        for key in ("path", "fs_type", "free_bytes", "writable"):
+            assert key in d, f"drive entry missing {key}: {d}"
+
+
+def test_detect_drives_admin_only():
+    r = requests.get(f"{BASE}/api/admin/backup/detect-drives", timeout=15)
+    assert r.status_code in (401, 403)
