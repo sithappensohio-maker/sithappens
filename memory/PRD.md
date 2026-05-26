@@ -1312,7 +1312,23 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 108c — Auto-Backup Drive Auto-Discovery + Startup Logging (2026-02)
+## Sprint 109 — Today's Plan unified form (steps + fields + submit in ONE card) (2026-02)
+- ✅ **User asked**: "clients shouldn't be ok to mark today's plan done until the corresponding homework is filled out" — chose option **C: single-form merge**, fold the day's fields right into the Today's Plan card so checking steps and filling fields happens in one place.
+- ✅ **`TodayPlanCard.jsx` rewritten** as the SOLE place to complete the current actionable day. Now renders, in one card, in order:
+  - Per-step checklist (live-toggles via `/homework/{id}/day/{n}/toggle-step` — instant progress dopamine, no submit needed)
+  - "Today's homework" section: mood selector (1-5 emoji), every templated field (`reps`/`sets`/`duration_min`/`success_rate`/`rating_5`/`text`/`longtext`/`checkbox`/`mood_5`), optional note textarea, optional photo upload
+  - **"Mark Day Complete"** button — replaces the old "auto-submit when all steps checked" behavior with an explicit, user-controlled submission
+- ✅ **Submit-gating logic** (`blockReason()`): the button is disabled (and shows the precise reason as a `data-testid` text) until ALL of:
+  - Every step is checked (`"Check off every step first"`)
+  - Mood is selected (`"Pick how today went (mood)"`)
+  - Every non-checkbox field has a value (`"Fill in \"{label}\""`)
+  Then submit POSTs the combined payload to `/homework/{id}/day/{n}/submit` (existing endpoint, no backend change).
+- ✅ **`DailyCheckInCard.jsx` suppresses the duplicate "today's day" filling pane** via the new `hideActionableForm` prop. The auto-open of `available`/`needs_redo` days is short-circuited, and `DayRow` no-ops the `actionable` flag for those statuses so the inputs don't render twice. History rows (`approved`/`submitted`/`rest`) still open normally for review-note + question-thread viewing.
+- ✅ **`Portal.jsx` wires `hideActionableForm={true}`** on every `DailyCheckInCard` mount for daily-tracker homework — so the standalone homework card below now only shows historical days, never duplicating the active form that's at the top in Today's Plan.
+- ✅ **All 26 existing homework + daily-tracker pytests still pass** (no backend changes were needed — the submit endpoint and shape were already correct).
+- ✅ **Smoke-tested via Playwright**: `today-plan-card`, `today-plan-form-*`, `today-plan-mood-*`, and `today-plan-submit-*` all present in the rendered client portal for `testclient@sithappens.com`.
+
+
 - ✅ **Question from admin:** "can we code this in to auto mount the disks on start up automatically since our app just auto starts" — they run via Docker on Bazzite (auto-starts on boot). Because the container is **non-privileged**, the backend itself cannot mount drives; the right answer is to let the host (Bazzite's GNOME/udisks2) auto-mount USB drives — which it already does at `/run/media/<user>/<LABEL>` — and to bind-mount that path into the container so the CRM can simply *see* whatever's been plugged in.
 - ✅ **New endpoint** `GET /api/admin/backup/detect-drives` — at the moment the Settings panel opens (no button press needed), the backend scans `/run/media/*/*`, `/media/*`, `/mnt/*`, and `/host/run/media/*/*`, filters out anything still on the container's overlay (i.e. empty dirs the container itself created), looks up fs type / fs source / free space from `/proc/mounts`, marks the largest writable drive as `recommended`, and returns either a list of one-click drives OR a `setup_required: true` flag with ready-to-paste Docker Compose **and** plain `docker run` snippets (both using `rslave` propagation so newly plugged USB drives appear live without restarting the container).
 - ✅ **Settings UI** — `AutoBackupPanel` now auto-runs `detect-drives` on mount and renders, just above the path input:

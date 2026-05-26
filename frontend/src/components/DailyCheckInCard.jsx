@@ -27,7 +27,7 @@ const VIDEO_MAX_MB = 15;
  * questions to the trainer, and a "download certificate" CTA when the plan
  * is complete.
  */
-export default function DailyCheckInCard({ homeworkId, onChanged }) {
+export default function DailyCheckInCard({ homeworkId, onChanged, hideActionableForm = false }) {
   const [hw, setHw] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -50,7 +50,9 @@ export default function DailyCheckInCard({ homeworkId, onChanged }) {
       const { data } = await api.get(`/homework/${homeworkId}`);
       setHw(data);
       const next = (data.daily_progress || []).find(p => p.status === "available" || p.status === "needs_redo");
-      if (next && openDay === null) {
+      // Sprint 109 — when Today's Plan card now hosts the actionable day's form,
+      // don't auto-open it here too (would render the same form twice).
+      if (next && openDay === null && !hideActionableForm) {
         setOpenDay(next.day_number);
         if (next.log) {
           const fv = { ...(next.log.field_values || {}) };
@@ -239,6 +241,7 @@ export default function DailyCheckInCard({ homeworkId, onChanged }) {
             onAsk={(t) => askQuestion(day.day_number, t)}
             busy={busy}
             err={err}
+            hideActionableForm={hideActionableForm}
           />
         ))}
       </div>
@@ -248,7 +251,7 @@ export default function DailyCheckInCard({ homeworkId, onChanged }) {
   );
 }
 
-function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood, note, setNote, photo, setPhoto, videoId, videoName, setVideoId, setVideoName, uploadingVideo, homeworkId, onPickPhoto, onPickVideo, onSubmit, onMarkRest, onAsk, busy, err }) {
+function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood, note, setNote, photo, setPhoto, videoId, videoName, setVideoId, setVideoName, uploadingVideo, homeworkId, onPickPhoto, onPickVideo, onSubmit, onMarkRest, onAsk, busy, err, hideActionableForm = false }) {
   const statusMeta = {
     locked:     { color: "border-bgHover bg-bgBase/40 text-gray-500", icon: "fa-lock",          label: "Locked",              actionable: false },
     available:  { color: "border-shGreen/50 bg-bgBase",               icon: "fa-circle-play",   label: "Ready to log",        actionable: true  },
@@ -258,6 +261,12 @@ function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood
     rest:       { color: "border-shBlue/40 bg-shBlue/5",              icon: "fa-bed",           label: "Rest day",            actionable: false },
     needs_redo: { color: "border-red-500/40 bg-red-500/5",            icon: "fa-rotate-left",   label: "Needs redo",          actionable: true  },
   }[day.status] || { color: "border-bgHover bg-bgBase", icon: "fa-circle", label: day.status };
+  // Sprint 109 — when Today's Plan owns the actionable day form, this row
+  // should NOT show the form. We still let it open to show review notes /
+  // question thread, just not the inputs.
+  if (hideActionableForm && statusMeta.actionable) {
+    statusMeta.actionable = false;
+  }
   const log = day.log;
   const reviewerNote = log?.review_note;
   const logMood = Number(log?.field_values?.__mood) || 0;

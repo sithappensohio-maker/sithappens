@@ -1186,7 +1186,7 @@ export default function Portal() {
                     </div>
                     {h.daily_tracker && h.status !== "completed" && (
                       <div className="mt-4 pt-4 border-t border-bgHover">
-                        <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} />
+                        <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
                       </div>
                     )}
                     {hasTemplate && !h.daily_tracker && h.status !== "completed" && (

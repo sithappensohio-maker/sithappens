@@ -1,32 +1,66 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
+const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
+const MOOD_LABEL = ["", "Rough", "Tricky", "OK", "Strong", "Awesome"];
+
+const KIND_META = {
+  reps:         { unit: "reps",   type: "number" },
+  sets:         { unit: "sets",   type: "number" },
+  duration_sec: { unit: "sec",    type: "number" },
+  duration_min: { unit: "min",    type: "number" },
+  distance_ft:  { unit: "ft",     type: "number" },
+  success_rate: { unit: "%",      type: "number", min: 0, max: 100 },
+  rating_5:     { unit: "/ 5",    type: "number", min: 1, max: 5 },
+  mood_5:       { type: "mood" },
+  checkbox:     { type: "checkbox" },
+  text:         { type: "text" },
+  longtext:     { type: "longtext" },
+};
+
 /**
- * Sprint 103 — Today's Plan: a single unified checklist for the client portal
- * that pulls today's available day from every active daily-tracker homework
- * and lets the client tick steps off without drilling into each tracker.
+ * Sprint 109 — Today's Plan: a single UNIFIED card for the client portal that
+ * folds steps + homework fields + mood + photo + note + submit into one place.
+ * Steps tick live (instant progress), but the day isn't COMPLETE until the
+ * client fills out the required fields and hits "Mark Day Complete".
  *
- * Auto-submits the day when all steps are checked; surfaces a Catch-Up modal
- * if the client missed yesterday.
- *
- * Props:
- *   onChanged — optional callback after any state change (used to refresh
- *               the parent portal so other tiles update too).
+ * Replaces the previous "TodayPlan steps only / DailyCheckInCard fields"
+ * split — the homework's actionable day no longer renders twice.
  */
 export default function TodayPlanCard({ onChanged }) {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(null); // `${hwid}:${stepid}`
   const [err, setErr] = useState("");
-  const [catchUpFor, setCatchUpFor] = useState(null); // { homework_id, missed_day_number, dog_name, title }
+  const [catchUpFor, setCatchUpFor] = useState(null);
+  // Per-homework form state. Key: homework_id → { values, mood, photo, note, submitting }
+  const [forms, setForms] = useState({});
 
   const load = async () => {
     try {
       const r = await api.get("/portal/today-plan");
       setData(r.data);
+      // Pre-fill form state from any existing in-progress log so refreshing
+      // doesn't wipe what they typed.
+      const next = {};
+      for (const it of r.data.items || []) {
+        const prev = forms[it.homework_id] || {};
+        next[it.homework_id] = {
+          values: prev.values || {},
+          mood: prev.mood ?? 0,
+          photo: prev.photo || "",
+          note: prev.note || "",
+          submitting: false,
+        };
+      }
+      setForms(next);
       setErr("");
     } catch (e) { setErr(e.response?.data?.detail || "Couldn't load today's plan"); }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  const patchForm = (hwId, patch) => {
+    setForms((f) => ({ ...f, [hwId]: { ...(f[hwId] || {}), ...patch } }));
+  };
 
   const toggleStep = async (item, step) => {
     setBusy(`${item.homework_id}:${step.id}`);
@@ -55,7 +89,67 @@ export default function TodayPlanCard({ onChanged }) {
     } catch (e) { setErr(e.response?.data?.detail || "Couldn't apply catch-up"); }
   };
 
-  if (!data || data.count === 0) return null; // hide entirely when no active trackers
+  const onPickPhoto = (hwId, e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => patchForm(hwId, { photo: reader.result || "" });
+    reader.readAsDataURL(f);
+  };
+
+  // What blocks the day from being submittable? Returns "" if good to go, or a
+  // human-readable reason.
+  const blockReason = (item, form) => {
+    const allStepsDone = (item.steps || []).every(s => s.done);
+    if (item.steps?.length && !allStepsDone) return "Check off every step first";
+    // Mood is collected on every submission unless mood_5 is already a field
+    const hasMoodField = (item.fields || []).some(f => f.kind === "mood_5");
+    if (!hasMoodField && !form.mood) return "Pick how today went (mood)";
+    for (const f of item.fields || []) {
+      const v = f.kind === "mood_5" ? form.mood : form.values?.[f.id];
+      const km = KIND_META[f.kind] || {};
+      const isEmpty = v === undefined || v === "" || v === null ||
+                      (km.type === "number" && Number.isNaN(Number(v)));
+      // Only checkbox is allowed to be "false". Everything else must have a value.
+      if (km.type === "checkbox") continue;
+      if (isEmpty) return `Fill in "${f.label || f.kind}"`;
+    }
+    return "";
+  };
+
+  const submitDay = async (item) => {
+    const form = forms[item.homework_id] || {};
+    const reason = blockReason(item, form);
+    if (reason) { setErr(reason); return; }
+    patchForm(item.homework_id, { submitting: true });
+    setErr("");
+    try {
+      const field_values = {};
+      for (const f of item.fields || []) {
+        const v = f.kind === "mood_5" ? form.mood : form.values?.[f.id];
+        if (v === undefined || v === "" || v === null) continue;
+        const km = KIND_META[f.kind] || {};
+        if (km.type === "number") field_values[f.id] = Number(v);
+        else if (km.type === "checkbox") field_values[f.id] = !!v;
+        else field_values[f.id] = v;
+      }
+      await api.post(`/homework/${item.homework_id}/day/${item.day_number}/submit`, {
+        field_values,
+        note: form.note || "",
+        mood: form.mood || null,
+        photo: form.photo || "",
+        video_media_id: "",
+      });
+      await load();
+      onChanged?.();
+    } catch (e) {
+      setErr(e.response?.data?.detail || "Submit failed");
+    } finally {
+      patchForm(item.homework_id, { submitting: false });
+    }
+  };
+
+  if (!data || data.count === 0) return null;
 
   return (
     <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 mb-5 shadow-lg" data-testid="today-plan-card">
@@ -148,7 +242,7 @@ export default function TodayPlanCard({ onChanged }) {
               ) : null}
 
               {item.steps.length === 0 ? (
-                <p className="text-[14px] text-gray-500 italic mt-1">No checklist steps on this day — open the homework card below to log fields.</p>
+                <p className="text-[14px] text-gray-500 italic mt-1">No checklist steps on this day — fill in the homework below.</p>
               ) : (
                 <div className="space-y-1.5 mt-1">
                   {item.status !== "submitted" && (
@@ -179,9 +273,19 @@ export default function TodayPlanCard({ onChanged }) {
                 </div>
               )}
 
-              {item.all_done && item.status === "submitted" && (
-                <p className="text-[13px] text-shGreen mt-2 font-black uppercase tracking-widest"><i className="fas fa-paper-plane mr-1"/>All steps done — auto-submitted!</p>
+              {/* Inline homework form — fields + mood + photo + note + submit.
+                  Hidden once submitted/needs_redo flips back to submitted. */}
+              {item.status !== "submitted" && (
+                <InlineHomeworkForm
+                  item={item}
+                  form={forms[item.homework_id] || {}}
+                  patch={(p) => patchForm(item.homework_id, p)}
+                  onPickPhoto={(e) => onPickPhoto(item.homework_id, e)}
+                  blockReason={blockReason(item, forms[item.homework_id] || {})}
+                  onSubmit={() => submitDay(item)}
+                />
               )}
+
             </div>
           );
         })}
@@ -239,3 +343,141 @@ function CatchUpOption({ busy, onClick, icon, title, subtitle, testid }) {
     </button>
   );
 }
+
+
+function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSubmit }) {
+  const hwId = item.homework_id;
+  const hasMoodField = (item.fields || []).some(f => f.kind === "mood_5");
+  const submitting = !!form.submitting;
+  const disabled = !!blockReason || submitting;
+  return (
+    <div className="mt-4 pt-4 border-t border-bgHover space-y-3" data-testid={`today-plan-form-${hwId}`}>
+      <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+        <i className="fas fa-pen-to-square mr-1"/>Today's homework
+      </p>
+
+      {!hasMoodField && (
+        <MoodRow value={form.mood || 0} onChange={(v) => patch({ mood: v })} testid={`today-plan-mood-${hwId}`} />
+      )}
+
+      {(item.fields || []).map((f) => (
+        <FieldInput key={f.id}
+                    field={f}
+                    hwId={hwId}
+                    value={f.kind === "mood_5" ? (form.mood || 0) : (form.values?.[f.id] ?? "")}
+                    onChange={(v) => {
+                      if (f.kind === "mood_5") patch({ mood: v });
+                      else patch({ values: { ...(form.values || {}), [f.id]: v } });
+                    }} />
+      ))}
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note for your trainer (optional)</label>
+        <textarea value={form.note || ""} onChange={(e) => patch({ note: e.target.value })}
+                  rows={2}
+                  data-testid={`today-plan-note-${hwId}`}
+                  placeholder="Anything tricky? Wins? Questions?"
+                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+      </div>
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest block">Photo (optional)</label>
+        {form.photo ? (
+          <div className="mt-1 relative inline-block">
+            <img src={form.photo} alt="" className="max-h-24 rounded border border-bgHover" />
+            <button onClick={() => patch({ photo: "" })}
+                    data-testid={`today-plan-photo-clear-${hwId}`}
+                    className="absolute top-1 right-1 bg-black/80 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px]">
+              <i className="fas fa-times"/>
+            </button>
+          </div>
+        ) : (
+          <label className="mt-1 inline-flex items-center gap-2 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-gray-300 font-black uppercase tracking-widest hover:border-shBlue cursor-pointer"
+                 data-testid={`today-plan-photo-pick-${hwId}`}>
+            <i className="fas fa-camera"/>Add photo
+            <input type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
+          </label>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+        {blockReason && (
+          <span className="text-[12px] text-gray-400 italic" data-testid={`today-plan-block-${hwId}`}>
+            <i className="fas fa-lock mr-1"/>{blockReason}
+          </span>
+        )}
+        <button onClick={onSubmit}
+                disabled={disabled}
+                data-testid={`today-plan-submit-${hwId}`}
+                className="bg-shGreen text-bgHeader px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50 disabled:cursor-not-allowed">
+          <i className={`fas ${submitting ? "fa-spinner fa-spin" : "fa-paper-plane"} mr-2`}/>
+          {submitting ? "Sending…" : "Mark Day Complete"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function MoodRow({ value, onChange, testid }) {
+  return (
+    <div>
+      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">How did it go?</label>
+      <div className="flex gap-1.5 mt-1" data-testid={testid}>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} onClick={() => onChange(n)} type="button"
+                  data-testid={`${testid}-${n}`}
+                  className={`flex-1 py-2 rounded border text-center transition ${value === n ? "border-shGreen bg-shGreen/15" : "border-bgHover hover:border-shGreen/50"}`}>
+            <div className="text-xl leading-none">{MOOD_EMOJI[n]}</div>
+            <div className={`text-[10px] font-black uppercase tracking-widest mt-0.5 ${value === n ? "text-shGreen" : "text-gray-500"}`}>{MOOD_LABEL[n]}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FieldInput({ field, hwId, value, onChange }) {
+  const km = KIND_META[field.kind] || { type: "text" };
+  const label = (
+    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">
+      {field.label || field.kind}
+      {km.unit && <span className="text-gray-600 normal-case ml-1">({km.unit})</span>}
+    </label>
+  );
+  const tid = `today-plan-field-${hwId}-${field.id}`;
+  if (km.type === "mood") {
+    return <MoodRow value={Number(value) || 0} onChange={onChange} testid={tid} />;
+  }
+  if (km.type === "checkbox") {
+    return (
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)}
+               data-testid={tid}
+               className="accent-shGreen w-4 h-4" />
+        <span className="text-[14px] text-white">{field.label || field.kind}</span>
+      </label>
+    );
+  }
+  if (km.type === "longtext") {
+    return (
+      <div>
+        {label}
+        <textarea value={value || ""} onChange={(e) => onChange(e.target.value)} rows={2}
+                  data-testid={tid}
+                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+      </div>
+    );
+  }
+  return (
+    <div>
+      {label}
+      <input type={km.type === "number" ? "number" : "text"}
+             value={value ?? ""}
+             onChange={(e) => onChange(e.target.value)}
+             min={km.min} max={km.max}
+             data-testid={tid}
+             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+    </div>
+  );
+}
+
