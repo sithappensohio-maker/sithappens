@@ -956,8 +956,8 @@ export default function Portal() {
                            : "from-shGreen/15 to-shBlue/10 border-shGreen/40 hover:border-shGreen/60"}`}>
                     {client?.photo_gallery_has_new && (
                       <span data-testid="portal-gallery-new-badge"
-                            className="absolute -top-2 -right-2 flex items-center gap-1 bg-shOrange text-bgHeader text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full shadow-lg animate-pulse z-10">
-                        <i className="fas fa-bell text-[9px]"/> New
+                            className="absolute top-2 right-2 flex items-center gap-1.5 bg-shOrange text-bgHeader text-[12px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-[0_0_12px_rgba(255,138,0,0.8)] animate-pulse z-10 ring-2 ring-shOrange/40">
+                        <i className="fas fa-bell text-[10px]"/>New photos!
                       </span>
                     )}
                     <a href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
@@ -971,7 +971,7 @@ export default function Portal() {
                        className="flex items-start gap-3 px-3 py-3 hover:bg-white/[0.03] transition group">
                       <i className={`fas fa-camera-retro text-2xl w-7 text-center mt-0.5 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
                       <div className="flex-1 min-w-0 text-left">
-                        <div className="text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2">
+                        <div className={`text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2 ${client?.photo_gallery_has_new ? "pr-32" : ""}`}>
                           See Your Pup In Action
                           <span className="text-[12px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
                         </div>
