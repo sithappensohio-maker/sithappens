@@ -378,6 +378,8 @@ class BookingOut(BaseModel):
     # count, credits used, billed nights, per-night rate and total charge so
     # admin UI / income reports can render the extension cleanly.
     extra_nights: Optional[Dict[str, Any]] = None
+    # Sprint 110 — multi-dog household discount applied at check-out.
+    multi_dog_discount: Optional[Dict[str, Any]] = None
     # Sprint 94 — silent audit: who/where the check-in / check-out happened.
     checked_in_by: Optional[str] = None
     checked_in_by_name: Optional[str] = None
@@ -2301,6 +2303,104 @@ async def check_in(
     booking.update(update)
     return booking
 
+async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Sprint 110 — return the dollar discount that should apply to the
+    booking being checked out, given the multi-dog household setting.
+
+    Rules:
+      - Setting must be enabled.
+      - Discount applies ONLY if the same client has at least one other
+        booking on the same date that's already been checked out (status
+        completed, has checked_out_at) and is NOT this booking.
+      - First dog full price → subsequent dogs (in checkout order) discounted.
+      - `percent` mode = % off the booking's pre-discount actual_price.
+      - `flat`    mode = a fixed $ amount.
+    """
+    settings = await get_settings()
+    if not settings.get("multi_dog_discount_enabled"):
+        return None
+    mode = (settings.get("multi_dog_discount_mode") or "percent").lower()
+    if mode not in ("percent", "flat"):
+        return None
+    value = float(settings.get("multi_dog_discount_value") or 0)
+    if value <= 0:
+        return None
+
+    client_id = booking.get("client_id")
+    booking_date = booking.get("date")
+    if not client_id or not booking_date:
+        return None
+
+    # Count this client's OTHER bookings on the same date that have already
+    # been checked out (i.e. the first dog of the day has paid full price).
+    sibling_q = {
+        "client_id": client_id,
+        "date": booking_date,
+        "status": "completed",
+        "checked_out_at": {"$exists": True, "$ne": None},
+    }
+    if exclude_id:
+        sibling_q["id"] = {"$ne": exclude_id}
+    sibling_count = await db.bookings.count_documents(sibling_q)
+    if sibling_count < 1:
+        return None
+
+    base_price = float(booking.get("actual_price") or 0)
+    if base_price <= 0:
+        return None
+    if mode == "percent":
+        # Clamp 0-100 just in case the admin typo'd.
+        pct = max(0.0, min(100.0, value))
+        amount = round(base_price * pct / 100.0, 2)
+    else:
+        amount = round(min(base_price, value), 2)
+    label = settings.get("multi_dog_discount_label") or "Multi-dog discount"
+    return {
+        "amount": amount,
+        "mode": mode,
+        "value": value,
+        "label": label,
+        "sibling_count": sibling_count,
+    }
+
+
+@api.get("/bookings/{booking_id}/discount-preview")
+async def discount_preview(booking_id: str, _: dict = Depends(require_employee_or_admin)):
+    """Pre-checkout preview of the multi-dog discount that WILL apply at
+    check-out time, given the current siblings already checked out today
+    and the configured base/service price. Used by the checkout modal so
+    the client sees the discount BEFORE submit."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    # Resolve a tentative price the same way check_out() would.
+    tentative_price = float(booking.get("actual_price") or 0)
+    if tentative_price <= 0:
+        default_svc = await db.services.find_one(
+            {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+            {"_id": 0},
+        )
+        if default_svc:
+            unit = float(default_svc.get("base_price") or 0)
+            if booking.get("service_type") == "boarding":
+                try:
+                    s = date.fromisoformat(booking.get("date"))
+                    e = date.fromisoformat(booking.get("end_date") or booking.get("date"))
+                    nights = max(1, (e - s).days or 1)
+                except Exception:
+                    nights = 1
+                tentative_price = unit * nights
+            else:
+                tentative_price = unit
+    preview_booking = {**booking, "actual_price": round(tentative_price, 2)}
+    disc = await _compute_multi_dog_discount(preview_booking, exclude_id=booking_id)
+    return {
+        "eligible": bool(disc and disc["amount"] > 0),
+        "preview_base_price": round(tentative_price, 2),
+        "discount": disc,
+    }
+
+
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
 async def check_out(
     booking_id: str,
@@ -2537,6 +2637,36 @@ async def check_out(
         # Add-ons stack on top of whatever the base ended up being.
         prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
         update["actual_price"] = round(prev_price + add_on_total, 2)
+
+    # ── Sprint 110: multi-dog household discount.
+    # Auto-applied to the 2nd-and-later dog of the same client on the same
+    # date. The first dog checked out that day pays full price; subsequent
+    # checkouts get the configured percent-or-flat discount. We compute it
+    # AFTER add-ons + extra nights but BEFORE finalizing payment, so the
+    # discount is visible as its own line on the receipt.
+    multi_dog_discount_amount = 0.0
+    if (update.get("actual_price") or 0) > 0:
+        try:
+            # Pass the merged view (booking + update) so the discount calc
+            # sees the price we're ABOUT to commit, not the pre-checkout value.
+            merged_for_discount = {**booking, **update}
+            discount = await _compute_multi_dog_discount(merged_for_discount, exclude_id=booking_id)
+            if discount and discount["amount"] > 0:
+                multi_dog_discount_amount = round(discount["amount"], 2)
+                prev_price = float(update.get("actual_price") or 0)
+                new_price = max(0.0, round(prev_price - multi_dog_discount_amount, 2))
+                update["actual_price"] = new_price
+                update["multi_dog_discount"] = {
+                    "amount": multi_dog_discount_amount,
+                    "mode": discount["mode"],
+                    "value": discount["value"],
+                    "label": discount["label"],
+                    "based_on_price": prev_price,
+                    "sibling_count": discount["sibling_count"],
+                    "applied_at": ts,
+                }
+        except Exception as exc:
+            logger.warning("multi-dog discount calc failed for %s: %s", booking_id, exc)
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
@@ -2851,6 +2981,12 @@ class SettingsIn(BaseModel):
     auto_backup_path: Optional[str] = None      # absolute path on host (e.g. /mnt/backup/sit-happens)
     auto_backup_hour: Optional[int] = None      # 0-23 server-local hour to fire daily
     auto_backup_retention_days: Optional[int] = None  # keep this many daily snapshots (default 14)
+    # Sprint 110 — multi-dog household discount (auto-applied at check-out for
+    # the 2nd-and-later dog from the same client on the same date)
+    multi_dog_discount_enabled: Optional[bool] = None
+    multi_dog_discount_mode: Optional[Literal["percent", "flat"]] = None  # default "percent"
+    multi_dog_discount_value: Optional[float] = None  # 10 = 10% or $10 depending on mode
+    multi_dog_discount_label: Optional[str] = None    # display label on the receipt
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):

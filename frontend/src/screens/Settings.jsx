@@ -509,6 +509,15 @@ function CapacityPanel({ s, save, saving }) {
 function RulesPanel({ s, save, saving }) {
   const [r, setR] = useState(s.booking_rules || {});
   const set = (k, v) => setR({ ...r, [k]: v });
+  // Sprint 110 — multi-dog discount lives at the top-level settings doc, not
+  // under booking_rules, so it gets its own piece of state + its own save.
+  const [md, setMd] = useState({
+    multi_dog_discount_enabled: !!s.multi_dog_discount_enabled,
+    multi_dog_discount_mode: s.multi_dog_discount_mode || "percent",
+    multi_dog_discount_value: s.multi_dog_discount_value ?? 10,
+    multi_dog_discount_label: s.multi_dog_discount_label || "Multi-dog discount",
+  });
+  const setM = (k, v) => setMd((p) => ({ ...p, [k]: v }));
 
   return (
     <div className="space-y-6" data-testid="rules-panel">
@@ -531,7 +540,42 @@ function RulesPanel({ s, save, saving }) {
         </div>
       </Section>
 
-      <SaveBar onSave={()=>save({ booking_rules: r })} saving={saving} />
+      <Section title="Multi-dog household discount" subtitle="Auto-applied at check-out for the 2nd-and-later dog from the same client on the same date. First dog pays full price; siblings get the discount.">
+        <label className="flex items-center gap-3 cursor-pointer mb-3">
+          <input type="checkbox" checked={md.multi_dog_discount_enabled}
+                 onChange={(e)=>setM("multi_dog_discount_enabled", e.target.checked)}
+                 data-testid="multi-dog-enabled"
+                 className="accent-shGreen w-4 h-4" />
+          <span className="text-[15px] font-black uppercase tracking-widest text-gray-300">Enable multi-dog discount</span>
+        </label>
+        <div className={`grid grid-cols-3 gap-4 ${md.multi_dog_discount_enabled ? "" : "opacity-50 pointer-events-none"}`}>
+          <div>
+            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest block">Mode</label>
+            <select value={md.multi_dog_discount_mode}
+                    onChange={(e)=>setM("multi_dog_discount_mode", e.target.value)}
+                    data-testid="multi-dog-mode"
+                    className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="percent">Percent (%)</option>
+              <option value="flat">Flat ($)</option>
+            </select>
+          </div>
+          <Field
+            label={md.multi_dog_discount_mode === "percent" ? "Amount (% off)" : "Amount ($ off)"}
+            type="number"
+            value={md.multi_dog_discount_value}
+            onChange={(v)=>setM("multi_dog_discount_value", Math.max(0, parseFloat(v) || 0))}
+            testId="multi-dog-value" />
+          <Field label="Receipt label" value={md.multi_dog_discount_label}
+                 onChange={(v)=>setM("multi_dog_discount_label", v)}
+                 testId="multi-dog-label" />
+        </div>
+        <p className="text-[12px] text-gray-500 mt-2 italic">
+          <i className="fas fa-circle-info mr-1"/>
+          Discount applies to the booking's price (incl. add-ons & extra nights) — never to credit-only checkouts.
+        </p>
+      </Section>
+
+      <SaveBar onSave={()=>save({ booking_rules: r, ...md })} saving={saving} />
     </div>
   );
 }

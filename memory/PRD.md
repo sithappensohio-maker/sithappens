@@ -1312,7 +1312,31 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 109b — Today's Tasks dismissals (per-row X + Clear all) (2026-02)
+## Sprint 110 — Multi-dog household discount + Vaccine upload confirmation (2026-02)
+- ✅ **Multi-dog discount feature SHIPPED** — auto-applied at check-out for the 2nd-and-later dog of the same client on the same date. Solo-operator sales lever you can toggle on/off from Settings.
+- ✅ **Settings panel** in `Settings → Booking Rules tab`: enable toggle, mode (percent vs flat), value, and customizable receipt label (defaults to "Multi-dog discount").
+- ✅ **Persisted settings fields** in `settings` collection: `multi_dog_discount_enabled`, `multi_dog_discount_mode`, `multi_dog_discount_value`, `multi_dog_discount_label`.
+- ✅ **Backend logic** in `_compute_multi_dog_discount()` (`server.py`): counts the client's other bookings on the same date that have already been checked out (status=completed, checked_out_at present). If 1+ siblings exist, the discount applies to the booking being checked out NOW. Applied AFTER add-ons + extra nights so it visibly reduces the final receipt price.
+- ✅ **Pre-checkout preview endpoint** `GET /api/bookings/{id}/discount-preview` — returns `{eligible, preview_base_price, discount: {amount, mode, value, label, sibling_count}}` so the checkout modal shows the discount BEFORE the operator hits Submit.
+- ✅ **Audit trail on the booking** — every discounted check-out persists `multi_dog_discount: {amount, mode, value, label, based_on_price, sibling_count, applied_at}` so income reports and receipt reprints stay accurate.
+- ✅ **CheckoutModal UI** — discount preview fetched on mount, computed live against the current base price override, surfaced as a yellow "−$X · Multi-pup" line (`data-testid="checkout-multi-dog-discount"`) between the add-ons and the total. Total auto-recalculates.
+- ✅ **Credit-only checkouts skip the discount** (no point discounting a $0 charge); the discount only fires when a real dollar amount is being charged.
+- ✅ **6 new regression tests pass** (`/app/backend/tests/test_multi_dog_discount.py`):
+  - Settings round-trip (enable, mode, value, label)
+  - First dog of the day → full price, no `multi_dog_discount` metadata
+  - Second dog same client same date → 20% off → correct `actual_price` + metadata
+  - Flat-mode discount ($10 off) computes correctly
+  - Setting disabled → no discount even with 2+ dogs
+  - `discount-preview` endpoint requires auth (401/403 unauth)
+- ✅ All adjacent suites (today-brain dismissals, auto-backup, etc.) still pass — no regressions across the 25-test run.
+
+### Vaccine upload from portal — already existed (no work needed)
+- ✅ `POST /api/portal/dogs/{dog_id}/vaccine-update` — client uploads cert photo + expiry, vaccine record updates immediately so they're unblocked for booking.
+- ✅ `GET /api/admin/vaccine-cert-uploads` — admin's pending review queue with the uploaded photo.
+- ✅ `POST /api/admin/dogs/{id}/vaccine-cert/{vaccine}/review` — approve/reject flow.
+- ✅ Client-portal modal `VaccineUploadModal` in `Portal.jsx:283` wires the upload UI to the endpoint with a photo picker + expiry-date input.
+
+
 - ✅ **User asked**: a way to clear Today's Tasks on the admin dashboard — per-row X to dismiss, plus a "Clear all" for one-tap inbox-zero.
 - ✅ **Smart re-appearance via signature gating**: every item gets a server-computed `signature` capturing its underlying state (credit pool counts for low_credits, expiry date for vaccines, pending count for booking_pending, today's date for monday_digest/no_checkin/steps_incomplete, percent-bucket for pipeline_ready, etc). A dismissal is stored with that signature; the GET filter only suppresses items whose CURRENT signature still matches the dismissed one — so if credits drop further or a new pending booking arrives, the item reappears automatically.
 - ✅ **3 new endpoints (admin-only)**:

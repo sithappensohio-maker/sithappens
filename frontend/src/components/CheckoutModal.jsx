@@ -78,6 +78,19 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Sprint 110 — fetch multi-dog discount preview (only shows if 2nd+ dog of
+  // the same client has already been checked out today).
+  const [discountPreview, setDiscountPreview] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/bookings/${booking.id}/discount-preview`);
+        if (alive) setDiscountPreview(data);
+      } catch { /* non-fatal — quietly skip the line item */ }
+    })();
+    return () => { alive = false; };
+  }, [booking.id]);
 
   const addOne = (svc) => setCart(c => ({ ...c, [svc.id]: { service: svc, qty: (c[svc.id]?.qty || 0) + 1 } }));
   const removeOne = (svc) => setCart(c => {
@@ -103,7 +116,18 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const extraNightsCharge = isBoarding && extraNights > 0 && !extraUseCredits
     ? Math.round(extraNights * extraRateEffective * 100) / 100
     : 0;
-  const chargedToday = (useCredits ? 0 : basePreview) + addOnTotal + extraNightsCharge;
+  // Multi-dog discount preview: recompute against the CURRENT basePreview (so
+  // if the operator overrides the base price, the discount updates live).
+  let multiDogDiscount = 0;
+  if (discountPreview?.eligible && discountPreview.discount && basePreview > 0 && !useCredits) {
+    const d = discountPreview.discount;
+    if (d.mode === "percent") {
+      multiDogDiscount = Math.round(basePreview * (Math.max(0, Math.min(100, d.value)) / 100) * 100) / 100;
+    } else {
+      multiDogDiscount = Math.min(basePreview, Math.round(d.value * 100) / 100);
+    }
+  }
+  const chargedToday = Math.max(0, (useCredits ? 0 : basePreview) + addOnTotal + extraNightsCharge - multiDogDiscount);
 
   const submit = async () => {
     setBusy(true); setErr("");
@@ -317,6 +341,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           <div>
             <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
             {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
+            {multiDogDiscount > 0 && (
+              <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-multi-dog-discount">
+                <i className="fas fa-dog mr-1"/>
+                {discountPreview?.discount?.label || "Multi-dog discount"} · −${multiDogDiscount.toFixed(2)}
+                {discountPreview?.discount?.mode === "percent" && (
+                  <span className="text-gray-500 normal-case ml-1">({discountPreview.discount.value}% off)</span>
+                )}
+              </p>
+            )}
             {useCredits && hadCredit && <p className="text-[12px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
           </div>
           <div className="text-right">
