@@ -302,7 +302,7 @@ function DayRow({ day, isOpen, onOpen, onClose, values, setValues, mood, setMood
               </span>
             )}
           </div>
-          <p className="text-gray-300 text-[14px] mt-0.5 line-clamp-2">{day.day_focus}</p>
+          <p className="text-gray-300 text-[14px] mt-0.5 whitespace-pre-wrap break-words">{day.day_focus}</p>
           {log && day.status !== "available" && day.status !== "needs_redo" && day.status !== "draft" && (
             <div className="mt-2 flex items-center gap-2 text-[12px] text-gray-500 font-black uppercase tracking-widest">
               <span>{(log.date || "").slice(0, 10)}</span>

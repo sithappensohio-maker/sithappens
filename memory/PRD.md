@@ -1312,7 +1312,22 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110h — Per-service multi-dog discount (daycare ≠ boarding) (2026-02)
+## Sprint 110i — Expandable steps + Fullscreen view for client portal homework (2026-02)
+- ✅ **User reported**: clients can't read long step labels in Today's Plan — they want to click/expand each step and even open the whole thing in a "new window" for breathing room.
+- ✅ **Fix #1 — Backend payload enrichment** (`/portal/today-plan` → `items[].steps[]`): each step now also returns `description` and `notes` so the portal can render rich detail when expanded. Existing data unaffected (fields are optional, default to empty string).
+- ✅ **Fix #2 — Expandable step rows** (`TodayPlanCard.jsx`): each step is now a 2-row component:
+  - Top row: check-circle button (idempotent toggle) + step label + minute pill. Click the label area to expand if there's a description/notes (chevron indicator); otherwise the label area still toggles done so we never lose the existing single-tap behavior.
+  - Bottom row (only when expanded): full description + italic trainer notes with a left-border accent.
+  - Labels now wrap with `break-words leading-snug` instead of single-line clipping.
+- ✅ **Fix #3 — Trainer's instructions block** rendered above the steps on every Today's Plan day, showing the per-day longer-form instructions stored on the homework. Pre-wrap preserves multi-line formatting.
+- ✅ **Fix #4 — "Open fullscreen" button** on every Today's Plan item (`today-plan-fullscreen-{id}`) → opens a full-page modal (`FullscreenItemModal`) that gives the client a wide-canvas view of the whole training day:
+  - Sticky header with dog/day/title + Close button
+  - Day focus, full trainer instructions, all resources, ALL steps with their descriptions/notes expanded inline
+  - Bigger step check-circles (40px) + larger fonts (17px labels, 14px descriptions) for tablet/phone readability
+- ✅ **Fix #5 — `DailyCheckInCard` day-focus** no longer truncated to 2 lines — full text shown on each historical day card so clients can re-read past day briefs.
+- ✅ **Lints clean**. All 32 homework-related pytests still pass (no regressions across redesign + driven-tracker + incentives suites).
+
+
 - ✅ **User reported**: multi-dog discount should differ by service type — daycare and boarding have different margins.
 - ✅ **New settings field** `multi_dog_discount_by_service: Dict[str, Dict[str, Any]]` — keyed by service_type (`daycare`, `boarding`, `training`, `grooming`, `photography`) → `{enabled, mode, value, label}`. Master toggle `multi_dog_discount_enabled` still gates the entire feature.
 - ✅ **`_compute_multi_dog_discount` rewritten** to look up the booking's service_type in `multi_dog_discount_by_service` first. Falls back to legacy flat fields (`multi_dog_discount_mode/value/label`) so existing installs keep working without migration.

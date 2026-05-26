@@ -34,6 +34,11 @@ export default function TodayPlanCard({ onChanged }) {
   const [catchUpFor, setCatchUpFor] = useState(null);
   // Per-homework form state. Key: homework_id → { values, mood, photo, note, submitting }
   const [forms, setForms] = useState({});
+  // Sprint 110i — track which steps are expanded so clients can read the full
+  // label/description without truncation. Also which item is in fullscreen.
+  const [expanded, setExpanded] = useState({}); // key: `${hwid}:${stepid}` → bool
+  const [fullscreenItem, setFullscreenItem] = useState(null);
+  const toggleExpand = (key) => setExpanded((e) => ({ ...e, [key]: !e[key] }));
 
   const load = async () => {
     try {
@@ -185,6 +190,24 @@ export default function TodayPlanCard({ onChanged }) {
                 </div>
               </div>
 
+              {/* Open-fullscreen affordance + instructions accordion */}
+              <div className="flex items-center justify-end gap-2 mb-2">
+                <button onClick={() => setFullscreenItem(item)}
+                        data-testid={`today-plan-fullscreen-${item.homework_id}`}
+                        className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-white border border-shBlue/40 hover:border-shBlue rounded px-2.5 py-1 transition">
+                  <i className="fas fa-expand mr-1.5"/>Open fullscreen
+                </button>
+              </div>
+
+              {item.instructions && (
+                <div className="bg-bgPanel/60 border-l-4 border-shGreen/60 rounded p-3 mb-3" data-testid={`today-plan-instructions-block-${item.homework_id}`}>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-1">
+                    <i className="fas fa-bookmark mr-1"/>Trainer's instructions
+                  </p>
+                  <p className="text-[13px] text-gray-200 whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
+                </div>
+              )}
+
               {allResources.length > 0 && (
                 <div className="mb-3 bg-purple-500/5 border border-purple-400/30 rounded p-2.5" data-testid={`today-plan-resources-${item.homework_id}`}>
                   <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-1.5"><i className="fas fa-paperclip mr-1"/>Take with you</p>
@@ -253,21 +276,53 @@ export default function TodayPlanCard({ onChanged }) {
                   {item.steps.map((s) => {
                     const id = `${item.homework_id}:${s.id}`;
                     const isBusy = busy === id;
+                    const hasMore = !!(s.description || s.notes);
+                    const isOpen = !!expanded[id];
                     return (
-                      <button key={s.id} onClick={() => toggleStep(item, s)}
-                              disabled={isBusy || item.status === "submitted"}
-                              data-testid={`today-plan-step-${item.homework_id}-${s.id}`}
-                              className={`w-full flex items-center gap-3 p-2.5 rounded border text-left transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover hover:border-shGreen/40"} disabled:opacity-60`}>
-                        <span className={`w-6 h-6 rounded grid place-items-center shrink-0 ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgPanel border border-bgHover"}`}>
-                          {isBusy ? <i className="fas fa-spinner fa-spin text-xs"/> : s.done ? <i className="fas fa-check text-xs"/> : null}
-                        </span>
-                        <span className={`flex-1 text-[15px] ${s.done ? "line-through text-gray-500" : "text-white"}`}>{s.label}</span>
-                        {s.minutes ? (
-                          <span className={`text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
-                            {s.minutes} min
-                          </span>
-                        ) : null}
-                      </button>
+                      <div key={s.id}
+                           data-testid={`today-plan-step-${item.homework_id}-${s.id}`}
+                           className={`rounded border transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover hover:border-shGreen/40"}`}>
+                        <div className="flex items-start gap-3 p-2.5">
+                          <button onClick={() => toggleStep(item, s)}
+                                  disabled={isBusy || item.status === "submitted"}
+                                  data-testid={`today-plan-step-check-${item.homework_id}-${s.id}`}
+                                  className={`shrink-0 w-7 h-7 rounded grid place-items-center transition ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgPanel border border-bgHover hover:border-shGreen"} disabled:opacity-60`}
+                                  aria-label={s.done ? "Mark step incomplete" : "Mark step complete"}>
+                            {isBusy ? <i className="fas fa-spinner fa-spin text-xs"/> : s.done ? <i className="fas fa-check text-xs"/> : null}
+                          </button>
+                          <button onClick={() => hasMore ? toggleExpand(id) : toggleStep(item, s)}
+                                  disabled={isBusy || item.status === "submitted"}
+                                  data-testid={`today-plan-step-label-${item.homework_id}-${s.id}`}
+                                  className="flex-1 text-left disabled:opacity-60">
+                            <p className={`text-[15px] leading-snug break-words ${s.done ? "line-through text-gray-500" : "text-white"}`}>
+                              {s.label}
+                              {hasMore && (
+                                <i className={`fas ${isOpen ? "fa-chevron-up" : "fa-chevron-down"} ml-2 text-[11px] text-gray-500`}/>
+                              )}
+                            </p>
+                          </button>
+                          {s.minutes ? (
+                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
+                              {s.minutes} min
+                            </span>
+                          ) : null}
+                        </div>
+                        {hasMore && isOpen && (
+                          <div className="px-3 pb-3 pt-1 border-t border-bgHover/60 space-y-2"
+                               data-testid={`today-plan-step-detail-${item.homework_id}-${s.id}`}>
+                            {s.description && (
+                              <p className="text-[13px] text-gray-300 whitespace-pre-wrap leading-relaxed">
+                                {s.description}
+                              </p>
+                            )}
+                            {s.notes && (
+                              <p className="text-[12px] text-gray-400 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shBlue/40 pl-2">
+                                <i className="fas fa-circle-info mr-1 text-shBlue"/>{s.notes}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -293,6 +348,12 @@ export default function TodayPlanCard({ onChanged }) {
 
       {catchUpFor && (
         <CatchUpModal target={catchUpFor} onApply={applyCatchUp} onClose={() => setCatchUpFor(null)} />
+      )}
+      {fullscreenItem && (
+        <FullscreenItemModal item={fullscreenItem}
+                             busy={busy}
+                             onToggleStep={(s) => toggleStep(fullscreenItem, s)}
+                             onClose={() => setFullscreenItem(null)} />
       )}
     </div>
   );
@@ -343,6 +404,134 @@ function CatchUpOption({ busy, onClick, icon, title, subtitle, testid }) {
     </button>
   );
 }
+
+
+function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
+  // Sprint 110i — full-window view of a single training plan day. Steps render
+  // with their full label, description, and notes expanded inline. Trainer's
+  // instructions + plan resources stay visible. Designed to give the client
+  // breathing room when reading longer step descriptions.
+  const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
+  const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
+  return (
+    <div className="fixed inset-0 z-50 bg-bgBase overflow-y-auto" data-testid="today-plan-fullscreen-modal">
+      <div className="sticky top-0 z-10 bg-bgPanel border-b border-bgHover">
+        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shBlue">
+              {item.dog_name} · day {item.day_number}/{item.total_days}
+              {totalMinutes > 0 && <span className="text-gray-500 normal-case"> · ~{totalMinutes} min</span>}
+            </p>
+            <h2 className="text-lg font-black text-white uppercase italic tracking-tight truncate">{item.title}</h2>
+          </div>
+          <button onClick={onClose}
+                  data-testid="today-plan-fullscreen-close"
+                  className="shrink-0 bg-bgBase border border-bgHover hover:border-red-400 hover:text-red-300 text-gray-300 rounded px-4 py-2 text-[13px] font-black uppercase tracking-widest transition">
+            <i className="fas fa-xmark mr-1"/>Close
+          </button>
+        </div>
+      </div>
+
+      <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
+        {item.day_focus && (
+          <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-4">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-1.5">
+              <i className="fas fa-flag-checkered mr-1"/>Today's focus
+            </p>
+            <p className="text-[16px] text-white leading-relaxed">{item.day_focus}</p>
+          </div>
+        )}
+
+        {item.instructions && (
+          <div className="bg-bgPanel border border-bgHover rounded-lg p-4">
+            <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-2">
+              <i className="fas fa-bookmark text-shGreen mr-1"/>Trainer's instructions
+            </p>
+            <p className="text-[15px] text-gray-200 whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
+          </div>
+        )}
+
+        {allResources.length > 0 && (
+          <div className="bg-purple-500/5 border border-purple-400/30 rounded-lg p-4">
+            <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-2">
+              <i className="fas fa-paperclip mr-1"/>Resources for today
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {allResources.map((r) => {
+                const isUpload = !!r.media_id;
+                return (
+                  <a key={r.id}
+                     href={isUpload ? `#res-${r.id}` : (r.url || "#")}
+                     target={isUpload ? "_self" : "_blank"}
+                     rel="noreferrer"
+                     onClick={isUpload ? (async (e) => {
+                       e.preventDefault();
+                       try {
+                         const res = await api.get(`/homework/resource/${r.media_id}`);
+                         const win = window.open("", "_blank");
+                         if (win) win.location.href = res.data?.data || "#";
+                       } catch (err) { console.warn(err); }
+                     }) : undefined}
+                     data-testid={`today-plan-fullscreen-resource-${r.id}`}
+                     className="bg-purple-500/15 hover:bg-purple-500/30 text-purple-200 px-3 py-2 rounded text-[14px] font-black inline-flex items-center gap-2 transition">
+                    <i className={`fas ${isUpload ? "fa-file-arrow-down" : "fa-arrow-up-right-from-square"} text-[11px]`}/>{r.name}
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {(item.steps || []).length > 0 && (
+          <div>
+            <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-3">
+              <i className="fas fa-list-check mr-1"/>Steps · tap circle to mark done
+            </p>
+            <div className="space-y-3">
+              {item.steps.map((s) => {
+                const isBusy = busy === `${item.homework_id}:${s.id}`;
+                return (
+                  <div key={s.id}
+                       data-testid={`today-plan-fullscreen-step-${s.id}`}
+                       className={`rounded-lg border p-4 transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover bg-bgPanel"}`}>
+                    <div className="flex items-start gap-3">
+                      <button onClick={() => onToggleStep(s)}
+                              disabled={isBusy || item.status === "submitted"}
+                              data-testid={`today-plan-fullscreen-step-check-${s.id}`}
+                              className={`shrink-0 w-10 h-10 rounded-full grid place-items-center transition ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgBase border-2 border-bgHover hover:border-shGreen"} disabled:opacity-60`}>
+                        {isBusy ? <i className="fas fa-spinner fa-spin"/> : s.done ? <i className="fas fa-check"/> : null}
+                      </button>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 flex-wrap">
+                          <p className={`text-[17px] leading-snug font-black ${s.done ? "line-through text-gray-500" : "text-white"}`}>{s.label}</p>
+                          {s.minutes ? (
+                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${s.done ? "bg-bgHover text-gray-500" : "bg-shGreen/20 text-shGreen"}`}>
+                              {s.minutes} min
+                            </span>
+                          ) : null}
+                        </div>
+                        {s.description && (
+                          <p className="text-[14px] text-gray-300 mt-2 whitespace-pre-wrap leading-relaxed">{s.description}</p>
+                        )}
+                        {s.notes && (
+                          <p className="text-[13px] text-gray-400 italic mt-2 border-l-2 border-shBlue/40 pl-3 whitespace-pre-wrap leading-relaxed">
+                            <i className="fas fa-circle-info text-shBlue mr-1"/>{s.notes}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 
 
 function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSubmit }) {

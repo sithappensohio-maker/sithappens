@@ -5039,7 +5039,14 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
             "instructions": current.get("instructions", ""),
             "status": current["status"],
             "steps": [
-                {"id": s["id"], "label": s["label"], "done": bool(step_states.get(s["id"])), "minutes": s.get("minutes")}
+                {
+                    "id": s["id"],
+                    "label": s["label"],
+                    "done": bool(step_states.get(s["id"])),
+                    "minutes": s.get("minutes"),
+                    "description": s.get("description") or "",
+                    "notes": s.get("notes") or "",
+                }
                 for s in current.get("steps") or []
             ],
             "fields": current.get("fields") or [],
