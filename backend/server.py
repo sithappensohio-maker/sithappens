@@ -3165,6 +3165,17 @@ async def list_homework(user: dict = Depends(get_current_user), dog_id: Optional
     if dog_id:
         q["dog_id"] = dog_id
     items = await db.homework.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    # Sprint 107 — enrich daily-tracker rows with streak/total_days so the
+    # admin Homework list can show a live progress bar without an extra fetch
+    # per row. Non-tracker homework is returned unchanged.
+    for it in items:
+        if it.get("daily_tracker"):
+            try:
+                prog = _compute_daily_progress(it)
+                it["total_days"] = len(prog)
+                it["streak"] = _streak_count(prog)
+            except Exception:
+                pass
     return items
 
 @api.post("/homework")

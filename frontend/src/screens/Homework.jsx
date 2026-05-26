@@ -140,19 +140,36 @@ export default function Homework() {
           const tm = snap ? tierMeta(snap.tier) : null;
           const logCount = (h.section_logs || []).length;
           const isExpanded = expandedId === h.id;
+          // Sprint 107 — daily-tracker progress at a glance
+          const totalDays = h.total_days || (snap?.sections?.length || 0);
+          const streak = h.streak || 0;
+          const progressPct = totalDays > 0 ? Math.round((streak / totalDays) * 100) : 0;
+          const isTracker = !!h.daily_tracker;
           return (
             <div key={h.id} className={`bg-bgPanel border rounded-xl p-5 shadow-lg ${h.status==="completed"?"border-shGreen/40":"border-bgHover"}`} data-testid={`hw-${h.id}`}>
               <div className="flex items-start justify-between gap-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-2">
                     <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                    {h.daily_tracker && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-300"><i className="fas fa-calendar-check mr-1"/>Daily · {h.total_days || (h.template_snapshot?.sections?.length || 0)}d</span>}
+                    {h.daily_tracker && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-300"><i className="fas fa-calendar-check mr-1"/>Daily · {totalDays}d</span>}
                     {h.template_snapshot && !h.daily_tracker && (() => { const tm = tierMeta(h.template_snapshot.tier); return <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${tm.bg} ${tm.color}`}><i className={`fas ${h.template_snapshot.icon || "fa-paw"} mr-1`}/>{tm.label}</span>; })()}
                     {h.due_date && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-calendar mr-1"/>Due {h.due_date}</span>}
                     {snap && <span className="text-[14px] font-black uppercase tracking-widest text-gray-400"><i className="fas fa-list-check mr-1"/>{logCount} client log{logCount===1?"":"s"}</span>}
+                    {isTracker && streak > 0 && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shGreen/15 text-shGreen" data-testid={`hw-streak-${h.id}`}><i className="fas fa-fire mr-1"/>{streak}/{totalDays}</span>}
                   </div>
                   <h4 className="text-lg font-black text-white uppercase tracking-tight">{h.title}</h4>
                   <p className="text-[15px] text-shBlue font-black uppercase tracking-widest mt-1">{h.dog_name} · {h.client_name}</p>
+                  {isTracker && h.status !== "completed" && totalDays > 0 && (
+                    <div className="mt-3" data-testid={`hw-progress-${h.id}`}>
+                      <div className="flex items-center justify-between text-[12px] text-gray-400 mb-1">
+                        <span className="font-black uppercase tracking-widest">Progress</span>
+                        <span className="font-black text-shGreen">{progressPct}% · day {Math.min(streak + 1, totalDays)} of {totalDays}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-bgBase overflow-hidden">
+                        <div className="h-full bg-shGreen transition-all" style={{ width: `${progressPct}%` }} />
+                      </div>
+                    </div>
+                  )}
                   {h.instructions && <p className="text-sm text-gray-300 mt-2 whitespace-pre-wrap">{h.instructions}</p>}
                   {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-video mr-1"/>Watch demo video</a>}
                   {h.status === "completed" && (
