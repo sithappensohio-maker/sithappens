@@ -987,7 +987,7 @@ export default function Portal() {
                     <GalleryPinRow pin={client?.photo_gallery_pin} accent={client?.photo_gallery_has_new ? "orange" : "green"} />
                   </div>
                 )}
-                {referralCode && false && (
+                {referralCode && (
                   <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
                           className="flex items-center gap-3 bg-bgBase hover:bg-shOrange/15 border border-bgHover hover:border-shOrange/50 rounded px-3 py-2.5 transition w-full text-left">
                     <i className="fas fa-gift text-shOrange text-lg w-6 text-center"/>

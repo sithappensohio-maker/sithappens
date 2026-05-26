@@ -31,7 +31,8 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 ## Sprint 110n — Portal reorder: Homework first, Achievements second (2026-02)
 - ✅ Training Homework promoted to top section of client portal main column (was buried below Dogs/Training/Files/Trophies)
 - ✅ Trophy Wall + HomeworkIncentivesPanel now follow directly after Homework
-- ✅ Referral UI removed from portal (sidebar quick-link dead-coded, ReferralCard removed from incentives panel) — client uses external referral system
+- ✅ Trophy-tier referral feed removed from HomeworkIncentivesPanel (per user — uses simpler legacy program)
+- ✅ ORIGINAL referral program restored: sidebar "Refer a Friend" quick-link + ReferFriendModal (share code → friend signs up & completes first appointment → referrer auto-credited 1 free daycare day). Backend auto-credit hook in server.py was always intact.
 - ✅ Lint clean, screenshot verified
 
 ## Implemented (2026-01)
