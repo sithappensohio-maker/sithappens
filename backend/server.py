@@ -6687,8 +6687,14 @@ async def calendar_events(_: dict = Depends(require_admin)):
             end_excl = (datetime.fromisoformat(end).date() + timedelta(days=1)).isoformat()
         except Exception:
             end_excl = end
-        # daycare green, boarding blue, training purple, grooming pink
-        _svc_colors = {"daycare": "#8cc63f", "boarding": "#00a9e0", "training": "#a855f7", "grooming": "#ec4899"}
+        # daycare green, boarding blue, training purple, grooming pink, photography amber
+        _svc_colors = {
+            "daycare":     "#8cc63f",
+            "boarding":    "#00a9e0",
+            "training":    "#a855f7",
+            "grooming":    "#ec4899",
+            "photography": "#f59e0b",
+        }
         color = _svc_colors.get(b["service_type"], "#64748b")
         if b["status"] == "pending":
             color = "#f26522"

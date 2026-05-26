@@ -1312,7 +1312,15 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110e — Photography hours parity with grooming/training (2026-02)
+## Sprint 110f — Calendar timed events get colored chips (2026-02)
+- ✅ **User reported**: training and photography on the Schedule "just show text" while daycare/boarding show colored indicators.
+- ✅ **Root cause**: FullCalendar's `dayGridMonth` default behavior renders **timed events** (those with start/end times — i.e. training/grooming/photography) as a `display: list-item` row with a colored dot + time text, while **all-day events** (daycare/boarding) render as solid colored bars. So even though the backend was emitting the right color for each event, timed services looked like plain text rows.
+- ✅ **Fix #1 — `eventDisplay="block"`** added to the `<FullCalendar>` in `Schedule.jsx`. Forces ALL events (timed AND all-day) to render as solid colored chips. Training/photography now look exactly like daycare/boarding visually, just with the time prefix still showing inside the chip.
+- ✅ **Fix #2 — photography in the backend color map**: was missing entirely. Added amber `#f59e0b` so photography events come back with their own distinct color (different from training's purple). Confirmed via `GET /api/events`: training → `#a855f7`, photography → `#f59e0b`.
+- ✅ **Fix #3 — frontend legend + booking dropdown**: `Schedule.jsx`'s legend and the "Service Type" `<select>` in the day-roster modal were both missing photography. Added so the legend chip and the booking creation flow both list it alongside the other 4 services.
+- ✅ **Lints clean.** No new pytest needed — this is purely a UI-rendering concern; backend color emission was already covered by existing event-shape tests and the new sprint 110e photography tests.
+
+
 - ✅ **User reported**: no hours settings for photography; should work just like grooming/training.
 - ✅ **Root cause**: `_default_settings()` was missing the `photography` key under `service_hours`, so the forward-compat backfill loop never inserted a grid for it. The Settings UI's hours panel also iterated only `["daycare","training","grooming"]` so photography never had a render row.
 - ✅ **Fix #1 — Backend defaults**: added `"photography": _default_hours_grid("09:00", "17:00")` to `_default_settings().service_hours`. Existing installs get auto-backfilled by `get_settings()` on next read; no migration needed.

@@ -15,6 +15,7 @@ const SVC_META = {
   boarding: { color: "bg-shBlue/25 text-shBlue border-shBlue/50", label: "Boarding" },
   training: { color: "bg-purple-500/25 text-purple-300 border-purple-500/50", label: "Training" },
   grooming: { color: "bg-pink-500/25 text-pink-300 border-pink-500/50", label: "Grooming" },
+  photography: { color: "bg-amber-500/25 text-amber-300 border-amber-500/50", label: "Photography" },
 };
 
 function pretty(iso) {
@@ -189,9 +190,14 @@ export default function Schedule() {
           // Clicking an event chip opens the detail modal (notes, payment, etc.).
           // Stop FullCalendar from also bubbling up to dateClick.
           eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
-          // Training/grooming events have specific times — display them
+          // Training/grooming/photography events have specific times — display them
           displayEventTime={true}
           eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
+          // Force timed events (training/grooming/photography) to render as
+          // solid colored blocks like daycare/boarding, instead of FullCalendar's
+          // default "dot + time text" list-item style which made them look like
+          // plain text rows on the calendar grid.
+          eventDisplay="block"
           headerToolbar={mobile
             ? { left: "prev,next", center: "title", right: "today" }
             : { left: "prev,next today", center: "title", right: "" }}
@@ -301,6 +307,7 @@ export default function Schedule() {
                       <option value="boarding">Boarding</option>
                       <option value="training">Training</option>
                       <option value="grooming">Grooming</option>
+                      <option value="photography">Photography</option>
                     </select>
                   </div>
                   {newBooking.service_type === "boarding" && (
