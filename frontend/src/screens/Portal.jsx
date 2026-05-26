@@ -987,7 +987,7 @@ export default function Portal() {
                     <GalleryPinRow pin={client?.photo_gallery_pin} accent={client?.photo_gallery_has_new ? "orange" : "green"} />
                   </div>
                 )}
-                {referralCode && (
+                {referralCode && false && (
                   <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
                           className="flex items-center gap-3 bg-bgBase hover:bg-shOrange/15 border border-bgHover hover:border-shOrange/50 rounded px-3 py-2.5 transition w-full text-left">
                     <i className="fas fa-gift text-shOrange text-lg w-6 text-center"/>
@@ -1032,6 +1032,105 @@ export default function Portal() {
         </div>
 
         <div className="col-span-2 space-y-6">
+          {/* Sprint 110n — Homework is the #1 client priority; promoted to the
+              top of the portal main column, followed by Achievements. The old
+              referral feed has been removed (client uses a separate system). */}
+          {homework.length > 0 && (
+            <div data-testid="portal-homework">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
+              <div className="space-y-3">
+                {homework.map(h => {
+                  const hasTemplate = !!h.template_snapshot;
+                  return (
+                  <div key={h.id} className={`bg-bgPanel border rounded-xl p-4 ${h.status==="completed"?"border-shGreen/40":"border-shOrange/40"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                          <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
+                          {h.daily_tracker && <span className="text-[14px] text-purple-300 bg-purple-500/15 font-black uppercase px-2 py-0.5 rounded tracking-widest"><i className="fas fa-calendar-check mr-1"/>Daily Tracker</span>}
+                          <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
+                          {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
+                          {hasTemplate && !h.daily_tracker && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
+                        </div>
+                        <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
+                        {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
+                        {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
+                      </div>
+                      {h.daily_tracker && h.progress_summary && h.status !== "completed" && (
+                        <PlanProgressRing
+                          pct={h.progress_summary.pct}
+                          current={h.progress_summary.current_day}
+                          total={h.progress_summary.total_days}
+                          completed={h.progress_summary.completed_days}
+                          testid={`portal-plan-ring-${h.id}`}
+                        />
+                      )}
+                      {h.status !== "completed" && !h.daily_tracker && (
+                        <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
+                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
+                      )}
+                    </div>
+
+                    {h.daily_tracker && h.status !== "completed" && (
+                      <>
+                        <div className="mt-4 pt-4 border-t border-bgHover" data-testid={`portal-today-${h.id}`}>
+                          <TodayPlanCard homeworkId={h.id} unwrapped={true} onChanged={loadAll} />
+                        </div>
+                        <details className="mt-3 group" data-testid={`portal-history-${h.id}`}>
+                          <summary className="list-none cursor-pointer flex items-center justify-between gap-2 py-2 px-3 rounded bg-bgBase border border-bgHover hover:border-shBlue/50 transition">
+                            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400 group-hover:text-white">
+                              <i className="fas fa-clock-rotate-left mr-2"/>Previous days &amp; history
+                            </span>
+                            <i className="fas fa-chevron-down text-gray-500 text-xs group-open:rotate-180 transition-transform"/>
+                          </summary>
+                          <div className="mt-3">
+                            <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
+                          </div>
+                        </details>
+                      </>
+                    )}
+                    {hasTemplate && !h.daily_tracker && h.status !== "completed" && (
+                      <div className="mt-4 pt-4 border-t border-bgHover">
+                        <HomeworkSectionLogger homework={h} onLogged={loadAll} />
+                      </div>
+                    )}
+                    {h.status === "completed" && h.completion_note && (
+                      <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
+                    )}
+                  </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
+            <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">
+              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4 flex items-center gap-2">
+                <i className="fas fa-trophy text-shOrange"/> Trophy Wall
+                <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
+              </h2>
+              {trophies.client_trophies.length > 0 && (
+                <div className="mb-5">
+                  <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
+                  <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
+                </div>
+              )}
+              {trophies.dog_trophies.length > 0 && dogs.map(d => {
+                const mine = trophies.dog_trophies.filter(t => t.recipient_id === d.id);
+                if (!mine.length) return null;
+                return (
+                  <div key={d.id} className="mb-4 last:mb-0">
+                    <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
+                    <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <HomeworkIncentivesPanel />
+
           <div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Dogs</h2>
@@ -1132,111 +1231,6 @@ export default function Portal() {
           )}
 
           <PortalFilesSection dogs={dogs} />
-
-          {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
-            <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4 flex items-center gap-2">
-                <i className="fas fa-trophy text-shOrange"/> Trophy Wall
-                <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
-              </h2>
-              {trophies.client_trophies.length > 0 && (
-                <div className="mb-5">
-                  <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
-                  <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
-                </div>
-              )}
-              {trophies.dog_trophies.length > 0 && dogs.map(d => {
-                const mine = trophies.dog_trophies.filter(t => t.recipient_id === d.id);
-                if (!mine.length) return null;
-                return (
-                  <div key={d.id} className="mb-4 last:mb-0">
-                    <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
-                    <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          <HomeworkIncentivesPanel />
-
-          {homework.length > 0 && (
-            <div data-testid="portal-homework">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
-              <div className="space-y-3">
-                {homework.map(h => {
-                  const hasTemplate = !!h.template_snapshot;
-                  return (
-                  <div key={h.id} className={`bg-bgPanel border rounded-xl p-4 ${h.status==="completed"?"border-shGreen/40":"border-shOrange/40"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2 mb-1">
-                          <span className={`text-[14px] font-black uppercase px-2 py-0.5 rounded tracking-widest ${h.status==="completed"?"bg-shGreen/15 text-shGreen":"bg-shOrange/15 text-shOrange"}`}>{h.status}</span>
-                          {h.daily_tracker && <span className="text-[14px] text-purple-300 bg-purple-500/15 font-black uppercase px-2 py-0.5 rounded tracking-widest"><i className="fas fa-calendar-check mr-1"/>Daily Tracker</span>}
-                          <span className="text-[14px] text-shBlue font-black uppercase tracking-widest">{h.dog_name}</span>
-                          {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
-                          {hasTemplate && !h.daily_tracker && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
-                        </div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
-                        {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
-                        {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
-                      </div>
-                      {/* Sprint 110m — progress ring on every daily-tracker plan,
-                          replacing the old hidden "Progress N%" text. Visible
-                          at the card header level so clients see momentum
-                          across all their plans at a glance. */}
-                      {h.daily_tracker && h.progress_summary && h.status !== "completed" && (
-                        <PlanProgressRing
-                          pct={h.progress_summary.pct}
-                          current={h.progress_summary.current_day}
-                          total={h.progress_summary.total_days}
-                          completed={h.progress_summary.completed_days}
-                          testid={`portal-plan-ring-${h.id}`}
-                        />
-                      )}
-                      {h.status !== "completed" && !h.daily_tracker && (
-                        <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
-                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
-                      )}
-                    </div>
-
-                    {/* Sprint 110l — merged single-card-per-plan UX. Active
-                        daily-tracker plans now show TODAY's actionable day
-                        inline (steps + form + submit), with previous days
-                        tucked into a collapsed "Previous days" accordion
-                        below. Replaces the standalone TodayPlanCard tile. */}
-                    {h.daily_tracker && h.status !== "completed" && (
-                      <>
-                        <div className="mt-4 pt-4 border-t border-bgHover" data-testid={`portal-today-${h.id}`}>
-                          <TodayPlanCard homeworkId={h.id} unwrapped={true} onChanged={loadAll} />
-                        </div>
-                        <details className="mt-3 group" data-testid={`portal-history-${h.id}`}>
-                          <summary className="list-none cursor-pointer flex items-center justify-between gap-2 py-2 px-3 rounded bg-bgBase border border-bgHover hover:border-shBlue/50 transition">
-                            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400 group-hover:text-white">
-                              <i className="fas fa-clock-rotate-left mr-2"/>Previous days &amp; history
-                            </span>
-                            <i className="fas fa-chevron-down text-gray-500 text-xs group-open:rotate-180 transition-transform"/>
-                          </summary>
-                          <div className="mt-3">
-                            <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
-                          </div>
-                        </details>
-                      </>
-                    )}
-                    {hasTemplate && !h.daily_tracker && h.status !== "completed" && (
-                      <div className="mt-4 pt-4 border-t border-bgHover">
-                        <HomeworkSectionLogger homework={h} onLogged={loadAll} />
-                      </div>
-                    )}
-                    {h.status === "completed" && h.completion_note && (
-                      <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
-                    )}
-                  </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           <div id="portal-bookings-anchor">
             {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (

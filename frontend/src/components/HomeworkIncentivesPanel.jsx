@@ -77,9 +77,8 @@ export default function HomeworkIncentivesPanel() {
   const ladder = data.streak_ladder || [];
 
   // Show the panel as long as the client has ANY of: streak activity, completed
-  // plans, earned badges, OR a referral code (so even brand-new clients can
-  // find their code immediately and start inviting friends).
-  if (data.streak_days === 0 && data.completed_plans === 0 && earnedTrophies.length === 0 && !data.referral?.code) return null;
+  // plans, or earned badges. (Sprint 110n — referral check removed.)
+  if (data.streak_days === 0 && data.completed_plans === 0 && earnedTrophies.length === 0) return null;
 
   return (
     <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4 shadow-lg" data-testid="incentives-panel">
@@ -214,10 +213,7 @@ export default function HomeworkIncentivesPanel() {
         </div>
       )}
 
-      {/* Sprint 110c — Refer a friend, both get a trophy */}
-      {data.referral?.code && (
-        <ReferralCard referral={data.referral} />
-      )}
+      {/* Sprint 110n — Referral feed removed; client uses an external referral system. */}
     </div>
   );
 }

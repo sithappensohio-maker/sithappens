@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110n — Portal reorder: Homework first, Achievements second (2026-02)
+- ✅ Training Homework promoted to top section of client portal main column (was buried below Dogs/Training/Files/Trophies)
+- ✅ Trophy Wall + HomeworkIncentivesPanel now follow directly after Homework
+- ✅ Referral UI removed from portal (sidebar quick-link dead-coded, ReferralCard removed from incentives panel) — client uses external referral system
+- ✅ Lint clean, screenshot verified
+
 ## Implemented (2026-01)
 - ✅ JWT auth with bcrypt + admin seeding (idempotent)
 - ✅ Client CRUD + portal account creation
