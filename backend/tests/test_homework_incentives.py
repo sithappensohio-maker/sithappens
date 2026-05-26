@@ -62,6 +62,17 @@ def test_portal_incentives_includes_referral_block(client_headers):
     assert len(ref["ladder"]) == 3, "expected 3-rung referral ladder"
     # share_text must contain the client's actual code
     assert ref["code"] in ref["share_text"], "share_text should include the referral code"
+    # Sprint 110d — recent referrals mini-feed
+    assert "recent" in ref, "referral block must include `recent` for the mini-feed"
+    assert isinstance(ref["recent"], list)
+    if ref["successful_count"] > 0:
+        assert len(ref["recent"]) > 0, "if successful_count > 0 we should surface at least one entry"
+        for r in ref["recent"]:
+            assert "first_name" in r and r["first_name"], "must always have a non-empty first_name"
+            # Privacy — never leak full name, email, or last name
+            assert " " not in r["first_name"], "first_name only, no spaces (no last name)"
+            assert "@" not in r["first_name"], "no emails in mini-feed"
+            assert "joined_at" in r
 
 
 def test_portal_incentives_shape(client_headers):

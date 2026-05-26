@@ -1312,7 +1312,14 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110c — Refer-a-friend, both get a trophy (2026-02)
+## Sprint 110d — Recent referrals mini-feed (2026-02)
+- ✅ **User accepted the social-proof improvement**: show first names of friends the client has brought in.
+- ✅ **`/api/portal/incentives` extended** — `referral.recent` array of up-to-5 most-recent successful referrals from the `referrals` collection. Each entry: `{first_name, joined_at, service}`. **Privacy-safe**: only the first word of `referred_name` is exposed — never last name, never email, never client_id. Falls back to `"Friend"` if name unavailable.
+- ✅ **UI**: new "Friends you've brought in" block inside `ReferralCard`, between the share-text blockquote and the action buttons. Each row: 🐾 first-name + relative-time stamp ("joined 3 weeks ago"). Driven by a small `timeAgo()` helper supporting just-now → years-ago granularity.
+- ✅ **Hidden gracefully** when the client has no successful referrals yet (`recent.length === 0` short-circuits the whole block, no empty-state needed).
+- ✅ **1 new pytest assertion** added to `test_portal_incentives_includes_referral_block`: validates shape + privacy invariants (no spaces in `first_name`, no `@` symbols, non-empty fallback). 6/6 incentives tests still green.
+
+
 - ✅ **User accepted the improvement suggestion**: tap into existing referral infrastructure to drive growth via the homework dopamine loop.
 - ✅ **Discovery**: ALL of the referral plumbing already existed end-to-end — `referral_code` field on clients, `referrals` collection, automatic 6-char code minting on `/portal/me`, signup honors `?ref=CODE` query param, and three referral trophies in the seed catalog (`client_friend_bringer` @1, `client_pack_builder` @3, `client_ambassador` @10) all wired to fire on first successful appointment of the referred client. Just needed to surface it.
 - ✅ **`/api/portal/incentives` extended** to also return a `referral` block with `{code, successful_count, ladder, current_milestone, next_milestone, share_text}`. `share_text` is a pre-written, brand-aware invite message containing the client's actual code (`"Hey! I love {BRAND} for my pup. Sign up with my code 7KTUMQ and we both unlock a trophy once you complete your first appointment."`) so the client can paste-and-go.

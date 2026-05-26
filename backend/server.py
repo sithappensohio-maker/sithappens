@@ -7840,6 +7840,20 @@ async def portal_incentives(user: dict = Depends(get_current_user)):
     client_doc = await db.clients.find_one({"id": cid}, {"_id": 0, "referral_code": 1, "name": 1})
     ref_code = (client_doc or {}).get("referral_code")
     successful_referrals = await db.referrals.count_documents({"referrer_id": cid})
+    # Sprint 110d — recent referrals mini-feed: first name only (privacy)
+    # + created_at so the UI can render "Alex joined 3 weeks ago".
+    recent_refs: list = []
+    async for r in db.referrals.find(
+        {"referrer_id": cid},
+        {"_id": 0, "referred_name": 1, "referred_id": 1, "created_at": 1, "trigger_service_type": 1},
+    ).sort("created_at", -1).limit(5):
+        full = (r.get("referred_name") or "").strip()
+        first = full.split()[0] if full else "Friend"
+        recent_refs.append({
+            "first_name": first,
+            "joined_at": r.get("created_at", ""),
+            "service": r.get("trigger_service_type", ""),
+        })
     REF_LADDER = [
         (1,  "Friend Bringer",   "🤝"),
         (3,  "Pack Builder",     "🐾🐾🐾"),
@@ -7860,6 +7874,7 @@ async def portal_incentives(user: dict = Depends(get_current_user)):
     referral_block = {
         "code": ref_code,
         "successful_count": successful_referrals,
+        "recent": recent_refs,
         "ladder": [{"threshold": t, "label": l, "emoji": e} for t, l, e in REF_LADDER],
         "current_milestone": current_ref_milestone,
         "next_milestone": next_ref_milestone,

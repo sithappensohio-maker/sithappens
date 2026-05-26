@@ -22,6 +22,26 @@ const TIER_TEXT = {
   platinum: "text-[#bff0ff]", diamond: "text-[#e2d6ff]",
 };
 
+function timeAgo(iso) {
+  if (!iso) return "recently";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms) || ms < 0) return "recently";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} min${min === 1 ? "" : "s"} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} day${day === 1 ? "" : "s"} ago`;
+  const wk = Math.floor(day / 7);
+  if (wk < 5) return `${wk} week${wk === 1 ? "" : "s"} ago`;
+  const mo = Math.floor(day / 30);
+  if (mo < 12) return `${mo} month${mo === 1 ? "" : "s"} ago`;
+  const yr = Math.floor(day / 365);
+  return `${yr} year${yr === 1 ? "" : "s"} ago`;
+}
+
 export default function HomeworkIncentivesPanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
@@ -262,6 +282,24 @@ function ReferralCard({ referral }) {
         )}
 
         <p className="text-[12px] text-gray-300 italic mb-3">"{referral.share_text}"</p>
+
+        {(referral.recent || []).length > 0 && (
+          <div className="mb-3" data-testid="incentives-referral-recent">
+            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1">
+              <i className="fas fa-users text-shGreen mr-1"/>Friends you've brought in
+            </p>
+            <div className="space-y-1">
+              {referral.recent.map((r, i) => (
+                <div key={i} className="flex items-center justify-between gap-2 text-[12px]" data-testid={`incentives-referral-recent-${i}`}>
+                  <span className="text-white font-black truncate">
+                    <i className="fas fa-paw text-shOrange mr-1"/>{r.first_name}
+                  </span>
+                  <span className="text-gray-500 shrink-0">joined {timeAgo(r.joined_at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-2">
           <button onClick={copy}
