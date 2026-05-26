@@ -2874,6 +2874,7 @@ def _default_settings() -> dict:
             "boarding": {"mode": "24_7"},
             "training": _default_hours_grid("09:00", "17:00"),
             "grooming": _default_hours_grid("09:00", "17:00"),
+            "photography": _default_hours_grid("09:00", "17:00"),
         },
         "daycare_capacity": DAYCARE_CAPACITY,
         "boarding_capacity": 10,
@@ -6696,11 +6697,11 @@ async def calendar_events(_: dict = Depends(require_admin)):
         if b["service_type"] == "grooming" and b.get("grooming_type"):
             gt = "bath" if b["grooming_type"] == "bath" else "nail trim"
             svc_label = f"grooming · {gt}"
-        # Training (and grooming) have appointment times — promote the event
+        # Training (and grooming/photography) have appointment times — promote the event
         # from all-day to a timed event so FullCalendar renders the time prefix
         # automatically (e.g. "2:16pm Buddy (training)").
         appt_time = (b.get("time") or "").strip()
-        is_timed = bool(appt_time) and b["service_type"] in ("training", "grooming")
+        is_timed = bool(appt_time) and b["service_type"] in TIME_SLOTTED_SERVICES
         title = f"{b['dog_name']} ({svc_label})"
         event = {
             "id": b["id"],
@@ -6721,9 +6722,14 @@ async def calendar_events(_: dict = Depends(require_admin)):
             try:
                 hh, mm = appt_time.split(":")[0:2]
                 event["start"] = f"{b['date']}T{int(hh):02d}:{int(mm):02d}:00"
-                # Training sessions default to 1 hour, grooming to 1.5 hours.
-                dur = timedelta(hours=1 if b["service_type"] == "training" else 1, minutes=30 if b["service_type"] == "grooming" else 0)
-                end_dt = datetime.fromisoformat(event["start"]) + dur
+                # Use the booking's stored duration when present (admin-configured
+                # per-service-tier minutes) so photography sessions render at
+                # their actual length on the calendar. Falls back to the service
+                # default, then 60 min as a final safety net.
+                stored_dur = int(b.get("duration_minutes") or 0)
+                if stored_dur <= 0:
+                    stored_dur = await _get_default_duration(b["service_type"]) or 60
+                end_dt = datetime.fromisoformat(event["start"]) + timedelta(minutes=stored_dur)
                 event["end"] = end_dt.isoformat()
                 event["allDay"] = False
             except Exception:

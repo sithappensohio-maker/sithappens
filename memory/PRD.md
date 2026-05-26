@@ -1312,7 +1312,20 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110d — Recent referrals mini-feed (2026-02)
+## Sprint 110e — Photography hours parity with grooming/training (2026-02)
+- ✅ **User reported**: no hours settings for photography; should work just like grooming/training.
+- ✅ **Root cause**: `_default_settings()` was missing the `photography` key under `service_hours`, so the forward-compat backfill loop never inserted a grid for it. The Settings UI's hours panel also iterated only `["daycare","training","grooming"]` so photography never had a render row.
+- ✅ **Fix #1 — Backend defaults**: added `"photography": _default_hours_grid("09:00", "17:00")` to `_default_settings().service_hours`. Existing installs get auto-backfilled by `get_settings()` on next read; no migration needed.
+- ✅ **Fix #2 — Schedule calendar timed events**: the FullCalendar event-builder previously hard-coded `b["service_type"] in ("training", "grooming")` for timed rendering — now it uses the shared `TIME_SLOTTED_SERVICES` constant (`training`, `grooming`, `photography`) so photography bookings with a time field render as proper timed events (start/end ISO datetimes) instead of all-day blocks.
+- ✅ **Fix #3 — Event duration**: replaced the hard-coded "60 min for training, 90 min for grooming" with `b["duration_minutes"]` (the operator's saved length) → falls back to `_get_default_duration(service_type)` (admin-configured) → finally 60 min. So a 90-min photography shoot now shows up as a 90-min block.
+- ✅ **Fix #4 — Settings UI**: added `"photography"` to the hours-grid loop in `Settings.jsx` so admins now see a "Photography Hours" section with per-weekday open/close/closed controls, identical to grooming/training.
+- ✅ **3 new pytests pass** (`/app/backend/tests/test_photography_hours.py`):
+  - `test_photography_default_hours_present` — settings grid exists with all 7 weekdays + open/close/closed keys
+  - `test_photography_time_slots_use_configured_hours` — override Wednesday to noon-3pm, slots come back starting at 12:00 with no 15:00+
+  - `test_photography_closed_day_returns_no_slots` — marking a weekday closed yields zero time-slots
+- ✅ Settings panel still lints clean. No regressions in adjacent suites.
+
+
 - ✅ **User accepted the social-proof improvement**: show first names of friends the client has brought in.
 - ✅ **`/api/portal/incentives` extended** — `referral.recent` array of up-to-5 most-recent successful referrals from the `referrals` collection. Each entry: `{first_name, joined_at, service}`. **Privacy-safe**: only the first word of `referred_name` is exposed — never last name, never email, never client_id. Falls back to `"Friend"` if name unavailable.
 - ✅ **UI**: new "Friends you've brought in" block inside `ReferralCard`, between the share-text blockquote and the action buttons. Each row: 🐾 first-name + relative-time stamp ("joined 3 weeks ago"). Driven by a small `timeAgo()` helper supporting just-now → years-ago granularity.

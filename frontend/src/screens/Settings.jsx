@@ -402,7 +402,7 @@ function HoursPanel({ s, save, saving }) {
         ))}
       </Section>
 
-      {["daycare","training","grooming"].map(svcKey => (
+      {["daycare","training","grooming","photography"].map(svcKey => (
         <Section key={svcKey} title={`${svcKey[0].toUpperCase()+svcKey.slice(1)} Hours`} subtitle={`Override hours just for ${svcKey}.`}>
           {DAYS.map(d => {
             const val = (svc[svcKey] && svc[svcKey][d]) || biz[d];
