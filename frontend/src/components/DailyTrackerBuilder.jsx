@@ -115,7 +115,7 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
   const addStep = (dayIdx) => {
     const d = days[dayIdx];
     const steps = d.steps || [];
-    const newStep = { id: `s-${d.day_number}-${steps.length + 1}-${Math.random().toString(36).slice(2, 6)}`, label: "" };
+    const newStep = { id: `s-${d.day_number}-${steps.length + 1}-${Math.random().toString(36).slice(2, 6)}`, label: "", minutes: null };
     setDay(dayIdx, { steps: [...steps, newStep] });
   };
   const updateStep = (dayIdx, stepId, patch) => {
@@ -126,6 +126,29 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
     const d = days[dayIdx];
     setDay(dayIdx, { steps: (d.steps || []).filter((s) => s.id !== stepId) });
   };
+
+  // Sprint 105 — Per-day resources (URL or pasted link). Each row is
+  // {id, name, kind: "link"|"file", url}. We use `kind: "link"` so the backend
+  // doesn't require a media_id. Admins paste a Google Drive / Dropbox / direct PDF link.
+  const addDayResource = (dayIdx) => {
+    const d = days[dayIdx];
+    const list = d.resources || [];
+    setDay(dayIdx, { resources: [...list, { id: `res-${Math.random().toString(36).slice(2, 8)}`, name: "", kind: "link", url: "" }] });
+  };
+  const updateDayResource = (dayIdx, resId, patch) => {
+    const d = days[dayIdx];
+    setDay(dayIdx, { resources: (d.resources || []).map((r) => (r.id === resId ? { ...r, ...patch } : r)) });
+  };
+  const removeDayResource = (dayIdx, resId) => {
+    const d = days[dayIdx];
+    setDay(dayIdx, { resources: (d.resources || []).filter((r) => r.id !== resId) });
+  };
+
+  // Plan-level resources (shared across all days)
+  const [planResources, setPlanResources] = useState([]);
+  const addPlanResource = () => setPlanResources(rs => [...rs, { id: `res-${Math.random().toString(36).slice(2, 8)}`, name: "", kind: "link", url: "" }]);
+  const updatePlanResource = (rid, patch) => setPlanResources(rs => rs.map(r => r.id === rid ? { ...r, ...patch } : r));
+  const removePlanResource = (rid) => setPlanResources(rs => rs.filter(r => r.id !== rid));
 
   const canGoStep2 = dogId && title.trim().length >= 2;
   const canAssign = days.every((d) => d.day_focus.trim().length > 0 && (d.fields || []).length > 0);
@@ -146,7 +169,14 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
           equipment: (d.equipment || []).map(e => (e || "").trim()).filter(Boolean),
           steps: (d.steps || [])
             .filter((s) => (s.label || "").trim())
-            .map((s) => ({ id: s.id, label: s.label.trim() })),
+            .map((s) => ({
+              id: s.id,
+              label: s.label.trim(),
+              minutes: s.minutes ? Number(s.minutes) || null : null,
+            })),
+          resources: (d.resources || [])
+            .filter((r) => (r.url || "").trim() && (r.name || "").trim())
+            .map((r) => ({ id: r.id, name: r.name.trim(), kind: "link", url: r.url.trim() })),
           fields: (d.fields || []).map((f) => ({
             id: f.id,
             label: (f.label || "").trim() || "Untitled",
@@ -157,6 +187,9 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
         })),
         save_as_template: saveAsTemplate,
         template_name: saveAsTemplate ? templateName.trim() : "",
+        resources: planResources
+          .filter(r => (r.url || "").trim() && (r.name || "").trim())
+          .map(r => ({ id: r.id, name: r.name.trim(), kind: "link", url: r.url.trim() })),
       };
       const { data } = await api.post("/homework/daily-tracker", body);
       onAssigned?.(data);
@@ -263,6 +296,35 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                          className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
                 )}
               </div>
+
+              {/* Plan-level resources (Sprint 105) — shared across all days */}
+              <div className="border-t border-bgHover pt-3 mt-3">
+                <p className="text-[13px] font-black uppercase tracking-widest text-purple-300 mb-1">
+                  <i className="fas fa-paperclip mr-1"/>Plan-wide resources ({planResources.length})
+                </p>
+                <p className="text-[12px] text-gray-500 mb-2">PDFs or links available on every day card.</p>
+                <div className="space-y-2">
+                  {planResources.map((r) => (
+                    <div key={r.id} className="space-y-1" data-testid={`dtb-plan-res-${r.id}`}>
+                      <input value={r.name} onChange={(e) => updatePlanResource(r.id, { name: e.target.value })}
+                             placeholder="Display name"
+                             className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]" />
+                      <div className="flex items-center gap-1">
+                        <input value={r.url} onChange={(e) => updatePlanResource(r.id, { url: e.target.value })}
+                               placeholder="https://..."
+                               className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]" />
+                        <button onClick={() => removePlanResource(r.id)} className="text-gray-400 hover:text-red-400 px-1.5" data-testid={`dtb-remove-plan-res-${r.id}`}>
+                          <i className="fas fa-times"/>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={addPlanResource} data-testid="dtb-add-plan-resource"
+                        className="mt-2 text-purple-300 hover:text-purple-200 text-[12px] font-black uppercase tracking-widest">
+                  <i className="fas fa-plus mr-1"/>Add a resource
+                </button>
+              </div>
             </div>
 
             {/* Active-day editor */}
@@ -303,13 +365,23 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <p className="text-[12px] text-gray-500 mt-1">Shown to the client at the top of the day card so they don't show up empty-handed.</p>
               </div>
 
-              {/* Action steps (Sprint 103) — checkable list shown in Today's Plan */}
+              {/* Action steps (Sprint 103+105) — checkable list with per-step minutes */}
               <div className="bg-bgBase border border-shGreen/30 rounded-xl p-4">
-                <p className="text-[14px] font-black uppercase tracking-widest text-shGreen mb-1">
-                  <i className="fas fa-list-check mr-1" />Action steps for today ({(activeDay.steps || []).filter(s => s.label?.trim()).length})
-                </p>
+                <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                  <p className="text-[14px] font-black uppercase tracking-widest text-shGreen">
+                    <i className="fas fa-list-check mr-1" />Action steps for today ({(activeDay.steps || []).filter(s => s.label?.trim()).length})
+                  </p>
+                  {(() => {
+                    const total = (activeDay.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
+                    return total > 0 ? (
+                      <span className="text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="dtb-day-minutes-total">
+                        <i className="fas fa-clock mr-1"/>~{total} min total
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
                 <p className="text-[13px] text-gray-400 mb-3">
-                  Bite-sized checkboxes the client ticks off as they go. When every step is checked, the day auto-submits for your review.
+                  Bite-sized checkboxes the client ticks off as they go. Add a minute target so you (and they) know how long the day takes. When every step is checked, the day auto-submits.
                 </p>
                 <div className="space-y-2">
                   {(activeDay.steps || []).map((s, i) => (
@@ -318,6 +390,15 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                       <input value={s.label} onChange={(e) => updateStep(activeDayIdx, s.id, { label: e.target.value })}
                              placeholder={`Step ${i + 1} · e.g., "Practice sit for 5 reps in the kitchen"`}
                              className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      <input
+                        type="number" min="0" max="180"
+                        value={s.minutes ?? ""}
+                        onChange={(e) => updateStep(activeDayIdx, s.id, { minutes: e.target.value === "" ? null : Math.max(0, parseInt(e.target.value) || 0) })}
+                        placeholder="min"
+                        title="Minutes for this step"
+                        data-testid={`dtb-step-minutes-${s.id}`}
+                        className="w-20 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center"
+                      />
                       {(activeDay.steps || []).length > 1 && (
                         <button onClick={() => removeStep(activeDayIdx, s.id)} data-testid={`dtb-remove-step-${s.id}`}
                                 className="text-gray-400 hover:text-red-400 px-2">
@@ -330,6 +411,35 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <button onClick={() => addStep(activeDayIdx)} data-testid="dtb-add-step"
                         className="mt-3 text-shGreen hover:text-shGreen/80 text-[13px] font-black uppercase tracking-widest">
                   <i className="fas fa-plus mr-1"/>Add a step
+                </button>
+              </div>
+
+              {/* Per-day resources (Sprint 105) — printable handouts the client can take outside */}
+              <div className="bg-bgBase border border-purple-400/30 rounded-xl p-4">
+                <p className="text-[14px] font-black uppercase tracking-widest text-purple-300 mb-1">
+                  <i className="fas fa-paperclip mr-1"/>Day {activeDay.day_number} resources ({(activeDay.resources || []).length})
+                </p>
+                <p className="text-[13px] text-gray-400 mb-3">
+                  Paste a public link to a PDF, diagram, or YouTube clip the client should grab for THIS day. They'll see a tap-to-open button on the day card.
+                </p>
+                <div className="space-y-2">
+                  {(activeDay.resources || []).map((r) => (
+                    <div key={r.id} className="flex items-center gap-2" data-testid={`dtb-day-res-${r.id}`}>
+                      <i className="fas fa-link text-purple-300 text-xs w-4 text-center"/>
+                      <input value={r.name} onChange={(e) => updateDayResource(activeDayIdx, r.id, { name: e.target.value })}
+                             placeholder="Display name (e.g., Leash-positioning diagram)"
+                             className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      <input value={r.url} onChange={(e) => updateDayResource(activeDayIdx, r.id, { url: e.target.value })}
+                             placeholder="https://..."
+                             className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      <button onClick={() => removeDayResource(activeDayIdx, r.id)} data-testid={`dtb-remove-day-res-${r.id}`}
+                              className="text-gray-400 hover:text-red-400 px-2"><i className="fas fa-times"/></button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => addDayResource(activeDayIdx)} data-testid="dtb-add-day-resource"
+                        className="mt-3 text-purple-300 hover:text-purple-200 text-[13px] font-black uppercase tracking-widest">
+                  <i className="fas fa-plus mr-1"/>Add a resource
                 </button>
               </div>
 

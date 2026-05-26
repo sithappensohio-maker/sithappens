@@ -2844,6 +2844,8 @@ class SettingsIn(BaseModel):
     grad_warning_color: Optional[str] = None  # default #f59e0b — vaccine expiring, low credits
     grad_danger_color: Optional[str] = None   # default #ef4444 — vaccine missing, server errors
     grad_success_color: Optional[str] = None  # default #8cc63f — approved bookings, trophies earned
+    # Sprint 105 — notification preferences
+    email_per_step: Optional[bool] = None  # when True, fire an email on EVERY homework step completion (default False; daily roll-up is always on)
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -3544,9 +3546,13 @@ class DailyTrackerSectionIn(BaseModel):
     equipment: Optional[List[str]] = []  # e.g., ["high-value treats", "6-ft leash"]
     fields: List[dict] = []  # [{id, label, kind, ...}] — same shape as legacy fields
     # Sprint 103 — "Homework-Driven Tracker": named checklist steps for the day.
-    # Each step is `{id?, label}` — when ALL steps are checked the day auto-submits.
+    # Each step is `{id?, label, minutes?}` — when ALL steps are checked the day auto-submits.
     # Backward-compatible: trackers without steps still work via the field/metric flow.
     steps: Optional[List[dict]] = []
+    # Sprint 105 — printable per-day resources (PDFs, images). Each resource is
+    # `{id, name, kind: "file"|"image"|"link", media_id?, url?}`. media_id refers
+    # to /api/homework-media uploads. url is for external links.
+    resources: Optional[List[dict]] = []
 
 
 class DailyTrackerCreateIn(BaseModel):
@@ -3558,6 +3564,9 @@ class DailyTrackerCreateIn(BaseModel):
     global_rules_this_week: Optional[List[str]] = []
     save_as_template: Optional[bool] = False
     template_name: Optional[str] = ""  # used if save_as_template=True
+    # Sprint 105 — plan-level resources, shared across all days (e.g. a
+    # 1-page summary the client takes outside every day).
+    resources: Optional[List[dict]] = []
 
 
 class DaySubmitIn(BaseModel):
@@ -3597,6 +3606,35 @@ class DayReviewIn(BaseModel):
     note: Optional[str] = ""
 
 
+def _normalize_resources(items: list) -> list:
+    """Sanitize a list of resource dicts. Each resource = {id, name, kind, media_id?, url?}.
+    Kind is `file`, `image`, or `link`. media_id refers to homework_media uploads;
+    url is for external links. Drops empty/invalid entries."""
+    out = []
+    for r in items or []:
+        if not isinstance(r, dict):
+            continue
+        kind = (r.get("kind") or "file").strip().lower()
+        if kind not in ("file", "image", "link"):
+            kind = "file"
+        name = (r.get("name") or "").strip()[:140]
+        media_id = (r.get("media_id") or "").strip() or None
+        url = (r.get("url") or "").strip() or None
+        if not media_id and not url:
+            continue
+        if not name:
+            name = "Resource"
+        out.append({
+            "id": (r.get("id") or "").strip() or f"res-{uuid.uuid4().hex[:8]}",
+            "kind": kind,
+            "name": name,
+            "media_id": media_id,
+            "url": url,
+        })
+    return out
+
+
+
 def _compute_daily_progress(hw: dict) -> List[dict]:
     """Walk template_snapshot.sections (sorted by day_number) and emit a
     per-day status: locked / available / submitted / approved / needs_redo."""
@@ -3631,6 +3669,7 @@ def _compute_daily_progress(hw: dict) -> List[dict]:
             "fields": s.get("fields", []),
             "steps": s.get("steps") or [],
             "step_states": (log or {}).get("step_states") or {},
+            "resources": s.get("resources") or [],
             "section_id": s.get("id"),
             "status": status,           # locked | available | submitted | approved | needs_redo | rest | skipped
             "is_rest_day": bool(log and log.get("is_rest_day")),
@@ -3707,10 +3746,12 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
                 {
                     "id": (s.get("id") or "").strip() or f"step-{uuid.uuid4().hex[:6]}",
                     "label": (s.get("label") or "Step").strip()[:200],
+                    "minutes": int(s["minutes"]) if isinstance(s.get("minutes"), (int, float)) and int(s["minutes"]) > 0 else None,
                 }
                 for s in (d.steps or [])
                 if (s.get("label") or "").strip()
             ],
+            "resources": _normalize_resources(d.resources or []),
         })
 
     due = (date.today() + timedelta(days=len(sections))).isoformat()
@@ -3741,6 +3782,7 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
         "completion_photo": "",
         "template_snapshot": snapshot,
         "section_logs": [],
+        "resources": _normalize_resources(body.resources or []),  # Sprint 105 — plan-level resources shared across all days
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
@@ -4454,6 +4496,28 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
     refreshed["streak"] = _streak_count(refreshed["daily_progress"])
     refreshed["total_days"] = len(refreshed["daily_progress"])
 
+    # Sprint 105 — log a step_event for the live feed + nightly rollup.
+    if user.get("role") != "admin":
+        step_label = next((s.get("label") for s in steps_def if s.get("id") == body.step_id), body.step_id)
+        try:
+            await db.step_events.insert_one({
+                "id": str(uuid.uuid4()),
+                "homework_id": homework_id,
+                "client_id": refreshed.get("client_id"),
+                "client_name": refreshed.get("client_name"),
+                "dog_id": refreshed.get("dog_id"),
+                "dog_name": refreshed.get("dog_name"),
+                "day_number": int(day_number),
+                "step_id": body.step_id,
+                "step_label": step_label,
+                "homework_title": refreshed.get("title"),
+                "done": bool(body.done),
+                "all_done": bool(all_done),
+                "ts": now_iso(),
+            })
+        except Exception as e:
+            logger.warning("step_event insert failed: %s", e)
+
     # Notify admin when the auto-submit fires (so the review queue gets a heads-up
     # — same UX as filling in fields and tapping Submit).
     if all_done and user.get("role") != "admin":
@@ -4464,6 +4528,16 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
                 await notify_admin_homework_section_log(refreshed, log, client, dog)
         except Exception:
             pass
+
+    # Sprint 105 — per-step email (off by default, opt-in via settings.email_per_step)
+    if body.done and user.get("role") != "admin":
+        try:
+            settings = await get_settings()
+            if bool(settings.get("email_per_step")):
+                step_label = next((s.get("label") for s in steps_def if s.get("id") == body.step_id), body.step_id)
+                await _send_per_step_email(refreshed, day_number, step_label, len(steps_def))
+        except Exception as e:
+            logger.warning("per-step email failed: %s", e)
 
     return refreshed
 
@@ -4640,10 +4714,12 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
             "instructions": current.get("instructions", ""),
             "status": current["status"],
             "steps": [
-                {"id": s["id"], "label": s["label"], "done": bool(step_states.get(s["id"]))}
+                {"id": s["id"], "label": s["label"], "done": bool(step_states.get(s["id"])), "minutes": s.get("minutes")}
                 for s in current.get("steps") or []
             ],
             "fields": current.get("fields") or [],
+            "resources": current.get("resources") or [],
+            "plan_resources": hw.get("resources") or [],
             "all_done": bool(current.get("steps")) and all(step_states.get(s["id"]) for s in current.get("steps") or []),
             "missed_yesterday": missed is not None,
             "missed_day_number": missed,
@@ -4651,6 +4727,120 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
         })
     plan.sort(key=lambda p: (not p["missed_yesterday"], p["dog_name"]))
     return {"date": today, "yesterday": yesterday, "items": plan, "count": len(plan)}
+
+
+
+# ────────────────────── Sprint 105 — Resources + Step Events ──────────────────────
+
+class ResourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=140)
+    kind: Literal["file", "image", "link"] = "file"
+    media_id: Optional[str] = None
+    url: Optional[str] = None
+
+
+@api.post("/homework/{homework_id}/resource")
+async def add_plan_resource(homework_id: str, body: ResourceIn, _: dict = Depends(require_admin)):
+    """Attach a printable resource (PDF/image/link) to a plan. Shows up under
+    every day card in the client portal so they can grab it on the way out."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    res = _normalize_resources([body.model_dump()])
+    if not res:
+        raise HTTPException(status_code=400, detail="Resource needs a media_id or url")
+    cur = hw.get("resources") or []
+    cur.append(res[0])
+    await db.homework.update_one({"id": homework_id}, {"$set": {"resources": cur}})
+    return {"resources": cur}
+
+
+@api.delete("/homework/{homework_id}/resource/{resource_id}")
+async def remove_plan_resource(homework_id: str, resource_id: str, _: dict = Depends(require_admin)):
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    cur = [r for r in (hw.get("resources") or []) if r.get("id") != resource_id]
+    await db.homework.update_one({"id": homework_id}, {"$set": {"resources": cur}})
+    return {"resources": cur}
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/resource")
+async def add_day_resource(homework_id: str, day_number: int, body: ResourceIn, _: dict = Depends(require_admin)):
+    """Attach a printable resource to a specific day only (e.g., Day 1 has a
+    leash-positioning diagram, Day 4 has a recall cue chart)."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    snap = hw.get("template_snapshot") or {}
+    sections = snap.get("sections") or []
+    section = next((s for s in sections if int(s.get("day_number") or 0) == int(day_number)), None)
+    if not section:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    res = _normalize_resources([body.model_dump()])
+    if not res:
+        raise HTTPException(status_code=400, detail="Resource needs a media_id or url")
+    section["resources"] = (section.get("resources") or []) + [res[0]]
+    await db.homework.update_one({"id": homework_id}, {"$set": {"template_snapshot.sections": sections}})
+    return {"resources": section["resources"]}
+
+
+@api.delete("/homework/{homework_id}/day/{day_number}/resource/{resource_id}")
+async def remove_day_resource(homework_id: str, day_number: int, resource_id: str, _: dict = Depends(require_admin)):
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    snap = hw.get("template_snapshot") or {}
+    sections = snap.get("sections") or []
+    section = next((s for s in sections if int(s.get("day_number") or 0) == int(day_number)), None)
+    if not section:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    section["resources"] = [r for r in (section.get("resources") or []) if r.get("id") != resource_id]
+    await db.homework.update_one({"id": homework_id}, {"$set": {"template_snapshot.sections": sections}})
+    return {"resources": section["resources"]}
+
+
+@api.get("/admin/homework/recent-steps")
+async def admin_recent_step_events(
+    since_hours: int = 24,
+    _: dict = Depends(require_admin),
+):
+    """Live feed of step completions across all clients. Powers the in-app
+    "what just happened" panel; default 24h window."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, min(168, since_hours)))).isoformat()
+    events: List[dict] = []
+    async for ev in db.step_events.find(
+        {"ts": {"$gte": cutoff}, "done": True},
+        {"_id": 0},
+    ).sort("ts", -1).limit(200):
+        events.append(ev)
+    return {"events": events, "count": len(events), "since": cutoff}
+
+
+async def _send_per_step_email(hw: dict, day_number: int, step_label: str, total_steps: int) -> None:
+    """Fire a tiny per-step email to ADMIN_NOTIFICATION_EMAIL. Only called when
+    settings.email_per_step is on (off by default). Subject keeps it scannable."""
+    try:
+        from email_service import _send, ADMIN_NOTIFICATION_EMAIL  # type: ignore
+    except Exception:
+        return
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    subj = f"[Step done] {hw.get('dog_name', '?')} · Day {day_number} · {step_label[:60]}"
+    body_html = f"""
+    <p>Step completed for <strong>{hw.get('dog_name', '?')}</strong> ({hw.get('client_name', '?')}).</p>
+    <ul>
+      <li><strong>Plan:</strong> {hw.get('title', '—')}</li>
+      <li><strong>Day:</strong> {day_number} of {hw.get('total_days') or '?'}</li>
+      <li><strong>Step:</strong> {step_label}</li>
+    </ul>
+    <p style="color:#9ca3af; font-size:12px;">To turn off per-step emails, go to Settings → Notifications and switch off "Email me on every step".</p>
+    """
+    try:
+        await _send(ADMIN_NOTIFICATION_EMAIL, subj, body_html)
+    except Exception:
+        pass
+
 
 
 

@@ -1173,6 +1173,24 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 105 — Homework Redesign: Minutes, Resources, Step Events + Daily Roll-up (2026-02)
+- ✅ **Per-step minutes** — every step now carries an optional `minutes: int`. Surfaced in:
+  - Admin builder: tiny minute input next to each step + day-total chip that auto-rolls up (`~11 min total`)
+  - Client portal: green `5 min` badge per step + day-total in the header line (`Rocky · Day 1/2 · ~11 min`)
+- ✅ **Per-day + per-plan resources** — schema adds `resources[]` to each day section AND to the homework root. Each resource = `{id, name, kind: link/file/image, media_id?, url?}`.
+  - Admin builder: 2 new sections — "Day N resources" (per-day handouts/diagrams) + "Plan-wide resources" (shared across all days). Paste public URLs to PDFs / Drive links / YouTube clips.
+  - Client portal: purple **TAKE WITH YOU** strip on each day card with tappable chips — opens in new tab so they can save/print/take outside.
+  - 4 new admin endpoints: `POST /api/homework/{id}/resource`, `DELETE /api/homework/{id}/resource/{rid}`, plus `/day/{day}/resource` variants.
+  - Helper `_normalize_resources` strips empty entries, generates stable IDs, normalises `kind`.
+- ✅ **Live feed of step completions** — every client step-toggle (when `done=true`) writes to a new `step_events` collection with `{id, homework_id, client_id, dog_id, day_number, step_id, step_label, done, all_done, ts}`. Admin toggles do NOT emit events (regression-tested). Surfaced via new `GET /api/admin/homework/recent-steps?since_hours=24` endpoint.
+- ✅ **Daily 8 PM-ish roll-up email** — new `run_homework_step_rollup_job` in `daily_jobs.py` aggregates today's step events grouped by client/dog/plan/day → single admin email "Today's training progress · N steps done" with each row collapsed to a clean HTML card. Dedups once per day via `system_runs`. Skips entirely if no steps were completed.
+- ✅ **Per-step email toggle (opt-in)** — new `email_per_step: bool` field on `SettingsIn`, default off. When ON, the toggle-step endpoint fires a tiny `_send_per_step_email` to `ADMIN_NOTIFICATION_EMAIL` on every client step toggle (subject `[Step done] Buddy · Day 1 · Practice heel for 10 reps`). When OFF, the daily roll-up replaces it.
+- ✅ **Settings UI** — Email Automation tab gets a new toggle row `Per-step homework emails` with explicit off-default + warning copy, plus a new always-on card explaining the Daily Roll-up.
+- ✅ **10/10 new regression tests pass** (`backend/tests/test_homework_redesign.py`): minutes persist · resources on create + post-hoc upload + delete · day-level resource lifecycle · step events recorded on client toggle · admin toggle does NOT emit event · today-plan exposes resources + minutes · settings toggle round-trips · recent-steps admin-only auth · resource validation rejects empty payloads.
+- ✅ **All 26 cross-sprint homework regression tests green** (Sprint 103 + 102 + 105).
+- ✅ **End-to-end verified via smoke screenshot** — client portal renders the new "Today's Plan" card with day-total minutes header, TAKE WITH YOU resource chips (per-day + plan-level merged), and per-step minute badges. Builder UI shows minute inputs + per-day resource list + plan-wide resource list.
+
+
 ## Sprint 104 — Dashboard Hierarchy & Branding Polish (2026-02)
 - ✅ **Brand text refresh** in all 4 locations (sidebar, mobile drawer, login, claim, portal header): `Daycare • Boarding` → `Dog Training • Daycare • Boarding • Photography`. Tight tracking, wraps cleanly across 3 lines under the logo in the desktop sidebar.
 - ✅ **Text-Size picker collapsed** — `TextSizePicker` (compact mode) now renders as a small `TEXT · M` pill button instead of a permanent S/M/L/XL row. Click opens a popover with the size pills + a Close button; auto-closes on outside-click and Escape. Settings screen still uses the inline non-compact mode unchanged. Massive vertical space reclaimed in both sidebars + the portal header.

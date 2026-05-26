@@ -71,11 +71,17 @@ export default function TodayPlanCard({ onChanged }) {
       <div className="space-y-4">
         {data.items.map((item) => {
           const pct = item.total_days ? Math.round((item.streak / item.total_days) * 100) : 0;
+          // Sprint 105 — auto-roll up per-day minutes from steps; the client sees a single total at-a-glance
+          const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
+          const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
           return (
             <div key={item.homework_id} className="bg-bgBase border border-bgHover rounded-lg p-4" data-testid={`today-plan-item-${item.homework_id}`}>
               <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">{item.dog_name} · day {item.day_number}/{item.total_days}</p>
+                  <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+                    {item.dog_name} · day {item.day_number}/{item.total_days}
+                    {totalMinutes > 0 && <span className="text-gray-500 normal-case"> · ~{totalMinutes} min</span>}
+                  </p>
                   <h3 className="text-base font-black text-white uppercase italic tracking-tight">{item.title}</h3>
                   {item.day_focus && <p className="text-[14px] text-gray-300 mt-0.5"><i className="fas fa-flag-checkered text-shGreen mr-1"/>{item.day_focus}</p>}
                 </div>
@@ -84,6 +90,21 @@ export default function TodayPlanCard({ onChanged }) {
                   <p className="text-shGreen text-xl font-black">{pct}%</p>
                 </div>
               </div>
+
+              {allResources.length > 0 && (
+                <div className="mb-3 bg-purple-500/5 border border-purple-400/30 rounded p-2.5" data-testid={`today-plan-resources-${item.homework_id}`}>
+                  <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-1.5"><i className="fas fa-paperclip mr-1"/>Take with you</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {allResources.map((r) => (
+                      <a key={r.id} href={r.url || "#"} target="_blank" rel="noreferrer"
+                         data-testid={`today-plan-resource-${r.id}`}
+                         className="bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 px-2.5 py-1 rounded text-[13px] font-black inline-flex items-center gap-1.5 transition">
+                        <i className="fas fa-arrow-up-right-from-square text-[10px]"/>{r.name}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {item.missed_yesterday && (
                 <button onClick={() => setCatchUpFor({
@@ -123,6 +144,11 @@ export default function TodayPlanCard({ onChanged }) {
                           {isBusy ? <i className="fas fa-spinner fa-spin text-xs"/> : s.done ? <i className="fas fa-check text-xs"/> : null}
                         </span>
                         <span className={`flex-1 text-[15px] ${s.done ? "line-through text-gray-500" : "text-white"}`}>{s.label}</span>
+                        {s.minutes ? (
+                          <span className={`text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
+                            {s.minutes} min
+                          </span>
+                        ) : null}
                       </button>
                     );
                   })}

@@ -1572,6 +1572,19 @@ function AutomationPanel() {
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState(null);
   const [err, setErr] = useState("");
+  const [emailPerStep, setEmailPerStep] = useState(null); // null = loading
+  const [stepBusy, setStepBusy] = useState(false);
+  useEffect(() => {
+    api.get("/settings").then(r => setEmailPerStep(!!r.data?.email_per_step)).catch(() => setEmailPerStep(false));
+  }, []);
+  const toggleEmailPerStep = async () => {
+    setStepBusy(true);
+    try {
+      const next = !emailPerStep;
+      await api.put("/settings", { email_per_step: next });
+      setEmailPerStep(next);
+    } catch {} finally { setStepBusy(false); }
+  };
   const run = async () => {
     setBusy(true); setErr(""); setLast(null);
     try {
@@ -1584,8 +1597,29 @@ function AutomationPanel() {
   return (
     <div className="space-y-5 max-w-2xl" data-testid="automation-panel">
       <div>
-        <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Email Automation</h4>
+        <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Email Automation & Notifications</h4>
         <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1 normal-case">Background jobs that run automatically at most once per day, triggered the first time the admin dashboard loads each morning.</p>
+      </div>
+
+      {/* Sprint 105 — Per-step homework email toggle */}
+      <div className="bg-bgBase border border-bgHover rounded-lg p-4" data-testid="email-per-step-row">
+        <div className="flex items-start gap-3">
+          <i className="fas fa-list-check text-shBlue text-xl mt-1 w-7 text-center"/>
+          <div className="flex-1">
+            <p className="text-white font-black text-[14px] uppercase tracking-widest">Per-step homework emails</p>
+            <p className="text-[14px] text-gray-500 normal-case mt-1">
+              Default is <strong>off</strong> — instead, you get one nightly roll-up email at the end of the day with every step completed. Turn this on if you want a real-time email every time a client checks off ANY step. Heads-up: this can be a lot of emails.
+            </p>
+          </div>
+          <button onClick={toggleEmailPerStep} disabled={stepBusy || emailPerStep === null}
+                  data-testid="email-per-step-toggle"
+                  className={`shrink-0 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest transition ${
+                    emailPerStep ? "bg-shGreen text-bgHeader hover:bg-shGreen/90"
+                                  : "bg-bgPanel text-gray-400 hover:bg-bgHover border border-bgHover"
+                  } disabled:opacity-50`}>
+            {emailPerStep === null ? "…" : emailPerStep ? "On" : "Off"}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -1604,6 +1638,14 @@ function AutomationPanel() {
             <p className="text-[14px] text-gray-500 normal-case mt-1">30 days before any vaccine expires, the owner gets a single email listing which renewals are due with a link to upload the updated record.</p>
           </div>
           <span className="bg-shOrange/15 text-shOrange text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+        </div>
+        <div className="bg-bgBase border border-bgHover rounded-lg p-4 flex items-start gap-3">
+          <i className="fas fa-envelope-open-text text-shBlue text-xl mt-1 w-7 text-center"/>
+          <div className="flex-1">
+            <p className="text-white font-black text-[14px] uppercase tracking-widest">Homework Daily Roll-up</p>
+            <p className="text-[14px] text-gray-500 normal-case mt-1">One email at the end of each day summarising every step a client checked off — grouped by dog + plan. Replaces per-step spam.</p>
+          </div>
+          <span className="bg-shGreen/15 text-shGreen text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
         </div>
       </div>
 

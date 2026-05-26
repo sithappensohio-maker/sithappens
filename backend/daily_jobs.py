@@ -378,6 +378,73 @@ async def run_homework_practice_reminder_job(db) -> dict:
     return {"sent": sent, "attempted": attempted, "errors": errors, "weekday": today_dow}
 
 
+async def run_homework_step_rollup_job(db) -> dict:
+    """Sprint 105 — daily roll-up email of every homework step completed
+    today across all clients. Dedups once per day. Skips entirely if no
+    steps were completed."""
+    from email_service import _send, ADMIN_NOTIFICATION_EMAIL  # type: ignore
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return {"sent": 0, "reason": "no admin email"}
+
+    today = datetime.now(timezone.utc).date()
+    today_iso = today.isoformat()
+    dedup_key = f"hw_step_rollup:{today_iso}"
+    existing = await db.system_runs.find_one({"id": dedup_key}, {"_id": 0})
+    if existing:
+        return {"sent": 0, "skipped_already_sent": True}
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    grouped: Dict[str, dict] = {}
+    async for ev in db.step_events.find({"ts": {"$gte": cutoff}, "done": True}, {"_id": 0}):
+        key = f"{ev.get('client_id')}|{ev.get('homework_id')}|{ev.get('day_number')}"
+        g = grouped.setdefault(key, {
+            "client_name": ev.get("client_name", "—"),
+            "dog_name": ev.get("dog_name", "—"),
+            "title": ev.get("homework_title", "—"),
+            "day_number": ev.get("day_number"),
+            "steps": [],
+        })
+        g["steps"].append(ev.get("step_label") or ev.get("step_id"))
+
+    if not grouped:
+        await db.system_runs.update_one(
+            {"id": dedup_key},
+            {"$set": {"id": dedup_key, "ran_at": datetime.now(timezone.utc).isoformat(), "sent": 0}},
+            upsert=True,
+        )
+        return {"sent": 0, "reason": "no step events today"}
+
+    rows_html = ""
+    for g in grouped.values():
+        steps_list = "".join(f"<li>{s}</li>" for s in g["steps"])
+        rows_html += (
+            f"<div style='margin:0 0 16px 0;padding:12px 16px;background:#f8fafc;border-left:3px solid #8cc63f;border-radius:4px;'>"
+            f"<p style='margin:0 0 4px 0;font-weight:700;color:#0f172a;'>{g['dog_name']} · {g['title']}</p>"
+            f"<p style='margin:0 0 8px 0;color:#475569;font-size:13px;'>Day {g['day_number']} · {g['client_name']}</p>"
+            f"<ul style='margin:0;padding-left:18px;color:#1e293b;font-size:14px;'>{steps_list}</ul></div>"
+        )
+
+    total = sum(len(g["steps"]) for g in grouped.values())
+    subj = f"Today's training progress · {total} step{'s' if total != 1 else ''} done"
+    body_html = (
+        '<html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f1f5f9;margin:0;padding:24px;">'
+        '<table style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;">'
+        f'<tr><td style="padding:20px 32px;background:#0f172a;color:#fff;"><h1 style="margin:0;font-size:20px;">{subj}</h1>'
+        f'<p style="margin:4px 0 0 0;color:#94a3b8;font-size:13px;">Date: {today_iso}</p></td></tr>'
+        f'<tr><td style="padding:24px 32px;">{rows_html}'
+        '<p style="color:#64748b;font-size:12px;margin-top:16px;">Per-step emails are off. To get an email on every step instead of this nightly roll-up, go to Settings → Notifications.</p>'
+        '</td></tr></table></body></html>'
+    )
+    sent = await _send(ADMIN_NOTIFICATION_EMAIL, subj, body_html)
+    await db.system_runs.update_one(
+        {"id": dedup_key},
+        {"$set": {"id": dedup_key, "ran_at": datetime.now(timezone.utc).isoformat(), "sent": int(bool(sent)), "total_steps": total}},
+        upsert=True,
+    )
+    return {"sent": int(bool(sent)), "total_steps": total, "grouped_keys": len(grouped)}
+
+
+
 async def run_trainer_monday_digest_job(db) -> dict:
     """Monday-morning digest to the admin/operator.
     Wraps the week ahead: streak leaders, stale review queue, unanswered
@@ -523,6 +590,7 @@ async def maybe_run_daily(db) -> dict | None:
         results["birthdays"] = await run_birthday_job(db)
         results["vaccine_expiry"] = await run_vaccine_expiry_job(db)
         results["hw_reminder"] = await run_homework_practice_reminder_job(db)
+        results["hw_step_rollup"] = await run_homework_step_rollup_job(db)
         # Monday-only: trainer's weekly digest (weekday() returns 0 for Monday).
         if datetime.now(timezone.utc).date().weekday() == 0:
             results["trainer_monday_digest"] = await run_trainer_monday_digest_job(db)
