@@ -7743,6 +7743,165 @@ async def admin_close_quote_request(request_id: str, _: dict = Depends(require_a
     return {"ok": True}
 
 
+@api.get("/portal/incentives")
+async def portal_incentives(user: dict = Depends(get_current_user)):
+    """Sprint 110b — Homework Client Incentives bundle. Returns the client's
+    current homework streak, the milestone they just hit, and the NEXT
+    milestone to chase (so the portal can show a "X days to next badge"
+    motivator). Aggregates trophies the client has earned + which ones are
+    still locked but achievable in the homework category."""
+    from trophy_service import _homework_streak_days, _count_homework_completed  # type: ignore
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client linked")
+
+    streak = await _homework_streak_days(db, cid)
+    completed = await _count_homework_completed(db, cid)
+
+    # Streak-tier ladder for the visual fire display in the portal.
+    # Each rung = (threshold, label, emoji).
+    LADDER = [
+        (3,   "Streak Sparked",       "🔥"),
+        (7,   "Homework Hero",        "🔥🔥"),
+        (14,  "Two-Week Champ",       "🔥🔥🔥"),
+        (30,  "Month-Long Master",    "🔥🔥🔥🔥"),
+        (60,  "Iron Streak",          "🛡️🔥"),
+        (100, "Centurion",            "👑🔥"),
+    ]
+    current_milestone = None
+    next_milestone = None
+    for thresh, label, emoji in LADDER:
+        if streak >= thresh:
+            current_milestone = {"threshold": thresh, "label": label, "emoji": emoji}
+        elif next_milestone is None:
+            next_milestone = {
+                "threshold": thresh,
+                "label": label,
+                "emoji": emoji,
+                "days_to_go": max(0, thresh - streak),
+            }
+
+    # Pull every homework trophy (locked + earned) so the portal can render a
+    # progress ladder of "what's next to unlock".
+    hw_trophies = await db.trophies.find(
+        {"trigger_kind": {"$in": ["homework_streak_days", "homework_completed"]}, "active": True},
+        {"_id": 0},
+    ).to_list(200)
+    earned_rows = await db.awarded_trophies.find(
+        {"recipient_type": "client", "recipient_id": cid, "revoked": {"$ne": True}},
+        {"_id": 0, "trophy_code": 1, "awarded_at": 1, "id": 1},
+    ).to_list(500)
+    earned_codes = {r["trophy_code"]: r for r in earned_rows}
+
+    def _progress_for(t: dict) -> dict:
+        kind = t.get("trigger_kind")
+        thresh = int(t.get("threshold") or 0)
+        cur = streak if kind == "homework_streak_days" else completed
+        earned = t["code"] in earned_codes
+        return {
+            "code": t["code"],
+            "name": t.get("name"),
+            "description": t.get("description"),
+            "tier": t.get("tier"),
+            "icon": t.get("icon"),
+            "kind": kind,
+            "threshold": thresh,
+            "current": int(cur),
+            "earned": earned,
+            "earned_at": earned_codes.get(t["code"], {}).get("awarded_at") if earned else None,
+            "awarded_id": earned_codes.get(t["code"], {}).get("id") if earned else None,
+            "pct": min(100, int(round(100 * cur / thresh))) if thresh > 0 else 0,
+        }
+
+    progress = [_progress_for(t) for t in hw_trophies]
+    progress.sort(key=lambda r: (r["kind"], r["threshold"]))
+
+    # Completed plans with certificates → for the "Shareable Certificates" carousel
+    certificates: list = []
+    async for hw in db.homework.find(
+        {"client_id": cid, "status": "completed", "certificate": {"$exists": True, "$ne": ""}},
+        {"_id": 0, "id": 1, "title": 1, "dog_name": 1, "completed_at": 1, "share_token": 1, "certificate_filename": 1},
+    ).sort("completed_at", -1).limit(20):
+        certificates.append({
+            "homework_id": hw["id"],
+            "title": hw.get("title", ""),
+            "dog_name": hw.get("dog_name", ""),
+            "completed_at": hw.get("completed_at", ""),
+            "share_token": hw.get("share_token"),  # null until generated; UI calls /share-link to mint
+            "filename": hw.get("certificate_filename", "certificate"),
+        })
+
+    return {
+        "streak_days": streak,
+        "completed_plans": completed,
+        "current_milestone": current_milestone,
+        "next_milestone": next_milestone,
+        "streak_ladder": [{"threshold": t, "label": l, "emoji": e} for t, l, e in LADDER],
+        "trophy_progress": progress,
+        "certificates": certificates,
+    }
+
+
+# ────────── Sprint 110b: Shareable certificate links ──────────
+@api.post("/homework/{homework_id}/share-link")
+async def homework_share_link(homework_id: str, user: dict = Depends(get_current_user)):
+    """Mint (or return existing) a public share token for a completed
+    homework's certificate. Token-based so a client can share the link on
+    social/text without exposing their portal login."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    # Only the owning client (or admin) can mint a share link
+    if user.get("role") == "client" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your homework")
+    if not hw.get("certificate"):
+        raise HTTPException(status_code=400, detail="No certificate uploaded yet")
+    token = hw.get("share_token")
+    if not token:
+        # Short, URL-safe token — 22 chars from uuid4 hex is unguessable in practice
+        token = uuid.uuid4().hex[:22]
+        await db.homework.update_one(
+            {"id": homework_id},
+            {"$set": {"share_token": token, "share_token_created_at": now_iso()}},
+        )
+    return {
+        "share_token": token,
+        "share_url": f"/share/cert/{token}",  # frontend route renders the public view
+        "homework_id": homework_id,
+        "dog_name": hw.get("dog_name", ""),
+        "title": hw.get("title", ""),
+    }
+
+
+@api.get("/share/cert/{token}")
+async def public_certificate_view(token: str):
+    """PUBLIC (no auth) endpoint that returns the certificate metadata + image
+    bytes for the share page. Token is unguessable — anyone with the link can
+    view, by design (that's what shareable means)."""
+    hw = await db.homework.find_one(
+        {"share_token": token},
+        {"_id": 0, "certificate": 1, "certificate_filename": 1, "title": 1,
+         "dog_name": 1, "client_name": 1, "completed_at": 1, "id": 1},
+    )
+    if not hw:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    # We surface a settings-driven brand name so the share page can render
+    # "Issued by X" without leaking any other settings info.
+    settings = await get_settings()
+    return {
+        "homework_id": hw["id"],
+        "title": hw.get("title", ""),
+        "dog_name": hw.get("dog_name", ""),
+        "client_name": hw.get("client_name", ""),
+        "completed_at": hw.get("completed_at", ""),
+        "certificate": hw.get("certificate", ""),
+        "filename": hw.get("certificate_filename") or "certificate",
+        "brand_name": settings.get("brand_footer_text") or "Sit Happens",
+    }
+
+
 @api.get("/portal/trophies")
 async def portal_trophies(user: dict = Depends(get_current_user)):
     """Returns trophies for the current client + their dogs, plus an

@@ -1312,7 +1312,32 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110 — Multi-dog household discount + Vaccine upload confirmation (2026-02)
+## Sprint 110b — Homework Client Incentives bundle (streaks · trophies · shareable certs) (2026-02)
+- ✅ **User chose**: streak milestones + trophies + shareable certificates — **NO free credits** (explicitly excluded).
+- ✅ **Streak ladder added to seed catalog**: 6 fire-tier trophies on `homework_streak_days` at thresholds 3 (Streak Sparked — bronze), 7 (Homework Hero — bronze, existing), 14 (Two-Week Champ — silver), 30 (Month-Long Master — gold), 60 (Iron Streak — platinum), 100 (Centurion — diamond, new tier).
+- ✅ **Plans-completed ladder expanded**: now 1 (First Plan Down — bronze), 5 (Five Down — bronze), 25 (Dedicated Owner — existing silver), 100 (Coach of the Year — existing gold).
+- ✅ **New `diamond` tier** added to `TIER_COLORS` palette so Centurion renders with a purple ring/fill.
+- ✅ **New endpoint `GET /api/portal/incentives`** (client-only, 403 for admin) — returns the client's current streak, total completed plans, current milestone (with emoji + label), next milestone (with `days_to_go`), the full 6-rung ladder, every homework trophy with `{current, threshold, pct, earned, awarded_id}` for progress bars, and the last 20 certificate-bearing homework records for the share carousel.
+- ✅ **Shareable certificates** (no auth required on the public side):
+  - `POST /api/homework/{id}/share-link` — client or admin can mint an unguessable 22-char share token; idempotent (returns existing token on repeat calls). Refuses with 400 if no certificate uploaded yet, 403 if a different client tries to share.
+  - `GET /api/share/cert/{token}` — **PUBLIC** (no auth header) endpoint that returns certificate image + metadata + brand name. 404 on bogus tokens.
+- ✅ **New frontend component `HomeworkIncentivesPanel.jsx`** rendered in client portal directly under Today's Plan:
+  - Streak headline ("N days · 🔥🔥🔥 Two-Week Champ") + "next milestone in X days" callout
+  - 6-rung visual ladder (greyscale for not-yet-reached, glowing for reached)
+  - Earned trophies row (color-coded by tier ring)
+  - Up-to-4 upcoming trophies with progress bars
+  - Shareable certificates with copy-to-clipboard share button (uses `navigator.share` on mobile, clipboard fallback elsewhere)
+- ✅ **New public route `/share/cert/{token}`** wired in `App.js` (same pattern as `/claim/{token}`) → renders `ShareCertificate.jsx`: branded page showing the cert image full-bleed, plan title, dog name, completion date, download button + native re-share button.
+- ✅ **5 new pytests pass + 1 skipped** (`/app/backend/tests/test_homework_incentives.py`):
+  - Verifies all 10 homework trophy tiers seeded with correct thresholds
+  - `/portal/incentives` shape contract (every field the UI consumes)
+  - Admin gets 403 from `/portal/incentives` (client-only)
+  - Share-link refuses without a certificate (404/400)
+  - Public share endpoint returns 404 on invalid token
+  - End-to-end: admin uploads cert → mints share-link → unauth GET succeeds → 2nd mint returns SAME token (idempotent)
+- ✅ All existing homework tests still pass (31 across 3 suites).
+
+
 - ✅ **Multi-dog discount feature SHIPPED** — auto-applied at check-out for the 2nd-and-later dog of the same client on the same date. Solo-operator sales lever you can toggle on/off from Settings.
 - ✅ **Settings panel** in `Settings → Booking Rules tab`: enable toggle, mode (percent vs flat), value, and customizable receipt label (defaults to "Multi-dog discount").
 - ✅ **Persisted settings fields** in `settings` collection: `multi_dog_discount_enabled`, `multi_dog_discount_mode`, `multi_dog_discount_value`, `multi_dog_discount_label`.

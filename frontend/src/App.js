@@ -20,6 +20,7 @@ import Staff from "./screens/Staff";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import Claim from "./screens/Claim";
+import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
@@ -178,6 +179,15 @@ export default function App() {
     return (
       <ErrorBoundary>
         <Claim token={decodeURIComponent(claimMatch[1])} />
+      </ErrorBoundary>
+    );
+  }
+  // Sprint 110b — public shareable certificate page (no auth).
+  const shareMatch = typeof window !== "undefined" && window.location.pathname.match(/^\/share\/cert\/([^/?#]+)/);
+  if (shareMatch) {
+    return (
+      <ErrorBoundary>
+        <ShareCertificate token={decodeURIComponent(shareMatch[1])} />
       </ErrorBoundary>
     );
   }
