@@ -12,6 +12,7 @@ import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import DailyCheckInCard from "../components/DailyCheckInCard";
 import TodayPlanCard from "../components/TodayPlanCard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
+import PlanProgressRing from "../components/PlanProgressRing";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import TextSizePicker from "../components/TextSizePicker";
@@ -1180,6 +1181,19 @@ export default function Portal() {
                         {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
                         {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
                       </div>
+                      {/* Sprint 110m — progress ring on every daily-tracker plan,
+                          replacing the old hidden "Progress N%" text. Visible
+                          at the card header level so clients see momentum
+                          across all their plans at a glance. */}
+                      {h.daily_tracker && h.progress_summary && h.status !== "completed" && (
+                        <PlanProgressRing
+                          pct={h.progress_summary.pct}
+                          current={h.progress_summary.current_day}
+                          total={h.progress_summary.total_days}
+                          completed={h.progress_summary.completed_days}
+                          testid={`portal-plan-ring-${h.id}`}
+                        />
+                      )}
                       {h.status !== "completed" && !h.daily_tracker && (
                         <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
                                 className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>

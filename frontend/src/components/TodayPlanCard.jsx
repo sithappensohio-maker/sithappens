@@ -211,10 +211,15 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                   <h3 className="text-base font-black text-white uppercase italic tracking-tight">{item.title}</h3>
                   {item.day_focus && <p className="text-[14px] text-gray-300 mt-0.5"><i className="fas fa-flag-checkered text-shGreen mr-1"/>{item.day_focus}</p>}
                 </div>
-                <div className="text-right">
-                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Progress</p>
-                  <p className="text-shGreen text-xl font-black">{pct}%</p>
-                </div>
+                {/* Sprint 110m — when this is rendered inside a per-plan card
+                    (unwrapped=true), the parent already shows a progress ring at
+                    the header level, so we drop the duplicate "Progress N%" tile. */}
+                {!unwrapped && (
+                  <div className="text-right">
+                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Progress</p>
+                    <p className="text-shGreen text-xl font-black">{pct}%</p>
+                  </div>
+                )}
               </div>
 
               {/* Open-fullscreen affordance + instructions accordion */}

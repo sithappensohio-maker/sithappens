@@ -7548,6 +7548,25 @@ async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require
         {"client_id": client_id, "status": {"$in": ["assigned", "in_progress"]}},
         {"_id": 0},
     ).sort("due_date", 1).to_list(200)
+    # Sprint 110m — attach a quick per-plan progress summary so the portal
+    # can render a circular progress ring on each plan card without fetching
+    # per-plan endpoints.
+    for hw in homework:
+        if not hw.get("daily_tracker"):
+            continue
+        days = _compute_daily_progress(hw)
+        total = len(days)
+        completed = sum(1 for d in days if d["status"] in ("approved", "submitted", "rest"))
+        current = next(
+            (d["day_number"] for d in days if d["status"] in ("available", "needs_redo", "draft")),
+            (days[-1]["day_number"] if days else 0),
+        )
+        hw["progress_summary"] = {
+            "total_days": total,
+            "completed_days": completed,
+            "current_day": current,
+            "pct": int(round(100 * completed / total)) if total > 0 else 0,
+        }
 
     # Waiver status
     settings = await get_settings()
