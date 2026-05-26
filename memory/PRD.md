@@ -1312,7 +1312,23 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110f — Calendar timed events get colored chips (2026-02)
+## Sprint 110g — Low-credit email at checkout (2026-02)
+- ✅ **User reported**: clients aren't getting the email when they hit 2 daycare credits.
+- ✅ **Root cause**: `notify_client_low_credits` was IMPORTED in `server.py` but never CALLED from any code path. Credit decrements at checkout silently happened with no email trigger. The Today's Tasks dashboard pip at line 6350 was the only signal that something low was happening.
+- ✅ **Fix #1 — Wired into checkout** (`server.py`): every credit-consuming code path in `check_out` now calls `_maybe_send_low_credit_email(client_id, pool, new_balance)` immediately after the `$inc` decrement. Covers both the standard path (line ~2510) and the extra-boarding-nights path (line ~2604).
+- ✅ **Fix #2 — Email function now supports boarding** (`email_service.py`): was hard-coded to daycare/training labels; now maps `boarding → "Boarding" / "nights"` too.
+- ✅ **Fix #3 — Smart idempotency** (`_maybe_send_low_credit_email`): stamps the client doc with `low_credit_emailed_at.{pool} = {balance, at}` after each email. The next checkout at the SAME balance is skipped (no spam). When the balance moves to a NEW lower value within the warn zone, a new email fires (so "2 left" and then "1 left" both go out). When the balance lifts back above 2, the stamp clears so the next dip re-arms the email.
+- ✅ **Fix #4 — `adjust-credits` also clears stamps** when a manual top-up lifts a pool above 2, so a fresh credit pack purchase properly re-arms future heads-up emails.
+- ✅ **Fix #5 — `ClientOut` Pydantic model** now exposes `low_credit_emailed_at` so admins/tests can verify which clients have been notified.
+- ✅ **Threshold = 2** (matches the existing dashboard signal so email + dashboard pip fire in lockstep).
+- ✅ **4 new pytests pass** (`/app/backend/tests/test_low_credit_email.py`):
+  - First checkout that drops to ≤2 stamps `low_credit_emailed_at.daycare`
+  - Stamp updates when balance changes within warn zone (2 → 1 → new stamp)
+  - Manual `adjust-credits` lifting balance above threshold clears the stamp
+  - Email function signature accepts a `service_type` arg (sanity check)
+- ✅ All 10 checkout-related tests pass (no regressions in multi-dog discount or any other checkout path).
+
+
 - ✅ **User reported**: training and photography on the Schedule "just show text" while daycare/boarding show colored indicators.
 - ✅ **Root cause**: FullCalendar's `dayGridMonth` default behavior renders **timed events** (those with start/end times — i.e. training/grooming/photography) as a `display: list-item` row with a colored dot + time text, while **all-day events** (daycare/boarding) render as solid colored bars. So even though the backend was emitting the right color for each event, timed services looked like plain text rows.
 - ✅ **Fix #1 — `eventDisplay="block"`** added to the `<FullCalendar>` in `Schedule.jsx`. Forces ALL events (timed AND all-day) to render as solid colored chips. Training/photography now look exactly like daycare/boarding visually, just with the time prefix still showing inside the chip.

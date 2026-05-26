@@ -231,6 +231,10 @@ class ClientOut(ClientIn):
     dogs: Optional[List[Dict[str, Any]]] = None  # lightweight [{id, name, breed}] for admin listing
     last_login_at: Optional[str] = None  # ISO timestamp of the client's most recent portal login
     login_count: int = 0  # total number of times this client has logged in
+    # Sprint 110g — per-pool stamp of the most recent "low credit" email we
+    # fired, so the idempotency guard can avoid spamming and the UI can show
+    # "client was notified".
+    low_credit_emailed_at: Optional[Dict[str, Any]] = None
     created_at: str
 
 class PortalAccountIn(BaseModel):
@@ -2303,6 +2307,48 @@ async def check_in(
     booking.update(update)
     return booking
 
+async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_balance: int) -> None:
+    """Sprint 110g — Fire the low-credit "heads up" email when a credit pool
+    drops to <= 2.
+
+    Idempotency: we stamp the client doc with the LAST balance we emailed at
+    (per pool) so re-checkouts within the same low-credit episode don't spam.
+    A subsequent credit refill that lifts the balance above 2 clears the stamp,
+    so the next time they dip down again the next email goes through.
+
+    Threshold is "2 or fewer" matching the existing dashboard `low_credits`
+    Today's Tasks signal (server.py line 6350-6354), so the email + dashboard
+    pip in lockstep.
+    """
+    THRESHOLD = 2
+    if new_balance > THRESHOLD:
+        # Lift above threshold — clear any prior stamp so a future dip re-arms.
+        stamp_key = f"low_credit_emailed_at.{service_type}"
+        await db.clients.update_one(
+            {"id": client_id, stamp_key: {"$exists": True}},
+            {"$unset": {stamp_key: ""}},
+        )
+        return
+    # Inside the warn-zone. Only email if we haven't already for THIS balance.
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client or not client.get("email"):
+        return
+    last = (client.get("low_credit_emailed_at") or {}).get(service_type)
+    if isinstance(last, dict) and last.get("balance") == new_balance:
+        return  # already emailed for this exact balance — skip
+    try:
+        await notify_client_low_credits(client, service_type, new_balance)
+        await db.clients.update_one(
+            {"id": client_id},
+            {"$set": {f"low_credit_emailed_at.{service_type}": {
+                "balance": new_balance,
+                "at": now_iso(),
+            }}},
+        )
+    except Exception as exc:
+        logger.warning("Low-credit email failed for client=%s pool=%s: %s", client_id, service_type, exc)
+
+
 async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Sprint 110 — return the dollar discount that should apply to the
     booking being checked out, given the multi-dog household setting.
@@ -2505,6 +2551,11 @@ async def check_out(
         if available >= nights and nights > 0:
             credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
+            # Sprint 110g — fire low-credit email if this checkout dropped the
+            # pool to ≤ 2. Idempotent per (client, pool, threshold) so we
+            # never spam the client with multiple "2 left" emails.
+            new_balance = available - nights
+            await _maybe_send_low_credit_email(booking["client_id"], svc_type, new_balance)
             # Income value: prefer admin's manual override; fall back to lot value;
             # if the lot has no $ data, use the default service price so income is
             # still recorded correctly.
@@ -2592,6 +2643,10 @@ async def check_out(
                 )
                 await db.clients.update_one(
                     {"id": booking["client_id"]}, {"$inc": {"boarding_credits": -extra_credits_used}}
+                )
+                # Sprint 110g — low-credit email when extra-night burns drop pool.
+                await _maybe_send_low_credit_email(
+                    booking["client_id"], "boarding", available - extra_credits_used
                 )
                 # Stack onto whatever credit_value already existed on the booking.
                 prev_credit_value = float(booking.get("credit_value") or 0)
@@ -10179,6 +10234,15 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
             }
 
     await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
+    # Sprint 110g — if a manual adjustment lifts any low-credit pool back above
+    # the threshold, clear its email-sent stamp so the NEXT dip re-fires the
+    # heads-up email instead of silently being skipped by the idempotency guard.
+    for pool, (field, delta) in pool_map.items():
+        if delta and (int(client.get(field) or 0) + delta) > 2:
+            await db.clients.update_one(
+                {"id": client_id, f"low_credit_emailed_at.{pool}": {"$exists": True}},
+                {"$unset": {f"low_credit_emailed_at.{pool}": ""}},
+            )
     log_entry = {
         "id": str(uuid.uuid4()),
         "client_id": client_id,

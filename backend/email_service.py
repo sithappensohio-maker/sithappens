@@ -760,13 +760,15 @@ async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
 
 
 async def notify_client_low_credits(client: dict, service_type: str, remaining: int) -> None:
-    """Heads-up to the client when their daycare/training credits hit the
-    low-balance threshold (currently 2 or fewer)."""
+    """Heads-up to the client when their daycare/training/boarding credits hit
+    the low-balance threshold (currently 2 or fewer)."""
     to_email = client.get("email", "")
     if not to_email:
         return
-    label = "Training" if service_type == "training" else "Daycare"
-    unit = "sessions" if service_type == "training" else "days"
+    label_map = {"training": "Training", "boarding": "Boarding"}
+    label = label_map.get(service_type, "Daycare")
+    unit_map = {"training": "sessions", "boarding": "nights"}
+    unit = unit_map.get(service_type, "days")
     rows = [
         ("Pool", f"{label} credits"),
         ("Remaining", f"{remaining} {unit}"),
