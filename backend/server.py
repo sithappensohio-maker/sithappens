@@ -3543,6 +3543,10 @@ class DailyTrackerSectionIn(BaseModel):
     instructions: Optional[str] = ""
     equipment: Optional[List[str]] = []  # e.g., ["high-value treats", "6-ft leash"]
     fields: List[dict] = []  # [{id, label, kind, ...}] — same shape as legacy fields
+    # Sprint 103 — "Homework-Driven Tracker": named checklist steps for the day.
+    # Each step is `{id?, label}` — when ALL steps are checked the day auto-submits.
+    # Backward-compatible: trackers without steps still work via the field/metric flow.
+    steps: Optional[List[dict]] = []
 
 
 class DailyTrackerCreateIn(BaseModel):
@@ -3625,21 +3629,24 @@ def _compute_daily_progress(hw: dict) -> List[dict]:
             "instructions": s.get("instructions", ""),
             "equipment": s.get("equipment") or [],
             "fields": s.get("fields", []),
+            "steps": s.get("steps") or [],
+            "step_states": (log or {}).get("step_states") or {},
             "section_id": s.get("id"),
-            "status": status,           # locked | available | submitted | approved | needs_redo | rest
+            "status": status,           # locked | available | submitted | approved | needs_redo | rest | skipped
             "is_rest_day": bool(log and log.get("is_rest_day")),
+            "is_skipped": bool(log and log.get("is_skipped")),
             "questions": (log or {}).get("questions") or [],
             "log": log,                  # full submission incl. mood/photo/note
         })
-        prev_passed = status in ("approved", "rest")
+        prev_passed = status in ("approved", "rest", "skipped")
     return progress
 
 
 def _streak_count(progress: List[dict]) -> int:
-    """Count consecutive passed days from Day 1 forward — approved OR rest day."""
+    """Count consecutive passed days from Day 1 forward — approved, rest, or skipped."""
     n = 0
     for p in progress:
-        if p.get("status") in ("approved", "rest"):
+        if p.get("status") in ("approved", "rest", "skipped"):
             n += 1
         else:
             break
@@ -3694,6 +3701,16 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
             "instructions": (d.instructions or "").strip(),
             "equipment": [(e or "").strip() for e in (d.equipment or []) if (e or "").strip()],
             "fields": fields,
+            # Sprint 103 — normalize steps with stable ids so toggle endpoints
+            # can target them across resubmissions.
+            "steps": [
+                {
+                    "id": (s.get("id") or "").strip() or f"step-{uuid.uuid4().hex[:6]}",
+                    "label": (s.get("label") or "Step").strip()[:200],
+                }
+                for s in (d.steps or [])
+                if (s.get("label") or "").strip()
+            ],
         })
 
     due = (date.today() + timedelta(days=len(sections))).isoformat()
@@ -4336,6 +4353,305 @@ async def admin_force_weekly_digest(_: dict = Depends(require_admin)):
     await db.notification_log.delete_many({"key": {"$regex": f"^hw_digest:.*:{week_start}$"}})
     result = await run_homework_weekly_digest_job(db)
     return result
+
+
+
+
+# ────────────────────── Sprint 103 — Homework-Driven Tracker ──────────────────────
+# Steps are checkable sub-tasks within a day. Toggling all steps auto-submits
+# the day. A "catch-up" endpoint handles missed days with 3 strategies.
+
+class StepToggleIn(BaseModel):
+    step_id: str = Field(min_length=1, max_length=80)
+    done: bool
+
+
+@api.post("/homework/{homework_id}/day/{day_number}/toggle-step")
+async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn, user: dict = Depends(get_current_user)):
+    """Check/uncheck a single step within a day. When ALL steps on the day are
+    checked, the day's section_log auto-flips to `submission_status=submitted`
+    so the admin review queue picks it up — same as a full form submission."""
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+
+    snap = hw.get("template_snapshot") or {}
+    section = next(
+        (s for s in (snap.get("sections") or []) if int(s.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    if not section:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    steps_def = section.get("steps") or []
+    if not steps_def:
+        raise HTTPException(status_code=400, detail="This day has no steps configured")
+    if body.step_id not in {s.get("id") for s in steps_def}:
+        raise HTTPException(status_code=404, detail=f"Step {body.step_id} not found on day {day_number}")
+
+    # Make sure the day is available (no skipping ahead)
+    prog = _compute_daily_progress(hw)
+    cur = next((p for p in prog if p["day_number"] == day_number), None)
+    if not cur:
+        raise HTTPException(status_code=404, detail=f"Day {day_number} not found")
+    if cur["status"] == "locked":
+        raise HTTPException(status_code=400, detail="Previous day hasn't been approved yet")
+
+    # Find-or-create the day's section_log
+    logs = hw.get("section_logs") or []
+    existing_idx = next(
+        (i for i, lo in enumerate(logs) if int(lo.get("day_number") or 0) == int(day_number)),
+        None,
+    )
+    if existing_idx is None:
+        log = {
+            "id": str(uuid.uuid4()),
+            "section_id": f"day-{day_number}",
+            "day_number": int(day_number),
+            "date": date.today().isoformat(),
+            "field_values": {},
+            "step_states": {},
+            "note": "",
+            "submission_status": "in_progress",
+            "is_rest_day": False,
+            "questions": [],
+            "logged_by": user.get("name", ""),
+            "logged_by_id": user.get("id"),
+            "logged_by_role": user.get("role", "client"),
+            "logged_at": now_iso(),
+        }
+        logs.append(log)
+    else:
+        log = logs[existing_idx]
+        if log.get("submission_status") == "approved":
+            raise HTTPException(status_code=400, detail="Day already approved")
+
+    states = dict(log.get("step_states") or {})
+    states[body.step_id] = bool(body.done)
+    log["step_states"] = states
+
+    # If every step is now done, auto-submit the day
+    all_done = all(states.get(s["id"]) for s in steps_def)
+    if all_done and log.get("submission_status") in (None, "in_progress", "needs_redo"):
+        log["submission_status"] = "submitted"
+        log["logged_at"] = now_iso()
+        log["logged_by"] = user.get("name", log.get("logged_by", ""))
+        log["logged_by_role"] = user.get("role", log.get("logged_by_role", "client"))
+
+    if existing_idx is None:
+        await db.homework.update_one({"id": homework_id}, {"$set": {"section_logs": logs}})
+    else:
+        await db.homework.update_one(
+            {"id": homework_id},
+            {"$set": {f"section_logs.{existing_idx}": log}},
+        )
+
+    refreshed = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    refreshed["daily_progress"] = _compute_daily_progress(refreshed)
+    refreshed["streak"] = _streak_count(refreshed["daily_progress"])
+    refreshed["total_days"] = len(refreshed["daily_progress"])
+
+    # Notify admin when the auto-submit fires (so the review queue gets a heads-up
+    # — same UX as filling in fields and tapping Submit).
+    if all_done and user.get("role") != "admin":
+        try:
+            client = await db.clients.find_one({"id": refreshed.get("client_id")}, {"_id": 0})
+            dog = await db.dogs.find_one({"id": refreshed.get("dog_id")}, {"_id": 0})
+            if client and dog:
+                await notify_admin_homework_section_log(refreshed, log, client, dog)
+        except Exception:
+            pass
+
+    return refreshed
+
+
+class CatchUpIn(BaseModel):
+    strategy: Literal["shift_forward", "skip_missed", "double_up"]
+    missed_day_number: int = Field(ge=1, le=120)
+
+
+@api.post("/homework/{homework_id}/catch-up")
+async def homework_catch_up(homework_id: str, body: CatchUpIn, user: dict = Depends(get_current_user)):
+    """Apply one of 3 catch-up strategies after a client misses a day:
+      * shift_forward — leave missed day as-is, extend due_date by 1
+      * skip_missed   — mark missed day status=skipped so the next day unlocks
+      * double_up     — copy missed day's steps into today's available day
+    """
+    hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if user.get("role") != "admin" and hw.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not allowed")
+    if not hw.get("daily_tracker"):
+        raise HTTPException(status_code=400, detail="Not a daily-tracker homework")
+
+    snap = hw.get("template_snapshot") or {}
+    sections = sorted(
+        [s for s in (snap.get("sections") or []) if s.get("day_number")],
+        key=lambda s: int(s["day_number"]),
+    )
+    missed_section = next(
+        (s for s in sections if int(s["day_number"]) == int(body.missed_day_number)),
+        None,
+    )
+    if not missed_section:
+        raise HTTPException(status_code=404, detail=f"Day {body.missed_day_number} not found")
+
+    logs = list(hw.get("section_logs") or [])
+
+    if body.strategy == "skip_missed":
+        existing_idx = next(
+            (i for i, lo in enumerate(logs) if int(lo.get("day_number") or 0) == int(body.missed_day_number)),
+            None,
+        )
+        skip_log = {
+            "id": str(uuid.uuid4()),
+            "section_id": f"day-{body.missed_day_number}",
+            "day_number": int(body.missed_day_number),
+            "date": date.today().isoformat(),
+            "field_values": {},
+            "step_states": {},
+            "note": "Skipped via catch-up",
+            "submission_status": "skipped",
+            "is_skipped": True,
+            "is_rest_day": False,
+            "questions": [],
+            "logged_by": user.get("name", ""),
+            "logged_by_id": user.get("id"),
+            "logged_by_role": user.get("role", "client"),
+            "logged_at": now_iso(),
+        }
+        if existing_idx is None:
+            logs.append(skip_log)
+        else:
+            logs[existing_idx] = skip_log
+        await db.homework.update_one({"id": homework_id}, {"$set": {"section_logs": logs}})
+
+    elif body.strategy == "shift_forward":
+        try:
+            cur_due = datetime.fromisoformat(hw.get("due_date") or date.today().isoformat()).date()
+        except Exception:
+            cur_due = date.today()
+        new_due = (cur_due + timedelta(days=1)).isoformat()
+        await db.homework.update_one({"id": homework_id}, {"$set": {"due_date": new_due}})
+
+    elif body.strategy == "double_up":
+        # 1. Mark the missed day as skipped FIRST so the next day unlocks
+        skip_log = {
+            "id": str(uuid.uuid4()),
+            "section_id": f"day-{body.missed_day_number}",
+            "day_number": int(body.missed_day_number),
+            "date": date.today().isoformat(),
+            "field_values": {},
+            "step_states": {},
+            "note": "Carried forward via catch-up",
+            "submission_status": "skipped",
+            "is_skipped": True,
+            "is_rest_day": False,
+            "questions": [],
+            "logged_by": user.get("name", ""),
+            "logged_by_id": user.get("id"),
+            "logged_by_role": user.get("role", "client"),
+            "logged_at": now_iso(),
+        }
+        existing_idx = next(
+            (i for i, lo in enumerate(logs) if int(lo.get("day_number") or 0) == int(body.missed_day_number)),
+            None,
+        )
+        if existing_idx is None:
+            logs.append(skip_log)
+        else:
+            logs[existing_idx] = skip_log
+        await db.homework.update_one({"id": homework_id}, {"$set": {"section_logs": logs}})
+
+        # 2. Recompute progress with the skip applied, find the now-available next day
+        refreshed_tmp = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+        prog_now = _compute_daily_progress(refreshed_tmp)
+        next_avail = next(
+            (p for p in prog_now if p["status"] == "available" and int(p["day_number"]) > int(body.missed_day_number)),
+            None,
+        )
+        if not next_avail:
+            raise HTTPException(status_code=400, detail="No available day to double up onto")
+        next_dn = int(next_avail["day_number"])
+        sections_mut = snap.get("sections") or []
+        next_section = next((s for s in sections_mut if int(s.get("day_number") or 0) == next_dn), None)
+        missed_steps = missed_section.get("steps") or []
+        if next_section is not None and missed_steps:
+            new_steps = list(next_section.get("steps") or []) + [
+                {"id": f"carryover-{s['id']}", "label": f"(catch-up) {s['label']}"} for s in missed_steps
+            ]
+            next_section["steps"] = new_steps
+            await db.homework.update_one(
+                {"id": homework_id},
+                {"$set": {"template_snapshot.sections": sections_mut}},
+            )
+
+    refreshed = await db.homework.find_one({"id": homework_id}, {"_id": 0})
+    refreshed["daily_progress"] = _compute_daily_progress(refreshed)
+    refreshed["streak"] = _streak_count(refreshed["daily_progress"])
+    refreshed["total_days"] = len(refreshed["daily_progress"])
+    refreshed["catch_up_applied"] = body.strategy
+    return refreshed
+
+
+@api.get("/portal/today-plan")
+async def portal_today_plan(user: dict = Depends(get_current_user)):
+    """Unified "what should I do today?" feed for the client portal. Pulls the
+    NEXT-AVAILABLE day from every active daily-tracker homework owned by this
+    client, returning a single flat checklist grouped by dog → homework."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=400, detail="No client linked")
+
+    today = date.today().isoformat()
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    plan: List[dict] = []
+
+    async for hw in db.homework.find(
+        {"client_id": cid, "daily_tracker": True, "status": {"$ne": "completed"}},
+        {"_id": 0},
+    ):
+        prog = _compute_daily_progress(hw)
+        current = next((p for p in prog if p["status"] in ("available", "in_progress", "submitted", "needs_redo")), None)
+        if not current:
+            continue
+        missed = None
+        for p in prog:
+            if p["day_number"] >= current["day_number"]:
+                break
+            if p["status"] in ("available", "in_progress"):
+                missed = p["day_number"]
+                break
+        step_states = current.get("step_states") or {}
+        plan.append({
+            "homework_id": hw["id"],
+            "dog_id": hw.get("dog_id"),
+            "dog_name": hw.get("dog_name", ""),
+            "title": hw.get("title", ""),
+            "day_number": current["day_number"],
+            "total_days": len(prog),
+            "day_focus": current.get("day_focus", ""),
+            "instructions": current.get("instructions", ""),
+            "status": current["status"],
+            "steps": [
+                {"id": s["id"], "label": s["label"], "done": bool(step_states.get(s["id"]))}
+                for s in current.get("steps") or []
+            ],
+            "fields": current.get("fields") or [],
+            "all_done": bool(current.get("steps")) and all(step_states.get(s["id"]) for s in current.get("steps") or []),
+            "missed_yesterday": missed is not None,
+            "missed_day_number": missed,
+            "streak": _streak_count(prog),
+        })
+    plan.sort(key=lambda p: (not p["missed_yesterday"], p["dog_name"]))
+    return {"date": today, "yesterday": yesterday, "items": plan, "count": len(plan)}
+
 
 
 @api.get("/admin/homework/pending-reviews")
@@ -5720,6 +6036,52 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             "cta": {"type": "send_monday_digest"},
             "icon": "fa-envelope-open-text",
         })
+
+    # 10. Clients with today's tracker steps still incomplete (warn — Sprint 103)
+    try:
+        steps_incomplete = 0
+        clients_lagging = set()
+        async for hw in db.homework.find(
+            {"daily_tracker": True, "status": {"$ne": "completed"}},
+            {"_id": 0, "id": 1, "client_id": 1, "client_name": 1, "dog_name": 1, "template_snapshot": 1, "section_logs": 1},
+        ):
+            snap = hw.get("template_snapshot") or {}
+            sections = sorted(
+                [s for s in (snap.get("sections") or []) if s.get("day_number") and (s.get("steps") or [])],
+                key=lambda s: int(s["day_number"]),
+            )
+            if not sections:
+                continue
+            logs_by_day = {int(lo.get("day_number") or 0): lo for lo in (hw.get("section_logs") or [])}
+            # Find current available day
+            prev_passed = True
+            for s in sections:
+                dn = int(s["day_number"])
+                lo = logs_by_day.get(dn)
+                if prev_passed and not lo:
+                    states = {}
+                    steps = s.get("steps") or []
+                    if steps and not all(states.get(st["id"]) for st in steps):
+                        steps_incomplete += 1
+                        clients_lagging.add(hw.get("client_name", ""))
+                    break
+                if lo and lo.get("submission_status") in ("approved", "rest", "skipped"):
+                    prev_passed = True
+                    continue
+                break
+        if steps_incomplete > 0:
+            items.append({
+                "id": f"steps-incomplete:{steps_incomplete}",
+                "kind": "steps_incomplete",
+                "priority": "warn",
+                "title": f"{steps_incomplete} tracker{'s' if steps_incomplete != 1 else ''} have today's steps still open",
+                "subtitle": ", ".join(sorted(clients_lagging))[:120] or "Clients haven't started today's steps",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "homework"},
+                "icon": "fa-list-check",
+            })
+    except Exception as e:
+        logger.warning("today-brain steps-incomplete failed: %s", e)
 
     # Sort: priority (urgent=0, warn=1, info=2) then within priority newest-first
     prio_order = {"urgent": 0, "warn": 1, "info": 2}

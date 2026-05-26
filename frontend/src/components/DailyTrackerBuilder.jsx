@@ -34,6 +34,9 @@ function blankDay(dayNumber) {
     day_focus: "",
     instructions: "",
     equipment: [],
+    steps: [
+      { id: `s-${dayNumber}-1`, label: "" },
+    ],
     fields: [
       { id: `f-${dayNumber}-mood`, label: "How'd it go?", kind: "mood_5" },
       { id: `f-${dayNumber}-notes`, label: "Anything to flag for your trainer?", kind: "longtext" },
@@ -108,6 +111,22 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
     setDay(dayIdx, { fields: d.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f)) });
   };
 
+  // Sprint 103 — Action steps editor
+  const addStep = (dayIdx) => {
+    const d = days[dayIdx];
+    const steps = d.steps || [];
+    const newStep = { id: `s-${d.day_number}-${steps.length + 1}-${Math.random().toString(36).slice(2, 6)}`, label: "" };
+    setDay(dayIdx, { steps: [...steps, newStep] });
+  };
+  const updateStep = (dayIdx, stepId, patch) => {
+    const d = days[dayIdx];
+    setDay(dayIdx, { steps: (d.steps || []).map((s) => (s.id === stepId ? { ...s, ...patch } : s)) });
+  };
+  const removeStep = (dayIdx, stepId) => {
+    const d = days[dayIdx];
+    setDay(dayIdx, { steps: (d.steps || []).filter((s) => s.id !== stepId) });
+  };
+
   const canGoStep2 = dogId && title.trim().length >= 2;
   const canAssign = days.every((d) => d.day_focus.trim().length > 0 && (d.fields || []).length > 0);
 
@@ -125,6 +144,9 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
           day_focus: d.day_focus.trim(),
           instructions: (d.instructions || "").trim(),
           equipment: (d.equipment || []).map(e => (e || "").trim()).filter(Boolean),
+          steps: (d.steps || [])
+            .filter((s) => (s.label || "").trim())
+            .map((s) => ({ id: s.id, label: s.label.trim() })),
           fields: (d.fields || []).map((f) => ({
             id: f.id,
             label: (f.label || "").trim() || "Untitled",
@@ -279,6 +301,36 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                        placeholder="e.g., high-value treats, 6-ft leash, target stick"
                        className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
                 <p className="text-[12px] text-gray-500 mt-1">Shown to the client at the top of the day card so they don't show up empty-handed.</p>
+              </div>
+
+              {/* Action steps (Sprint 103) — checkable list shown in Today's Plan */}
+              <div className="bg-bgBase border border-shGreen/30 rounded-xl p-4">
+                <p className="text-[14px] font-black uppercase tracking-widest text-shGreen mb-1">
+                  <i className="fas fa-list-check mr-1" />Action steps for today ({(activeDay.steps || []).filter(s => s.label?.trim()).length})
+                </p>
+                <p className="text-[13px] text-gray-400 mb-3">
+                  Bite-sized checkboxes the client ticks off as they go. When every step is checked, the day auto-submits for your review.
+                </p>
+                <div className="space-y-2">
+                  {(activeDay.steps || []).map((s, i) => (
+                    <div key={s.id} className="flex items-center gap-2" data-testid={`dtb-step-${s.id}`}>
+                      <i className="fas fa-square text-shGreen text-xs w-4 text-center"/>
+                      <input value={s.label} onChange={(e) => updateStep(activeDayIdx, s.id, { label: e.target.value })}
+                             placeholder={`Step ${i + 1} · e.g., "Practice sit for 5 reps in the kitchen"`}
+                             className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      {(activeDay.steps || []).length > 1 && (
+                        <button onClick={() => removeStep(activeDayIdx, s.id)} data-testid={`dtb-remove-step-${s.id}`}
+                                className="text-gray-400 hover:text-red-400 px-2">
+                          <i className="fas fa-times"/>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => addStep(activeDayIdx)} data-testid="dtb-add-step"
+                        className="mt-3 text-shGreen hover:text-shGreen/80 text-[13px] font-black uppercase tracking-widest">
+                  <i className="fas fa-plus mr-1"/>Add a step
+                </button>
               </div>
 
               {/* Steps list */}

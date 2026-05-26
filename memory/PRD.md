@@ -1173,6 +1173,32 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 103 — Homework-Driven Tracker (Steps + Today's Plan + Catch-Up) (2026-02)
+- ✅ **Schema additive**: `DailyTrackerSectionIn.steps[]` — each day can carry up to N named checklist steps `{id, label}` alongside the existing fields/metrics. Stored in `template_snapshot.sections[].steps`. Backward-compatible — existing trackers without steps still work via the field-flow.
+- ✅ **`POST /api/homework/{id}/day/{day}/toggle-step`** — check/uncheck a single step. Persists in `section_logs[].step_states[step_id] = bool`. When ALL steps for the day are checked, auto-flips the day's `submission_status → submitted` so it lands in the admin review queue (same as a manual submit). Fires `notify_admin_homework_section_log` so the email pipeline picks it up too.
+- ✅ **`POST /api/homework/{id}/catch-up`** — 3 strategies for the "I missed a day" modal:
+  - `skip_missed` — marks the missed day `status=skipped` so the next day unlocks (no rescheduling)
+  - `shift_forward` — extends `due_date` by 1 day (missed day stays available)
+  - `double_up` — appends missed day's steps onto the next-available day (with `(catch-up)` label prefix), then marks the missed day skipped
+- ✅ **`GET /api/portal/today-plan`** — single unified "what to do today?" feed for the client portal. Returns next-available day from every active daily-tracker, with: steps + step_states + day_focus + all_done flag + missed_yesterday + missed_day_number + streak + total_days. Sorted: missed-yesterday first.
+- ✅ **`_compute_daily_progress` updated** to expose `steps` + `step_states` per day. Added new statuses: `in_progress` (partial steps), `skipped` (catch-up applied). `_streak_count` now counts approved + rest + skipped.
+- ✅ **Today's Brain integration** — new alert kind `steps_incomplete` (warn) surfaces "N trackers have today's steps still open" with rolled-up client names.
+- ✅ **Frontend `TodayPlanCard.jsx`** — compact unified card at top of client portal (above existing homework list). Renders step checklist per active tracker with progress %, mood-emoji headline, "you missed day N — tap to catch up" banner, and embedded `CatchUpModal` (3 options: Skip yesterday / Double up today / Push back the schedule).
+- ✅ **Frontend `DailyTrackerBuilder.jsx` extended** — new "Action steps for today" green-bordered section in the day editor. Admin adds 1-N step labels per day; submit persists them into the new `steps[]`.
+- ✅ **9/9 new regression tests pass** (`backend/tests/test_homework_driven_tracker.py`):
+  - steps persist on creation
+  - step toggle stores state
+  - all-steps-done auto-submits day → lands in pending review queue
+  - `/portal/today-plan` returns active trackers with steps
+  - catch-up `skip_missed` unlocks next day
+  - catch-up `shift_forward` extends due_date
+  - catch-up `double_up` carries (catch-up) steps onto next day
+  - step toggle rejected on legacy trackers without `steps[]` (clean error)
+  - today-brain surfaces `steps_incomplete` when tracker has open steps
+- ✅ **All 50 cross-sprint regression tests still green** (sprint 95-103).
+- ✅ **End-to-end verified** with admin-creates-tracker → client-portal screenshot: "TODAY'S PLAN · 1 ACTIVE" tile rendered above Training Homework with Rocky · Day 1/2 · 0% PROGRESS · 3 checkable steps (1 ticked + struck-through after live click).
+
+
 ## Sprint 102 — "Today's Brain" Unified Action Queue (2026-02)
 - ✅ **`GET /api/admin/today-brain`** — single endpoint aggregates 9 alert sources into one prioritized feed:
   1. Homework day-submissions waiting for review (urgent)

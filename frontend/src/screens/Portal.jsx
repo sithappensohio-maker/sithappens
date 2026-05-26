@@ -10,6 +10,7 @@ import PortalFilesSection from "../components/PortalFilesSection";
 import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import DailyCheckInCard from "../components/DailyCheckInCard";
+import TodayPlanCard from "../components/TodayPlanCard";
 import MultiDateCalendar from "../components/MultiDateCalendar";
 import InstallAppButton from "../components/InstallAppButton";
 import TextSizePicker from "../components/TextSizePicker";
@@ -1154,6 +1155,8 @@ export default function Portal() {
               })}
             </div>
           )}
+
+          <TodayPlanCard onChanged={loadAll} />
 
           {homework.length > 0 && (
             <div data-testid="portal-homework">
