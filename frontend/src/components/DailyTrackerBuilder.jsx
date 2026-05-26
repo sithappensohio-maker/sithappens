@@ -106,6 +106,27 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
     setDay(dayIdx, { fields: d.fields.filter((f) => f.id !== fieldId) });
   };
 
+  // Sprint 106 — Reorder helpers for both fields + steps (move up/down by 1).
+  const reorderArray = (arr, idx, dir) => {
+    const next = idx + dir;
+    if (next < 0 || next >= arr.length) return arr;
+    const copy = [...arr];
+    [copy[idx], copy[next]] = [copy[next], copy[idx]];
+    return copy;
+  };
+  const moveField = (dayIdx, fieldId, dir) => {
+    const d = days[dayIdx];
+    const fs = d.fields || [];
+    const idx = fs.findIndex(f => f.id === fieldId);
+    setDay(dayIdx, { fields: reorderArray(fs, idx, dir) });
+  };
+  const moveStep = (dayIdx, stepId, dir) => {
+    const d = days[dayIdx];
+    const ss = d.steps || [];
+    const idx = ss.findIndex(s => s.id === stepId);
+    setDay(dayIdx, { steps: reorderArray(ss, idx, dir) });
+  };
+
   const updateField = (dayIdx, fieldId, patch) => {
     const d = days[dayIdx];
     setDay(dayIdx, { fields: d.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f)) });
@@ -150,6 +171,33 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
   const updatePlanResource = (rid, patch) => setPlanResources(rs => rs.map(r => r.id === rid ? { ...r, ...patch } : r));
   const removePlanResource = (rid) => setPlanResources(rs => rs.filter(r => r.id !== rid));
 
+  // Sprint 106 — direct file upload (PDF/JPG/PNG, ≤10 MB). Reads the file as a
+  // base64 data-URL, POSTs to /homework/resource-upload, gets back a media_id,
+  // then inserts a resource row with the upload already wired.
+  const [uploadingScope, setUploadingScope] = useState(""); // "plan" | `day-${idx}`
+  const [uploadErr, setUploadErr] = useState("");
+  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+  const handleUpload = async (scope, dayIdx, file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setUploadErr(`File too large (${Math.round(file.size / (1024 * 1024))} MB). Max is 10 MB.`); return; }
+    setUploadingScope(scope === "plan" ? "plan" : `day-${dayIdx}`);
+    setUploadErr("");
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const { data } = await api.post("/homework/resource-upload", { data: dataUrl, filename: file.name });
+      const row = { id: `res-${Math.random().toString(36).slice(2, 8)}`, name: file.name, kind: data.kind || "file", media_id: data.media_id };
+      if (scope === "plan") setPlanResources(rs => [...rs, row]);
+      else setDay(dayIdx, { resources: [...(days[dayIdx].resources || []), row] });
+    } catch (e) {
+      setUploadErr(e.response?.data?.detail || formatErr(e) || "Upload failed");
+    } finally { setUploadingScope(""); }
+  };
+
   const canGoStep2 = dogId && title.trim().length >= 2;
   const canAssign = days.every((d) => d.day_focus.trim().length > 0 && (d.fields || []).length > 0);
 
@@ -175,8 +223,14 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
               minutes: s.minutes ? Number(s.minutes) || null : null,
             })),
           resources: (d.resources || [])
-            .filter((r) => (r.url || "").trim() && (r.name || "").trim())
-            .map((r) => ({ id: r.id, name: r.name.trim(), kind: "link", url: r.url.trim() })),
+            .filter((r) => ((r.url || "").trim() || (r.media_id || "").trim()) && (r.name || "").trim())
+            .map((r) => ({
+              id: r.id,
+              name: r.name.trim(),
+              kind: r.kind || (r.media_id ? "file" : "link"),
+              url: r.url ? r.url.trim() : null,
+              media_id: r.media_id || null,
+            })),
           fields: (d.fields || []).map((f) => ({
             id: f.id,
             label: (f.label || "").trim() || "Untitled",
@@ -188,8 +242,14 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
         save_as_template: saveAsTemplate,
         template_name: saveAsTemplate ? templateName.trim() : "",
         resources: planResources
-          .filter(r => (r.url || "").trim() && (r.name || "").trim())
-          .map(r => ({ id: r.id, name: r.name.trim(), kind: "link", url: r.url.trim() })),
+          .filter(r => ((r.url || "").trim() || (r.media_id || "").trim()) && (r.name || "").trim())
+          .map(r => ({
+            id: r.id,
+            name: r.name.trim(),
+            kind: r.kind || (r.media_id ? "file" : "link"),
+            url: r.url ? r.url.trim() : null,
+            media_id: r.media_id || null,
+          })),
       };
       const { data } = await api.post("/homework/daily-tracker", body);
       onAssigned?.(data);
@@ -310,9 +370,15 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                              placeholder="Display name"
                              className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]" />
                       <div className="flex items-center gap-1">
-                        <input value={r.url} onChange={(e) => updatePlanResource(r.id, { url: e.target.value })}
-                               placeholder="https://..."
-                               className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]" />
+                        {r.media_id ? (
+                          <span className="flex-1 text-[12px] text-purple-200 bg-purple-500/20 px-2 py-1 rounded font-black uppercase tracking-widest">
+                            <i className="fas fa-circle-check mr-1"/>{r.kind === "image" ? "image" : "file"} uploaded
+                          </span>
+                        ) : (
+                          <input value={r.url || ""} onChange={(e) => updatePlanResource(r.id, { url: e.target.value })}
+                                 placeholder="https://..."
+                                 className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]" />
+                        )}
                         <button onClick={() => removePlanResource(r.id)} className="text-gray-400 hover:text-red-400 px-1.5" data-testid={`dtb-remove-plan-res-${r.id}`}>
                           <i className="fas fa-times"/>
                         </button>
@@ -320,10 +386,18 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                     </div>
                   ))}
                 </div>
-                <button onClick={addPlanResource} data-testid="dtb-add-plan-resource"
-                        className="mt-2 text-purple-300 hover:text-purple-200 text-[12px] font-black uppercase tracking-widest">
-                  <i className="fas fa-plus mr-1"/>Add a resource
-                </button>
+                <div className="mt-2 flex flex-wrap gap-2 items-center">
+                  <label data-testid="dtb-plan-upload-file"
+                         className={`cursor-pointer bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 px-3 py-1 rounded text-[12px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 ${uploadingScope === "plan" ? "opacity-60 cursor-wait" : ""}`}>
+                    {uploadingScope === "plan" ? <><i className="fas fa-spinner fa-spin"/>Uploading…</> : <><i className="fas fa-upload"/>Upload PDF / image</>}
+                    <input type="file" accept=".pdf,image/*" className="hidden" disabled={uploadingScope === "plan"}
+                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; handleUpload("plan", null, f); }} />
+                  </label>
+                  <button onClick={addPlanResource} data-testid="dtb-add-plan-resource"
+                          className="text-purple-300 hover:text-purple-200 text-[12px] font-black uppercase tracking-widest">
+                    <i className="fas fa-link mr-1"/>Or paste a URL
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -386,7 +460,16 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <div className="space-y-2">
                   {(activeDay.steps || []).map((s, i) => (
                     <div key={s.id} className="flex items-center gap-2" data-testid={`dtb-step-${s.id}`}>
-                      <i className="fas fa-square text-shGreen text-xs w-4 text-center"/>
+                      <div className="flex flex-col">
+                        <button onClick={() => moveStep(activeDayIdx, s.id, -1)} disabled={i === 0} data-testid={`dtb-step-up-${s.id}`}
+                                className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3">
+                          <i className="fas fa-chevron-up"/>
+                        </button>
+                        <button onClick={() => moveStep(activeDayIdx, s.id, 1)} disabled={i === (activeDay.steps || []).length - 1} data-testid={`dtb-step-down-${s.id}`}
+                                className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3 mt-0.5">
+                          <i className="fas fa-chevron-down"/>
+                        </button>
+                      </div>
                       <input value={s.label} onChange={(e) => updateStep(activeDayIdx, s.id, { label: e.target.value })}
                              placeholder={`Step ${i + 1} · e.g., "Practice sit for 5 reps in the kitchen"`}
                              className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
@@ -425,22 +508,37 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <div className="space-y-2">
                   {(activeDay.resources || []).map((r) => (
                     <div key={r.id} className="flex items-center gap-2" data-testid={`dtb-day-res-${r.id}`}>
-                      <i className="fas fa-link text-purple-300 text-xs w-4 text-center"/>
+                      <i className={`fas ${r.media_id ? "fa-file" : "fa-link"} text-purple-300 text-xs w-4 text-center`}/>
                       <input value={r.name} onChange={(e) => updateDayResource(activeDayIdx, r.id, { name: e.target.value })}
                              placeholder="Display name (e.g., Leash-positioning diagram)"
                              className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-                      <input value={r.url} onChange={(e) => updateDayResource(activeDayIdx, r.id, { url: e.target.value })}
-                             placeholder="https://..."
-                             className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      {r.media_id ? (
+                        <span className="text-[12px] text-purple-200 bg-purple-500/20 px-2 py-1 rounded font-black uppercase tracking-widest">
+                          <i className="fas fa-circle-check mr-1"/>uploaded
+                        </span>
+                      ) : (
+                        <input value={r.url || ""} onChange={(e) => updateDayResource(activeDayIdx, r.id, { url: e.target.value })}
+                               placeholder="https://..."
+                               className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                      )}
                       <button onClick={() => removeDayResource(activeDayIdx, r.id)} data-testid={`dtb-remove-day-res-${r.id}`}
                               className="text-gray-400 hover:text-red-400 px-2"><i className="fas fa-times"/></button>
                     </div>
                   ))}
                 </div>
-                <button onClick={() => addDayResource(activeDayIdx)} data-testid="dtb-add-day-resource"
-                        className="mt-3 text-purple-300 hover:text-purple-200 text-[13px] font-black uppercase tracking-widest">
-                  <i className="fas fa-plus mr-1"/>Add a resource
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2 items-center">
+                  <label data-testid="dtb-day-upload-file"
+                         className={`cursor-pointer bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 ${uploadingScope === `day-${activeDayIdx}` ? "opacity-60 cursor-wait" : ""}`}>
+                    {uploadingScope === `day-${activeDayIdx}` ? <><i className="fas fa-spinner fa-spin"/>Uploading…</> : <><i className="fas fa-upload"/>Upload PDF / image</>}
+                    <input type="file" accept=".pdf,image/*" className="hidden" disabled={uploadingScope === `day-${activeDayIdx}`}
+                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; handleUpload("day", activeDayIdx, f); }} />
+                  </label>
+                  <button onClick={() => addDayResource(activeDayIdx)} data-testid="dtb-add-day-resource"
+                          className="text-purple-300 hover:text-purple-200 text-[13px] font-black uppercase tracking-widest">
+                    <i className="fas fa-link mr-1"/>Or paste a URL
+                  </button>
+                </div>
+                {uploadErr && uploadingScope === "" && <p className="text-red-400 text-[13px] mt-2" data-testid="dtb-upload-err">{uploadErr}</p>}
               </div>
 
               {/* Steps list */}
@@ -451,11 +549,21 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                   </p>
                 </div>
                 <div className="space-y-2">
-                  {(activeDay.fields || []).map((f) => (
+                  {(activeDay.fields || []).map((f, i) => (
                     <div key={f.id} className="bg-bgPanel border border-bgHover rounded p-2.5 flex items-center gap-2" data-testid={`dtb-field-${f.id}`}>
+                      <div className="flex flex-col">
+                        <button onClick={() => moveField(activeDayIdx, f.id, -1)} disabled={i === 0} data-testid={`dtb-field-up-${f.id}`}
+                                className="text-gray-500 hover:text-shBlue disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3">
+                          <i className="fas fa-chevron-up"/>
+                        </button>
+                        <button onClick={() => moveField(activeDayIdx, f.id, 1)} disabled={i === (activeDay.fields || []).length - 1} data-testid={`dtb-field-down-${f.id}`}
+                                className="text-gray-500 hover:text-shBlue disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3 mt-0.5">
+                          <i className="fas fa-chevron-down"/>
+                        </button>
+                      </div>
                       <i className={`fas ${FIELD_KIND_OPTIONS.find(k=>k.value===f.kind)?.icon || "fa-circle"} text-gray-500 w-5 text-center text-[14px]`} />
                       <input value={f.label} onChange={(e) => updateField(activeDayIdx, f.id, { label: e.target.value })}
-                             placeholder="Label" className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+                             placeholder="Custom label (e.g., How many recalls?)" className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
                       <select value={f.kind} onChange={(e) => updateField(activeDayIdx, f.id, { kind: e.target.value })}
                               className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-[13px]">
                         {FIELD_KIND_OPTIONS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}

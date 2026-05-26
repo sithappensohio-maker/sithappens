@@ -4138,6 +4138,103 @@ async def upload_day_video(
     return {"media_id": media_id}
 
 
+# ────────────────────── Sprint 106 — Direct file upload for resources ──────────────────────
+ALLOWED_RESOURCE_MIME = {
+    "application/pdf": "file",
+    "image/jpeg": "image", "image/jpg": "image",
+    "image/png": "image", "image/webp": "image", "image/heic": "image",
+}
+MAX_RESOURCE_BYTES = 10 * 1024 * 1024  # 10 MB ceiling so the DB doesn't bloat
+
+
+class ResourceFileUploadIn(BaseModel):
+    """Direct file upload payload. `data` is a base64 data-URL (e.g.,
+    `data:application/pdf;base64,JVBERi...`). Backend pulls the MIME from the
+    prefix, validates it against the allow-list, and rejects files > 10 MB."""
+    data: str = Field(min_length=10)
+    filename: str = Field(min_length=1, max_length=140)
+
+
+@api.post("/homework/resource-upload")
+async def upload_resource_file(body: ResourceFileUploadIn, user: dict = Depends(require_admin)):
+    """Admin-only file upload for homework resources (per-day or per-plan).
+    Returns the media_id + auto-detected `kind` (file/image) for the resource
+    record. PDFs and common image formats only; 10 MB ceiling. Stored in
+    `homework_media` so it shares the same storage path as the existing
+    video uploads."""
+    raw = body.data
+    if not raw.startswith("data:"):
+        raise HTTPException(status_code=400, detail="Expected base64 data URL")
+    # Parse `data:<mime>;base64,<...>`
+    try:
+        header, b64 = raw.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").lower().strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed data URL")
+    kind = ALLOWED_RESOURCE_MIME.get(mime)
+    if not kind:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type ({mime}). Allowed: PDF, JPG, PNG, WEBP, HEIC.")
+    # Approximate size from base64 length (4 b64 chars = 3 bytes)
+    approx_bytes = (len(b64) * 3) // 4
+    if approx_bytes > MAX_RESOURCE_BYTES:
+        raise HTTPException(status_code=400, detail=f"File too large ({approx_bytes // (1024 * 1024)} MB). Max is 10 MB.")
+    media_id = str(uuid.uuid4())
+    await db.homework_media.insert_one({
+        "id": media_id,
+        "homework_id": None,  # not tied to a specific homework yet — resources can be reused
+        "kind": "resource",
+        "mime": mime,
+        "resource_kind": kind,
+        "data": raw,
+        "filename": (body.filename or "resource")[:140],
+        "size_bytes": approx_bytes,
+        "uploaded_at": now_iso(),
+        "uploaded_by": user.get("id"),
+    })
+    return {
+        "media_id": media_id,
+        "kind": kind,        # file or image
+        "mime": mime,
+        "filename": body.filename,
+        "size_bytes": approx_bytes,
+    }
+
+
+@api.get("/homework/resource/{media_id}")
+async def get_resource_file(media_id: str, user: dict = Depends(get_current_user)):
+    """Stream a resource blob. Clients can read it if the file is referenced
+    by a homework they own, OR if it's a generic resource (homework_id=None).
+    Admins can read anything."""
+    m = await db.homework_media.find_one({"id": media_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Resource not found")
+    if user.get("role") != "admin":
+        # Check that at least one of the user's homework references this media_id.
+        cid = user.get("client_id")
+        found = await db.homework.find_one(
+            {
+                "client_id": cid,
+                "$or": [
+                    {"resources.media_id": media_id},
+                    {"template_snapshot.sections.resources.media_id": media_id},
+                ],
+            },
+            {"_id": 0, "id": 1},
+        )
+        if not found:
+            raise HTTPException(status_code=403, detail="Not allowed")
+    return {
+        "id": m["id"],
+        "kind": m.get("resource_kind") or "file",
+        "mime": m.get("mime"),
+        "data": m.get("data"),
+        "filename": m.get("filename"),
+    }
+
+
+
+
+
 @api.get("/homework/{homework_id}/media/{media_id}")
 async def get_day_media(homework_id: str, media_id: str, user: dict = Depends(get_current_user)):
     """Stream back a media blob (video) belonging to a homework."""

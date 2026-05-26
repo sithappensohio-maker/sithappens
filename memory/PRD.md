@@ -1173,6 +1173,24 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 106 — Builder polish + Direct File Upload + Tutorials Refresh (2026-02)
+- ✅ **Reorder arrows on both panels** — Action Steps + Steps to Log now have `[↑/↓]` buttons per row so the admin can resequence drills without deleting and re-adding. Disabled state on the top/bottom rows. Test IDs: `dtb-step-up-{id}`, `dtb-step-down-{id}`, `dtb-field-up-{id}`, `dtb-field-down-{id}`.
+- ✅ **Custom labels everywhere** — the existing label inputs on Steps + Fields already accepted free text; documented in the tutorials so the operator knows they can write "Times Buddy looked at me without a cue" instead of being stuck with mood/notes/reps.
+- ✅ **Direct file upload** — replaces URL-paste-only for printable resources.
+  - New backend endpoint `POST /api/homework/resource-upload` accepts a base64 data-URL + filename. Validates MIME against an allow-list (PDF, JPG, PNG, WEBP, HEIC) and rejects payloads > 10 MB. Returns `{media_id, kind, mime, size_bytes}`. Stored in `homework_media` collection alongside existing video uploads.
+  - New backend endpoint `GET /api/homework/resource/{media_id}` streams the file back (clients only get access if they own a homework that references the media_id; admins get everything).
+  - Builder UI: per-day AND plan-wide resource panels now show a `⬆ Upload PDF / image` button + an `Or paste a URL` link. After upload, the row renders an "✓ uploaded" pill instead of the URL textbox. URL paste remains as a fallback for Drive/YouTube links.
+  - Client portal `TodayPlanCard`: uploaded resources fetch via `/homework/resource/{media_id}` and open in a new tab; pasted URLs continue to open externally. Icon differentiates upload vs link.
+- ✅ **Tutorials Refresh** (`/app/frontend/src/screens/Tutorials.jsx`):
+  - Admin **Homework** section completely rewritten — 5 new cards covering plan creation, day approval, step events + nightly roll-up email, resource placement, and catch-up modal.
+  - New admin **Today's Tasks** section explaining the 10 alert kinds + auto-resolve behaviour + sort order. Replaces references to the deleted Vax Alert banner.
+  - Client **Homework → "Daily Plans"** section completely rewritten — finding Today's Plan, checking off steps, adding mood/notes/photo, missed-day catch-up, asking questions.
+  - Client **Text size** instructions updated to reflect the new collapsed `TEXT · M` popover.
+- ✅ **7 new file-upload regression tests pass**: PDF upload returns `kind=file` · JPG returns `kind=image` · unsupported MIME rejected · 11 MB rejected · admin-only auth · end-to-end attach-and-stream (client can fetch the file referenced by their plan) · perm guard (unrelated client gets 403).
+- ✅ **45/45 cross-sprint tests still green** (test_homework_redesign.py + test_homework_driven_tracker.py + test_daily_tracker.py + test_daily_tracker_phase2.py + test_todays_brain.py).
+- ✅ **End-to-end verified** via 2 smoke screenshots: Step 2 of builder renders new minute inputs + reorder arrows + Upload PDF buttons on both day-level and plan-wide resource panels.
+
+
 ## Sprint 105 — Homework Redesign: Minutes, Resources, Step Events + Daily Roll-up (2026-02)
 - ✅ **Per-step minutes** — every step now carries an optional `minutes: int`. Surfaced in:
   - Admin builder: tiny minute input next to each step + day-total chip that auto-rolls up (`~11 min total`)

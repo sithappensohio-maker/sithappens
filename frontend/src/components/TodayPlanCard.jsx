@@ -95,13 +95,32 @@ export default function TodayPlanCard({ onChanged }) {
                 <div className="mb-3 bg-purple-500/5 border border-purple-400/30 rounded p-2.5" data-testid={`today-plan-resources-${item.homework_id}`}>
                   <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-1.5"><i className="fas fa-paperclip mr-1"/>Take with you</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {allResources.map((r) => (
-                      <a key={r.id} href={r.url || "#"} target="_blank" rel="noreferrer"
-                         data-testid={`today-plan-resource-${r.id}`}
-                         className="bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 px-2.5 py-1 rounded text-[13px] font-black inline-flex items-center gap-1.5 transition">
-                        <i className="fas fa-arrow-up-right-from-square text-[10px]"/>{r.name}
-                      </a>
-                    ))}
+                    {allResources.map((r) => {
+                      // Sprint 106 — uploaded files come back via the resource endpoint
+                      // and are streamed as base64; we open them via a tiny helper that
+                      // fetches + re-bundles as a blob URL so the browser handles PDF/image previews.
+                      const isUpload = !!r.media_id;
+                      return (
+                        <a
+                          key={r.id}
+                          href={isUpload ? `#res-${r.id}` : (r.url || "#")}
+                          target={isUpload ? "_self" : "_blank"}
+                          rel="noreferrer"
+                          onClick={isUpload ? (async (e) => {
+                            e.preventDefault();
+                            try {
+                              const res = await api.get(`/homework/resource/${r.media_id}`);
+                              const win = window.open("", "_blank");
+                              if (win) win.location.href = res.data?.data || "#";
+                            } catch (err) { console.warn("download failed", err); }
+                          }) : undefined}
+                          data-testid={`today-plan-resource-${r.id}`}
+                          className="bg-purple-500/15 hover:bg-purple-500/25 text-purple-200 px-2.5 py-1 rounded text-[13px] font-black inline-flex items-center gap-1.5 transition"
+                        >
+                          <i className={`fas ${isUpload ? "fa-file-arrow-down" : "fa-arrow-up-right-from-square"} text-[10px]`}/>{r.name}
+                        </a>
+                      );
+                    })}
                   </div>
                 </div>
               )}

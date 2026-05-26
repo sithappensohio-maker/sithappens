@@ -213,3 +213,128 @@ def test_resource_upload_rejects_empty(admin_headers, a_dog):
         assert r.status_code == 400
     finally:
         requests.delete(f"{BASE}/api/homework/{hw['id']}", headers=admin_headers)
+
+
+# ─── Sprint 106 — direct file upload ───
+
+import base64
+
+
+def _b64(prefix, payload_bytes):
+    return f"{prefix}{base64.b64encode(payload_bytes).decode('ascii')}"
+
+
+def test_resource_file_upload_pdf(admin_headers):
+    """Upload a tiny PDF, get back a media_id + auto-kind."""
+    pdf_bytes = b"%PDF-1.4\n%fake test pdf\n"
+    payload = {
+        "data": _b64("data:application/pdf;base64,", pdf_bytes),
+        "filename": "test-handout.pdf",
+    }
+    r = requests.post(f"{BASE}/api/homework/resource-upload", headers=admin_headers, json=payload, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["kind"] == "file"
+    assert body["mime"] == "application/pdf"
+    assert body["media_id"]
+    assert body["size_bytes"] > 0
+
+
+def test_resource_file_upload_image(admin_headers):
+    """JPG should map to kind=image."""
+    img_bytes = b"\xff\xd8\xff\xe0" + b"x" * 20  # JPEG header + filler
+    r = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=admin_headers,
+        json={"data": _b64("data:image/jpeg;base64,", img_bytes), "filename": "diagram.jpg"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "image"
+
+
+def test_resource_file_upload_rejects_bad_mime(admin_headers):
+    """Word docs, mp4, etc. must be rejected (allow-list)."""
+    r = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=admin_headers,
+        json={"data": _b64("data:application/msword;base64,", b"xxx"), "filename": "x.doc"},
+        timeout=15,
+    )
+    assert r.status_code == 400
+    assert "Unsupported" in r.json()["detail"]
+
+
+def test_resource_file_upload_rejects_too_large(admin_headers):
+    """11 MB payload should 400."""
+    big = b"a" * (11 * 1024 * 1024)
+    r = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=admin_headers,
+        json={"data": _b64("data:application/pdf;base64,", big), "filename": "big.pdf"},
+        timeout=60,
+    )
+    assert r.status_code == 400
+    assert "too large" in r.json()["detail"].lower()
+
+
+def test_resource_file_upload_admin_only(client_headers):
+    r = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=client_headers,
+        json={"data": "data:application/pdf;base64,JVBE", "filename": "x.pdf"},
+        timeout=15,
+    )
+    assert r.status_code in (401, 403)
+
+
+def test_uploaded_resource_attaches_to_plan_and_streams(admin_headers, client_headers, a_dog):
+    """End-to-end: upload a file → create plan with that media_id → client can stream it back."""
+    pdf = b"%PDF-1.4\nstream-back test\n"
+    up = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=admin_headers,
+        json={"data": _b64("data:application/pdf;base64,", pdf), "filename": "stream-test.pdf"},
+        timeout=15,
+    ).json()
+    media_id = up["media_id"]
+    # Create plan with this file as a day-1 resource
+    body = {
+        "dog_id": a_dog["id"], "title": "stream test", "instructions": "",
+        "days": [{
+            "day_number": 1, "day_focus": "x", "instructions": "", "fields": [],
+            "steps": [{"id": "s1a", "label": "y", "minutes": 1}],
+            "resources": [{"id": "r1", "name": "stream-test.pdf", "kind": "file", "media_id": media_id}],
+        }],
+    }
+    hw = requests.post(f"{BASE}/api/homework/daily-tracker", headers=admin_headers, json=body, timeout=20).json()
+    hwid = hw["id"]
+    try:
+        # Client can stream back
+        r = requests.get(f"{BASE}/api/homework/resource/{media_id}", headers=client_headers, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["mime"] == "application/pdf"
+    finally:
+        requests.delete(f"{BASE}/api/homework/{hwid}", headers=admin_headers)
+
+
+def test_unrelated_client_cannot_stream_resource(admin_headers, a_dog):
+    """A client who doesn't own a homework referencing the media_id must get 403."""
+    pdf = b"%PDF-1.4\nperm test\n"
+    up = requests.post(
+        f"{BASE}/api/homework/resource-upload",
+        headers=admin_headers,
+        json={"data": _b64("data:application/pdf;base64,", pdf), "filename": "private.pdf"},
+        timeout=15,
+    ).json()
+    # Don't attach to any homework — just an orphan upload
+    other = requests.post(
+        f"{BASE}/api/auth/register",
+        json={"email": f"perm-{uuid.uuid4().hex[:8]}@x.com", "password": "abc12345", "name": "Perm Tester"},
+        timeout=15,
+    )
+    if other.status_code != 200:
+        pytest.skip("could not create unrelated client")
+    h = {"Authorization": f"Bearer {other.json()['token']}"}
+    r = requests.get(f"{BASE}/api/homework/resource/{up['media_id']}", headers=h, timeout=15)
+    assert r.status_code == 403
