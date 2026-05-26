@@ -1312,7 +1312,22 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110k — Fullscreen homework: close button + step toggles work (2026-02)
+## Sprint 110l — Merged single-card-per-plan UX in client portal (2026-02)
+- ✅ **User reported**: Today's Plan and Training Homework felt like two redundant blocks showing the same plan twice.
+- ✅ **Chose option 1a + 2a**: one card per plan with TODAY's actionable day at the top + collapsed "Previous days" accordion below, achievements panel stays separate.
+- ✅ **`TodayPlanCard` refactored** to accept two new props:
+  - `homeworkId={id}` — filters today-plan items to ONE specific plan
+  - `unwrapped={true}` — skips the outer green "Today's Plan" frame (caller owns the chrome)
+  - Both default to legacy behavior so the component is still usable as a standalone top-of-portal tile if ever needed.
+- ✅ **Portal.jsx flow rewritten**:
+  - Removed the standalone `<TodayPlanCard onChanged={loadAll} />` from the top of the portal — no more separate "Today's Plan" section.
+  - Each daily-tracker plan card in the Training Homework list now embeds `<TodayPlanCard homeworkId={h.id} unwrapped={true} />` directly under the plan header. Today's actionable day (steps + form + submit) lives WITH its plan, not in a parallel section.
+  - Below that, a new `<details>` accordion ("Previous days & history" — `data-testid="portal-history-{id}"`) wraps the existing `DailyCheckInCard` so historical days, trainer notes, and question threads are one click away but don't clutter the active-day view.
+- ✅ **Achievements panel kept separate** (per user choice) — `HomeworkIncentivesPanel` still renders standalone above the Training Homework section since it spans all plans (streak + trophies + share certs + referral).
+- ✅ **Backward compat**: if a client has a plan with no actionable day right now (all submitted/approved/rest), `TodayPlanCard` filters to zero items and renders nothing — the history accordion still works, so the plan card doesn't go blank.
+- ✅ **Lints clean**. All 32 homework pytests pass — no backend changes were needed since the same `/portal/today-plan` endpoint and same data shape are reused, just rendered inline per plan.
+
+
 - ✅ **User reported**: in the new fullscreen homework view, clicking the close button OR a step check-circle "doesn't do anything."
 - ✅ **Root cause #1**: the modal was rendered as a child of `TodayPlanCard`, which was nested inside Portal.jsx layout containers. A parent's `transform` / `filter` / `will-change` would have made `position: fixed` get clipped to that container OR put it behind another layer. Same containing-block issue caused buttons to be visually present but functionally trapped behind an overlay.
 - ✅ **Root cause #2**: when a user clicked a check-circle, `toggleStep` mutated the backend → `load()` refreshed `data` → but `fullscreenItem` state still pointed at the OLD object from when the modal opened, so re-renders never reflected the toggle. The state didn't update visually, so it felt like the click did nothing.

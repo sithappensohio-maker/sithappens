@@ -28,7 +28,12 @@ const KIND_META = {
  * Replaces the previous "TodayPlan steps only / DailyCheckInCard fields"
  * split — the homework's actionable day no longer renders twice.
  */
-export default function TodayPlanCard({ onChanged }) {
+export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped = false }) {
+  // Sprint 110l — when `homeworkId` is set, this card filters its today-plan
+  // items down to ONE specific plan. When `unwrapped=true`, the outer green
+  // "Today's Plan" frame is skipped — the caller (e.g. a per-plan homework
+  // card in Portal.jsx) owns the chrome and just wants the actionable-day
+  // content inline. This is what powers the merged single-card-per-plan UX.
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(null); // `${hwid}:${stepid}`
   const [err, setErr] = useState("");
@@ -178,25 +183,25 @@ export default function TodayPlanCard({ onChanged }) {
 
   if (!data || data.count === 0) return null;
 
-  return (
-    <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 mb-5 shadow-lg" data-testid="today-plan-card">
-      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-        <h2 className="text-lg font-black text-white uppercase italic tracking-tight">
-          <i className="fas fa-bullseye text-shGreen mr-2"/>Today's Plan
-        </h2>
-        <span className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{data.count} active</span>
-      </div>
+  // Sprint 110l — filter to one plan when embedded inside a per-plan card.
+  const visibleItems = homeworkId
+    ? (data.items || []).filter((it) => it.homework_id === homeworkId)
+    : (data.items || []);
+  if (visibleItems.length === 0) return null;
 
+  // When the caller passes unwrapped=true (rendering inside a parent plan
+  // card), skip the green outer frame and just spit out the inner items list.
+  const inner = (
+    <>
       {err && <p className="text-red-400 text-[14px] mb-3" data-testid="today-plan-err">{err}</p>}
-
       <div className="space-y-4">
-        {data.items.map((item) => {
+        {visibleItems.map((item) => {
           const pct = item.total_days ? Math.round((item.streak / item.total_days) * 100) : 0;
           // Sprint 105 — auto-roll up per-day minutes from steps; the client sees a single total at-a-glance
           const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
           const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
           return (
-            <div key={item.homework_id} className="bg-bgBase border border-bgHover rounded-lg p-4" data-testid={`today-plan-item-${item.homework_id}`}>
+            <div key={item.homework_id} className={`${unwrapped ? "" : "bg-bgBase border border-bgHover rounded-lg p-4"}`} data-testid={`today-plan-item-${item.homework_id}`}>
               <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
                 <div className="min-w-0 flex-1">
                   <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
@@ -367,7 +372,11 @@ export default function TodayPlanCard({ onChanged }) {
           );
         })}
       </div>
+    </>
+  );
 
+  const portals = (
+    <>
       {catchUpFor && (
         <CatchUpModal target={catchUpFor} onApply={applyCatchUp} onClose={() => setCatchUpFor(null)} />
       )}
@@ -378,6 +387,23 @@ export default function TodayPlanCard({ onChanged }) {
                              onClose={() => setFullscreenItem(null)} />,
         document.body,
       )}
+    </>
+  );
+
+  if (unwrapped) {
+    return <>{inner}{portals}</>;
+  }
+
+  return (
+    <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 mb-5 shadow-lg" data-testid="today-plan-card">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+        <h2 className="text-lg font-black text-white uppercase italic tracking-tight">
+          <i className="fas fa-bullseye text-shGreen mr-2"/>Today's Plan
+        </h2>
+        <span className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{visibleItems.length} active</span>
+      </div>
+      {inner}
+      {portals}
     </div>
   );
 }

@@ -1157,7 +1157,6 @@ export default function Portal() {
             </div>
           )}
 
-          <TodayPlanCard onChanged={loadAll} />
           <HomeworkIncentivesPanel />
 
           {homework.length > 0 && (
@@ -1186,10 +1185,29 @@ export default function Portal() {
                                 className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
                       )}
                     </div>
+
+                    {/* Sprint 110l — merged single-card-per-plan UX. Active
+                        daily-tracker plans now show TODAY's actionable day
+                        inline (steps + form + submit), with previous days
+                        tucked into a collapsed "Previous days" accordion
+                        below. Replaces the standalone TodayPlanCard tile. */}
                     {h.daily_tracker && h.status !== "completed" && (
-                      <div className="mt-4 pt-4 border-t border-bgHover">
-                        <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
-                      </div>
+                      <>
+                        <div className="mt-4 pt-4 border-t border-bgHover" data-testid={`portal-today-${h.id}`}>
+                          <TodayPlanCard homeworkId={h.id} unwrapped={true} onChanged={loadAll} />
+                        </div>
+                        <details className="mt-3 group" data-testid={`portal-history-${h.id}`}>
+                          <summary className="list-none cursor-pointer flex items-center justify-between gap-2 py-2 px-3 rounded bg-bgBase border border-bgHover hover:border-shBlue/50 transition">
+                            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400 group-hover:text-white">
+                              <i className="fas fa-clock-rotate-left mr-2"/>Previous days &amp; history
+                            </span>
+                            <i className="fas fa-chevron-down text-gray-500 text-xs group-open:rotate-180 transition-transform"/>
+                          </summary>
+                          <div className="mt-3">
+                            <DailyCheckInCard homeworkId={h.id} onChanged={loadAll} hideActionableForm={true} />
+                          </div>
+                        </details>
+                      </>
                     )}
                     {hasTemplate && !h.daily_tracker && h.status !== "completed" && (
                       <div className="mt-4 pt-4 border-t border-bgHover">
