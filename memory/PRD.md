@@ -1312,7 +1312,29 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 109 — Today's Plan unified form (steps + fields + submit in ONE card) (2026-02)
+## Sprint 109b — Today's Tasks dismissals (per-row X + Clear all) (2026-02)
+- ✅ **User asked**: a way to clear Today's Tasks on the admin dashboard — per-row X to dismiss, plus a "Clear all" for one-tap inbox-zero.
+- ✅ **Smart re-appearance via signature gating**: every item gets a server-computed `signature` capturing its underlying state (credit pool counts for low_credits, expiry date for vaccines, pending count for booking_pending, today's date for monday_digest/no_checkin/steps_incomplete, percent-bucket for pipeline_ready, etc). A dismissal is stored with that signature; the GET filter only suppresses items whose CURRENT signature still matches the dismissed one — so if credits drop further or a new pending booking arrives, the item reappears automatically.
+- ✅ **3 new endpoints (admin-only)**:
+  - `POST /api/admin/today-brain/dismiss` `{item_id, signature}` — upserts a dismissal for one row.
+  - `POST /api/admin/today-brain/clear-all` — fetches the current visible list and dismisses every row with its current signature in one batch.
+  - `POST /api/admin/today-brain/restore` `{item_id}` — pulls a row back into view.
+- ✅ **New collection `task_dismissals`** with shape `{item_id, signature, dismissed_at, dismissed_by}`. `item_id` is the unique upsert key.
+- ✅ **Frontend `TodaysBrainTile`** rewritten:
+  - Tile header now has a small "🧹 Clear all" button (`brain-clear-all`) with a confirm dialog explaining auto-reappearance.
+  - Every `BrainRow` now renders an X dismiss button in the top-right corner (`brain-dismiss-{item.id}`), independent of the row's CTA click target.
+  - Modal version also has its own "Clear all" (`brain-modal-clear-all`) so the user can purge from the full-screen list too.
+  - `busy` state across the tile/modal during the round-trip so accidental double-clicks don't fire two dismisses.
+- ✅ **6 new regression tests pass** (`/app/backend/tests/test_today_brain_dismissals.py`):
+  - signature present on every item
+  - dismiss removes a single item from the list
+  - **dismiss with stale signature does NOT hide the item** (proves the gate works)
+  - restore brings an item back
+  - clear-all empties the queue completely
+  - admin-only guard on all three endpoints (401/403 for unauth)
+  - All 7 existing `test_todays_brain.py` tests still pass — no regressions.
+
+
 - ✅ **User asked**: "clients shouldn't be ok to mark today's plan done until the corresponding homework is filled out" — chose option **C: single-form merge**, fold the day's fields right into the Today's Plan card so checking steps and filling fields happens in one place.
 - ✅ **`TodayPlanCard.jsx` rewritten** as the SOLE place to complete the current actionable day. Now renders, in one card, in order:
   - Per-step checklist (live-toggles via `/homework/{id}/day/{n}/toggle-step` — instant progress dopamine, no submit needed)

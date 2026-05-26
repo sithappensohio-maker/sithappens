@@ -6395,6 +6395,22 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
     items.sort(key=lambda it: it.get("ts", ""), reverse=True)
     items.sort(key=lambda it: prio_order.get(it["priority"], 9))
 
+    # Sprint 109b — attach a state-signature to every item so the dismissal
+    # logic below knows when the underlying condition has changed (and the
+    # item should reappear despite a prior dismiss).
+    for it in items:
+        it["signature"] = _today_brain_signature(it)
+
+    # Filter out anything the admin has dismissed *whose signature still
+    # matches*. If the underlying state has shifted (e.g. credits dropped
+    # further, vaccine moved closer to expiry, count went up), the dismissal
+    # no longer applies → item reappears.
+    dismissed_map: Dict[str, str] = {}
+    async for dm in db.task_dismissals.find({}, {"_id": 0, "item_id": 1, "signature": 1}):
+        dismissed_map[dm["item_id"]] = dm.get("signature") or ""
+    if dismissed_map:
+        items = [it for it in items if dismissed_map.get(it["id"]) != it["signature"]]
+
     counts = {
         "urgent": sum(1 for it in items if it["priority"] == "urgent"),
         "warn":   sum(1 for it in items if it["priority"] == "warn"),
@@ -6402,6 +6418,103 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         "total":  len(items),
     }
     return {"items": items, "counts": counts, "generated_at": now_dt.isoformat()}
+
+
+def _today_brain_signature(item: dict) -> str:
+    """Build a deterministic state-fingerprint for a today-brain item so a
+    dismissal naturally expires when the underlying condition changes.
+
+    Examples:
+      - low_credits → "2|1|0" (the 3 credit pools). Drop any pool → new sig → reappears.
+      - vaccine_expiring → the expiry date. New expiry recorded → new sig → reappears.
+      - booking_pending → the current pending count. Count goes up → reappears.
+      - new_signup → empty (one-time dismiss; tied to client_id in the id already).
+      - monday_digest / no_checkin → today's date (auto-expires next day).
+    """
+    kind = item.get("kind") or ""
+    title = item.get("title") or ""
+    subtitle = item.get("subtitle") or ""
+    if kind in ("vaccine_expiring", "vaccine_expired", "vaccine_missing"):
+        # ts holds the expiry date (or "0000" for missing). Stable per state.
+        return f"{kind}:{item.get('ts') or ''}"
+    if kind == "low_credits":
+        # subtitle is generic; pull the pool counts out of the title
+        # ("Name · 2 daycare · 0 training · 1 boarding left").
+        nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
+        return f"low:{nums or title}"
+    if kind in ("booking_pending", "hw_review", "hw_question"):
+        # Title carries the count → encode it as the signature.
+        nums = "|".join([t for t in title.split() if t.isdigit()])
+        return f"{kind}:{nums or title}"
+    if kind == "pipeline_ready":
+        # Bucket overall_pct into 5% steps so a 1% bump doesn't re-spam.
+        nums = [int(t) for t in title.replace("%", " ").split() if t.isdigit()]
+        pct_bucket = (nums[0] // 5) * 5 if nums else 0
+        return f"pipeline:{item.get('id','').split(':')[-1]}:{pct_bucket}"
+    if kind in ("monday_digest", "no_checkin", "steps_incomplete"):
+        # Date-scoped — these auto-roll over at midnight UTC anyway.
+        return f"{kind}:{date.today().isoformat()}"
+    if kind == "new_signup":
+        # One-time dismiss tied to the client id — no state to track.
+        return "once"
+    # Fallback: hash of title+subtitle so unknown item kinds still behave sanely.
+    return f"hash:{hash(title + '|' + subtitle) & 0xFFFFFFFF:08x}"
+
+
+# ────────────────────── Sprint 109b — Today's Tasks dismissals ──────────────────────
+
+class TodayBrainDismissIn(BaseModel):
+    item_id: str = Field(min_length=1, max_length=300)
+    signature: str = Field(default="", max_length=300)
+
+
+@api.post("/admin/today-brain/dismiss")
+async def admin_today_brain_dismiss(body: TodayBrainDismissIn, user: dict = Depends(require_admin)):
+    """Hide a single Today's Tasks row. The dismissal is keyed by
+    (item_id, signature) — so once the underlying state changes (the
+    signature shifts), the item naturally re-appears next dashboard load."""
+    await db.task_dismissals.update_one(
+        {"item_id": body.item_id},
+        {"$set": {
+            "item_id": body.item_id,
+            "signature": body.signature or "",
+            "dismissed_at": now_iso(),
+            "dismissed_by": user.get("email") or user.get("id"),
+        }},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.post("/admin/today-brain/clear-all")
+async def admin_today_brain_clear_all(user: dict = Depends(require_admin)):
+    """Dismiss every currently-visible Today's Tasks row in one shot. Each
+    row's state-signature is captured so any that flip back to a new state
+    (e.g. credits drop further, a fresh vaccine expires) reappear automatically."""
+    # Build the current list exactly as the tile sees it (with signatures),
+    # then upsert one dismissal per item.
+    current = await admin_today_brain(_=user)
+    count = 0
+    for it in current.get("items", []):
+        await db.task_dismissals.update_one(
+            {"item_id": it["id"]},
+            {"$set": {
+                "item_id": it["id"],
+                "signature": it.get("signature") or "",
+                "dismissed_at": now_iso(),
+                "dismissed_by": user.get("email") or user.get("id"),
+            }},
+            upsert=True,
+        )
+        count += 1
+    return {"ok": True, "dismissed": count}
+
+
+@api.post("/admin/today-brain/restore")
+async def admin_today_brain_restore(body: TodayBrainDismissIn, _: dict = Depends(require_admin)):
+    """Undo a single dismissal (item re-appears immediately)."""
+    res = await db.task_dismissals.delete_one({"item_id": body.item_id})
+    return {"ok": True, "removed": res.deleted_count}
 
 
 
