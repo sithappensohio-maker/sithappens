@@ -2353,22 +2353,39 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     """Sprint 110 — return the dollar discount that should apply to the
     booking being checked out, given the multi-dog household setting.
 
+    Sprint 110h — discount config is now PER SERVICE TYPE (daycare/boarding/
+    training/grooming/photography all configurable separately). The legacy
+    flat fields are read as the fallback so existing installs keep working.
+
     Rules:
-      - Setting must be enabled.
+      - Master toggle must be on.
+      - Service-specific entry must be enabled with a value > 0.
       - Discount applies ONLY if the same client has at least one other
         booking on the same date that's already been checked out (status
         completed, has checked_out_at) and is NOT this booking.
       - First dog full price → subsequent dogs (in checkout order) discounted.
-      - `percent` mode = % off the booking's pre-discount actual_price.
-      - `flat`    mode = a fixed $ amount.
     """
     settings = await get_settings()
     if not settings.get("multi_dog_discount_enabled"):
         return None
-    mode = (settings.get("multi_dog_discount_mode") or "percent").lower()
+
+    service_type = booking.get("service_type") or "daycare"
+    per_service = settings.get("multi_dog_discount_by_service") or {}
+    cfg = per_service.get(service_type)
+    if not cfg:
+        # Legacy single-config fallback (applied to all services as before)
+        cfg = {
+            "enabled": True,
+            "mode": settings.get("multi_dog_discount_mode") or "percent",
+            "value": float(settings.get("multi_dog_discount_value") or 0),
+            "label": settings.get("multi_dog_discount_label") or "Multi-dog discount",
+        }
+    if not cfg.get("enabled"):
+        return None
+    mode = (cfg.get("mode") or "percent").lower()
     if mode not in ("percent", "flat"):
         return None
-    value = float(settings.get("multi_dog_discount_value") or 0)
+    value = float(cfg.get("value") or 0)
     if value <= 0:
         return None
 
@@ -2377,8 +2394,6 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     if not client_id or not booking_date:
         return None
 
-    # Count this client's OTHER bookings on the same date that have already
-    # been checked out (i.e. the first dog of the day has paid full price).
     sibling_q = {
         "client_id": client_id,
         "date": booking_date,
@@ -2395,17 +2410,17 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     if base_price <= 0:
         return None
     if mode == "percent":
-        # Clamp 0-100 just in case the admin typo'd.
         pct = max(0.0, min(100.0, value))
         amount = round(base_price * pct / 100.0, 2)
     else:
         amount = round(min(base_price, value), 2)
-    label = settings.get("multi_dog_discount_label") or "Multi-dog discount"
+    label = cfg.get("label") or "Multi-dog discount"
     return {
         "amount": amount,
         "mode": mode,
         "value": value,
         "label": label,
+        "service_type": service_type,
         "sibling_count": sibling_count,
     }
 
@@ -2716,6 +2731,7 @@ async def check_out(
                     "mode": discount["mode"],
                     "value": discount["value"],
                     "label": discount["label"],
+                    "service_type": discount.get("service_type"),
                     "based_on_price": prev_price,
                     "sibling_count": discount["sibling_count"],
                     "applied_at": ts,
@@ -3043,6 +3059,10 @@ class SettingsIn(BaseModel):
     multi_dog_discount_mode: Optional[Literal["percent", "flat"]] = None  # default "percent"
     multi_dog_discount_value: Optional[float] = None  # 10 = 10% or $10 depending on mode
     multi_dog_discount_label: Optional[str] = None    # display label on the receipt
+    # Sprint 110h — per-service-type discount config so daycare and boarding
+    # can have totally different discount tiers (e.g. 15% off daycare, $20 off
+    # boarding nights, training waived). Keyed by service_type → {enabled, mode, value, label}.
+    multi_dog_discount_by_service: Optional[Dict[str, Dict[str, Any]]] = None
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):

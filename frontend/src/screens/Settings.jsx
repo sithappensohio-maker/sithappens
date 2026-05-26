@@ -509,15 +509,36 @@ function CapacityPanel({ s, save, saving }) {
 function RulesPanel({ s, save, saving }) {
   const [r, setR] = useState(s.booking_rules || {});
   const set = (k, v) => setR({ ...r, [k]: v });
-  // Sprint 110 — multi-dog discount lives at the top-level settings doc, not
-  // under booking_rules, so it gets its own piece of state + its own save.
-  const [md, setMd] = useState({
-    multi_dog_discount_enabled: !!s.multi_dog_discount_enabled,
-    multi_dog_discount_mode: s.multi_dog_discount_mode || "percent",
-    multi_dog_discount_value: s.multi_dog_discount_value ?? 10,
-    multi_dog_discount_label: s.multi_dog_discount_label || "Multi-dog discount",
-  });
-  const setM = (k, v) => setMd((p) => ({ ...p, [k]: v }));
+  // Sprint 110h — per-service multi-dog discount: daycare and boarding can be
+  // configured separately. Falls back to the legacy flat fields as default.
+  const SERVICES = [
+    { key: "daycare",     label: "Daycare",     icon: "fa-paw",        defaultValue: 10 },
+    { key: "boarding",    label: "Boarding",    icon: "fa-bed",        defaultValue: 15 },
+    { key: "training",    label: "Training",    icon: "fa-graduation-cap", defaultValue: 10 },
+    { key: "grooming",    label: "Grooming",    icon: "fa-scissors",   defaultValue: 10 },
+    { key: "photography", label: "Photography", icon: "fa-camera",     defaultValue: 10 },
+  ];
+  const legacyMode  = s.multi_dog_discount_mode  || "percent";
+  const legacyValue = s.multi_dog_discount_value ?? 10;
+  const legacyLabel = s.multi_dog_discount_label || "Multi-dog discount";
+  const initialByService = {};
+  for (const svc of SERVICES) {
+    const existing = (s.multi_dog_discount_by_service || {})[svc.key];
+    initialByService[svc.key] = existing ? {
+      enabled: !!existing.enabled,
+      mode: existing.mode || legacyMode,
+      value: existing.value ?? svc.defaultValue,
+      label: existing.label || `${svc.label} multi-dog discount`,
+    } : {
+      enabled: !!s.multi_dog_discount_enabled && svc.key === "daycare",  // migrate legacy onto daycare
+      mode: legacyMode,
+      value: svc.key === "daycare" ? legacyValue : svc.defaultValue,
+      label: svc.key === "daycare" ? legacyLabel : `${svc.label} multi-dog discount`,
+    };
+  }
+  const [mdEnabled, setMdEnabled] = useState(!!s.multi_dog_discount_enabled);
+  const [byService, setByService] = useState(initialByService);
+  const setSvc = (svcKey, patch) => setByService((p) => ({ ...p, [svcKey]: { ...p[svcKey], ...patch } }));
 
   return (
     <div className="space-y-6" data-testid="rules-panel">
@@ -540,42 +561,64 @@ function RulesPanel({ s, save, saving }) {
         </div>
       </Section>
 
-      <Section title="Multi-dog household discount" subtitle="Auto-applied at check-out for the 2nd-and-later dog from the same client on the same date. First dog pays full price; siblings get the discount.">
-        <label className="flex items-center gap-3 cursor-pointer mb-3">
-          <input type="checkbox" checked={md.multi_dog_discount_enabled}
-                 onChange={(e)=>setM("multi_dog_discount_enabled", e.target.checked)}
+      <Section title="Multi-dog household discount" subtitle="Auto-applied at check-out for the 2nd-and-later dog from the same client on the same date. Each service has its OWN discount tier — set daycare and boarding to whatever margins make sense for each.">
+        <label className="flex items-center gap-3 cursor-pointer mb-4">
+          <input type="checkbox" checked={mdEnabled}
+                 onChange={(e)=>setMdEnabled(e.target.checked)}
                  data-testid="multi-dog-enabled"
                  className="accent-shGreen w-4 h-4" />
-          <span className="text-[15px] font-black uppercase tracking-widest text-gray-300">Enable multi-dog discount</span>
+          <span className="text-[15px] font-black uppercase tracking-widest text-gray-300">Enable multi-dog discount (master switch)</span>
         </label>
-        <div className={`grid grid-cols-3 gap-4 ${md.multi_dog_discount_enabled ? "" : "opacity-50 pointer-events-none"}`}>
-          <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest block">Mode</label>
-            <select value={md.multi_dog_discount_mode}
-                    onChange={(e)=>setM("multi_dog_discount_mode", e.target.value)}
-                    data-testid="multi-dog-mode"
-                    className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="percent">Percent (%)</option>
-              <option value="flat">Flat ($)</option>
-            </select>
-          </div>
-          <Field
-            label={md.multi_dog_discount_mode === "percent" ? "Amount (% off)" : "Amount ($ off)"}
-            type="number"
-            value={md.multi_dog_discount_value}
-            onChange={(v)=>setM("multi_dog_discount_value", Math.max(0, parseFloat(v) || 0))}
-            testId="multi-dog-value" />
-          <Field label="Receipt label" value={md.multi_dog_discount_label}
-                 onChange={(v)=>setM("multi_dog_discount_label", v)}
-                 testId="multi-dog-label" />
+        <div className={`space-y-3 ${mdEnabled ? "" : "opacity-50 pointer-events-none"}`}>
+          {SERVICES.map(svc => {
+            const v = byService[svc.key] || {};
+            return (
+              <div key={svc.key} className="bg-bgBase rounded-lg p-3 border border-bgHover" data-testid={`multi-dog-svc-${svc.key}`}>
+                <label className="flex items-center gap-2 cursor-pointer mb-3">
+                  <input type="checkbox" checked={!!v.enabled}
+                         onChange={(e)=>setSvc(svc.key, { enabled: e.target.checked })}
+                         data-testid={`multi-dog-${svc.key}-enabled`}
+                         className="accent-shGreen w-4 h-4" />
+                  <i className={`fas ${svc.icon} text-shBlue mr-1`}/>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-white">{svc.label}</span>
+                </label>
+                <div className={`grid grid-cols-3 gap-3 ${v.enabled ? "" : "opacity-60"}`}>
+                  <div>
+                    <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest block">Mode</label>
+                    <select value={v.mode || "percent"}
+                            onChange={(e)=>setSvc(svc.key, { mode: e.target.value })}
+                            disabled={!v.enabled}
+                            data-testid={`multi-dog-${svc.key}-mode`}
+                            className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                      <option value="percent">Percent (%)</option>
+                      <option value="flat">Flat ($)</option>
+                    </select>
+                  </div>
+                  <Field
+                    label={v.mode === "flat" ? "Amount ($)" : "Amount (%)"}
+                    type="number"
+                    value={v.value ?? 0}
+                    onChange={(val)=>setSvc(svc.key, { value: Math.max(0, parseFloat(val) || 0) })}
+                    testId={`multi-dog-${svc.key}-value`} />
+                  <Field label="Receipt label" value={v.label || ""}
+                         onChange={(val)=>setSvc(svc.key, { label: val })}
+                         testId={`multi-dog-${svc.key}-label`} />
+                </div>
+              </div>
+            );
+          })}
         </div>
         <p className="text-[12px] text-gray-500 mt-2 italic">
           <i className="fas fa-circle-info mr-1"/>
-          Discount applies to the booking's price (incl. add-ons & extra nights) — never to credit-only checkouts.
+          Each service uses its own tier. Disable per-service for the ones you don't want discounted (e.g. keep daycare at 15% but leave photography full price).
         </p>
       </Section>
 
-      <SaveBar onSave={()=>save({ booking_rules: r, ...md })} saving={saving} />
+      <SaveBar onSave={()=>save({
+        booking_rules: r,
+        multi_dog_discount_enabled: mdEnabled,
+        multi_dog_discount_by_service: byService,
+      })} saving={saving} />
     </div>
   );
 }

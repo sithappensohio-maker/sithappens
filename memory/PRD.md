@@ -1312,7 +1312,19 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110g — Low-credit email at checkout (2026-02)
+## Sprint 110h — Per-service multi-dog discount (daycare ≠ boarding) (2026-02)
+- ✅ **User reported**: multi-dog discount should differ by service type — daycare and boarding have different margins.
+- ✅ **New settings field** `multi_dog_discount_by_service: Dict[str, Dict[str, Any]]` — keyed by service_type (`daycare`, `boarding`, `training`, `grooming`, `photography`) → `{enabled, mode, value, label}`. Master toggle `multi_dog_discount_enabled` still gates the entire feature.
+- ✅ **`_compute_multi_dog_discount` rewritten** to look up the booking's service_type in `multi_dog_discount_by_service` first. Falls back to legacy flat fields (`multi_dog_discount_mode/value/label`) so existing installs keep working without migration.
+- ✅ **`multi_dog_discount` audit blob on bookings now carries `service_type`** so income reports + receipt reprints can group "which service had which discount tier applied" accurately.
+- ✅ **Settings UI overhauled**: under Booking Rules → Multi-dog household discount section, admins now see ONE master toggle + 5 per-service cards (daycare/boarding/training/grooming/photography) each with their own enable checkbox, mode (percent/flat), value, and receipt label. Cards dim/grey when their own toggle is off so it's clear which tiers are live.
+- ✅ **Legacy data auto-migrates**: when a user opens the panel with the OLD flat schema, the enable-state is mapped onto the daycare card by default and the legacy value/mode flow in as that card's seed values.
+- ✅ **2 new pytests pass** (`test_per_service_discount_config`, `test_legacy_flat_config_still_works_when_per_service_empty`):
+  - Daycare 25% on / boarding disabled → 2nd daycare booking gets 25% off, `discount.service_type=="daycare"`
+  - Empty `multi_dog_discount_by_service: {}` with legacy fields populated still applies the legacy 10% across services
+- ✅ All 8 multi-dog-discount tests + all checkout-related suites still pass; no regressions.
+
+
 - ✅ **User reported**: clients aren't getting the email when they hit 2 daycare credits.
 - ✅ **Root cause**: `notify_client_low_credits` was IMPORTED in `server.py` but never CALLED from any code path. Credit decrements at checkout silently happened with no email trigger. The Today's Tasks dashboard pip at line 6350 was the only signal that something low was happening.
 - ✅ **Fix #1 — Wired into checkout** (`server.py`): every credit-consuming code path in `check_out` now calls `_maybe_send_low_credit_email(client_id, pool, new_balance)` immediately after the `$inc` decrement. Covers both the standard path (line ~2510) and the extra-boarding-nights path (line ~2604).

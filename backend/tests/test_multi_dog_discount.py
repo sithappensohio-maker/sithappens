@@ -175,6 +175,67 @@ def test_flat_mode_discount(admin_headers, two_dog_client):
         requests.put(f"{BASE}/api/settings", headers=admin_headers, json={"multi_dog_discount_enabled": False}, timeout=15)
 
 
+def test_per_service_discount_config(admin_headers, two_dog_client):
+    """Sprint 110h — daycare and boarding have separate tiers. Daycare 25% off,
+    boarding off entirely → only daycare bookings get the discount."""
+    requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+        "multi_dog_discount_enabled": True,
+        "multi_dog_discount_by_service": {
+            "daycare":  {"enabled": True,  "mode": "percent", "value": 25, "label": "Daycare 25%"},
+            "boarding": {"enabled": False, "mode": "flat",    "value": 20, "label": "Boarding"},
+        },
+    }, timeout=15)
+    try:
+        bid1, bid2 = two_dog_client["booking_ids"]
+        # Both are daycare bookings (per the fixture) → daycare rule applies
+        requests.post(f"{BASE}/api/bookings/{bid1}/check-out", headers=admin_headers, json={
+            "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15)
+        r = requests.post(f"{BASE}/api/bookings/{bid2}/check-out", headers=admin_headers, json={
+            "base_price": 40.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15).json()
+        # 25% off $40 → $30 net
+        assert r["actual_price"] == 30.0, f"expected $30 after 25% daycare off, got {r['actual_price']}"
+        md = r["multi_dog_discount"]
+        assert md["amount"] == 10.0
+        assert md["service_type"] == "daycare"
+        assert md["label"] == "Daycare 25%"
+    finally:
+        requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+            "multi_dog_discount_enabled": False,
+            "multi_dog_discount_by_service": {},
+        }, timeout=15)
+
+
+def test_legacy_flat_config_still_works_when_per_service_empty(admin_headers, two_dog_client):
+    """If admins are on the OLD single-config schema (multi_dog_discount_mode/value)
+    without per-service, the discount should still apply to all services
+    using the legacy fields. Ensures forward-compat migration."""
+    requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+        "multi_dog_discount_enabled": True,
+        "multi_dog_discount_mode": "percent",
+        "multi_dog_discount_value": 10,
+        "multi_dog_discount_label": "Legacy",
+        "multi_dog_discount_by_service": {},  # empty → fall back to legacy
+    }, timeout=15)
+    try:
+        bid1, bid2 = two_dog_client["booking_ids"]
+        requests.post(f"{BASE}/api/bookings/{bid1}/check-out", headers=admin_headers, json={
+            "base_price": 50.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15)
+        r = requests.post(f"{BASE}/api/bookings/{bid2}/check-out", headers=admin_headers, json={
+            "base_price": 50.0, "payment_method": "cash", "payment_status": "paid",
+        }, timeout=15).json()
+        # 10% off $50 = $5 → $45 net
+        assert r["actual_price"] == 45.0
+        assert r["multi_dog_discount"]["amount"] == 5.0
+    finally:
+        requests.put(f"{BASE}/api/settings", headers=admin_headers, json={
+            "multi_dog_discount_enabled": False,
+        }, timeout=15)
+
+
+
 def test_disabled_setting_skips_discount(admin_headers, two_dog_client):
     """Setting OFF → second dog also pays full price."""
     requests.put(f"{BASE}/api/settings", headers=admin_headers, json={"multi_dog_discount_enabled": False}, timeout=15)
