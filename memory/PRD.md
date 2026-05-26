@@ -1312,7 +1312,16 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110i — Expandable steps + Fullscreen view for client portal homework (2026-02)
+## Sprint 110j — Step labels were being silently truncated to 200 chars (2026-02)
+- ✅ **User reported** with a screenshot: step text ends mid-sentence ("without asking for an", "even for a", "If they don't look, lur"). NOT a CSS issue — the text was being chopped IN THE DATABASE on save.
+- ✅ **Root cause** (`server.py:3976`): `"label": (s.get("label") or "Step").strip()[:200]` — every step label was capped at exactly 200 characters during the plan save. The 110i "expandable steps" feature added an `description` field but the user was pasting the full text into `label`, which got the axe.
+- ✅ **Fix #1 — Raised the step label cap from 200 → 2000 characters** so long step instructions like the user's "Charge the Marker (2 mins): Low distraction. Sit with your dog. Say your marker word (e.g., 'Yes!')..." save in full going forward.
+- ✅ **Fix #2 — Step `description` and `notes` also persisted** (max 5000 chars each) — these were already exposed on the read side from sprint 110i but the write path wasn't normalizing them. Now plans can save the rich text the read endpoint surfaces.
+- ✅ **Fix #3 — Raised `day_focus` cap from 200 → 2000** so the per-day brief can be a full paragraph instead of getting rejected/truncated.
+- ✅ **HEADS UP TO ADMIN**: existing plans already in the DB with truncated labels CANNOT be recovered — the lost text is gone. Re-edit + save those plans to get the full instructions stored (the current code now accepts up to 2000 chars).
+- ✅ All 26 homework pytests still pass. Backend lints clean.
+
+
 - ✅ **User reported**: clients can't read long step labels in Today's Plan — they want to click/expand each step and even open the whole thing in a "new window" for breathing room.
 - ✅ **Fix #1 — Backend payload enrichment** (`/portal/today-plan` → `items[].steps[]`): each step now also returns `description` and `notes` so the portal can render rich detail when expanded. Existing data unaffected (fields are optional, default to empty string).
 - ✅ **Fix #2 — Expandable step rows** (`TodayPlanCard.jsx`): each step is now a 2-row component:

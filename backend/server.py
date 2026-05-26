@@ -3769,7 +3769,9 @@ def _trend(nums: List[float]) -> str:
 # legacy templates without day_number continue to work in single-section logger.
 class DailyTrackerSectionIn(BaseModel):
     day_number: int = Field(ge=1, le=120)
-    day_focus: str = Field(min_length=1, max_length=200)
+    # Sprint 110j — raised from 200 → 2000 chars so longer day-focus
+    # descriptions don't get rejected/truncated on save.
+    day_focus: str = Field(min_length=1, max_length=2000)
     instructions: Optional[str] = ""
     equipment: Optional[List[str]] = []  # e.g., ["high-value treats", "6-ft leash"]
     fields: List[dict] = []  # [{id, label, kind, ...}] — same shape as legacy fields
@@ -3973,8 +3975,16 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
             "steps": [
                 {
                     "id": (s.get("id") or "").strip() or f"step-{uuid.uuid4().hex[:6]}",
-                    "label": (s.get("label") or "Step").strip()[:200],
+                    # Sprint 110j — raised from 200 → 2000 chars so long
+                    # step instructions like "Charge the Marker (2 mins): Low
+                    # distraction. Sit with your dog. Say your marker word
+                    # (e.g., 'Yes!') or click, and immediately give a
+                    # high-value treat. Do this 10-15 times without asking
+                    # for anything." don't get chopped mid-sentence.
+                    "label": (s.get("label") or "Step").strip()[:2000],
                     "minutes": int(s["minutes"]) if isinstance(s.get("minutes"), (int, float)) and int(s["minutes"]) > 0 else None,
+                    "description": (s.get("description") or "").strip()[:5000] or None,
+                    "notes": (s.get("notes") or "").strip()[:5000] or None,
                 }
                 for s in (d.steps or [])
                 if (s.get("label") or "").strip()
