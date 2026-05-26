@@ -151,6 +151,11 @@ export default function TodayPlanCard({ onChanged }) {
                 <p className="text-[14px] text-gray-500 italic mt-1">No checklist steps on this day — open the homework card below to log fields.</p>
               ) : (
                 <div className="space-y-1.5 mt-1">
+                  {item.status !== "submitted" && (
+                    <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-1" data-testid={`today-plan-instructions-${item.homework_id}`}>
+                      <i className="fas fa-square-check mr-1"/>Check off each step as you complete the homework below
+                    </p>
+                  )}
                   {item.steps.map((s) => {
                     const id = `${item.homework_id}:${s.id}`;
                     const isBusy = busy === id;
