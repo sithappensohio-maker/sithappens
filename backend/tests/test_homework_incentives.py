@@ -48,6 +48,22 @@ def test_all_homework_trophy_tiers_seeded(admin_headers):
     assert "diamond" in r["tier_colors"], "diamond tier missing"
 
 
+def test_portal_incentives_includes_referral_block(client_headers):
+    """Sprint 110c — referral card data must come down with /portal/incentives
+    so the UI can render the code + ladder + share-text in one round-trip."""
+    # Ensure the client has a referral_code minted (auto-created on /portal/me)
+    requests.get(f"{BASE}/api/portal/me", headers=client_headers, timeout=15)
+    d = requests.get(f"{BASE}/api/portal/incentives", headers=client_headers, timeout=15).json()
+    ref = d.get("referral")
+    assert ref is not None, "/portal/incentives must surface a referral block"
+    for k in ("code", "successful_count", "ladder", "current_milestone", "next_milestone", "share_text"):
+        assert k in ref, f"referral block missing key {k}"
+    assert ref["code"], "referral.code must be auto-minted"
+    assert len(ref["ladder"]) == 3, "expected 3-rung referral ladder"
+    # share_text must contain the client's actual code
+    assert ref["code"] in ref["share_text"], "share_text should include the referral code"
+
+
 def test_portal_incentives_shape(client_headers):
     r = requests.get(f"{BASE}/api/portal/incentives", headers=client_headers, timeout=15)
     assert r.status_code == 200, r.text

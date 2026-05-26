@@ -56,8 +56,10 @@ export default function HomeworkIncentivesPanel() {
   const next = data.next_milestone;
   const ladder = data.streak_ladder || [];
 
-  // Hide entirely if the client has zero homework activity AND no achievements
-  if (data.streak_days === 0 && data.completed_plans === 0 && earnedTrophies.length === 0) return null;
+  // Show the panel as long as the client has ANY of: streak activity, completed
+  // plans, earned badges, OR a referral code (so even brand-new clients can
+  // find their code immediately and start inviting friends).
+  if (data.streak_days === 0 && data.completed_plans === 0 && earnedTrophies.length === 0 && !data.referral?.code) return null;
 
   return (
     <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4 shadow-lg" data-testid="incentives-panel">
@@ -191,6 +193,89 @@ export default function HomeworkIncentivesPanel() {
           </div>
         </div>
       )}
+
+      {/* Sprint 110c — Refer a friend, both get a trophy */}
+      {data.referral?.code && (
+        <ReferralCard referral={data.referral} />
+      )}
+    </div>
+  );
+}
+
+
+function ReferralCard({ referral }) {
+  const [copied, setCopied] = useState(false);
+  const link = `${window.location.origin}/?ref=${referral.code}`;
+  const text = `${referral.share_text} ${link}`;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2200); }
+    catch { /* clipboard blocked */ }
+  };
+  const nativeShare = () => {
+    if (navigator.share) navigator.share({ text, url: link }).catch(() => {});
+    else copy();
+  };
+  return (
+    <div className="mt-4 pt-4 border-t border-bgHover" data-testid="incentives-referral">
+      <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-2">
+        <i className="fas fa-user-plus text-shOrange mr-1"/>Refer a friend, both get a trophy
+      </p>
+      <div className="bg-gradient-to-br from-shOrange/10 to-shBlue/10 rounded-lg p-4 border border-shOrange/30">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">Your code</p>
+            <p className="text-3xl font-black text-shOrange tracking-widest font-mono" data-testid="incentives-referral-code">{referral.code}</p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">Friends joined</p>
+            <p className="text-3xl font-black text-shGreen" data-testid="incentives-referral-count">{referral.successful_count}</p>
+            {referral.current_milestone && (
+              <p className="text-[12px] text-shOrange font-black">
+                <span className="mr-1">{referral.current_milestone.emoji}</span>{referral.current_milestone.label}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Mini ladder */}
+        <div className="grid grid-cols-3 gap-2 mb-3" data-testid="incentives-referral-ladder">
+          {(referral.ladder || []).map(rung => {
+            const reached = referral.successful_count >= rung.threshold;
+            return (
+              <div key={rung.threshold}
+                   className={`text-center py-2 rounded transition ${reached ? "bg-shOrange/20 ring-1 ring-shOrange" : "bg-bgHover/40"}`}>
+                <div className={`text-lg ${reached ? "" : "grayscale opacity-40"}`}>{rung.emoji}</div>
+                <div className={`text-[10px] font-black uppercase tracking-widest mt-0.5 ${reached ? "text-shOrange" : "text-gray-600"}`}>
+                  {rung.threshold} ref{rung.threshold === 1 ? "" : "s"}
+                </div>
+                <div className={`text-[10px] ${reached ? "text-white" : "text-gray-600"}`}>{rung.label}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {referral.next_milestone && (
+          <p className="text-[12px] text-gray-400 mb-3 text-center">
+            <span className="mr-1">{referral.next_milestone.emoji}</span>
+            <span className="text-shBlue font-black">{referral.next_milestone.left} more</span> to unlock <span className="text-white font-black">{referral.next_milestone.label}</span>
+          </p>
+        )}
+
+        <p className="text-[12px] text-gray-300 italic mb-3">"{referral.share_text}"</p>
+
+        <div className="flex gap-2">
+          <button onClick={copy}
+                  data-testid="incentives-referral-copy"
+                  className="flex-1 bg-shBlue text-bgHeader px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:opacity-90">
+            <i className={`fas ${copied ? "fa-check" : "fa-clipboard"} mr-1`}/>{copied ? "Copied!" : "Copy link"}
+          </button>
+          <button onClick={nativeShare}
+                  data-testid="incentives-referral-share"
+                  className="flex-1 bg-shOrange text-bgHeader px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:opacity-90">
+            <i className="fas fa-share-nodes mr-1"/>Share now
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -7833,6 +7833,44 @@ async def portal_incentives(user: dict = Depends(get_current_user)):
             "filename": hw.get("certificate_filename", "certificate"),
         })
 
+    # Sprint 110c — "Refer a friend, both get a trophy" bolt-on.
+    # Fetch the client's referral_code (auto-minted in /portal/me if missing)
+    # plus their successful-referral count and the referral trophy ladder so
+    # the portal can render a complete shareable referral card.
+    client_doc = await db.clients.find_one({"id": cid}, {"_id": 0, "referral_code": 1, "name": 1})
+    ref_code = (client_doc or {}).get("referral_code")
+    successful_referrals = await db.referrals.count_documents({"referrer_id": cid})
+    REF_LADDER = [
+        (1,  "Friend Bringer",   "🤝"),
+        (3,  "Pack Builder",     "🐾🐾🐾"),
+        (10, "Ambassador",       "📣"),
+    ]
+    current_ref_milestone = None
+    next_ref_milestone = None
+    for thresh, label, emoji in REF_LADDER:
+        if successful_referrals >= thresh:
+            current_ref_milestone = {"threshold": thresh, "label": label, "emoji": emoji}
+        elif next_ref_milestone is None:
+            next_ref_milestone = {
+                "threshold": thresh,
+                "label": label,
+                "emoji": emoji,
+                "left": max(0, thresh - successful_referrals),
+            }
+    referral_block = {
+        "code": ref_code,
+        "successful_count": successful_referrals,
+        "ladder": [{"threshold": t, "label": l, "emoji": e} for t, l, e in REF_LADDER],
+        "current_milestone": current_ref_milestone,
+        "next_milestone": next_ref_milestone,
+        "share_text": (
+            f"Hey! I love {(await get_settings()).get('brand_footer_text') or 'Sit Happens'} for my pup. "
+            f"Sign up with my code {ref_code} and we both unlock a trophy "
+            f"once you complete your first appointment."
+            if ref_code else ""
+        ),
+    }
+
     return {
         "streak_days": streak,
         "completed_plans": completed,
@@ -7841,6 +7879,7 @@ async def portal_incentives(user: dict = Depends(get_current_user)):
         "streak_ladder": [{"threshold": t, "label": l, "emoji": e} for t, l, e in LADDER],
         "trophy_progress": progress,
         "certificates": certificates,
+        "referral": referral_block,
     }
 
 

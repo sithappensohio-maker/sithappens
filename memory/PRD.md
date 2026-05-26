@@ -1312,7 +1312,20 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110b — Homework Client Incentives bundle (streaks · trophies · shareable certs) (2026-02)
+## Sprint 110c — Refer-a-friend, both get a trophy (2026-02)
+- ✅ **User accepted the improvement suggestion**: tap into existing referral infrastructure to drive growth via the homework dopamine loop.
+- ✅ **Discovery**: ALL of the referral plumbing already existed end-to-end — `referral_code` field on clients, `referrals` collection, automatic 6-char code minting on `/portal/me`, signup honors `?ref=CODE` query param, and three referral trophies in the seed catalog (`client_friend_bringer` @1, `client_pack_builder` @3, `client_ambassador` @10) all wired to fire on first successful appointment of the referred client. Just needed to surface it.
+- ✅ **`/api/portal/incentives` extended** to also return a `referral` block with `{code, successful_count, ladder, current_milestone, next_milestone, share_text}`. `share_text` is a pre-written, brand-aware invite message containing the client's actual code (`"Hey! I love {BRAND} for my pup. Sign up with my code 7KTUMQ and we both unlock a trophy once you complete your first appointment."`) so the client can paste-and-go.
+- ✅ **New `<ReferralCard>` sub-component** rendered inside `HomeworkIncentivesPanel` (under shareable certificates):
+  - Big-text referral code in branded orange (`incentives-referral-code`) + live friends-joined counter (`incentives-referral-count`)
+  - 3-rung ladder visual matching the streak ladder pattern (greyscale-locked, gold-glow-unlocked)
+  - "{N} more to unlock {NextMilestone}" callout
+  - Pre-written share text in an italic blockquote
+  - **Copy link** button (clipboard) + **Share now** button (uses `navigator.share` on mobile, clipboard fallback elsewhere) — link auto-built as `{origin}/?ref={code}` which the existing `Login.jsx` already auto-detects and flips to the register tab with the code prefilled.
+- ✅ **Panel visibility rule updated** — now also shows when the client has just a referral code (so brand-new clients can find + share their code on day one, before they have any streak/badge activity).
+- ✅ **1 new regression test passes** (`test_portal_incentives_includes_referral_block`): asserts shape + ladder size + that `share_text` contains the actual referral code. All 6 incentives-suite tests + 31 across homework suites green.
+
+
 - ✅ **User chose**: streak milestones + trophies + shareable certificates — **NO free credits** (explicitly excluded).
 - ✅ **Streak ladder added to seed catalog**: 6 fire-tier trophies on `homework_streak_days` at thresholds 3 (Streak Sparked — bronze), 7 (Homework Hero — bronze, existing), 14 (Two-Week Champ — silver), 30 (Month-Long Master — gold), 60 (Iron Streak — platinum), 100 (Centurion — diamond, new tier).
 - ✅ **Plans-completed ladder expanded**: now 1 (First Plan Down — bronze), 5 (Five Down — bronze), 25 (Dedicated Owner — existing silver), 100 (Coach of the Year — existing gold).
