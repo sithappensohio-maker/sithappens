@@ -1312,6 +1312,20 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
+## Sprint 108b — Auto-Backup Mount Diagnostics (2026-02)
+- ✅ **Root cause** of "Run Now says completed but no file appears on the external drive": when the backend runs inside a container/pod, typing a host path like `/mnt/external/drive/...` causes Python to silently `mkdir -p` that path **inside the container's overlay filesystem** and write the gzip there. The file is real, the response says success — but it's on container ephemeral storage, NOT bind-mounted to the user's actual disk. On every container restart, the file vanishes; meanwhile the user sees nothing on their drive.
+- ✅ **New endpoint** `POST /api/admin/backup/inspect` (admin-only) — runs a full pre-flight on a path *before* scheduling: resolves it, walks up to find the real mountpoint, looks up the fs type and source from `/proc/mounts`, computes free space, performs an actual write-probe (create + delete a tiny file), lists existing `sit-happens-backup-*.json.gz` snapshots already in the folder, and returns a single human-readable `verdict` (`ok`/`warn`/`fail`) with a clear `verdict_message`. Overlay/tmpfs/aufs (or anything mounted at `/`) is flagged `likely_ephemeral: true` with a fix tip about bind-mounting.
+- ✅ **`run_auto_backup_job` enriched** — every successful run now also persists `mountpoint`, `fs_type`, `fs_source`, and `likely_ephemeral` into `system_runs` (both the per-run row and the `auto_backup:last` pointer) so the Settings UI can display, post-run, exactly what filesystem the file landed on.
+- ✅ **Settings UI** — new **Verify Path** button next to Save/Run Now (`data-testid="auto-backup-verify"`) calls the inspect endpoint and renders a color-coded diagnostics card (green/yellow/red) with resolved path, mountpoint, fs type+source, free space, write-test result, and (if ephemeral) a copy-pasteable Docker/Podman bind-mount example. The "Last successful backup" card now also surfaces `mount=… · fs=…` and a loud yellow "⚠ Container ephemeral — NOT on host disk" pill when the file landed in container scratch space, so the admin can never again be fooled by a green checkmark.
+- ✅ **5 new regression tests pass** (`/app/backend/tests/test_auto_backup.py`, now 11/11):
+  - `test_inspect_returns_diagnostics_for_writable_path` — shape + write_test.ok
+  - `test_inspect_flags_ephemeral_overlay_storage` — overlay/tmpfs → verdict=warn + likely_ephemeral=True
+  - `test_inspect_bad_path_reports_failure` — `/dev/null/...` returns 200 with verdict=fail (no 500)
+  - `test_inspect_admin_only` — unauth 401/403
+  - `test_run_now_response_includes_mount_diagnostics` — run-now + status both expose mountpoint/fs_type/likely_ephemeral
+- ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
+
+
 ## Backlog / Next Up
 - **P1** Public booking page (`yourdomain.com/book` — no login required)
 - **P1** Vaccine expiry email blast

@@ -6561,6 +6561,168 @@ async def admin_backup_status(_: dict = Depends(require_admin)):
     return {"last": last, "history": history}
 
 
+@api.post("/admin/backup/inspect")
+async def admin_backup_inspect(body: dict, _: dict = Depends(require_admin)):
+    """Pre-flight check for the configured backup path. Surfaces the REAL
+    filesystem the backend will write to so the admin can spot the
+    container-vs-host mount mismatch that silently sends backups into
+    ephemeral storage instead of an external drive.
+
+    Returns: resolved path, mount point, filesystem device id, whether it
+    matches the container root (which means it's NOT a separate disk),
+    free space, write-test result, and a listing of existing backup files.
+    """
+    import os
+    import shutil
+    from pathlib import Path
+
+    raw_path = (body.get("path") or "").strip()
+    if not raw_path:
+        # fall back to configured value
+        s = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        raw_path = (s.get("auto_backup_path") or "").strip()
+    if not raw_path:
+        raise HTTPException(400, "No path provided and none configured.")
+
+    info: Dict[str, Any] = {"input": raw_path}
+    try:
+        resolved = Path(raw_path).expanduser().resolve()
+        info["resolved"] = str(resolved)
+    except Exception as e:
+        return {**info, "error": f"Could not resolve path: {e}"}
+
+    # Walk up to find the mountpoint (where st_dev changes)
+    try:
+        target_dev = None
+        if resolved.exists():
+            target_dev = os.stat(resolved).st_dev
+        else:
+            # use the nearest existing parent
+            p = resolved
+            while not p.exists() and p != p.parent:
+                p = p.parent
+            target_dev = os.stat(p).st_dev
+            info["resolved_parent_exists"] = str(p)
+        root_dev = os.stat("/").st_dev
+        info["device_id"] = target_dev
+        info["root_device_id"] = root_dev
+        info["on_root_filesystem"] = (target_dev == root_dev)
+
+        # Find the mountpoint by walking up while st_dev stays the same
+        mp = resolved if resolved.exists() else Path(info.get("resolved_parent_exists", "/"))
+        try:
+            cur_dev = os.stat(mp).st_dev
+            while mp != mp.parent:
+                parent_dev = os.stat(mp.parent).st_dev
+                if parent_dev != cur_dev:
+                    break
+                mp = mp.parent
+            info["mountpoint"] = str(mp)
+        except Exception:
+            info["mountpoint"] = "/"
+    except Exception as e:
+        info["mount_error"] = str(e)
+
+    # Free space + total size
+    try:
+        usage_path = resolved if resolved.exists() else resolved.parent
+        while not usage_path.exists() and usage_path != usage_path.parent:
+            usage_path = usage_path.parent
+        du = shutil.disk_usage(str(usage_path))
+        info["disk_total_bytes"] = du.total
+        info["disk_free_bytes"] = du.free
+        info["disk_used_bytes"] = du.used
+    except Exception as e:
+        info["disk_error"] = str(e)
+
+    # Read /proc/mounts to learn the filesystem type for the mountpoint
+    try:
+        mp_str = info.get("mountpoint", "/")
+        fs_type = None
+        fs_source = None
+        with open("/proc/mounts", "r") as f:
+            best_match_len = -1
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3:
+                    src, mnt, typ = parts[0], parts[1], parts[2]
+                    if mp_str == mnt or mp_str.startswith(mnt.rstrip("/") + "/"):
+                        if len(mnt) > best_match_len:
+                            fs_type = typ
+                            fs_source = src
+                            best_match_len = len(mnt)
+        info["fs_type"] = fs_type
+        info["fs_source"] = fs_source
+    except Exception as e:
+        info["fs_type_error"] = str(e)
+
+    # Container-ephemeral heuristic: overlay/tmpfs mounted at root means the
+    # admin is staring at a container that has no host bind-mount, so files
+    # written here will vanish on container restart and never appear on the
+    # external drive.
+    eph_types = {"overlay", "overlayfs", "tmpfs", "aufs"}
+    info["likely_ephemeral"] = bool(
+        info.get("fs_type") in eph_types or
+        (info.get("on_root_filesystem") and info.get("mountpoint") == "/")
+    )
+
+    # Write-test: actually try to create + remove a small probe file. This is
+    # the only 100% reliable check that we can write there.
+    write_test = {"ok": False}
+    try:
+        resolved.mkdir(parents=True, exist_ok=True)
+        probe = resolved / ".sit-happens-write-probe"
+        probe.write_text(f"probe {now_iso()}", encoding="utf-8")
+        size = probe.stat().st_size
+        probe.unlink()
+        write_test = {"ok": True, "probe_bytes": size}
+    except Exception as e:
+        write_test = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    info["write_test"] = write_test
+
+    # Existing backup files in dir (so the admin can SEE what's there)
+    files: list = []
+    try:
+        if resolved.exists():
+            for fp in sorted(resolved.glob("sit-happens-backup-*.json.gz"),
+                             key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+                st = fp.stat()
+                files.append({
+                    "name": fp.name,
+                    "bytes": st.st_size,
+                    "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
+                })
+    except Exception as e:
+        info["list_error"] = str(e)
+    info["existing_backups"] = files
+    info["existing_backups_count"] = len(files)
+
+    # Build a single human-readable verdict for the UI
+    if not write_test.get("ok"):
+        info["verdict"] = "fail"
+        info["verdict_message"] = (
+            f"Cannot write to this path. {write_test.get('error', '')}"
+        )
+    elif info.get("likely_ephemeral"):
+        info["verdict"] = "warn"
+        info["verdict_message"] = (
+            f"WRITABLE, but path lives on '{info.get('fs_type') or 'root'}' filesystem "
+            f"({info.get('mountpoint')}). This looks like CONTAINER STORAGE, not an "
+            f"external disk — files written here will NOT appear on your host drive. "
+            f"Bind-mount your external drive into the backend container, or change "
+            f"the path to a real host mount."
+        )
+    else:
+        info["verdict"] = "ok"
+        info["verdict_message"] = (
+            f"Writable on {info.get('fs_source') or 'disk'} "
+            f"(mount={info.get('mountpoint')}, fs={info.get('fs_type')}). "
+            f"Looks like a real external/host filesystem."
+        )
+
+    return info
+
+
 
 
 # -------- User credential migration (admin-only) --------

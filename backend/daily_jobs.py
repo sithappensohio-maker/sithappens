@@ -727,6 +727,46 @@ async def run_auto_backup_job(db, *, force: bool = False) -> dict:
             pass
 
     # Record the run for the Settings UI
+    # Capture mount diagnostics so the admin can see WHERE the file actually
+    # landed — overlay/tmpfs means it went into container ephemeral storage,
+    # not the external drive (the most common reason "Run Now" silently
+    # appears to succeed but no file shows up on the host).
+    fs_type = None
+    fs_source = None
+    mountpoint = None
+    likely_ephemeral = False
+    try:
+        import os as _os
+        root_dev = _os.stat("/").st_dev
+        tgt_dev = _os.stat(target_dir).st_dev
+        # walk up to find mountpoint
+        mp = target_dir
+        cur_dev = tgt_dev
+        while mp != mp.parent:
+            try:
+                pd = _os.stat(mp.parent).st_dev
+            except Exception:
+                break
+            if pd != cur_dev:
+                break
+            mp = mp.parent
+        mountpoint = str(mp)
+        # parse /proc/mounts
+        try:
+            with open("/proc/mounts", "r") as fh:
+                best = -1
+                for line in fh:
+                    parts = line.split()
+                    if len(parts) >= 3 and (mountpoint == parts[1] or mountpoint.startswith(parts[1].rstrip("/") + "/")):
+                        if len(parts[1]) > best:
+                            fs_source, fs_type = parts[0], parts[2]
+                            best = len(parts[1])
+        except Exception:
+            pass
+        likely_ephemeral = (fs_type in {"overlay", "overlayfs", "tmpfs", "aufs"}) or (tgt_dev == root_dev and mountpoint == "/")
+    except Exception:
+        pass
+
     run_doc = {
         "id": f"auto_backup:{datetime.now().date().isoformat()}" if not force else f"auto_backup:manual:{ts}",
         "ran_at": datetime.now(timezone.utc).isoformat(),
@@ -737,6 +777,10 @@ async def run_auto_backup_job(db, *, force: bool = False) -> dict:
         "doc_count": sum(v for v in payload["counts"].values() if isinstance(v, int) and v >= 0),
         "pruned": pruned,
         "forced": bool(force),
+        "fs_type": fs_type,
+        "fs_source": fs_source,
+        "mountpoint": mountpoint,
+        "likely_ephemeral": likely_ephemeral,
     }
     await db.system_runs.update_one({"id": run_doc["id"]}, {"$set": run_doc}, upsert=True)
     # Also keep a "last successful auto-backup" pointer for the Settings UI.

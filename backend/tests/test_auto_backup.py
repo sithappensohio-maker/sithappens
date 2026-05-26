@@ -121,3 +121,83 @@ def test_run_now_with_bad_path_returns_error(admin_headers):
 def test_status_admin_only():
     r = requests.get(f"{BASE}/api/admin/backup/status", timeout=15)
     assert r.status_code in (401, 403)
+
+
+
+def test_inspect_returns_diagnostics_for_writable_path(admin_headers, backup_dir):
+    """Sprint 108b — POST /admin/backup/inspect must surface mountpoint,
+    fs type, free space, and a write-test result so the admin can spot
+    container-vs-host filesystem mismatches before scheduling backups."""
+    r = requests.post(
+        f"{BASE}/api/admin/backup/inspect",
+        headers=admin_headers,
+        json={"path": backup_dir},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["resolved"]
+    assert data["mountpoint"]
+    assert data["write_test"]["ok"] is True
+    assert "fs_type" in data
+    assert data["disk_free_bytes"] > 0
+    assert data["verdict"] in ("ok", "warn", "fail")
+    assert data["verdict_message"]
+
+
+def test_inspect_flags_ephemeral_overlay_storage(admin_headers):
+    """Pointing inspect at a path that resolves into the container's
+    overlay/root filesystem must come back with verdict='warn' and the
+    likely_ephemeral flag set, since files written there will NOT appear
+    on the host's external drive."""
+    r = requests.post(
+        f"{BASE}/api/admin/backup/inspect",
+        headers=admin_headers,
+        json={"path": "/tmp/sprint108-inspect-ephemeral"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # We can't assert ephemeral=True in every env (developer laptops have a
+    # real / on ext4), but if fs_type is overlay/tmpfs the verdict must warn.
+    if data.get("fs_type") in ("overlay", "overlayfs", "tmpfs", "aufs"):
+        assert data["likely_ephemeral"] is True
+        assert data["verdict"] == "warn"
+        assert "container" in data["verdict_message"].lower() or "ephemeral" in data["verdict_message"].lower()
+
+
+def test_inspect_bad_path_reports_failure(admin_headers):
+    """A path that can't be created (e.g. under /dev/null/...) must still
+    return 200 with a failed write-test rather than 500-ing."""
+    r = requests.post(
+        f"{BASE}/api/admin/backup/inspect",
+        headers=admin_headers,
+        json={"path": "/dev/null/cannot/make/this"},
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["write_test"]["ok"] is False
+    assert data["verdict"] == "fail"
+
+
+def test_inspect_admin_only():
+    r = requests.post(f"{BASE}/api/admin/backup/inspect", json={"path": "/tmp"}, timeout=15)
+    assert r.status_code in (401, 403)
+
+
+def test_run_now_response_includes_mount_diagnostics(admin_headers, configure_backup):
+    """The run-now response must carry mount/fs info so the UI can render
+    'this file landed on overlay (ephemeral)' or 'this file landed on
+    /dev/sda1 (real disk)' next to the path."""
+    r = requests.post(f"{BASE}/api/admin/backup/run-now", headers=admin_headers, timeout=60)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data.get("sent") == 1
+    assert "mountpoint" in data
+    assert "fs_type" in data
+    assert "likely_ephemeral" in data
+    # And the persisted "last" run carries the same fields for the Settings UI.
+    s = requests.get(f"{BASE}/api/admin/backup/status", headers=admin_headers, timeout=15).json()
+    assert "mountpoint" in s["last"]
+    assert "fs_type" in s["last"]

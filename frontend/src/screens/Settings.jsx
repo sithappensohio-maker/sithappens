@@ -1033,6 +1033,8 @@ function AutoBackupPanel() {
   const [history, setHistory] = useState([]);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [inspect, setInspect] = useState(null);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
@@ -1076,8 +1078,26 @@ function AutoBackupPanel() {
         setMsg(`Backup written → ${data.path} (${mb} MB · ${data.doc_count} docs)`);
       }
       await loadAll();
+      // Re-verify the path after a run so the diagnostics panel reflects the
+      // file that was just written (or surfaces the ephemeral-storage warning).
+      if (cfg.auto_backup_path) verifyPath(true);
     } catch (e) { setErr(e.response?.data?.detail || "Run failed"); }
     setRunning(false);
+  };
+
+  const verifyPath = async (silent = false) => {
+    if (!cfg.auto_backup_path) {
+      setErr("Enter a path first."); return;
+    }
+    if (!silent) { setVerifying(true); setMsg(""); setErr(""); }
+    try {
+      const { data } = await api.post("/admin/backup/inspect", { path: cfg.auto_backup_path });
+      setInspect(data);
+      if (!silent) setMsg("");
+    } catch (e) {
+      if (!silent) setErr(e.response?.data?.detail || "Verify failed");
+    }
+    if (!silent) setVerifying(false);
   };
 
   const fmtBytes = (n) => {
@@ -1141,6 +1161,10 @@ function AutoBackupPanel() {
                 className="bg-shGreen text-bgHeader px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
           <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"} mr-2`}/>{saving ? "Saving…" : "Save Settings"}
         </button>
+        <button onClick={() => verifyPath(false)} disabled={verifying || !cfg.auto_backup_path} data-testid="auto-backup-verify"
+                className="bg-bgHover text-white border border-shGreen/40 px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50 hover:border-shGreen">
+          <i className={`fas ${verifying ? "fa-spinner fa-spin" : "fa-magnifying-glass"} mr-2`}/>{verifying ? "Checking…" : "Verify Path"}
+        </button>
         <button onClick={runNow} disabled={running || !cfg.auto_backup_path} data-testid="auto-backup-run-now"
                 className="bg-shBlue text-bgHeader px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
           <i className={`fas ${running ? "fa-spinner fa-spin" : "fa-play"} mr-2`}/>{running ? "Running…" : "Run Backup Now"}
@@ -1148,6 +1172,58 @@ function AutoBackupPanel() {
         {msg && <span className="text-shGreen text-[13px] font-black" data-testid="auto-backup-msg">{msg}</span>}
         {err && <span className="text-red-400 text-[13px] font-black" data-testid="auto-backup-err">{err}</span>}
       </div>
+
+      {inspect && (
+        <div
+          data-testid="auto-backup-inspect"
+          className={`rounded p-3 mb-3 border ${
+            inspect.verdict === "ok" ? "bg-shGreen/10 border-shGreen/50" :
+            inspect.verdict === "warn" ? "bg-yellow-500/10 border-yellow-500/60" :
+            "bg-red-500/10 border-red-500/60"
+          }`}>
+          <p className={`text-[12px] font-black uppercase tracking-widest mb-2 ${
+            inspect.verdict === "ok" ? "text-shGreen" : inspect.verdict === "warn" ? "text-yellow-300" : "text-red-300"
+          }`}>
+            <i className={`fas ${inspect.verdict === "ok" ? "fa-circle-check" : inspect.verdict === "warn" ? "fa-triangle-exclamation" : "fa-circle-xmark"} mr-2`}/>
+            Path diagnostics
+          </p>
+          <p className="text-[13px] text-white leading-relaxed mb-2" data-testid="auto-backup-inspect-verdict">
+            {inspect.verdict_message}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-1 text-[12px] text-gray-300 font-mono">
+            <div><span className="text-gray-500">resolved:</span> <span className="text-white break-all">{inspect.resolved}</span></div>
+            <div><span className="text-gray-500">mountpoint:</span> <span className="text-white">{inspect.mountpoint || "—"}</span></div>
+            <div><span className="text-gray-500">fs type:</span> <span className="text-white">{inspect.fs_type || "—"}</span></div>
+            <div><span className="text-gray-500">fs source:</span> <span className="text-white break-all">{inspect.fs_source || "—"}</span></div>
+            <div><span className="text-gray-500">free space:</span> <span className="text-white">{inspect.disk_free_bytes ? fmtBytes(inspect.disk_free_bytes) : "—"}</span></div>
+            <div><span className="text-gray-500">write-test:</span> <span className={inspect.write_test?.ok ? "text-shGreen" : "text-red-300"}>{inspect.write_test?.ok ? "OK" : (inspect.write_test?.error || "FAIL")}</span></div>
+          </div>
+          {inspect.likely_ephemeral && (
+            <p className="text-[12px] text-yellow-200 mt-2 leading-relaxed">
+              <i className="fas fa-circle-info mr-1"/>
+              How to fix: when you launch the backend (docker/podman/systemd-nspawn), bind-mount your external drive into the container. Example:
+              <code className="block mt-1 bg-bgBase p-2 rounded text-shBlue break-all">-v /run/media/you/MyDrive:/mnt/backup</code>
+              then type <code className="text-shBlue">/mnt/backup</code> as the path above.
+            </p>
+          )}
+          {inspect.existing_backups_count > 0 && (
+            <details className="mt-2">
+              <summary className="text-[12px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-white">
+                Existing backups in this folder ({inspect.existing_backups_count})
+              </summary>
+              <div className="mt-1 space-y-1 max-h-40 overflow-y-auto">
+                {inspect.existing_backups.map((f, i) => (
+                  <div key={i} className="text-[12px] text-gray-300 font-mono flex items-center gap-2">
+                    <span className="text-shGreen">{fmtBytes(f.bytes)}</span>
+                    <span className="text-gray-500">{fmtTime(f.modified)}</span>
+                    <span className="text-white break-all">{f.name}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+        </div>
+      )}
 
       {last && last.path && (
         <div className="bg-bgBase border border-bgHover rounded p-3 mb-3" data-testid="auto-backup-last">
@@ -1158,6 +1234,16 @@ function AutoBackupPanel() {
             <span className="text-white font-black">{fmtBytes(last.bytes)}</span> · {last.doc_count?.toLocaleString() || 0} docs · {last.collections?.length || 0} collections
             {(last.pruned ?? 0) > 0 && <> · <span className="text-shOrange">pruned {last.pruned} old</span></>}
           </p>
+          {(last.mountpoint || last.fs_type) && (
+            <p className="text-[12px] text-gray-500 font-mono mt-1">
+              mount={last.mountpoint || "—"} · fs={last.fs_type || "—"}
+              {last.likely_ephemeral && (
+                <span className="ml-2 px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 font-black uppercase tracking-widest text-[10px]">
+                  ⚠ Container ephemeral — NOT on host disk
+                </span>
+              )}
+            </p>
+          )}
         </div>
       )}
 
