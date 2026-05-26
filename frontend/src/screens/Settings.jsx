@@ -1025,6 +1025,166 @@ function ErrorsPanel() {
 
 
 
+function AutoBackupPanel() {
+  // Sprint 108 — automated backups to an external disk path. Admin sets path +
+  // hour + retention + enable; manual "Run now" forces the job immediately.
+  const [cfg, setCfg] = useState({ auto_backup_enabled: false, auto_backup_path: "", auto_backup_hour: 3, auto_backup_retention_days: 14 });
+  const [last, setLast] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  const loadAll = async () => {
+    try {
+      const s = await api.get("/settings");
+      setCfg({
+        auto_backup_enabled: !!s.data.auto_backup_enabled,
+        auto_backup_path: s.data.auto_backup_path || "",
+        auto_backup_hour: s.data.auto_backup_hour ?? 3,
+        auto_backup_retention_days: s.data.auto_backup_retention_days ?? 14,
+      });
+      const st = await api.get("/admin/backup/status");
+      setLast(st.data.last);
+      setHistory(st.data.history || []);
+    } catch (e) { setErr(e.response?.data?.detail || "Couldn't load"); }
+  };
+  useEffect(() => { loadAll(); }, []);
+
+  const save = async () => {
+    setSaving(true); setMsg(""); setErr("");
+    try {
+      await api.put("/settings", cfg);
+      setMsg("Saved ✓");
+      setTimeout(() => setMsg(""), 2000);
+      await loadAll();
+    } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+    setSaving(false);
+  };
+
+  const runNow = async () => {
+    setRunning(true); setMsg(""); setErr("");
+    try {
+      const { data } = await api.post("/admin/backup/run-now");
+      if (data.error) {
+        setErr(`Backup failed: ${data.error}`);
+      } else if (data.skipped) {
+        setMsg(`Skipped: ${data.reason}`);
+      } else {
+        const mb = (data.bytes / (1024 * 1024)).toFixed(2);
+        setMsg(`Backup written → ${data.path} (${mb} MB · ${data.doc_count} docs)`);
+      }
+      await loadAll();
+    } catch (e) { setErr(e.response?.data?.detail || "Run failed"); }
+    setRunning(false);
+  };
+
+  const fmtBytes = (n) => {
+    if (!n) return "—";
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+  };
+  const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "—";
+
+  return (
+    <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5" data-testid="auto-backup-panel">
+      <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <h4 className="text-sm font-black text-shGreen uppercase tracking-widest"><i className="fas fa-hard-drive mr-2"/>Automated Backups (to external disk)</h4>
+        <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${cfg.auto_backup_enabled ? "bg-shGreen/15 text-shGreen" : "bg-bgHover text-gray-400"}`}>
+          {cfg.auto_backup_enabled ? "Enabled" : "Disabled"}
+        </span>
+      </div>
+      <p className="text-[14px] text-gray-300 leading-relaxed mb-4">
+        Set a path on your external disk (e.g. <code className="text-shBlue">/mnt/backup/sit-happens</code>) and a time of day. The system will write a gzipped JSON of <strong>every collection</strong> there once per day. Old snapshots beyond the retention window are auto-pruned. You'll get an email if anything fails.
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+        <label className="block md:col-span-2">
+          <span className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Backup path on disk</span>
+          <input value={cfg.auto_backup_path} onChange={(e) => setCfg(c => ({ ...c, auto_backup_path: e.target.value }))}
+                 data-testid="auto-backup-path"
+                 placeholder="/mnt/backup/sit-happens"
+                 className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono" />
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Run daily at (server hour)</span>
+          <select value={cfg.auto_backup_hour} onChange={(e) => setCfg(c => ({ ...c, auto_backup_hour: parseInt(e.target.value) }))}
+                  data-testid="auto-backup-hour"
+                  className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+            {Array.from({ length: 24 }, (_, i) => (
+              <option key={i} value={i}>{String(i).padStart(2, "0")}:00</option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Keep N days of snapshots</span>
+          <input type="number" min="1" max="365"
+                 value={cfg.auto_backup_retention_days}
+                 onChange={(e) => setCfg(c => ({ ...c, auto_backup_retention_days: Math.max(1, parseInt(e.target.value) || 14) }))}
+                 data-testid="auto-backup-retention"
+                 className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+        </label>
+      </div>
+
+      <label className="flex items-center gap-2 mb-4 cursor-pointer">
+        <input type="checkbox" checked={cfg.auto_backup_enabled}
+               onChange={(e) => setCfg(c => ({ ...c, auto_backup_enabled: e.target.checked }))}
+               data-testid="auto-backup-enabled"
+               className="accent-shGreen w-4 h-4" />
+        <span className="text-[14px] text-white font-black uppercase tracking-widest">Enable automated daily backups</span>
+      </label>
+
+      <div className="flex flex-wrap gap-3 items-center mb-4">
+        <button onClick={save} disabled={saving} data-testid="auto-backup-save"
+                className="bg-shGreen text-bgHeader px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+          <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-floppy-disk"} mr-2`}/>{saving ? "Saving…" : "Save Settings"}
+        </button>
+        <button onClick={runNow} disabled={running || !cfg.auto_backup_path} data-testid="auto-backup-run-now"
+                className="bg-shBlue text-bgHeader px-5 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+          <i className={`fas ${running ? "fa-spinner fa-spin" : "fa-play"} mr-2`}/>{running ? "Running…" : "Run Backup Now"}
+        </button>
+        {msg && <span className="text-shGreen text-[13px] font-black" data-testid="auto-backup-msg">{msg}</span>}
+        {err && <span className="text-red-400 text-[13px] font-black" data-testid="auto-backup-err">{err}</span>}
+      </div>
+
+      {last && last.path && (
+        <div className="bg-bgBase border border-bgHover rounded p-3 mb-3" data-testid="auto-backup-last">
+          <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1"><i className="fas fa-clock-rotate-left mr-1 text-shGreen"/>Last successful backup</p>
+          <p className="text-[14px] text-white"><span className="text-shGreen font-black">{fmtTime(last.ran_at)}</span></p>
+          <p className="text-[13px] text-gray-400 font-mono mt-1 break-all">{last.path}</p>
+          <p className="text-[13px] text-gray-500 mt-1">
+            <span className="text-white font-black">{fmtBytes(last.bytes)}</span> · {last.doc_count?.toLocaleString() || 0} docs · {last.collections?.length || 0} collections
+            {(last.pruned ?? 0) > 0 && <> · <span className="text-shOrange">pruned {last.pruned} old</span></>}
+          </p>
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <details className="bg-bgBase border border-bgHover rounded p-3" data-testid="auto-backup-history">
+          <summary className="text-[13px] font-black text-gray-500 uppercase tracking-widest cursor-pointer hover:text-white">
+            <i className="fas fa-clock-rotate-left mr-1"/>Backup history ({history.length})
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {history.map((h, i) => (
+              <div key={h.id || i} className="text-[13px] text-gray-300 flex flex-wrap items-center gap-2 border-b border-bgHover/50 pb-1.5 last:border-0">
+                <span className={`px-1.5 py-0.5 rounded text-[11px] font-black uppercase ${h.sent ? "bg-shGreen/15 text-shGreen" : "bg-red-500/15 text-red-300"}`}>
+                  {h.sent ? "OK" : "FAIL"}
+                </span>
+                <span className="text-gray-400">{fmtTime(h.ran_at)}</span>
+                <span className="text-white">{fmtBytes(h.bytes)}</span>
+                {h.forced && <span className="text-shBlue text-[11px] font-black uppercase">manual</span>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+
 function BackupPanel() {
   const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -1105,6 +1265,8 @@ function BackupPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
+      <AutoBackupPanel />
+
       <div>
         <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-download mr-2"/>Download Backup</h4>
         <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">

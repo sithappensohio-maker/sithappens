@@ -2846,6 +2846,11 @@ class SettingsIn(BaseModel):
     grad_success_color: Optional[str] = None  # default #8cc63f — approved bookings, trophies earned
     # Sprint 105 — notification preferences
     email_per_step: Optional[bool] = None  # when True, fire an email on EVERY homework step completion (default False; daily roll-up is always on)
+    # Sprint 108 — automated backups to an external disk path
+    auto_backup_enabled: Optional[bool] = None  # master switch
+    auto_backup_path: Optional[str] = None      # absolute path on host (e.g. /mnt/backup/sit-happens)
+    auto_backup_hour: Optional[int] = None      # 0-23 server-local hour to fire daily
+    auto_backup_retention_days: Optional[int] = None  # keep this many daily snapshots (default 14)
 
 @api.get("/settings")
 async def fetch_settings(_: dict = Depends(require_admin)):
@@ -6488,6 +6493,16 @@ BACKUP_COLLECTIONS = [
     "waiver_signatures", "vaccine_dismissals", "settings", "expenses",
     "retail_sales",
 ]
+# Sprint 108 — auto-backup writes the FULL universe of business data including
+# users (with hashes for portable logins), homework media (PDFs/images uploaded
+# for resources), step_events, and credit lots. The manual /backup/export keeps
+# the smaller list above for safety / ease of inspection.
+FULL_BACKUP_COLLECTIONS = list(set(BACKUP_COLLECTIONS + [
+    "users", "homework_media", "step_events", "credit_lots",
+    "homework_templates", "credit_packs", "services", "system_runs",
+    "trophies", "dog_programs", "vaccine_cert_uploads", "quote_requests",
+    "section_logs",
+]))
 BACKUP_VERSION = 1
 
 @api.post("/admin/compress-photos")
@@ -6522,6 +6537,30 @@ async def backup_export(_: dict = Depends(require_admin)):
         docs = await db[c].find({}, {"_id": 0}).to_list(50000)
         payload["collections"][c] = docs
     return payload
+
+
+# ────────────────────── Sprint 108 — Automated backups ──────────────────────
+
+@api.post("/admin/backup/run-now")
+async def admin_backup_run_now(_: dict = Depends(require_admin)):
+    """Force-fire the auto-backup job immediately, bypassing the hour gate and
+    the once-per-day dedup. Useful for testing the configured path."""
+    from daily_jobs import run_auto_backup_job
+    result = await run_auto_backup_job(db, force=True)
+    return result
+
+
+@api.get("/admin/backup/status")
+async def admin_backup_status(_: dict = Depends(require_admin)):
+    """Returns the most recent auto-backup result for the Settings UI."""
+    last = await db.system_runs.find_one({"id": "auto_backup:last"}, {"_id": 0})
+    history = []
+    async for r in db.system_runs.find({"id": {"$regex": "^auto_backup:"}}, {"_id": 0}).sort("ran_at", -1).limit(10):
+        if r.get("id") != "auto_backup:last":
+            history.append(r)
+    return {"last": last, "history": history}
+
+
 
 
 # -------- User credential migration (admin-only) --------

@@ -1173,6 +1173,24 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 108 — Automated Backups to External Disk (2026-02)
+- ✅ **Auto-backup job** in `daily_jobs.py` (`run_auto_backup_job`) — fires once per day when the local hour matches the admin-configured `auto_backup_hour`. Dumps **every collection in the database** (dynamic listing — captures any new collection added later) to a gzipped JSON file `sit-happens-backup-YYYY-MM-DD-HHMM.json.gz` at the admin's configured path. Includes media (homework_media), step_events, users with hashes, settings — everything. Dedups once per local day.
+- ✅ **Path validation** — backend creates the directory if missing, errors cleanly on permission/IO problems, sends a failure email to `ADMIN_NOTIFICATION_EMAIL` on failure.
+- ✅ **Retention pruning** — files older than `auto_backup_retention_days` (default 14) are deleted from the target directory after each successful write.
+- ✅ **New settings fields**: `auto_backup_enabled`, `auto_backup_path`, `auto_backup_hour` (0-23), `auto_backup_retention_days`.
+- ✅ **2 new admin endpoints**: `POST /api/admin/backup/run-now` (force-fire bypassing hour gate) and `GET /api/admin/backup/status` (last + history of 10).
+- ✅ **Settings UI** — new `AutoBackupPanel` at the top of the Backup & Restore tab. Path / hour / retention / enable toggle, Save Settings + Run Backup Now buttons, "Last successful backup" card, expandable history.
+- ✅ **6/6 regression tests pass** (`test_auto_backup.py`): settings round-trip, run-now writes a valid gzipped JSON containing every collection, admin-only auth on both endpoints, status returns last + history, bad path returns clean error.
+- ✅ **Coexists with manual Download Backup / Restore** on the same tab.
+- ✅ **Smoke-verified** end-to-end: "1.33 MB · 651 docs · 35 collections" written after manual run.
+
+
+## Sprint 107 — Admin Homework Overview + Client View Confirmation (2026-02)
+- ✅ Backend `GET /api/homework` enriched to return `streak` + `total_days` for daily-tracker plans.
+- ✅ Frontend `Homework.jsx` shows live `0% · day 1 of 2` progress bar + 🔥 streak chip per daily-tracker row.
+- ✅ Client portal Today's Plan view verified via screenshot.
+
+
 ## Sprint 106 — Builder polish + Direct File Upload + Tutorials Refresh (2026-02)
 - ✅ **Reorder arrows on both panels** — Action Steps + Steps to Log now have `[↑/↓]` buttons per row so the admin can resequence drills without deleting and re-adding. Disabled state on the top/bottom rows. Test IDs: `dtb-step-up-{id}`, `dtb-step-down-{id}`, `dtb-field-up-{id}`, `dtb-field-down-{id}`.
 - ✅ **Custom labels everywhere** — the existing label inputs on Steps + Fields already accepted free text; documented in the tutorials so the operator knows they can write "Times Buddy looked at me without a cue" instead of being stuck with mood/notes/reps.
