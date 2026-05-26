@@ -37,7 +37,7 @@ export default function TodaysBrainTile({ onCTA }) {
   if (err) return null; // silent — don't break dashboard if the endpoint hiccups
   if (!data) return (
     <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4" data-testid="todays-brain-loading">
-      <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-brain mr-2"/>Today's brain · loading…</p>
+      <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Today's tasks · loading…</p>
     </div>
   );
 
@@ -49,7 +49,7 @@ export default function TodaysBrainTile({ onCTA }) {
     return (
       <div className="rounded-xl border border-shGreen/30 bg-shGreen/5 p-4 mb-4" data-testid="todays-brain-empty">
         <p className="text-[14px] font-black uppercase tracking-widest text-shGreen">
-          <i className="fas fa-brain mr-2"/>Today's brain · all clear
+          <i className="fas fa-list-check mr-2"/>Today's tasks · all clear
         </p>
         <p className="text-[13px] text-gray-400 mt-1">Nothing urgent on the queue. Inbox zero, basically.</p>
       </div>
@@ -61,7 +61,7 @@ export default function TodaysBrainTile({ onCTA }) {
       <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4 shadow-lg" data-testid="todays-brain-tile">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
           <p className="text-[14px] font-black uppercase tracking-widest text-white">
-            <i className="fas fa-brain mr-2 text-shBlue"/>Today's brain
+            <i className="fas fa-list-check mr-2 text-shBlue"/>Today's tasks
           </p>
           <div className="flex items-center gap-2 text-[12px] font-black uppercase tracking-widest">
             {counts.urgent > 0 && <span className="bg-red-500/15 text-red-300 px-2 py-0.5 rounded" data-testid="brain-count-urgent">{counts.urgent} urgent</span>}
@@ -118,7 +118,7 @@ function TodaysBrainModal({ items, counts, onClose, onCTA }) {
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-bgHover">
           <h4 className="text-lg font-black uppercase italic tracking-tight text-white">
-            <i className="fas fa-brain text-shBlue mr-2"/>Today's brain · {items.length}
+            <i className="fas fa-list-check text-shBlue mr-2"/>Today's tasks · {items.length}
           </h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="brain-modal-close"><i className="fas fa-times"/></button>
         </div>

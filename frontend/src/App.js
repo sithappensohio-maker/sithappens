@@ -78,7 +78,7 @@ function AdminShell() {
     <>
       <div className="p-4 border-b border-bgHover text-center">
         <img src="/logo.png" alt="Sit Happens" className="h-20 mx-auto" data-testid={`${prefix}sidebar-logo`} />
-        <p className="text-[15px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Daycare • Boarding</p>
+        <p className="text-[15px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Dog Training • Daycare • Boarding • Photography</p>
       </div>
       <nav className="flex-grow p-4 space-y-1 overflow-y-auto">
         {navItems.map(n => (

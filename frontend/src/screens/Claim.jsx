@@ -45,7 +45,7 @@ export default function Claim({ token }) {
         <div className="text-center mb-5">
           <img src="/logo.png" alt="Sit Happens" className="h-24 mx-auto drop-shadow-2xl" />
           <p className="mt-3 text-[13px] text-gray-500 font-black uppercase tracking-[0.25em]">
-            Dog Training • Daycare • Boarding
+            Dog Training • Daycare • Boarding • Photography
           </p>
         </div>
 

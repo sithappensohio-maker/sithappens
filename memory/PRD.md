@@ -1173,6 +1173,18 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **4/4 new regression tests pass** (`/app/backend/tests/test_retail_sales.py`): CRUD round-trip, weekly-summary retail aggregation, summary-range fold-in (gross + net + by_day), P&L report retail breakdown. Sprint 16 income suite (24 tests) still passes — no regressions.
 
 
+## Sprint 104 — Dashboard Hierarchy & Branding Polish (2026-02)
+- ✅ **Brand text refresh** in all 4 locations (sidebar, mobile drawer, login, claim, portal header): `Daycare • Boarding` → `Dog Training • Daycare • Boarding • Photography`. Tight tracking, wraps cleanly across 3 lines under the logo in the desktop sidebar.
+- ✅ **Text-Size picker collapsed** — `TextSizePicker` (compact mode) now renders as a small `TEXT · M` pill button instead of a permanent S/M/L/XL row. Click opens a popover with the size pills + a Close button; auto-closes on outside-click and Escape. Settings screen still uses the inline non-compact mode unchanged. Massive vertical space reclaimed in both sidebars + the portal header.
+- ✅ **"Today's Brain" → "Today's Tasks"** — renamed in all 4 user-facing strings (loading state, empty state, tile header, modal header). Icon swapped from `fa-brain` → `fa-list-check` for clarity. Backend endpoint (`/api/admin/today-brain`) and component file kept the same so test IDs and data flows didn't churn.
+- ✅ **Today's Tasks moved to the TOP** of the admin dashboard — now the first thing the admin sees, above the StatCard grid + P&L tile.
+- ✅ **Standalone Vaccine Alert banner REMOVED** from the dashboard. Those alerts already feed into Today's Tasks via the brain endpoint (`vaccine_missing`/`vaccine_expired`/`vaccine_expiring` kinds), so the dedicated card was pure duplication. Pending-vaccine-cert-uploads banner kept — that's different (client uploads awaiting admin approval).
+- ✅ **"Health Flags" StatCard removed** — grid shrunk from 4-col to a balanced 3-col (Daycare Today / Boarding Today / Total Dogs). VaccineCenterModal + the obsolete `alerts` state + `dismiss()` handler all cleaned up. Lint-clean.
+- ✅ **Verified via 2 smoke screenshots** — sidebar branding wraps cleanly, "Today's Tasks" with `2 URGENT · 3 WARN · 5 INFO` chips renders as top-of-page tile, 3-card StatCard row sits below, text-size popover opens + closes correctly with S/M/L/XL pills exposed only on click.
+- ✅ **All 16 adjacent regression tests still green** (`test_todays_brain.py` + `test_homework_driven_tracker.py`) — no backend changes in this sprint but confirmed.
+
+
+
 ## Sprint 103 — Homework-Driven Tracker (Steps + Today's Plan + Catch-Up) (2026-02)
 - ✅ **Schema additive**: `DailyTrackerSectionIn.steps[]` — each day can carry up to N named checklist steps `{id, label}` alongside the existing fields/metrics. Stored in `template_snapshot.sections[].steps`. Backward-compatible — existing trackers without steps still work via the field-flow.
 - ✅ **`POST /api/homework/{id}/day/{day}/toggle-step`** — check/uncheck a single step. Persists in `section_logs[].step_states[step_id] = bool`. When ALL steps for the day are checked, auto-flips the day's `submission_status → submitted` so it lands in the admin review queue (same as a manual submit). Fires `notify_admin_homework_section_log` so the email pipeline picks it up too.

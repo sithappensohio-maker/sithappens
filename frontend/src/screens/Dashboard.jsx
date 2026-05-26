@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
-import VaccineCenterModal from "../components/VaccineCenterModal";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
@@ -21,7 +20,6 @@ function fmtTime(iso) {
 
 export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
   const [stats, setStats] = useState(null);
-  const [alerts, setAlerts] = useState([]);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
   const [checkoutFor, setCheckoutFor] = useState(null); // booking — opens checkout modal
@@ -33,16 +31,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [todayPnl, setTodayPnl] = useState(null);
   const [pnlExpanded, setPnlExpanded] = useState(false);
-  const [vaccineCenterOpen, setVaccineCenterOpen] = useState(false);
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const [quoteRequests, setQuoteRequests] = useState([]);
   const confirm = useConfirm();
 
   const load = async () => {
     try {
-      const [s, a, st, pg, sv, vx, lb, qr, pnl] = await Promise.all([
+      const [s, st, pg, sv, vx, lb, qr, pnl] = await Promise.all([
         api.get("/dashboard/stats"),
-        api.get("/vaccine-alerts"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
         api.get("/services").catch(()=>({data:[]})),
@@ -52,7 +48,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/admin/today-pnl").catch(()=>({data:null})),
       ]);
       setStats(s.data);
-      setAlerts(a.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
       setPrograms(pg.data);
       setServices(sv.data || []);
@@ -73,7 +68,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     );
   });
   const checkIn = async (id) => { try { const geo = await captureGeo(); await api.post(`/bookings/${id}/check-in`, geo); load(); } catch {} };
-  const dismiss = async (dogId) => { try { await api.post(`/vaccine-alerts/${dogId}/dismiss`); load(); } catch {} };
 
   const approveVax = async (v) => {
     try {
@@ -120,31 +114,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="admin-dashboard">
       <RefreshSpinner pulling={pulling} progress={progress} />
-      {alerts.length > 0 && (
-        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="vaccine-alerts-banner">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-xs font-black text-shOrange uppercase tracking-widest flex items-center gap-2"><i className="fas fa-shield-virus"/> Vaccine Alerts · {alerts.length}</h3>
-            <button onClick={()=>setVaccineCenterOpen(true)} data-testid="open-vaccine-center"
-                    className="bg-shOrange text-bgHeader px-4 py-2 rounded font-black uppercase tracking-widest text-[14px] shadow hover:bg-shOrange/90">
-              <i className="fas fa-shield-heart mr-1"/>Manage All
-            </button>
-          </div>
-          <div className="space-y-2">
-            {alerts.map(a => (
-              <div key={a.dog_id} className="flex items-center justify-between bg-bgBase/50 rounded p-3" data-testid={`alert-${a.dog_id}`}>
-                <div className="text-xs">
-                  <span className="font-black text-white uppercase">{a.dog_name}</span>
-                  <span className="text-gray-400"> · {a.owner_name}</span>
-                  <span className={`ml-3 text-[14px] font-black uppercase px-2 py-0.5 rounded ${a.status==='expired'||a.status==='missing'?'bg-red-500/20 text-red-400':'bg-shOrange/20 text-shOrange'}`}>
-                    Rabies {a.status}{a.rabies?` · ${a.rabies}`:''}
-                  </span>
-                </div>
-                <button onClick={()=>dismiss(a.dog_id)} data-testid={`dismiss-${a.dog_id}`} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:text-white">Dismiss 30d</button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
@@ -280,13 +249,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-6">
-        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />
-        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />
-        <StatCard label="Health Flags"  value={stats.health_flags}    accent="border-t-shOrange" gradClass="card-warning" textColor="text-shOrange" testId="stat-health" onClick={()=>setVaccineCenterOpen(true)} />
-        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
-      </div>
-
       <TodaysBrainTile onCTA={(it) => {
         const t = it.cta?.type;
         if (t === "open_dog" && it.cta.id) onJumpToDog(it.cta.id);
@@ -298,6 +260,12 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             .catch((e) => alert("Failed to send: " + (e.response?.data?.detail || e.message)));
         }
       }} />
+
+      <div className="grid grid-cols-3 gap-3 md:gap-6">
+        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />
+        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-hero"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />
+        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass=""             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
+      </div>
 
       {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
 
@@ -477,7 +445,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
-      <VaccineCenterModal open={vaccineCenterOpen} onClose={()=>setVaccineCenterOpen(false)} onChanged={load} />
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}

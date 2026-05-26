@@ -814,7 +814,7 @@ export default function Portal() {
         <div className="flex items-center gap-2 sm:gap-4 min-w-0">
           <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-16 shrink-0" data-testid="portal-logo" />
           <div className="min-w-0">
-            <p className="hidden sm:block text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding</p>
+            <p className="hidden sm:block text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding • Photography</p>
             <p className="text-[13px] sm:text-xs text-shGreen font-black uppercase tracking-widest sm:mt-1 truncate">Welcome, {user.name}</p>
           </div>
         </div>
