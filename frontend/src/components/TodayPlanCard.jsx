@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 
 const MOOD_EMOJI = ["", "😞", "😅", "😐", "💪", "😄"];
@@ -58,10 +59,31 @@ export default function TodayPlanCard({ onChanged }) {
         };
       }
       setForms(next);
+      // Sprint 110k — if the fullscreen modal is currently open, re-point it
+      // at the freshly-loaded item so check-step toggles reflect immediately.
+      setFullscreenItem((curr) => {
+        if (!curr) return curr;
+        const fresh = (r.data.items || []).find((it) => it.homework_id === curr.homework_id);
+        return fresh || curr;
+      });
       setErr("");
     } catch (e) { setErr(e.response?.data?.detail || "Couldn't load today's plan"); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+
+  // Sprint 110k — Escape key closes the fullscreen modal.
+  useEffect(() => {
+    if (!fullscreenItem) return;
+    const onKey = (e) => { if (e.key === "Escape") setFullscreenItem(null); };
+    window.addEventListener("keydown", onKey);
+    // Lock background scroll while modal is open so the page behind doesn't drift
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [fullscreenItem]);
 
   const patchForm = (hwId, patch) => {
     setForms((f) => ({ ...f, [hwId]: { ...(f[hwId] || {}), ...patch } }));
@@ -349,11 +371,12 @@ export default function TodayPlanCard({ onChanged }) {
       {catchUpFor && (
         <CatchUpModal target={catchUpFor} onApply={applyCatchUp} onClose={() => setCatchUpFor(null)} />
       )}
-      {fullscreenItem && (
+      {fullscreenItem && createPortal(
         <FullscreenItemModal item={fullscreenItem}
                              busy={busy}
                              onToggleStep={(s) => toggleStep(fullscreenItem, s)}
-                             onClose={() => setFullscreenItem(null)} />
+                             onClose={() => setFullscreenItem(null)} />,
+        document.body,
       )}
     </div>
   );
@@ -414,8 +437,8 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
   const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
   const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
   return (
-    <div className="fixed inset-0 z-50 bg-bgBase overflow-y-auto" data-testid="today-plan-fullscreen-modal">
-      <div className="sticky top-0 z-10 bg-bgPanel border-b border-bgHover">
+    <div className="fixed inset-0 z-[9999] bg-bgBase overflow-y-auto overscroll-contain" data-testid="today-plan-fullscreen-modal" role="dialog" aria-modal="true">
+      <div className="sticky top-0 z-10 bg-bgPanel border-b border-bgHover shadow-lg">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-widest text-shBlue">
@@ -425,9 +448,11 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
             <h2 className="text-lg font-black text-white uppercase italic tracking-tight truncate">{item.title}</h2>
           </div>
           <button onClick={onClose}
+                  type="button"
                   data-testid="today-plan-fullscreen-close"
-                  className="shrink-0 bg-bgBase border border-bgHover hover:border-red-400 hover:text-red-300 text-gray-300 rounded px-4 py-2 text-[13px] font-black uppercase tracking-widest transition">
-            <i className="fas fa-xmark mr-1"/>Close
+                  aria-label="Close fullscreen view"
+                  className="shrink-0 bg-red-500/20 hover:bg-red-500/40 border-2 border-red-400/60 hover:border-red-400 text-white rounded-full w-11 h-11 grid place-items-center text-lg font-black transition active:scale-95">
+            <i className="fas fa-xmark"/>
           </button>
         </div>
       </div>
@@ -496,10 +521,12 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
                        className={`rounded-lg border p-4 transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover bg-bgPanel"}`}>
                     <div className="flex items-start gap-3">
                       <button onClick={() => onToggleStep(s)}
+                              type="button"
                               disabled={isBusy || item.status === "submitted"}
                               data-testid={`today-plan-fullscreen-step-check-${s.id}`}
-                              className={`shrink-0 w-10 h-10 rounded-full grid place-items-center transition ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgBase border-2 border-bgHover hover:border-shGreen"} disabled:opacity-60`}>
-                        {isBusy ? <i className="fas fa-spinner fa-spin"/> : s.done ? <i className="fas fa-check"/> : null}
+                              aria-label={s.done ? "Mark step incomplete" : "Mark step complete"}
+                              className={`shrink-0 w-12 h-12 rounded-full grid place-items-center transition active:scale-95 ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgBase border-2 border-shGreen/60 hover:border-shGreen hover:bg-shGreen/10"} disabled:opacity-60`}>
+                        {isBusy ? <i className="fas fa-spinner fa-spin"/> : s.done ? <i className="fas fa-check text-lg"/> : <i className="fas fa-circle text-shGreen/30 text-xs"/>}
                       </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 flex-wrap">
@@ -526,6 +553,17 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
             </div>
           </div>
         )}
+
+        {/* Big "Done reading" button at the bottom so clients always have an
+            obvious way out, even after scrolling far down. */}
+        <div className="pt-4">
+          <button onClick={onClose}
+                  type="button"
+                  data-testid="today-plan-fullscreen-done"
+                  className="w-full bg-shGreen text-bgHeader py-4 rounded-lg text-[15px] font-black uppercase tracking-widest hover:opacity-90 active:scale-95 transition">
+            <i className="fas fa-check mr-2"/>Done reading — back to portal
+          </button>
+        </div>
       </div>
     </div>
   );

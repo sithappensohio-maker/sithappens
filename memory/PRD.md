@@ -1312,7 +1312,20 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Verified via smoke screenshot** — Buddy's Dog Hub renders the Timeline tab as default, shows lifetime stats pills (3 daycare / 0 boarding / 5 training / last visit), behavior-trend empty state for dogs without daily-tracker mood logs, and 10 historical events including price-tagged visits.
 
 
-## Sprint 110j — Step labels were being silently truncated to 200 chars (2026-02)
+## Sprint 110k — Fullscreen homework: close button + step toggles work (2026-02)
+- ✅ **User reported**: in the new fullscreen homework view, clicking the close button OR a step check-circle "doesn't do anything."
+- ✅ **Root cause #1**: the modal was rendered as a child of `TodayPlanCard`, which was nested inside Portal.jsx layout containers. A parent's `transform` / `filter` / `will-change` would have made `position: fixed` get clipped to that container OR put it behind another layer. Same containing-block issue caused buttons to be visually present but functionally trapped behind an overlay.
+- ✅ **Root cause #2**: when a user clicked a check-circle, `toggleStep` mutated the backend → `load()` refreshed `data` → but `fullscreenItem` state still pointed at the OLD object from when the modal opened, so re-renders never reflected the toggle. The state didn't update visually, so it felt like the click did nothing.
+- ✅ **Fix #1 — React portal**: modal now renders via `createPortal(..., document.body)` so it always mounts at the document root, escaping every parent stacking context, transform, and overflow. Z-index raised to `9999`.
+- ✅ **Fix #2 — Auto-sync `fullscreenItem` on each `load()`**: after a refresh, we look up the same homework_id in the new data and re-assign it. Step toggles now visibly update immediately.
+- ✅ **Fix #3 — Escape-key + body scroll lock**: pressing Escape closes the modal; background scroll is locked while it's open so the page behind doesn't drift on mobile.
+- ✅ **Fix #4 — Bigger, more obvious close affordances**:
+  - Top-right circular red X button (44×44, `data-testid="today-plan-fullscreen-close"`)
+  - NEW full-width green "Done reading — back to portal" button (`today-plan-fullscreen-done`) at the bottom of the modal so users who scroll far down always have an obvious exit
+- ✅ **Fix #5 — Larger step-check circles**: bumped from 40px → 48px with a green hint-dot inside the unchecked state so it's visually clear "this is tappable" + `active:scale-95` press feedback.
+- ✅ **Lints clean.** No backend or test changes — purely a UI-mounting and state-sync correctness fix.
+
+
 - ✅ **User reported** with a screenshot: step text ends mid-sentence ("without asking for an", "even for a", "If they don't look, lur"). NOT a CSS issue — the text was being chopped IN THE DATABASE on save.
 - ✅ **Root cause** (`server.py:3976`): `"label": (s.get("label") or "Step").strip()[:200]` — every step label was capped at exactly 200 characters during the plan save. The 110i "expandable steps" feature added an `description` field but the user was pasting the full text into `label`, which got the axe.
 - ✅ **Fix #1 — Raised the step label cap from 200 → 2000 characters** so long step instructions like the user's "Charge the Marker (2 mins): Low distraction. Sit with your dog. Say your marker word (e.g., 'Yes!')..." save in full going forward.
