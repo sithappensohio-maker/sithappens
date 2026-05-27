@@ -3,6 +3,7 @@ import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import { api, formatErr } from "../lib/api";
+import PageHero from "../components/PageHero";
 
 function isoOnly(d) { return d.toISOString().split("T")[0]; }
 function isMobile() {
@@ -165,15 +166,15 @@ export default function Schedule() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-3 animate-slide-in" data-testid="schedule-calendar">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[14px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest min-w-0 truncate">
-          <i className="fas fa-mouse-pointer mr-2 text-shBlue"/>
-          <span className="hidden sm:inline">Drag any event to reschedule · click a day to see the roster</span>
-          <span className="sm:hidden">Drag to reschedule · tap a day</span>
-        </p>
-        {msg && <span className="shrink-0 text-[14px] sm:text-[14px] font-black uppercase tracking-widest text-shGreen bg-shGreen/10 px-2 sm:px-3 py-1 rounded">{msg}</span>}
-      </div>
+    <div className="h-full flex flex-col gap-4 animate-slide-in" data-testid="schedule-calendar">
+      <PageHero
+        eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shBlue" }}
+        title="The Calendar."
+        highlight="Every pup. Every day."
+        subtitle="Drag any event to reschedule. Click a day to see the full roster."
+        right={msg ? (<span className="bg-shGreen/15 text-shGreen border border-shGreen/30 text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded">{msg}</span>) : null}
+        testid="schedule-hero"
+      />
       <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden">
         <FullCalendar
           ref={calRef}

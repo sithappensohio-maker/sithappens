@@ -115,6 +115,35 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     <div className="space-y-6 animate-slide-in" data-testid="admin-dashboard">
       <RefreshSpinner pulling={pulling} progress={progress} />
 
+      {/* Sprint 110u — landing-page-style hero header. Brand glow backdrop,
+          uppercase italic title, eyebrow tag, snapshot stat tiles. Replaces
+          the bare H2 the page used to open with. */}
+      <div className="relative overflow-hidden rounded-2xl border border-bgHover bg-gradient-to-br from-bgPanel via-bgBase to-bgPanel p-5 sm:p-7" data-testid="dashboard-hero">
+        <div className="absolute inset-0 pointer-events-none opacity-40"
+             style={{ background: "radial-gradient(circle at 15% 20%, rgba(0,169,224,0.45) 0%, transparent 40%), radial-gradient(circle at 85% 80%, rgba(140,198,63,0.4) 0%, transparent 45%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.25) 0%, transparent 35%)" }}/>
+        <div className="relative flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-2">
+              <i className="fas fa-paw mr-2"/>Today at Sit Happens
+            </p>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase italic tracking-tight text-white leading-tight">
+              Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
+              <span className="text-shGreen"> let's get to it.</span>
+            </h1>
+            <p className="text-[14px] text-gray-300 mt-2">
+              {new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}
+            </p>
+          </div>
+          {stats && (
+            <div className="flex flex-wrap gap-2 shrink-0" data-testid="dashboard-hero-tiles">
+              <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={stats?.daycare_today ?? 0}/>
+              <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_tonight ?? 0}/>
+              <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>
+            </div>
+          )}
+        </div>
+      </div>
+
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
           <div className="flex items-center justify-between mb-3">
@@ -575,5 +604,23 @@ function StatCard({ label, value, accent, gradClass = "", textColor, testId, onC
     </div>
   );
 }
+
+
+function DashHeroTile({ icon, color, label, value }) {
+  return (
+    <div className="bg-bgBase/60 backdrop-blur border border-bgHover rounded-lg px-3 py-2 flex items-center gap-3 min-w-[150px]"
+         data-testid={`dash-hero-tile-${label.replace(/\s+/g,'-').toLowerCase()}`}>
+      <div className="w-9 h-9 rounded grid place-items-center shrink-0"
+           style={{ backgroundColor: `${color}22`, color }}>
+        <i className={`fas ${icon}`}/>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 leading-none">{label}</p>
+        <p className="text-xl font-black text-white leading-tight mt-0.5">{value}</p>
+      </div>
+    </div>
+  );
+}
+
 
 

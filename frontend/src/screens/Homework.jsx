@@ -6,6 +6,7 @@ import HomeworkReportPanel from "../components/HomeworkReportPanel";
 import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
 import DailyReviewQueue from "../components/DailyReviewQueue";
 import HomeworkAnalytics from "../components/HomeworkAnalytics";
+import PageHero from "../components/PageHero";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -96,39 +97,44 @@ export default function Homework() {
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="homework-screen">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Training Homework</h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Assign exercises to clients between sessions</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          {pendingCount > 0 && (
-            <button onClick={() => setReviewOpen(true)} data-testid="review-queue-button"
-                    className="relative bg-shOrange text-bgHeader px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/80">
-              <i className="fas fa-clipboard-check mr-2" />Review · {pendingCount}
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px] font-black animate-pulse">{pendingCount}</span>
+      <PageHero
+        eyebrow={{ icon: "fa-graduation-cap", text: "Curriculum control room", color: "text-purple-300" }}
+        title="Training Homework."
+        highlight="Built around the dog."
+        subtitle="Assign exercises, run daily trackers, and review every submission."
+        right={(
+          <div className="flex flex-wrap gap-2">
+            {pendingCount > 0 && (
+              <button onClick={() => setReviewOpen(true)} data-testid="review-queue-button"
+                      className="relative bg-shOrange text-bgHeader px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/80 transition">
+                <i className="fas fa-clipboard-check mr-2" />Review · {pendingCount}
+                <span className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px] font-black animate-pulse">{pendingCount}</span>
+              </button>
+            )}
+            <button onClick={() => setTrackerOpen(true)} data-testid="daily-tracker-button"
+                    className="bg-purple-500 text-white px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-purple-500/80 transition">
+              <i className="fas fa-calendar-check mr-2" />Daily Tracker
             </button>
-          )}
-          <button onClick={() => setTrackerOpen(true)} data-testid="daily-tracker-button"
-                  className="bg-purple-500 text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-purple-500/80">
-            <i className="fas fa-calendar-check mr-2" />Daily Tracker
-          </button>
-          <button onClick={() => setAnalyticsOpen(true)} data-testid="homework-analytics-button" title="Curriculum completion + drop-off insights"
-                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
-            <i className="fas fa-chart-line mr-1.5" />Analytics
-          </button>
-          <button onClick={sendWeeklyDigest} disabled={digestBusy} data-testid="send-weekly-digest-button" title="Auto-fires every Sunday night"
-                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:border-purple-400 hover:text-purple-300 disabled:opacity-50">
-            <i className="fas fa-envelope-open-text mr-1.5" />{digestBusy ? "Sending…" : "Weekly recap"}
-          </button>
-          <button onClick={()=>setPickerOpen(true)} data-testid="assign-from-template-button" className="bg-shGreen text-black px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/80">
-            <i className="fas fa-clipboard-list mr-2"/>From Template
-          </button>
-          <button onClick={openNew} data-testid="add-homework-button" className="bg-shBlue text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
-            + Custom
-          </button>
-        </div>
-      </div>
+            <button onClick={() => setAnalyticsOpen(true)} data-testid="homework-analytics-button" title="Curriculum completion + drop-off insights"
+                    className="bg-bgBase border border-bgHover text-gray-200 px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
+              <i className="fas fa-chart-line mr-1.5" />Analytics
+            </button>
+            <button onClick={sendWeeklyDigest} disabled={digestBusy} data-testid="send-weekly-digest-button" title="Auto-fires every Sunday night"
+                    className="bg-bgBase border border-bgHover text-gray-200 px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest hover:border-purple-400 hover:text-purple-300 disabled:opacity-50 transition">
+              <i className="fas fa-envelope-open-text mr-1.5" />{digestBusy ? "Sending…" : "Weekly recap"}
+            </button>
+            <button onClick={()=>setPickerOpen(true)} data-testid="assign-from-template-button"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+              <i className="fas fa-clipboard-list mr-2"/>From Template
+            </button>
+            <button onClick={openNew} data-testid="add-homework-button"
+                    className="bg-shBlue text-white px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shBlue/90 transition">
+              <i className="fas fa-plus mr-1.5"/>Custom
+            </button>
+          </div>
+        )}
+        testid="homework-hero"
+      />
 
       <div className="flex gap-2 flex-wrap">
         {["all","assigned","completed"].map(k => (

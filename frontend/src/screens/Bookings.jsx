@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
+import PageHero from "../components/PageHero";
 
 export default function Bookings() {
   const [bookings, setBookings] = useState([]);
@@ -66,41 +67,49 @@ export default function Bookings() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
       <RefreshSpinner pulling={pulling} progress={progress} />
-      <div className="flex justify-between items-start flex-wrap gap-2">
-        <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Bookings</h3>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          {hiddenCount > 0 && !showHistory && (
-            <button onClick={()=>setShowHistory(true)} data-testid="show-history-btn"
-                    className="text-[15px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-3 py-2 bg-bgPanel rounded border border-bgHover">
-              <i className="fas fa-clock-rotate-left mr-2"/>Show History · {hiddenCount}
+      <PageHero
+        eyebrow={{ icon: "fa-calendar-check", text: `${bookings.length} active booking${bookings.length === 1 ? "" : "s"}`, color: "text-shOrange" }}
+        title="Bookings."
+        highlight="Every stay, every day."
+        subtitle="Daycare, boarding, training & grooming — all in one feed."
+        right={(
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            {hiddenCount > 0 && !showHistory && (
+              <button onClick={()=>setShowHistory(true)} data-testid="show-history-btn"
+                      className="text-[13px] font-black uppercase tracking-widest text-gray-400 hover:text-white px-3 py-2 bg-bgBase rounded border border-bgHover transition">
+                <i className="fas fa-clock-rotate-left mr-2"/>Show History · {hiddenCount}
+              </button>
+            )}
+            {showHistory && (
+              <button onClick={()=>setShowHistory(false)} data-testid="hide-history-btn"
+                      className="text-[13px] font-black uppercase tracking-widest text-shOrange hover:text-white px-3 py-2 bg-bgBase rounded border border-shOrange/40 transition">
+                <i className="fas fa-eye-slash mr-2"/>Hide History
+              </button>
+            )}
+            {showHistory && !archiveLoaded && (
+              <button onClick={loadArchive} disabled={archiveLoading} data-testid="load-archive-btn"
+                      className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white px-3 py-2 bg-bgBase rounded border border-shBlue/40 disabled:opacity-50 transition">
+                <i className={`fas ${archiveLoading ? "fa-spinner fa-spin" : "fa-box-archive"} mr-2`}/>
+                {archiveLoading ? "Loading…" : "Load Archived (>90d)"}
+              </button>
+            )}
+            {showHistory && archiveLoaded && (
+              <span className="text-[12px] font-black uppercase tracking-widest text-gray-400 px-3 py-2 bg-bgBase rounded border border-bgHover" data-testid="archive-loaded-pill">
+                <i className="fas fa-box-archive mr-2 text-shBlue"/>Archive · {archiveTotal}
+              </span>
+            )}
+            <button onClick={()=>setGroupByDate(g=>!g)} data-testid="group-by-date-btn"
+                    className={`text-[13px] font-black uppercase tracking-widest px-3 py-2 bg-bgBase rounded border transition ${groupByDate ? "text-shGreen border-shGreen/40" : "text-gray-400 border-bgHover hover:text-white"}`}>
+              <i className="fas fa-layer-group mr-2"/>{groupByDate ? "Ungroup" : "Group by Date"}
             </button>
-          )}
-          {showHistory && (
-            <button onClick={()=>setShowHistory(false)} data-testid="hide-history-btn"
-                    className="text-[15px] font-black uppercase tracking-widest text-shOrange hover:text-white px-3 py-2 bg-bgPanel rounded border border-shOrange/40">
-              <i className="fas fa-eye-slash mr-2"/>Hide History
+            <button onClick={()=>setShowModal(true)} data-testid="new-booking-button"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+              <i className="fas fa-plus mr-1.5"/>New Booking
             </button>
-          )}
-          {showHistory && !archiveLoaded && (
-            <button onClick={loadArchive} disabled={archiveLoading} data-testid="load-archive-btn"
-                    className="text-[15px] font-black uppercase tracking-widest text-shBlue hover:text-white px-3 py-2 bg-bgPanel rounded border border-shBlue/40 disabled:opacity-50">
-              <i className={`fas ${archiveLoading ? "fa-spinner fa-spin" : "fa-box-archive"} mr-2`}/>
-              {archiveLoading ? "Loading…" : "Load Archived (>90d)"}
-            </button>
-          )}
-          {showHistory && archiveLoaded && (
-            <span className="text-[13px] font-black uppercase tracking-widest text-gray-400 px-3 py-2 bg-bgPanel rounded border border-bgHover" data-testid="archive-loaded-pill">
-              <i className="fas fa-box-archive mr-2 text-shBlue"/>Archive · {archiveTotal}
-            </span>
-          )}
-          <button onClick={()=>setGroupByDate(g=>!g)} data-testid="group-by-date-btn"
-                  className={`text-[15px] font-black uppercase tracking-widest px-3 py-2 bg-bgPanel rounded border ${groupByDate ? "text-shGreen border-shGreen/40" : "text-gray-400 border-bgHover hover:text-white"}`}>
-            <i className="fas fa-layer-group mr-2"/>{groupByDate ? "Ungroup" : "Group by Date"}
-          </button>
-          <button onClick={()=>setShowModal(true)} data-testid="new-booking-button"
-                  className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ New Booking</button>
-        </div>
-      </div>
+          </div>
+        )}
+        testid="bookings-hero"
+      />
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
       <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
         {showHistory ? (

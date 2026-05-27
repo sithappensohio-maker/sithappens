@@ -28,6 +28,20 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110v — Page-hero rollout to Schedule / Clients / Homework / Bookings (2026-02)
+- ✅ New reusable `PageHero` component (`/app/frontend/src/components/PageHero.jsx`) — brand-glow backdrop, eyebrow + uppercase-italic-black title + highlight + subtitle + right-slot for tiles/CTAs. Used across admin screens for visual consistency with the landing page.
+- ✅ Applied to Schedule ("THE CALENDAR. EVERY PUP. EVERY DAY."), Clients ("CLIENT HUB. WHERE HUMANS LIVE."), Homework ("TRAINING HOMEWORK. BUILT AROUND THE DOG."), and Bookings ("BOOKINGS. EVERY STAY, EVERY DAY.")
+- ✅ Zero functional changes; all existing testids and event handlers preserved. Lint clean.
+- ✅ Smoke-screenshotted all four — hero renders cleanly with action buttons cohesively right-aligned
+
+## Sprint 110u — Landing-page aesthetic refresh: header / sidebar / dashboard / portal (2026-02)
+- ✅ **Logo upgrades**: top-nav + sidebar logos get brand-color glow shadow; hero feature-logo on landing now full-color front-and-centre (was 4%-opacity watermark); portal header logo is bigger with shGreen glow
+- ✅ **Admin sidebar**: brand-color halo on logo, active-nav uses gradient + shGreen left border + shGreen icon (was a thin shBlue border)
+- ✅ **Global header**: backdrop-blur + radial brand glow, page title becomes uppercase-italic-black with shGreen tick prefix
+- ✅ **Admin Dashboard**: new hero block with brand glow backdrop, "Good [morning/afternoon/evening], let's get to it." headline, eyebrow tag, snapshot tiles (Daycare/Boarding/Training today)
+- ✅ **Client Portal header**: same hero treatment with "Welcome back, [Name]" in italic, brand glow, refreshed colored-border buttons
+- ✅ Zero functional changes — all event handlers, testids, and routes preserved. Lint clean.
+
 ## Sprint 110t — Landing-page-grade login screen (2026-02)
 - ✅ Login screen rewritten as a real marketing landing: sticky top bar, full hero with brand promise + CTA buttons + compact auth card, "What we do" 4-category grid, "Browse all N services" modal pulling from new public endpoint, "Why Sit Happens" 4-pillar grid, "How it works" 3-step flow, final gradient CTA strip, footer
 - ✅ New backend endpoint `GET /api/public/services` (no auth) returns active services with only marketing-safe fields (name/description/price/category/color/icon)

@@ -812,26 +812,38 @@ export default function Portal() {
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
       <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
-      <header className="bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-24">
-        <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-          <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-16 shrink-0" data-testid="portal-logo" />
+      {/* Sprint 110u — landing-page-style portal header. Bigger glowing logo,
+          richer welcome line, brand-color glow backdrop. Same buttons, same
+          behaviour — purely visual upgrade. */}
+      <header className="relative bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-28 overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none opacity-30"
+             style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.45) 0%, transparent 38%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.4) 0%, transparent 42%)" }}/>
+        <div className="relative flex items-center gap-2 sm:gap-4 min-w-0">
+          <img src="/logo.png" alt="Sit Happens"
+               className="h-12 sm:h-20 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.45)]"
+               data-testid="portal-logo" />
           <div className="min-w-0">
-            <p className="hidden sm:block text-[15px] text-gray-500 font-black uppercase tracking-[0.25em]">Dog Training • Daycare • Boarding • Photography</p>
-            <p className="text-[13px] sm:text-xs text-shGreen font-black uppercase tracking-widest sm:mt-1 truncate">Welcome, {user.name}</p>
+            <p className="hidden sm:block text-[11px] text-gray-400 font-black uppercase tracking-[0.3em]">
+              Dog Training · Daycare · Boarding · Photography
+            </p>
+            <p className="text-[14px] sm:text-base text-white font-black uppercase italic tracking-tight sm:mt-1 truncate">
+              <span className="text-shGreen">·</span> Welcome back, <span className="text-shGreen">{user.name.split(" ")[0] || user.name}</span>
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
           <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
-                  className="text-[13px] sm:text-xs bg-shBlue/10 text-shBlue px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center gap-2">
+                  className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
             <i className="fas fa-circle-question"/>
             <span className="hidden sm:inline">How to Use</span>
           </button>
           <InstallAppButton
             testid="portal-install-app"
             label="Install"
-            className="text-[13px] sm:text-xs bg-shGreen/10 text-shGreen px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/20 flex items-center gap-2"
+            className="text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2"
           />
-          <button onClick={logout} data-testid="logout-button" className="text-[13px] sm:text-xs bg-red-500/10 text-red-400 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20">
+          <button onClick={logout} data-testid="logout-button"
+                  className="text-[13px] sm:text-xs bg-red-500/10 text-red-400 border border-red-500/20 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20 transition">
             <i className="fas fa-right-from-bracket sm:hidden"/>
             <span className="hidden sm:inline">Logout</span>
           </button>

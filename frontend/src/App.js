@@ -77,25 +77,38 @@ function AdminShell() {
 
   const sidebarContent = (prefix) => (
     <>
-      <div className="p-4 border-b border-bgHover text-center">
-        <img src="/logo.png" alt="Sit Happens" className="h-20 mx-auto" data-testid={`${prefix}sidebar-logo`} />
-        <p className="text-[15px] text-gray-500 font-black uppercase tracking-[0.25em] mt-2">Dog Training • Daycare • Boarding • Photography</p>
+      {/* Sprint 110u — branded sidebar header. Logo gets a soft brand-color
+          halo so it pops the way the landing-page hero logo does. */}
+      <div className="relative p-5 border-b border-bgHover text-center overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
+             style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
+        <img src="/logo.png" alt="Sit Happens"
+             className="relative h-24 mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]"
+             data-testid={`${prefix}sidebar-logo`} />
+        <p className="relative text-[11px] text-gray-400 font-black uppercase tracking-[0.3em] mt-2">
+          Dog Training · Daycare · Boarding · Photography
+        </p>
       </div>
-      <nav className="flex-grow p-4 space-y-1 overflow-y-auto">
+      <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
         {navItems.map(n => (
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
-                  className={`w-full text-left py-3 px-4 rounded-lg text-[15px] font-black uppercase tracking-widest transition ${tab===n.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
-            <i className={`fas ${n.icon} mr-3 w-4`} /> {n.label}
+                  className={`group w-full text-left py-2.5 px-3 rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
+            <i className={`fas ${n.icon} mr-3 w-4 ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} /> {n.label}
           </button>
         ))}
       </nav>
       <div className="p-4 border-t border-bgHover space-y-3">
         <TextSizePicker testid={`${prefix}text-size`} compact />
         <InstallAppButton testid={`${prefix}install-app-nav`} />
-        <div className="bg-bgPanel rounded-lg p-3">
-          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest">Signed in</p>
-          <p className="text-xs text-white font-black truncate">{user.name}</p>
-          <button onClick={logout} data-testid={`${prefix}admin-logout`} className="mt-2 w-full text-[14px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">Logout</button>
+        <div className="bg-bgPanel rounded-lg p-3 border border-bgHover">
+          <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">
+            <i className="fas fa-user-shield text-shGreen mr-1"/>Signed in
+          </p>
+          <p className="text-xs text-white font-black truncate mt-0.5">{user.name}</p>
+          <button onClick={logout} data-testid={`${prefix}admin-logout`}
+                  className="mt-2 w-full text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition">
+            <i className="fas fa-right-from-bracket mr-1"/>Logout
+          </button>
         </div>
       </div>
     </>
@@ -119,22 +132,31 @@ function AdminShell() {
       </aside>
 
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-bgHeader border-b border-bgHover h-16 flex items-center justify-between px-4 md:px-8 gap-3">
-          <div className="flex items-center gap-3 min-w-0">
+        {/* Sprint 110u — top header gets the same backdrop-blur + accent glow
+            treatment as the landing page nav. Page title becomes a big
+            uppercase-italic-black badge instead of a tiny label. */}
+        <header className="relative bg-bgHeader/95 backdrop-blur border-b border-bgHover h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none opacity-25"
+               style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.35) 0%, transparent 40%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.25) 0%, transparent 45%)" }}/>
+          <div className="relative flex items-center gap-3 min-w-0">
             <button onClick={()=>setDrawerOpen(true)} data-testid="drawer-toggle"
-                    className="md:hidden text-gray-300 hover:text-white p-2 -ml-2 text-lg">
+                    className="md:hidden text-gray-200 hover:text-shGreen p-2 -ml-2 text-lg transition">
               <i className="fas fa-bars" />
             </button>
-            <img src="/logo.png" alt="Sit Happens" className="h-10 md:hidden" />
-            <h2 className="text-xs font-black uppercase text-white tracking-widest truncate" data-testid="header-title">{tab}</h2>
+            <img src="/logo.png" alt="Sit Happens"
+                 className="h-11 md:hidden drop-shadow-[0_0_10px_rgba(140,198,63,0.4)]" />
+            <h2 className="text-base sm:text-lg font-black uppercase italic text-white tracking-tight truncate"
+                data-testid="header-title">
+              <span className="text-shGreen">·</span> {tab}
+            </h2>
           </div>
           <button onClick={()=>setSearchOpen(true)} data-testid="open-search"
-                  className="hidden md:flex items-center gap-2 bg-bgPanel border border-bgHover rounded px-3 py-1.5 text-xs text-gray-400 hover:border-shBlue">
+                  className="relative hidden md:flex items-center gap-2 bg-bgPanel border border-bgHover rounded-lg px-3 py-1.5 text-xs text-gray-400 hover:border-shGreen hover:text-white transition">
             <i className="fas fa-search text-[14px]" />
-            <span>Search…</span>
-            <kbd className="text-[15px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
+            <span>Search clients, dogs…</span>
+            <kbd className="text-[12px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
           </button>
-          <button onClick={()=>setSearchOpen(true)} className="md:hidden text-gray-300 p-2"><i className="fas fa-search" /></button>
+          <button onClick={()=>setSearchOpen(true)} className="relative md:hidden text-gray-300 p-2 hover:text-shGreen transition"><i className="fas fa-search" /></button>
         </header>
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative" data-scroll-root>
           {tab === "dashboard" && <Dashboard
