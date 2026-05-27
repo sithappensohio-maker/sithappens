@@ -28,6 +28,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110y — Portal: My Dogs / Homework / Quick Links visual unification (2026-02)
+- ✅ **Homework plan cards** rebuilt with gradient + brand-color radial glow: purple for daily-tracker plans, orange for session-template plans, green for completed. Title goes to italic uppercase. Shadow elevation added.
+- ✅ **My Dogs** header gets eyebrow ("THE REAL STARS") + italic "MY DOGS" headline; Add a Dog button polished
+- ✅ **Training Homework** header gets eyebrow ("DAILY TRAINING") + italic "TRAINING HOMEWORK." headline matching the rest of the page rhythm
+- ✅ **Quick Links overhaul**: card wrapped in brand-glow halo, eyebrow "SHORTCUTS" + italic "QUICK LINKS.", and the flat full-width list replaced with a vivid 2-column tile grid. Each tile has its own brand color, icon halo, hover lift, and an inline NEW badge for the gallery when fresh photos drop.
+- ✅ New reusable `QuickLinkTile` helper component handles button/anchor link variants uniformly.
+- ✅ Lint clean; portal screenshot verified — all 5 tiles render with their accent colors, NEW badge pulses on the Photo Gallery tile.
+
 ## Sprint 110x — Portal Book Service hero + credits visual polish (2026-02)
 - ✅ **Book a Service** promoted ABOVE Quick Links (was below) and rebuilt as a vivid gradient hero: brand-color radial glow backdrop, oversized calendar icon, "READY WHEN YOU ARE" eyebrow, italic "BOOK A SERVICE." headline, punchy green "BOOK NOW →" CTA
 - ✅ **Credits card** upgraded: shGreen radial halo behind whole card, per-credit colored glow halos, icon (sun/cap/moon) above each label, text-shadow drop-glow on the big numbers, gradient border highlights per credit type

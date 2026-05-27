@@ -1000,87 +1000,87 @@ export default function Portal() {
           </div>
 
           {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
-            <div className="bg-bgPanel p-4 rounded-xl border border-bgHover shadow-lg" data-testid="portal-quick-links">
-              <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-3"><i className="fas fa-bookmark text-shBlue mr-2"/>Quick Links</p>
-              <div className="grid grid-cols-1 gap-2">
-                {(publicServices.length > 0 || publicPrograms.length > 0) && (
-                  <button onClick={()=>setShowServicesModal(true)} data-testid="portal-open-services-btn"
-                          className="flex items-start gap-3 bg-gradient-to-br from-shGreen/15 to-shBlue/10 hover:from-shGreen/25 hover:to-shBlue/20 border border-shGreen/40 hover:border-shGreen/60 rounded-lg px-3 py-3 transition group text-left w-full">
-                    <i className="fas fa-list-check text-shGreen text-2xl w-7 text-center mt-0.5"/>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-black text-white uppercase tracking-widest">Services & Pricing</div>
-                      <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">{publicServices.length + publicPrograms.length} services & programs offered · request a quote</p>
-                    </div>
-                    <i className="fas fa-arrow-right text-shGreen group-hover:translate-x-0.5 transition text-xs mt-1"/>
-                  </button>
-                )}
-                {dogs.length > 0 && (
-                  <button onClick={()=>setShowRecurringModal(true)} data-testid="portal-open-recurring-btn"
-                          className="flex items-start gap-3 bg-gradient-to-br from-shBlue/15 to-purple-500/10 hover:from-shBlue/25 hover:to-purple-500/20 border border-shBlue/40 hover:border-shBlue/60 rounded-lg px-3 py-3 transition group text-left w-full">
-                    <i className="fas fa-rotate text-shBlue text-2xl w-7 text-center mt-0.5"/>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-black text-white uppercase tracking-widest">My Recurring Schedules</div>
-                      <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">Set up M/W/F daycare once · extend 12 weeks in one tap</p>
-                    </div>
-                    <i className="fas fa-arrow-right text-shBlue group-hover:translate-x-0.5 transition text-xs mt-1"/>
-                  </button>
-                )}
-                {pubSettings?.client_portal_links?.website_url && (
-                  <a href={pubSettings.client_portal_links.website_url} target="_blank" rel="noopener noreferrer"
-                     data-testid="portal-link-website"
-                     className="flex items-center gap-3 bg-bgBase hover:bg-shBlue/15 border border-bgHover hover:border-shBlue/50 rounded px-3 py-2.5 transition">
-                    <i className="fas fa-globe text-shBlue text-lg w-6 text-center"/>
-                    <span className="text-[14px] font-black text-white uppercase tracking-widest flex-1 text-left">Visit Our Website</span>
-                    <i className="fas fa-arrow-up-right-from-square text-gray-500 text-xs"/>
-                  </a>
-                )}
-                {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
-                  <div data-testid="portal-gallery-card"
-                       className={`relative rounded-lg overflow-hidden bg-gradient-to-br border transition ${client?.photo_gallery_has_new
-                           ? "from-shOrange/20 to-shGreen/10 border-shOrange/60 shadow-[0_0_18px_-6px_rgba(255,138,0,0.7)]"
-                           : "from-shGreen/15 to-shBlue/10 border-shGreen/40 hover:border-shGreen/60"}`}>
-                    {client?.photo_gallery_has_new && (
-                      <span data-testid="portal-gallery-new-badge"
-                            className="absolute top-2 right-2 flex items-center gap-1.5 bg-shOrange text-bgHeader text-[12px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full shadow-[0_0_12px_rgba(255,138,0,0.8)] animate-pulse z-10 ring-2 ring-shOrange/40">
-                        <i className="fas fa-bell text-[10px]"/>New photos!
-                      </span>
-                    )}
-                    <a href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url} target="_blank" rel="noopener noreferrer"
-                       data-testid="portal-link-gallery"
-                       onClick={() => {
-                         if (client?.photo_gallery_has_new) {
-                           api.post("/portal/gallery/mark-seen").catch(() => {});
-                           setClient((c) => c ? { ...c, photo_gallery_has_new: false } : c);
-                         }
-                       }}
-                       className="flex items-start gap-3 px-3 py-3 hover:bg-white/[0.03] transition group">
-                      <i className={`fas fa-camera-retro text-2xl w-7 text-center mt-0.5 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
-                      <div className="flex-1 min-w-0 text-left">
-                        <div className={`text-[14px] font-black text-white uppercase tracking-widest flex items-center gap-2 ${client?.photo_gallery_has_new ? "pr-32" : ""}`}>
-                          See Your Pup In Action
-                          <span className="text-[12px] font-black bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded uppercase tracking-widest">Order Prints</span>
-                        </div>
-                        <p className="text-[13px] text-gray-400 normal-case tracking-normal mt-0.5">
-                          {client?.photo_gallery_has_new
-                            ? "Fresh photos just dropped! Browse your private gallery & order prints"
-                            : "Browse your private gallery & order high-quality prints"}
-                        </p>
-                      </div>
-                      <i className={`fas fa-arrow-up-right-from-square group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition text-xs mt-1 ${client?.photo_gallery_has_new ? "text-shOrange" : "text-shGreen"}`}/>
-                    </a>
+            <div className="relative overflow-hidden bg-bgPanel p-5 rounded-2xl border border-bgHover shadow-2xl" data-testid="portal-quick-links">
+              {/* Sprint 110y — Quick Links overhauled. Brand-glow halo on the
+                  whole card, eyebrow + italic headline, then a 2-col grid of
+                  vivid colored tile cards (mirroring landing-page categories)
+                  instead of flat full-width rows. Each link gets its own
+                  branded color palette + icon halo so the visual rhythm
+                  reads quickly even at a glance. */}
+              <div className="absolute inset-0 pointer-events-none opacity-20"
+                   style={{ background: "radial-gradient(circle at 50% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
+              <div className="relative">
+                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
+                  <i className="fas fa-bookmark mr-1.5"/>Shortcuts
+                </p>
+                <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">Quick Links.</h3>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {(publicServices.length > 0 || publicPrograms.length > 0) && (
+                    <QuickLinkTile
+                      onClick={()=>setShowServicesModal(true)}
+                      testid="portal-open-services-btn"
+                      icon="fa-list-check"
+                      color="#8cc63f"
+                      title="Services & Pricing"
+                      subtitle={`${publicServices.length + publicPrograms.length} offered · quote`}
+                    />
+                  )}
+                  {dogs.length > 0 && (
+                    <QuickLinkTile
+                      onClick={()=>setShowRecurringModal(true)}
+                      testid="portal-open-recurring-btn"
+                      icon="fa-rotate"
+                      color="#00a9e0"
+                      title="My Schedules"
+                      subtitle="Recurring · M/W/F"
+                    />
+                  )}
+                  {pubSettings?.client_portal_links?.website_url && (
+                    <QuickLinkTile
+                      href={pubSettings.client_portal_links.website_url}
+                      testid="portal-link-website"
+                      icon="fa-globe"
+                      color="#06b6d4"
+                      title="Our Website"
+                      subtitle="Visit ↗"
+                      external
+                    />
+                  )}
+                  {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && (
+                    <QuickLinkTile
+                      href={client?.photo_gallery_url || pubSettings.client_portal_links.photo_gallery_url}
+                      testid="portal-link-gallery"
+                      icon="fa-camera-retro"
+                      color={client?.photo_gallery_has_new ? "#f97316" : "#8cc63f"}
+                      title="Photo Gallery"
+                      subtitle={client?.photo_gallery_has_new ? "✨ New photos!" : "Order prints ↗"}
+                      external
+                      pulse={!!client?.photo_gallery_has_new}
+                      onExtClick={() => {
+                        if (client?.photo_gallery_has_new) {
+                          api.post("/portal/gallery/mark-seen").catch(() => {});
+                          setClient((c) => c ? { ...c, photo_gallery_has_new: false } : c);
+                        }
+                      }}
+                      badge={client?.photo_gallery_has_new ? "NEW" : null}
+                    />
+                  )}
+                  {referralCode && (
+                    <QuickLinkTile
+                      onClick={()=>setShowReferModal(true)}
+                      testid="portal-refer-friend"
+                      icon="fa-gift"
+                      color="#f26522"
+                      title="Refer a Friend"
+                      subtitle="Earn a free daycare day"
+                    />
+                  )}
+                </div>
+                {/* Gallery pin (if present, render below tiles in compact form) */}
+                {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && client?.photo_gallery_pin && (
+                  <div className="mt-2.5">
                     <GalleryPinRow pin={client?.photo_gallery_pin} accent={client?.photo_gallery_has_new ? "orange" : "green"} />
                   </div>
-                )}
-                {referralCode && (
-                  <button onClick={()=>setShowReferModal(true)} data-testid="portal-refer-friend"
-                          className="flex items-center gap-3 bg-bgBase hover:bg-shOrange/15 border border-bgHover hover:border-shOrange/50 rounded px-3 py-2.5 transition w-full text-left">
-                    <i className="fas fa-gift text-shOrange text-lg w-6 text-center"/>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[14px] font-black text-white uppercase tracking-widest">Refer a Friend</p>
-                      <p className="text-[13px] text-gray-500 normal-case tracking-normal">Earn a free daycare day for every referral</p>
-                    </div>
-                    <i className="fas fa-arrow-right text-gray-500 text-xs"/>
-                  </button>
                 )}
               </div>
             </div>
@@ -1094,12 +1094,38 @@ export default function Portal() {
               referral feed has been removed (client uses a separate system). */}
           {homework.length > 0 && (
             <div data-testid="portal-homework">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-graduation-cap text-shBlue mr-2"/>Training Homework</h2>
+              {/* Sprint 110y — Homework section gets matching eyebrow + italic
+                  headline treatment. */}
+              <div className="mb-4">
+                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
+                  <i className="fas fa-graduation-cap mr-1.5"/>Daily training
+                </p>
+                <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">Training Homework.</h2>
+              </div>
               <div className="space-y-3">
                 {homework.map(h => {
                   const hasTemplate = !!h.template_snapshot;
+                  const isDone = h.status === "completed";
+                  // Sprint 110y — homework plan cards get the brand-glow + gradient
+                  // treatment matching the Book Service hero. Completed plans glow
+                  // green; active plans glow purple/orange depending on tracker type.
+                  const isTracker = !!h.daily_tracker;
                   return (
-                  <div key={h.id} className={`bg-bgPanel border rounded-xl p-4 ${h.status==="completed"?"border-shGreen/40":"border-shOrange/40"}`}>
+                  <div key={h.id}
+                       className={`relative overflow-hidden rounded-2xl border p-4 shadow-xl ${
+                         isDone
+                           ? "bg-gradient-to-br from-shGreen/15 via-bgPanel to-bgPanel border-shGreen/50"
+                           : isTracker
+                             ? "bg-gradient-to-br from-purple-500/15 via-bgPanel to-bgPanel border-purple-500/40"
+                             : "bg-gradient-to-br from-shOrange/15 via-bgPanel to-bgPanel border-shOrange/40"
+                       }`}>
+                    <div className="absolute inset-0 pointer-events-none opacity-30"
+                         style={{ background: isDone
+                           ? "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.5) 0%, transparent 45%)"
+                           : isTracker
+                             ? "radial-gradient(circle at 100% 0%, rgba(168,85,247,0.45) 0%, transparent 45%)"
+                             : "radial-gradient(circle at 100% 0%, rgba(242,101,34,0.4) 0%, transparent 45%)" }}/>
+                    <div className="relative">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex flex-wrap items-center gap-2 mb-1">
@@ -1109,7 +1135,7 @@ export default function Portal() {
                           {h.due_date && <span className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Due {h.due_date}</span>}
                           {hasTemplate && !h.daily_tracker && <span className="text-[14px] text-shGreen font-black uppercase tracking-widest"><i className="fas fa-list-check mr-1"/>{(h.section_logs||[]).length} sessions logged</span>}
                         </div>
-                        <h4 className="text-sm font-black text-white uppercase tracking-tight">{h.title}</h4>
+                        <h4 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight leading-tight">{h.title}</h4>
                         {h.instructions && <p className="text-xs text-gray-300 mt-1 whitespace-pre-wrap">{h.instructions}</p>}
                         {h.video_url && <a href={h.video_url} target="_blank" rel="noreferrer" className="inline-block mt-2 text-[14px] text-shBlue hover:underline font-black uppercase tracking-widest"><i className="fas fa-play mr-1"/>Watch demo</a>}
                       </div>
@@ -1124,7 +1150,7 @@ export default function Portal() {
                       )}
                       {h.status !== "completed" && !h.daily_tracker && (
                         <button onClick={()=>{setHwModal(h); setHwNote(""); setHwPhoto("");}} data-testid={`portal-complete-${h.id}`}
-                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90">Mark Done</button>
+                                className="shrink-0 bg-shGreen text-bgHeader px-4 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/90 shadow-lg">Mark Done</button>
                       )}
                     </div>
 
@@ -1154,6 +1180,7 @@ export default function Portal() {
                     {h.status === "completed" && h.completion_note && (
                       <p className="mt-2 text-xs text-gray-300 italic">"{h.completion_note}"</p>
                     )}
+                    </div>
                   </div>
                   );
                 })}
@@ -1189,11 +1216,18 @@ export default function Portal() {
           <HomeworkIncentivesPanel />
 
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Dogs</h2>
+            {/* Sprint 110y — My Dogs section header gets the eyebrow + italic
+                headline treatment matching the rest of the polished portal. */}
+            <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+                  <i className="fas fa-paw mr-1.5"/>The real stars
+                </p>
+                <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">My Dogs</h2>
+              </div>
               <button onClick={()=>setDogModal({open:true, dog:null})} data-testid="portal-add-dog"
-                      className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow hover:bg-shGreen/90">
-                <i className="fas fa-plus mr-1"/>Add a Dog
+                      className="bg-shGreen text-bgHeader px-4 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+                <i className="fas fa-plus mr-1.5"/>Add a Dog
               </button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="portal-dogs">
@@ -1620,3 +1654,61 @@ function OnboardStep({ n, done, active, title, desc, cta, onClick, testId, disab
     </div>
   );
 }
+
+
+/**
+ * Sprint 110y — Compact gradient tile for the portal Quick Links overhaul.
+ *
+ * Replaces the old full-width text rows with vivid, brand-colored 2-column
+ * tile cards (mirrors the landing-page "What we do" category tiles). Each
+ * tile gets its own accent color, an icon halo, and a hover lift.
+ *
+ * Renders as a <button> when `onClick` is provided, or an <a> when `href`
+ * is provided. Either gets the same visual treatment.
+ */
+function QuickLinkTile({
+  onClick, href, external = false, onExtClick,
+  testid, icon, color, title, subtitle,
+  badge = null, pulse = false,
+}) {
+  const cls = `group relative overflow-hidden bg-bgBase hover:bg-bgPanel border rounded-xl p-3 text-left transition-all hover:-translate-y-0.5 hover:shadow-lg flex flex-col items-start gap-2 ${
+    pulse ? "border-shOrange/60 shadow-[0_0_18px_-6px_rgba(255,138,0,0.6)]" : "border-bgHover hover:border-white/20"
+  }`;
+  const halo = (
+    <div className="absolute inset-0 pointer-events-none opacity-20"
+         style={{ background: `radial-gradient(circle at 100% 0%, ${color} 0%, transparent 65%)` }}/>
+  );
+  const body = (
+    <>
+      {halo}
+      {badge && (
+        <span className="absolute top-1.5 right-1.5 text-[10px] font-black uppercase tracking-widest text-bgHeader px-1.5 py-0.5 rounded animate-pulse z-10"
+              style={{ background: color }}>
+          {badge}
+        </span>
+      )}
+      <div className="relative w-10 h-10 rounded-lg grid place-items-center shrink-0"
+           style={{ backgroundColor: `${color}22`, color }}>
+        <i className={`fas ${icon} text-xl`}/>
+      </div>
+      <div className="relative min-w-0 w-full">
+        <div className="text-[12px] font-black text-white uppercase tracking-wide leading-tight">{title}</div>
+        <p className="text-[11px] text-gray-400 normal-case tracking-normal mt-0.5 leading-snug">{subtitle}</p>
+      </div>
+      <i className="relative fas fa-arrow-right text-[10px] absolute bottom-2 right-2 group-hover:translate-x-0.5 transition opacity-50 group-hover:opacity-100"
+         style={{ color }}/>
+    </>
+  );
+  if (href) {
+    return (
+      <a href={href} target={external ? "_blank" : "_self"} rel={external ? "noopener noreferrer" : undefined}
+         data-testid={testid} className={cls} onClick={onExtClick}>
+        {body}
+      </a>
+    );
+  }
+  return (
+    <button onClick={onClick} data-testid={testid} className={cls}>{body}</button>
+  );
+}
+
