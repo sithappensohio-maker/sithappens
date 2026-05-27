@@ -31,9 +31,9 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 ## Sprint 110q — Advancement celebration toast (2026-02)
 - ✅ When client submits a day, a bottom-center toast appears for ~4s:
   - Mid-plan: "🎉 Day N done — Day N+1 unlocked!" with dog name
-  - Final day: "🏆 Plan complete!" with summary
-- ✅ Self-contained inside `TodayPlanCard` (no app-wide Toaster mount needed). Rendered via `createPortal` so it floats above all card chrome.
-- ✅ Testid: `data-testid="day-advance-toast-advance"` / `day-advance-toast-complete`
+  - Final day: "🏆 Plan complete!" with summary + **CSS-only confetti burst** (22 multi-colored pieces, ~1.5s, randomized drift/rotation)
+- ✅ Self-contained inside `TodayPlanCard`; no app-wide Toaster mount, no JS confetti library. Renders via `createPortal`.
+- ✅ Testids: `day-advance-toast-{advance|complete}` and `day-advance-confetti`
 
 ## Sprint 110p — Client-driven daily-tracker advancement + visible day strip (2026-02)
 - ✅ Auto-advancement: once the client submits a day's log, the NEXT day immediately unlocks (no admin approval required to progress). `_compute_daily_progress` chain now treats `submitted` as a pass status.

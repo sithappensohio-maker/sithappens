@@ -468,11 +468,36 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
       {celebration && createPortal(
         <div className="fixed inset-x-0 bottom-6 z-[10000] flex justify-center px-4 pointer-events-none"
              data-testid={`day-advance-toast-${celebration.kind}`}>
-          <div className={`pointer-events-auto max-w-md w-full rounded-xl shadow-2xl border px-4 py-3 flex items-center gap-3 animate-slide-in ${
+          <div className={`pointer-events-auto relative max-w-md w-full rounded-xl shadow-2xl border px-4 py-3 flex items-center gap-3 animate-slide-in overflow-visible ${
                   celebration.kind === "complete"
                     ? "bg-gradient-to-r from-shOrange/30 via-shOrange/20 to-shGreen/20 border-shOrange/60"
                     : "bg-gradient-to-r from-shGreen/25 via-shGreen/15 to-shBlue/20 border-shGreen/60"
                 }`}>
+            {/* Sprint 110q — CSS-only confetti burst, only on plan-complete. */}
+            {celebration.kind === "complete" && (
+              <div className="absolute inset-x-0 -top-1 h-0 pointer-events-none" aria-hidden="true" data-testid="day-advance-confetti">
+                {Array.from({ length: 22 }).map((_, i) => {
+                  const colors = ["#8cc63f", "#00a9e0", "#f26522", "#f5c037", "#a78bfa", "#ff6b9d"];
+                  const left = Math.round((i / 21) * 100);                // spread across
+                  const cx = Math.round((Math.random() - 0.5) * 220);      // horizontal drift
+                  const cr = Math.round(360 + Math.random() * 720);        // total rotation
+                  const delay = (Math.random() * 0.25).toFixed(2);
+                  const bg = colors[i % colors.length];
+                  return (
+                    <span key={i}
+                          className="confetti-piece"
+                          style={{
+                            left: `${left}%`,
+                            background: bg,
+                            animationDelay: `${delay}s`,
+                            // CSS custom props consumed by the @keyframes
+                            "--cx": `${cx}px`,
+                            "--cr": `${cr}deg`,
+                          }}/>
+                  );
+                })}
+              </div>
+            )}
             <span className="text-3xl">{celebration.kind === "complete" ? "🏆" : "🎉"}</span>
             <div className="flex-1 min-w-0">
               <p className="text-[14px] font-black text-white uppercase tracking-tight">

@@ -143,6 +143,26 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 }
 .animate-slide-in { animation: slide-in 0.25s ease-out; }
 
+/* Sprint 110q — CSS-only confetti burst used when a client finishes the
+   final day of a daily-tracker plan. Each piece is a small square that
+   falls + rotates + fades over ~1.5s. Randomization comes from inline
+   styles set on each piece (left, color, delay, rotation). */
+@keyframes confetti-fall {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translate3d(var(--cx, 0), 320px, 0) rotate(var(--cr, 720deg)); opacity: 0; }
+}
+.confetti-piece {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 12px;
+  border-radius: 1px;
+  pointer-events: none;
+  animation: confetti-fall 1.5s ease-out forwards;
+  will-change: transform, opacity;
+}
+
 /* Pack-sale receipt print mode — hide everything except the receipt.
    Triggered by the .printing-receipt class added when [data-testid="pack-receipt"]
    is in the DOM and the user invokes print. */
