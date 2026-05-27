@@ -28,6 +28,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110o — Auto-backup removed + vaccine_dismissals excluded from backup (2026-02)
+- ✅ Auto-backup feature fully removed (never worked reliably across unprivileged Docker → Bazzite host boundary)
+  - Backend: deleted `/admin/backup/run-now`, `/admin/backup/status`, `/admin/backup/detect-drives`, `/admin/backup/inspect` endpoints (~339 lines)
+  - Backend: deleted `run_auto_backup_job` + `_notify_backup_failure` from `daily_jobs.py` (~200 lines) and the daily-jobs hook
+  - Backend: removed `auto_backup_*` fields from `SettingsIn` model and boot-time drive-scan diagnostics
+  - Frontend: deleted `AutoBackupPanel` component (~315 lines) from `Settings.jsx` and its mount in `BackupPanel`
+  - Tests: removed `test_auto_backup.py`
+- ✅ `vaccine_dismissals` removed from `BACKUP_COLLECTIONS` (was bloating backups with thousands of audit-trail rows; restore loop already filters by this list so it's excluded on restore too)
+- ✅ Backend boots clean, all endpoints return 404 as expected, manual `/api/backup/export` confirmed to exclude vaccine_dismissals
+
 ## Sprint 110n — Portal reorder: Homework first, Achievements second (2026-02)
 - ✅ Training Homework promoted to top section of client portal main column (was buried below Dogs/Training/Files/Trophies)
 - ✅ Trophy Wall + HomeworkIncentivesPanel now follow directly after Homework
