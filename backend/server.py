@@ -8189,6 +8189,10 @@ from services_data import SEED_SERVICES
 class ServiceIn(BaseModel):
     slug: Optional[str] = ""
     name: str = Field(min_length=1)
+    # Sprint 110s — short description shown on the client portal services list
+    # (rendered by ServicesByCategory.jsx → ServiceTile). Plain text, ~500
+    # chars is plenty for a 1-2 sentence pitch.
+    description: Optional[str] = Field(default="", max_length=500)
     base_price: float = 0.0
     service_type: Optional[Literal["daycare", "boarding", "training", "grooming", "photography", "other"]] = "other"
     color: Optional[str] = "#64748b"

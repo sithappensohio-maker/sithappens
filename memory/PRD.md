@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110s — Service descriptions (2026-02)
+- ✅ `ServiceIn` backend model gains optional `description` (max 500 chars) — surfaces in GET/POST/PUT `/services`
+- ✅ Admin Services form (Settings → Services & Programs) gets a 3-row textarea with live char counter + helper "shown to clients", and the live preview now renders the description right under the service name
+- ✅ Client portal already rendered `svc.description` in `ServicesByCategory.jsx` (ServiceTile, line 31) — no frontend portal change required; once admin saves a description, clients see it instantly
+- ✅ End-to-end smoke: create/list/update/delete round-trip via curl confirmed; admin form lint clean
+
 ## Sprint 110r — Homework analytics dashboard (2026-02)
 - ✅ New endpoint `GET /api/admin/homework/analytics` returns `{global, templates}` with:
   - Per-template: assigned/active/completed counts, completion rate, avg days-to-complete (calendar), drop-off Day (stale + engagement-cliff flavors), per-day buckets (submitted/approved/needs_redo/questions/mood_avg/engagement_pct), recent completions

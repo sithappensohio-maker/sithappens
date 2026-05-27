@@ -18,7 +18,7 @@ const SERVICE_TYPES = [
   { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
-const emptyService = { name: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true };
+const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true };
 
 
 export default function ServicesSettings() {
@@ -177,11 +177,26 @@ export default function ServicesSettings() {
                     <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="service-color-row" />
                   </div>
                 </div>
+                <div className="md:col-span-2">
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">
+                    Description <span className="text-gray-600 normal-case tracking-normal font-normal">— shown to clients</span>
+                  </label>
+                  <textarea
+                    value={form.description || ""}
+                    onChange={(e)=>setForm({...form, description: e.target.value.slice(0, 500)})}
+                    rows={3}
+                    maxLength={500}
+                    data-testid="service-description-input"
+                    placeholder="One or two sentences clients see on the portal. e.g., 'Group socialization in our 4,000 sq ft indoor play space. Half-day or full-day.'"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none resize-none"
+                  />
+                  <p className="text-[13px] text-gray-500 mt-1 normal-case">{(form.description || "").length}/500 — appears on client portal under the service name.</p>
+                </div>
               </div>
               {/* Live preview — exactly how this row will render in the catalog. */}
               <div className="mt-4">
                 <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
-                <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3" data-testid="service-preview">
+                <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-start gap-3" data-testid="service-preview">
                   <div className="w-10 h-10 rounded grid place-items-center shrink-0"
                        style={{ backgroundColor: `${form.color || "#64748b"}20`, color: form.color || "#64748b" }}>
                     <i className={`fas ${form.icon || "fa-tag"}`}/>
@@ -189,6 +204,9 @@ export default function ServicesSettings() {
                   <div className="flex-1 min-w-0">
                     <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled service"}</p>
                     <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{form.service_type}</p>
+                    {form.description && (
+                      <p className="text-[13px] text-gray-300 leading-relaxed mt-1.5" data-testid="service-preview-description">{form.description}</p>
+                    )}
                   </div>
                   <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.base_price || 0).toFixed(2)}</p>
                 </div>
