@@ -5227,6 +5227,278 @@ async def list_pending_reviews(_: dict = Depends(require_admin)):
     return items
 
 
+# ────────────────────── Sprint 110r — Homework Analytics ──────────────────────
+
+@api.get("/admin/homework/analytics")
+async def homework_analytics(_: dict = Depends(require_admin)):
+    """Per-template + global metrics for daily-tracker homework plans.
+
+    Returned shape:
+      {
+        "global": { active_plans, completed_plans, completion_rate, avg_streak },
+        "templates": [
+          {
+            "template_id": str|None,            # None for one-off custom plans grouped together
+            "title": str,
+            "total_days": int,
+            "assigned_count": int,
+            "active_count": int,
+            "completed_count": int,
+            "completion_rate": float (0-100),
+            "avg_days_to_complete": float|None,   # calendar days
+            "dropoff_day_stale": int|None,        # last-logged day on stale (>14d) plans
+            "dropoff_day_engagement": int|None,   # day with the steepest unlog rate
+            "per_day": [
+              { "day_number", "submitted", "approved", "needs_redo", "questions",
+                "mood_avg": float|None,
+                "engagement_pct": float (0-100) }
+            ],
+            "recent_completions": [ {dog_name, client_name, completed_at} ],
+          }, ...
+        ],
+      }
+    """
+    STALE_DAYS = 14
+    now_dt = datetime.now(timezone.utc)
+    stale_cutoff = now_dt - timedelta(days=STALE_DAYS)
+
+    # Pull all daily-tracker homework — small dataset for a solo operator, OK
+    # to aggregate in Python for simplicity + readable code.
+    homeworks: List[dict] = await db.homework.find(
+        {"daily_tracker": True}, {"_id": 0}
+    ).to_list(20000)
+
+    # Group by template_id; one-off plans (no template_id) bucketed under
+    # `None` per user spec (1.a — group as "Custom").
+    groups: Dict[Optional[str], List[dict]] = {}
+    for hw in homeworks:
+        key = hw.get("template_id") or None
+        groups.setdefault(key, []).append(hw)
+
+    # Lookup template titles for any template ids we still have records for
+    template_ids = [k for k in groups.keys() if k]
+    tpl_titles: Dict[str, str] = {}
+    if template_ids:
+        async for t in db.homework_templates.find(
+            {"id": {"$in": template_ids}}, {"_id": 0, "id": 1, "name": 1}
+        ):
+            tpl_titles[t["id"]] = t.get("name") or "Untitled template"
+
+    def _parse_dt(value: Any) -> Optional[datetime]:
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+
+    templates_out: List[Dict[str, Any]] = []
+    global_active = 0
+    global_completed = 0
+    global_streak_sum = 0
+    global_streak_count = 0
+
+    for template_id, plans in groups.items():
+        if not plans:
+            continue
+        # Title fallback: latest plan's template_snapshot title → otherwise
+        # the title field → "Custom (one-off)" for the no-template bucket.
+        title = None
+        if template_id and template_id in tpl_titles:
+            title = tpl_titles[template_id]
+        if not title:
+            # Take the most-recently-created plan as the representative title
+            latest = sorted(plans, key=lambda p: p.get("created_at") or "", reverse=True)[0]
+            snap = latest.get("template_snapshot") or {}
+            title = snap.get("name") or snap.get("title") or latest.get("title") or "Custom plan"
+        if template_id is None:
+            title = "Custom (one-off)"
+
+        # Use the latest plan's snapshot for total_days (curriculum length).
+        # If plans diverge, fall back to the max.
+        total_days = 0
+        for hw in plans:
+            snap = hw.get("template_snapshot") or {}
+            sects = [s for s in snap.get("sections") or [] if s.get("day_number")]
+            total_days = max(total_days, len(sects))
+
+        assigned_count = len(plans)
+        completed_count = sum(1 for p in plans if p.get("status") == "completed")
+        active_count = sum(1 for p in plans if p.get("status") != "completed")
+        completion_rate = round(100.0 * completed_count / assigned_count, 1) if assigned_count else 0.0
+
+        # Avg days-to-complete (only count completed; uses calendar days
+        # between created_at and completed_at, falls back to last log time
+        # if completed_at is missing).
+        days_list: List[float] = []
+        for p in plans:
+            if p.get("status") != "completed":
+                continue
+            start = _parse_dt(p.get("created_at"))
+            end = _parse_dt(p.get("completed_at"))
+            if not end:
+                # fall back to latest section log time
+                latest_log = None
+                for log in p.get("section_logs") or []:
+                    lt = _parse_dt(log.get("logged_at"))
+                    if lt and (latest_log is None or lt > latest_log):
+                        latest_log = lt
+                end = latest_log
+            if start and end and end >= start:
+                days_list.append((end - start).total_seconds() / 86400.0)
+        avg_days_to_complete = round(sum(days_list) / len(days_list), 1) if days_list else None
+
+        # Per-day breakdown across ALL plans in this template (not just completed)
+        per_day_acc: Dict[int, Dict[str, Any]] = {}
+        for dn in range(1, max(total_days, 1) + 1):
+            per_day_acc[dn] = {
+                "day_number": dn,
+                "submitted": 0,
+                "approved": 0,
+                "needs_redo": 0,
+                "questions": 0,
+                "mood_sum": 0,
+                "mood_count": 0,
+                "logged_count": 0,
+            }
+        for p in plans:
+            for log in p.get("section_logs") or []:
+                dn = int(log.get("day_number") or 0)
+                if dn not in per_day_acc:
+                    continue
+                bucket = per_day_acc[dn]
+                bucket["logged_count"] += 1
+                status = log.get("submission_status") or "submitted"
+                if status == "submitted":
+                    bucket["submitted"] += 1
+                elif status == "approved":
+                    bucket["approved"] += 1
+                elif status == "needs_redo":
+                    bucket["needs_redo"] += 1
+                bucket["questions"] += len(log.get("questions") or [])
+                mood = (log.get("field_values") or {}).get("__mood")
+                try:
+                    moodv = int(mood) if mood is not None else 0
+                    if 1 <= moodv <= 5:
+                        bucket["mood_sum"] += moodv
+                        bucket["mood_count"] += 1
+                except Exception:
+                    pass
+
+        per_day_out: List[Dict[str, Any]] = []
+        for dn in sorted(per_day_acc.keys()):
+            b = per_day_acc[dn]
+            engagement = round(100.0 * b["logged_count"] / assigned_count, 1) if assigned_count else 0.0
+            per_day_out.append({
+                "day_number": dn,
+                "submitted": b["submitted"],
+                "approved": b["approved"],
+                "needs_redo": b["needs_redo"],
+                "questions": b["questions"],
+                "mood_avg": round(b["mood_sum"] / b["mood_count"], 2) if b["mood_count"] else None,
+                "engagement_pct": engagement,
+                "logged_count": b["logged_count"],
+            })
+
+        # Drop-off day A — stale plans: of plans with no activity in 14+ days
+        # and still not completed, which day_number was last logged before
+        # they went stale? Report the most-common.
+        stale_last_days: Dict[int, int] = {}
+        for p in plans:
+            if p.get("status") == "completed":
+                continue
+            last_log_dt: Optional[datetime] = None
+            last_log_dn: Optional[int] = None
+            for log in p.get("section_logs") or []:
+                lt = _parse_dt(log.get("logged_at"))
+                if not lt:
+                    continue
+                if last_log_dt is None or lt > last_log_dt:
+                    last_log_dt = lt
+                    last_log_dn = int(log.get("day_number") or 0)
+            if last_log_dn is None:
+                # never logged — counts as drop at day 0/1 → bucket Day 1
+                last_log_dn = 1
+                last_log_dt = _parse_dt(p.get("created_at"))
+            if last_log_dt and last_log_dt < stale_cutoff:
+                stale_last_days[last_log_dn] = stale_last_days.get(last_log_dn, 0) + 1
+        dropoff_day_stale = max(stale_last_days, key=stale_last_days.get) if stale_last_days else None
+
+        # Drop-off day B — engagement-drop: the day_number with the largest
+        # negative delta in engagement_pct compared to its predecessor.
+        # First-day → second-day drop is usually biggest signal.
+        dropoff_day_engagement: Optional[int] = None
+        if len(per_day_out) >= 2:
+            biggest_drop = 0.0
+            for i in range(1, len(per_day_out)):
+                drop = per_day_out[i - 1]["engagement_pct"] - per_day_out[i]["engagement_pct"]
+                if drop > biggest_drop:
+                    biggest_drop = drop
+                    dropoff_day_engagement = per_day_out[i]["day_number"]
+
+        # Recent completions (last 8)
+        recent_completions: List[Dict[str, Any]] = []
+        completed_plans = [p for p in plans if p.get("status") == "completed"]
+        completed_plans.sort(key=lambda p: p.get("completed_at") or p.get("updated_at") or "", reverse=True)
+        for p in completed_plans[:8]:
+            recent_completions.append({
+                "homework_id": p.get("id"),
+                "dog_name": p.get("dog_name", ""),
+                "client_name": p.get("client_name", ""),
+                "completed_at": p.get("completed_at") or "",
+            })
+
+        # Roll into global counters
+        global_active += active_count
+        global_completed += completed_count
+
+        templates_out.append({
+            "template_id": template_id,
+            "title": title,
+            "total_days": total_days,
+            "assigned_count": assigned_count,
+            "active_count": active_count,
+            "completed_count": completed_count,
+            "completion_rate": completion_rate,
+            "avg_days_to_complete": avg_days_to_complete,
+            "dropoff_day_stale": dropoff_day_stale,
+            "dropoff_day_engagement": dropoff_day_engagement,
+            "per_day": per_day_out,
+            "recent_completions": recent_completions,
+        })
+
+    # Sort templates: most-assigned first (the curricula you actually use)
+    templates_out.sort(key=lambda t: (-t["assigned_count"], t["title"].lower()))
+
+    # Global avg streak across active plans — uses _compute_daily_progress so
+    # it matches what the client sees.
+    for hw in homeworks:
+        if hw.get("status") == "completed":
+            continue
+        prog = _compute_daily_progress(hw)
+        streak = _streak_count(prog)
+        global_streak_sum += streak
+        global_streak_count += 1
+
+    total_assigned = global_active + global_completed
+    global_completion_rate = round(100.0 * global_completed / total_assigned, 1) if total_assigned else 0.0
+    avg_streak = round(global_streak_sum / global_streak_count, 1) if global_streak_count else 0.0
+
+    return {
+        "global": {
+            "active_plans": global_active,
+            "completed_plans": global_completed,
+            "total_assigned": total_assigned,
+            "completion_rate": global_completion_rate,
+            "avg_streak": avg_streak,
+        },
+        "templates": templates_out,
+    }
+
+
 # -------- Service-Dog Training Curriculum --------
 from training_data import (
     CATEGORIES as TRAINING_CATEGORIES,

@@ -28,6 +28,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110r — Homework analytics dashboard (2026-02)
+- ✅ New endpoint `GET /api/admin/homework/analytics` returns `{global, templates}` with:
+  - Per-template: assigned/active/completed counts, completion rate, avg days-to-complete (calendar), drop-off Day (stale + engagement-cliff flavors), per-day buckets (submitted/approved/needs_redo/questions/mood_avg/engagement_pct), recent completions
+  - Global tiles: active plans, completed plans, completion rate, avg active streak
+- ✅ One-off custom plans bucketed under "Custom (one-off)" (template_id=None)
+- ✅ Both drop-off detectors shown:
+  - Stale: most-common last-logged day among plans inactive 14+ days
+  - Engagement cliff: day_number with steepest engagement_pct drop vs previous day
+- ✅ New `HomeworkAnalytics.jsx` modal accessible from Homework toolbar via "Analytics" button. Expand any template row → per-day mini bar chart with mood dots + needs-redo/questions counters + "What to check" coaching line
+- ✅ Tests: 65/65 homework + tracker + analytics pytests passing. `test_homework_analytics.py` covers shape, counter reconciliation, per-day submission propagation
+
 ## Sprint 110q — Advancement celebration toast (2026-02)
 - ✅ When client submits a day, a bottom-center toast appears for ~4s:
   - Mid-plan: "🎉 Day N done — Day N+1 unlocked!" with dog name

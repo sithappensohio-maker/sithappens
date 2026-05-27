@@ -5,6 +5,7 @@ import TemplatePicker, { tierMeta } from "../components/HomeworkTemplatePicker";
 import HomeworkReportPanel from "../components/HomeworkReportPanel";
 import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
 import DailyReviewQueue from "../components/DailyReviewQueue";
+import HomeworkAnalytics from "../components/HomeworkAnalytics";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -15,6 +16,7 @@ export default function Homework() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [trackerOpen, setTrackerOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [form, setForm] = useState({ dog_id: "", title: "", instructions: "", video_url: "", due_date: "" });
   const [err, setErr] = useState("");
@@ -110,6 +112,10 @@ export default function Homework() {
           <button onClick={() => setTrackerOpen(true)} data-testid="daily-tracker-button"
                   className="bg-purple-500 text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-purple-500/80">
             <i className="fas fa-calendar-check mr-2" />Daily Tracker
+          </button>
+          <button onClick={() => setAnalyticsOpen(true)} data-testid="homework-analytics-button" title="Curriculum completion + drop-off insights"
+                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
+            <i className="fas fa-chart-line mr-1.5" />Analytics
           </button>
           <button onClick={sendWeeklyDigest} disabled={digestBusy} data-testid="send-weekly-digest-button" title="Auto-fires every Sunday night"
                   className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:border-purple-400 hover:text-purple-300 disabled:opacity-50">
@@ -213,6 +219,10 @@ export default function Homework() {
 
       {reviewOpen && (
         <DailyReviewQueue onClose={()=>setReviewOpen(false)} onReviewed={()=>load()} />
+      )}
+
+      {analyticsOpen && (
+        <HomeworkAnalytics onClose={()=>setAnalyticsOpen(false)} />
       )}
 
       {open && (
