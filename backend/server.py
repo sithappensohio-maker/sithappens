@@ -8233,6 +8233,20 @@ async def list_services(user: dict = Depends(get_current_user), include_inactive
     return items
 
 
+# Sprint 110t — public, no-auth catalog of active services used by the
+# landing/login page so prospects can see what's offered before they sign up.
+# Returns only marketing-safe fields (name, description, price, category,
+# color, icon). Internal admin flags + slug omitted.
+@api.get("/public/services")
+async def public_list_services():
+    items = await db.services.find(
+        {"active": True},
+        {"_id": 0, "id": 1, "name": 1, "description": 1, "base_price": 1,
+         "service_type": 1, "color": 1, "icon": 1, "duration_minutes": 1},
+    ).sort("name", 1).to_list(500)
+    return items
+
+
 @api.post("/services")
 async def create_service(body: ServiceIn, _: dict = Depends(require_admin)):
     doc = body.model_dump()

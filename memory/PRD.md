@@ -28,6 +28,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110t — Landing-page-grade login screen (2026-02)
+- ✅ Login screen rewritten as a real marketing landing: sticky top bar, full hero with brand promise + CTA buttons + compact auth card, "What we do" 4-category grid, "Browse all N services" modal pulling from new public endpoint, "Why Sit Happens" 4-pillar grid, "How it works" 3-step flow, final gradient CTA strip, footer
+- ✅ New backend endpoint `GET /api/public/services` (no auth) returns active services with only marketing-safe fields (name/description/price/category/color/icon)
+- ✅ All existing auth flows preserved: tabs, ?ref=CODE auto-handler, forgot password modal, error display, all testids intact (`tab-login`, `tab-register`, `login-email-input`, `login-password-input`, `register-name-input`, `register-refcode-input`, `login-submit-button`, `forgot-password-link`, `login-error`)
+- ✅ Brand palette: dark base (#0c111c), shBlue / shGreen / shOrange / purple accents; uppercase-italic-black headlines; sharp pill CTAs; soft radial glow backdrop on hero
+- ✅ Lint clean; 17 landing-specific data-testids verified; browse-services modal opens with 11 live services
+
 ## Sprint 110s — Service descriptions (2026-02)
 - ✅ `ServiceIn` backend model gains optional `description` (max 500 chars) — surfaces in GET/POST/PUT `/services`
 - ✅ Admin Services form (Settings → Services & Programs) gets a 3-row textarea with live char counter + helper "shown to clients", and the live preview now renders the description right under the service name
