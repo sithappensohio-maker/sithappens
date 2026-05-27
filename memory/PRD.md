@@ -28,6 +28,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110aa — Italic clipping fix + admin Bookings gradient + Achievements panel polish (2026-02)
+- ✅ **Italic header clipping fixed**: PageHero title now has `pr-1 sm:pr-2`, plus global admin header h2 + portal welcome line get matching right-padding so italic D/S/B tails no longer clip against `overflow-hidden`
+- ✅ **Admin Bookings rows**: per-status colored left-border + gradient tint (approved=green, pending=orange, completed=blue, rejected=red) on both desktop table rows and mobile cards. Status pill now has matching colored border. Hover-state row highlight added.
+- ✅ **Portal Achievements panel** (`HomeworkIncentivesPanel`): wrapped in shadow-2xl gradient card with dual brand-glow halo (shGreen + shOrange), "{N} EARNED · {N} TO UNLOCK" eyebrow with medal icon, big italic "YOUR ACHIEVEMENTS." headline — matches Trophy Wall styling exactly
+- ✅ Lint clean across PageHero, App, Portal, Bookings, HomeworkIncentivesPanel
+- ✅ Smoke-screenshotted: dashboard header letters render clean; admin bookings shows colored row strips; portal achievements is on-brand
+
 ## Sprint 110z — Portal: Trophy Wall / My Dogs cards / My Bookings cards unification (2026-02)
 - ✅ **Trophy Wall**: shadow-2xl + dual brand-glow halos (orange top-left + blue bottom-right), "{N} EARNED" eyebrow, italic "TROPHY WALL." headline, section labels with user/paw icons
 - ✅ **My Dogs cards**: each card gets gradient bg + shGreen radial halo top-right, hover lift, larger photo area (h-36), italic dog name, brand-colored "Mixed/Lab" pill, shield-iconed vaccine status with bold green/red

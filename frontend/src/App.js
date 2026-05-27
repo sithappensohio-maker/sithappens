@@ -145,7 +145,7 @@ function AdminShell() {
             </button>
             <img src="/logo.png" alt="Sit Happens"
                  className="h-11 md:hidden drop-shadow-[0_0_10px_rgba(140,198,63,0.4)]" />
-            <h2 className="text-base sm:text-lg font-black uppercase italic text-white tracking-tight truncate"
+            <h2 className="text-base sm:text-lg font-black uppercase italic text-white tracking-tight truncate pr-1"
                 data-testid="header-title">
               <span className="text-shGreen">·</span> {tab}
             </h2>

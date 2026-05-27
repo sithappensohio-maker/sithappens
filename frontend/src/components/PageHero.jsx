@@ -35,7 +35,11 @@ export default function PageHero({
               {eyebrow.icon && <i className={`fas ${eyebrow.icon} mr-2`}/>}{eyebrow.text}
             </p>
           )}
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase italic tracking-tight text-white leading-tight">
+          {/* Sprint 110aa — italic + tight tracking + overflow-hidden caused
+              the tail of right-leaning letters (D, S, B…) to clip. Adding
+              `pr-2` (or `pr-1` on mobile) gives the slant room without
+              affecting layout otherwise. */}
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase italic tracking-tight text-white leading-tight pr-1 sm:pr-2">
             {title}
             {highlight && <> <span className="text-shGreen">{highlight}</span></>}
           </h1>

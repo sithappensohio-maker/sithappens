@@ -81,15 +81,21 @@ export default function HomeworkIncentivesPanel() {
   if (data.streak_days === 0 && data.completed_plans === 0 && earnedTrophies.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4 shadow-lg" data-testid="incentives-panel">
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <p className="text-[14px] font-black uppercase tracking-widest text-white">
-          <i className="fas fa-trophy text-shGreen mr-2"/>Your achievements
-        </p>
-        <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">
-          {earnedTrophies.length} earned · {(data.trophy_progress || []).length - earnedTrophies.length} to unlock
-        </p>
-      </div>
+    <div className="relative overflow-hidden rounded-2xl border border-shGreen/40 bg-gradient-to-br from-shGreen/10 via-bgPanel to-shOrange/10 p-5 shadow-2xl"
+         data-testid="incentives-panel">
+      {/* Sprint 110aa — Achievements panel gets the same glow-and-eyebrow
+          treatment as the rest of the polished portal. */}
+      <div className="absolute inset-0 pointer-events-none opacity-25"
+           style={{ background: "radial-gradient(circle at 0% 0%, rgba(140,198,63,0.5) 0%, transparent 45%), radial-gradient(circle at 100% 100%, rgba(242,101,34,0.45) 0%, transparent 50%)" }}/>
+      <div className="relative">
+        <div className="flex items-end justify-between flex-wrap gap-2 mb-4">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+              <i className="fas fa-medal mr-1.5"/>{earnedTrophies.length} earned · {(data.trophy_progress || []).length - earnedTrophies.length} to unlock
+            </p>
+            <h2 className="text-2xl font-black text-white uppercase italic tracking-tight pr-1">Your Achievements.</h2>
+          </div>
+        </div>
 
       {/* Streak tier — the headline */}
       <div className="bg-bgBase rounded-lg p-4 mb-4 border border-bgHover" data-testid="incentives-streak">
@@ -214,6 +220,7 @@ export default function HomeworkIncentivesPanel() {
       )}
 
       {/* Sprint 110n — Referral feed removed; client uses an external referral system. */}
+      </div>
     </div>
   );
 }

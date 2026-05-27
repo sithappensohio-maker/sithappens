@@ -178,8 +178,17 @@ export default function Bookings() {
           </thead>
           <tbody data-testid="bookings-body">
             {visible.length === 0 && <tr><td colSpan={6} className="px-6 py-10 text-center text-xs text-gray-500 uppercase font-black">{showHistory || bookings.length === 0 ? "No bookings yet." : "No active bookings. Click Show History to see past ones."}</td></tr>}
-            {visible.map(b => (
-              <tr key={b.id} className="border-t border-bgHover/40">
+            {visible.map(b => {
+              // Sprint 110aa — per-status gradient + colored left border so
+              // approved=green / pending=orange / completed=blue / rejected=red
+              // reads at a glance instead of having to find the status pill.
+              const rowAccent = b.status === "approved" ? "border-l-4 border-l-shGreen bg-gradient-to-r from-shGreen/10 to-transparent"
+                              : b.status === "pending"  ? "border-l-4 border-l-shOrange bg-gradient-to-r from-shOrange/10 to-transparent"
+                              : b.status === "completed"? "border-l-4 border-l-shBlue bg-gradient-to-r from-shBlue/10 to-transparent"
+                              : b.status === "rejected" ? "border-l-4 border-l-red-500 bg-gradient-to-r from-red-500/10 to-transparent"
+                              : "border-l-4 border-l-transparent";
+              return (
+              <tr key={b.id} className={`border-t border-bgHover/40 ${rowAccent} hover:bg-bgHover/30 transition`}>
                 <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}</td>
                 <td className="px-6 py-4 text-gray-300 text-xs">{b.client_name}</td>
                 <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</td>
@@ -187,7 +196,7 @@ export default function Bookings() {
                   {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}
                   {b.time && <span className="ml-2 text-shOrange font-black tracking-widest">@ {b.time}</span>}
                 </td>
-                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span></td>
+                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
                   <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shBlue hover:underline">Edit</button>
                   {b.status === "pending" && <>
@@ -197,21 +206,28 @@ export default function Bookings() {
                   {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
 
         {/* Mobile: stacked cards */}
         <div className="md:hidden divide-y divide-bgHover/40" data-testid="bookings-mobile">
           {visible.length === 0 && <div className="px-4 py-10 text-center text-xs text-gray-500 uppercase font-black">{showHistory || bookings.length === 0 ? "No bookings yet." : "No active bookings. Tap Show History to see past ones."}</div>}
-          {visible.map(b => (
-            <div key={b.id} className="p-4 space-y-2" data-testid={`booking-card-${b.id}`}>
+          {visible.map(b => {
+            const cardAccent = b.status === "approved" ? "border-l-4 border-l-shGreen bg-gradient-to-r from-shGreen/10 to-transparent"
+                            : b.status === "pending"  ? "border-l-4 border-l-shOrange bg-gradient-to-r from-shOrange/10 to-transparent"
+                            : b.status === "completed"? "border-l-4 border-l-shBlue bg-gradient-to-r from-shBlue/10 to-transparent"
+                            : b.status === "rejected" ? "border-l-4 border-l-red-500 bg-gradient-to-r from-red-500/10 to-transparent"
+                            : "";
+            return (
+            <div key={b.id} className={`p-4 space-y-2 ${cardAccent}`} data-testid={`booking-card-${b.id}`}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-black uppercase text-white">{b.dog_name}</p>
                   <p className="text-[13px] text-gray-400 truncate">{b.client_name}</p>
                 </div>
-                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px]">
                 <span className="font-black uppercase tracking-widest text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>
@@ -226,7 +242,8 @@ export default function Bookings() {
                 {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
         </>
         )}

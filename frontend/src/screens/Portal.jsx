@@ -826,7 +826,7 @@ export default function Portal() {
             <p className="hidden sm:block text-[11px] text-gray-400 font-black uppercase tracking-[0.3em]">
               Dog Training · Daycare · Boarding · Photography
             </p>
-            <p className="text-[14px] sm:text-base text-white font-black uppercase italic tracking-tight sm:mt-1 truncate">
+            <p className="text-[14px] sm:text-base text-white font-black uppercase italic tracking-tight sm:mt-1 truncate pr-1">
               <span className="text-shGreen">·</span> Welcome back, <span className="text-shGreen">{user.name.split(" ")[0] || user.name}</span>
             </p>
           </div>
