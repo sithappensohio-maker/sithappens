@@ -28,6 +28,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110q — Advancement celebration toast (2026-02)
+- ✅ When client submits a day, a bottom-center toast appears for ~4s:
+  - Mid-plan: "🎉 Day N done — Day N+1 unlocked!" with dog name
+  - Final day: "🏆 Plan complete!" with summary
+- ✅ Self-contained inside `TodayPlanCard` (no app-wide Toaster mount needed). Rendered via `createPortal` so it floats above all card chrome.
+- ✅ Testid: `data-testid="day-advance-toast-advance"` / `day-advance-toast-complete`
+
 ## Sprint 110p — Client-driven daily-tracker advancement + visible day strip (2026-02)
 - ✅ Auto-advancement: once the client submits a day's log, the NEXT day immediately unlocks (no admin approval required to progress). `_compute_daily_progress` chain now treats `submitted` as a pass status.
 - ✅ Trainer can still flag a day `needs_redo` — that re-locks any *unlogged* subsequent days. Already-submitted future days keep their own status.

@@ -44,7 +44,17 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
   // label/description without truncation. Also which item is in fullscreen.
   const [expanded, setExpanded] = useState({}); // key: `${hwid}:${stepid}` → bool
   const [fullscreenItem, setFullscreenItem] = useState(null);
+  // Sprint 110q — celebratory advancement toast. Set right after a successful
+  // day submit; auto-dismisses after a few seconds. Shape:
+  //   { kind: "advance" | "complete", day_completed, next_day?, total_days, dog_name, title }
+  const [celebration, setCelebration] = useState(null);
   const toggleExpand = (key) => setExpanded((e) => ({ ...e, [key]: !e[key] }));
+
+  useEffect(() => {
+    if (!celebration) return;
+    const t = setTimeout(() => setCelebration(null), 4200);
+    return () => clearTimeout(t);
+  }, [celebration]);
 
   const load = async () => {
     try {
@@ -172,7 +182,35 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
         photo: form.photo || "",
         video_media_id: "",
       });
-      await load();
+      // Sprint 110q — capture day_completed before reload, then compare with
+      // the freshly-loaded items to decide if we should celebrate an
+      // advancement (next day unlocked) or a plan completion (item gone).
+      const dayCompleted = item.day_number;
+      const totalDays = item.total_days;
+      const dogName = item.dog_name;
+      const planTitle = item.title;
+      const hwid = item.homework_id;
+      const r = await api.get("/portal/today-plan");
+      setData(r.data);
+      const nextItem = (r.data.items || []).find((it) => it.homework_id === hwid);
+      if (!nextItem) {
+        setCelebration({ kind: "complete", day_completed: dayCompleted, total_days: totalDays, dog_name: dogName, title: planTitle });
+      } else if (nextItem.day_number > dayCompleted) {
+        setCelebration({ kind: "advance", day_completed: dayCompleted, next_day: nextItem.day_number, total_days: totalDays, dog_name: dogName, title: planTitle });
+      }
+      // Reset form state for any newly-loaded items.
+      const fnext = {};
+      for (const it of r.data.items || []) {
+        const prev = forms[it.homework_id] || {};
+        fnext[it.homework_id] = {
+          values: prev.values || {},
+          mood: prev.mood ?? 0,
+          photo: prev.photo || "",
+          note: prev.note || "",
+          submitting: false,
+        };
+      }
+      setForms(fnext);
       onChanged?.();
     } catch (e) {
       setErr(e.response?.data?.detail || "Submit failed");
@@ -422,6 +460,39 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                              busy={busy}
                              onToggleStep={(s) => toggleStep(fullscreenItem, s)}
                              onClose={() => setFullscreenItem(null)} />,
+        document.body,
+      )}
+      {/* Sprint 110q — advancement toast. Fixed bottom-center, auto-dismisses
+          after ~4s. Two flavors: a next-day unlock celebration and a final
+          plan-complete celebration. */}
+      {celebration && createPortal(
+        <div className="fixed inset-x-0 bottom-6 z-[10000] flex justify-center px-4 pointer-events-none"
+             data-testid={`day-advance-toast-${celebration.kind}`}>
+          <div className={`pointer-events-auto max-w-md w-full rounded-xl shadow-2xl border px-4 py-3 flex items-center gap-3 animate-slide-in ${
+                  celebration.kind === "complete"
+                    ? "bg-gradient-to-r from-shOrange/30 via-shOrange/20 to-shGreen/20 border-shOrange/60"
+                    : "bg-gradient-to-r from-shGreen/25 via-shGreen/15 to-shBlue/20 border-shGreen/60"
+                }`}>
+            <span className="text-3xl">{celebration.kind === "complete" ? "🏆" : "🎉"}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-[14px] font-black text-white uppercase tracking-tight">
+                {celebration.kind === "complete"
+                  ? `Plan complete!`
+                  : `Day ${celebration.day_completed} done — Day ${celebration.next_day} unlocked!`}
+              </p>
+              <p className="text-[12px] text-gray-300 truncate">
+                {celebration.kind === "complete"
+                  ? `${celebration.dog_name} crushed all ${celebration.total_days} days of "${celebration.title}".`
+                  : `Keep the streak going with ${celebration.dog_name}.`}
+              </p>
+            </div>
+            <button onClick={() => setCelebration(null)}
+                    data-testid="day-advance-toast-close"
+                    className="text-gray-300 hover:text-white p-1 shrink-0">
+              <i className="fas fa-times"/>
+            </button>
+          </div>
+        </div>,
         document.body,
       )}
     </>
