@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110x — Portal Book Service hero + credits visual polish (2026-02)
+- ✅ **Book a Service** promoted ABOVE Quick Links (was below) and rebuilt as a vivid gradient hero: brand-color radial glow backdrop, oversized calendar icon, "READY WHEN YOU ARE" eyebrow, italic "BOOK A SERVICE." headline, punchy green "BOOK NOW →" CTA
+- ✅ **Credits card** upgraded: shGreen radial halo behind whole card, per-credit colored glow halos, icon (sun/cap/moon) above each label, text-shadow drop-glow on the big numbers, gradient border highlights per credit type
+- ✅ Profile / Bookings buttons rounded-lg with hover transitions; consistent visual weight with rest of app
+- ✅ Lint clean; verified Book Service hero renders above Quick Links via DOM ordering check; visual experience now matches the landing-page polish
+
 ## Sprint 110w — PageHero rolled out to all remaining admin screens (2026-02)
 - ✅ Settings ("Settings. Make it yours."), Run Sheet ("Daily Run Sheet. For the team."), Recurring ("Recurring. Set it. Forget it."), Dogs ("Dog Records. The real stars."), Pipeline ("Training Pipeline. At a glance."), Trophies ("Trophy Catalog. Earn it. Show it."), Income ("Income & Services. The cash story."), Staff ("Staff. The crew that makes it happen."), Incidents ("Incident Reports. Permanent record.")
 - ✅ Every admin screen now opens with the same landing-page hero rhythm: brand glow backdrop, eyebrow tag, uppercase-italic-black title + highlight, subhead, right-side action slot

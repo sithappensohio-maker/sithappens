@@ -870,40 +870,63 @@ export default function Portal() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
-          <div className="bg-bgPanel card-pop p-6 rounded-xl border border-bgHover shadow-2xl" data-testid="credits-card">
-            <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest text-center mb-4">Your Credits</p>
-            <div className="grid grid-cols-3 gap-2 text-center">
-              <div className="bg-bgBase rounded p-3">
-                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Daycare</p>
-                <p className="text-3xl font-black text-shGreen mt-1">{credits}</p>
-                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">days</p>
+          {/* Sprint 110x — credits card upgraded with brand-color glow halos
+              behind each metric, slightly bigger numbers, gradient bg. Same
+              data, much more visually engaging. */}
+          <div className="relative overflow-hidden bg-bgPanel card-pop p-6 rounded-2xl border border-bgHover shadow-2xl" data-testid="credits-card">
+            <div className="absolute inset-0 pointer-events-none opacity-25"
+                 style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.5) 0%, transparent 55%)" }}/>
+            <div className="relative">
+              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
+                <i className="fas fa-wallet mr-1"/>Your Credits
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="relative bg-bgBase rounded-lg p-3 border border-shGreen/20">
+                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(140,198,63,0.7) 0%, transparent 65%)" }}/>
+                  <div className="relative">
+                    <i className="fas fa-sun text-shGreen text-sm mb-1"/>
+                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Daycare</p>
+                    <p className="text-3xl font-black text-shGreen mt-1 drop-shadow-[0_0_8px_rgba(140,198,63,0.4)]">{credits}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">days</p>
+                  </div>
+                </div>
+                <div className="relative bg-bgBase rounded-lg p-3 border border-purple-500/20">
+                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(168,85,247,0.7) 0%, transparent 65%)" }}/>
+                  <div className="relative">
+                    <i className="fas fa-graduation-cap text-purple-400 text-sm mb-1"/>
+                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Training</p>
+                    <p className="text-3xl font-black text-purple-400 mt-1 drop-shadow-[0_0_8px_rgba(168,85,247,0.4)]">{client?.training_credits || 0}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">sessions</p>
+                  </div>
+                </div>
+                <div className="relative bg-bgBase rounded-lg p-3 border border-shOrange/20">
+                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(242,101,34,0.7) 0%, transparent 65%)" }}/>
+                  <div className="relative">
+                    <i className="fas fa-moon text-shOrange text-sm mb-1"/>
+                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Boarding</p>
+                    <p className="text-3xl font-black text-shOrange mt-1 drop-shadow-[0_0_8px_rgba(242,101,34,0.4)]">{client?.boarding_credits || 0}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">nights</p>
+                  </div>
+                </div>
               </div>
-              <div className="bg-bgBase rounded p-3">
-                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Training</p>
-                <p className="text-3xl font-black text-purple-400 mt-1">{client?.training_credits || 0}</p>
-                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">sessions</p>
+              <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
+                <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
+              </p>
+              <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
+                      className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
+                <i className="fas fa-user-pen mr-2"/>My Profile
+              </button>
+              <button onClick={()=>{
+                         const el = document.getElementById("portal-bookings-anchor");
+                         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                       }}
+                      data-testid="jump-to-bookings"
+                      className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
+                <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
+              </button>
+              <div className="mt-4 pt-4 border-t border-bgHover">
+                <TextSizePicker testid="portal-text-size" compact />
               </div>
-              <div className="bg-bgBase rounded p-3">
-                <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">Boarding</p>
-                <p className="text-3xl font-black text-shOrange mt-1">{client?.boarding_credits || 0}</p>
-                <p className="text-[12px] text-gray-500 uppercase tracking-widest mt-1">nights</p>
-              </div>
-            </div>
-            <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">Grooming is pay-on-the-day</p>
-            <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
-                    className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue">
-              <i className="fas fa-user-pen mr-2"/>My Profile
-            </button>
-            <button onClick={()=>{
-                       const el = document.getElementById("portal-bookings-anchor");
-                       if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                     }}
-                    data-testid="jump-to-bookings"
-                    className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen">
-              <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
-            </button>
-            <div className="mt-4 pt-4 border-t border-bgHover">
-              <TextSizePicker testid="portal-text-size" compact />
             </div>
           </div>
 
@@ -925,6 +948,55 @@ export default function Portal() {
             ) : (
               <p className="text-xs text-gray-400">Signed by <span className="text-white font-black">{waiver?.signature?.typed_name}</span> on {(waiver?.signature?.signed_at||"").slice(0,10)}</p>
             )}
+          </div>
+
+          {/* Sprint 110x — Book Service promoted ABOVE quick links and turned
+              into a vivid gradient hero CTA (brand-color glow, oversized icon,
+              big punchy headline). It's the #1 action a client takes — should
+              feel like the marquee not a small text card. */}
+          <div id="portal-book-section"
+               className="relative overflow-hidden rounded-2xl border border-shBlue/40 bg-gradient-to-br from-shBlue/30 via-shGreen/15 to-shOrange/15 p-5 shadow-2xl"
+               data-testid="portal-book-hero">
+            <div className="absolute inset-0 pointer-events-none opacity-50"
+                 style={{ background: "radial-gradient(circle at 20% 30%, rgba(0,169,224,0.45) 0%, transparent 45%), radial-gradient(circle at 80% 80%, rgba(140,198,63,0.4) 0%, transparent 50%)" }}/>
+            <div className="relative">
+              <div className="flex items-start gap-3 mb-3">
+                <div className="w-12 h-12 rounded-xl bg-white/10 backdrop-blur grid place-items-center text-shGreen shrink-0 shadow-lg">
+                  <i className="fas fa-calendar-plus text-2xl"/>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+                    <i className="fas fa-paw mr-1"/>Ready when you are
+                  </p>
+                  <h3 className="text-xl font-black text-white uppercase italic tracking-tight leading-tight">
+                    Book a service.
+                  </h3>
+                </div>
+              </div>
+              <p className="text-[14px] text-gray-200 leading-relaxed mb-4">
+                {dogs.length === 0 ? "Add a dog first to book a service." :
+                 waiverNeeded ? "Sign the waiver before booking your first service." :
+                 "Daycare, boarding, training & more — pick a service and a date."}
+              </p>
+              <button
+                onClick={() => setShowBookWizard(true)}
+                disabled={dogs.length === 0 || waiverNeeded}
+                data-testid="portal-book-button"
+                className={`w-full py-4 rounded-lg font-black uppercase text-[14px] tracking-widest shadow-xl flex items-center justify-center gap-2 transition ${
+                  (dogs.length === 0 || waiverNeeded)
+                    ? "bg-bgBase/60 text-gray-500 cursor-not-allowed border border-bgHover"
+                    : "bg-shGreen text-bgHeader hover:bg-white hover:scale-[1.02] active:scale-[0.98]"
+                }`}>
+                <i className="fas fa-calendar-plus"/>{dogs.length === 0 || waiverNeeded ? "Book Service" : "Book Now"}
+                {!(dogs.length === 0 || waiverNeeded) && <i className="fas fa-arrow-right ml-1"/>}
+              </button>
+              {waiverNeeded && (
+                <button onClick={()=>setShowWaiver(true)} data-testid="portal-book-waiver-link"
+                        className="w-full mt-2 text-[14px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
+                  Sign waiver to enable booking
+                </button>
+              )}
+            </div>
           </div>
 
           {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
@@ -1014,33 +1086,6 @@ export default function Portal() {
             </div>
           )}
 
-          <div id="portal-book-section" className="bg-bgPanel p-6 rounded-xl border border-bgHover shadow-2xl">
-            <h4 className="font-black text-shBlue mb-2 uppercase text-xs tracking-widest">
-              <i className="fas fa-calendar-plus mr-2"/>Book a Service
-            </h4>
-            <p className="text-[14px] text-gray-500 mb-4 leading-relaxed">
-              {dogs.length === 0 ? "Add a dog first to book a service." :
-               waiverNeeded ? "Sign the waiver before booking your first service." :
-               "Choose a service, pick a date, and we'll take it from there."}
-            </p>
-            <button
-              onClick={() => setShowBookWizard(true)}
-              disabled={dogs.length === 0 || waiverNeeded}
-              data-testid="portal-book-button"
-              className={`w-full py-4 rounded font-black uppercase text-[14px] tracking-widest shadow-lg flex items-center justify-center gap-2 transition ${
-                (dogs.length === 0 || waiverNeeded)
-                  ? "bg-bgBase text-gray-500 cursor-not-allowed border border-bgHover"
-                  : "bg-shBlue text-white hover:bg-shBlue/90"
-              }`}>
-              <i className="fas fa-calendar-plus"/>Book Service
-            </button>
-            {waiverNeeded && (
-              <button onClick={()=>setShowWaiver(true)} data-testid="portal-book-waiver-link"
-                      className="w-full mt-2 text-[14px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
-                Sign waiver to enable booking
-              </button>
-            )}
-          </div>
         </div>
 
         <div className="col-span-2 space-y-6">
