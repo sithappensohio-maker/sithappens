@@ -1189,27 +1189,36 @@ export default function Portal() {
           )}
 
           {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
-            <div data-testid="portal-trophies-section" className="bg-gradient-to-br from-shOrange/10 via-bgPanel to-shBlue/10 border border-shOrange/30 rounded-2xl p-5">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4 flex items-center gap-2">
-                <i className="fas fa-trophy text-shOrange"/> Trophy Wall
-                <span className="text-[13px] font-bold uppercase tracking-widest text-gray-500 normal-case">· {trophies.client_trophies.length + trophies.dog_trophies.length} earned</span>
-              </h2>
-              {trophies.client_trophies.length > 0 && (
-                <div className="mb-5">
-                  <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">Yours</div>
-                  <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
-                </div>
-              )}
-              {trophies.dog_trophies.length > 0 && dogs.map(d => {
-                const mine = trophies.dog_trophies.filter(t => t.recipient_id === d.id);
-                if (!mine.length) return null;
-                return (
-                  <div key={d.id} className="mb-4 last:mb-0">
-                    <div className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-2">{d.name}'s trophies</div>
-                    <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
+            <div data-testid="portal-trophies-section"
+                 className="relative overflow-hidden bg-gradient-to-br from-shOrange/15 via-bgPanel to-shBlue/15 border border-shOrange/40 rounded-2xl p-5 shadow-2xl">
+              {/* Sprint 110z — Trophy Wall gets matching brand-glow halo + eyebrow
+                  + italic headline treatment so it feels celebratory. */}
+              <div className="absolute inset-0 pointer-events-none opacity-30"
+                   style={{ background: "radial-gradient(circle at 0% 0%, rgba(242,101,34,0.5) 0%, transparent 45%), radial-gradient(circle at 100% 100%, rgba(0,169,224,0.4) 0%, transparent 50%)" }}/>
+              <div className="relative">
+                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+                  <i className="fas fa-trophy mr-1.5"/>{trophies.client_trophies.length + trophies.dog_trophies.length} earned
+                </p>
+                <h2 className="text-2xl font-black text-white uppercase italic tracking-tight mb-4">
+                  Trophy Wall.
+                </h2>
+                {trophies.client_trophies.length > 0 && (
+                  <div className="mb-5">
+                    <div className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen mb-2"><i className="fas fa-user mr-1.5"/>Yours</div>
+                    <TrophyWall awards={trophies.client_trophies} testIdPrefix="portal-client-trophies"/>
                   </div>
-                );
-              })}
+                )}
+                {trophies.dog_trophies.length > 0 && dogs.map(d => {
+                  const mine = trophies.dog_trophies.filter(t => t.recipient_id === d.id);
+                  if (!mine.length) return null;
+                  return (
+                    <div key={d.id} className="mb-4 last:mb-0">
+                      <div className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue mb-2"><i className="fas fa-paw mr-1.5"/>{d.name}'s trophies</div>
+                      <TrophyWall awards={mine} testIdPrefix={`portal-dog-trophies-${d.id}`}/>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -1248,28 +1257,35 @@ export default function Portal() {
                   return !exp || exp < today || exp < soonStr;
                 });
                 return (
-                <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden shadow-lg" data-testid={`portal-dog-${d.id}`}>
+                <div key={d.id}
+                     className="relative bg-gradient-to-br from-bgPanel via-bgPanel to-shGreen/10 rounded-2xl border border-bgHover hover:border-shGreen/50 overflow-hidden shadow-2xl transition-all hover:-translate-y-0.5"
+                     data-testid={`portal-dog-${d.id}`}>
+                  {/* Sprint 110z — dog cards get the gradient + glow treatment.
+                      Each card has a soft shGreen halo from the top-right and
+                      lifts on hover, matching the rest of the portal polish. */}
+                  <div className="absolute inset-0 pointer-events-none opacity-25"
+                       style={{ background: "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.45) 0%, transparent 55%)" }}/>
                   <button onClick={()=>setDogModal({open:true, dog:d})}
-                          className="block w-full text-left hover:border-shGreen transition group">
+                          className="relative block w-full text-left group">
                     {d.photo
-                      ? <div className="h-32 w-full bg-bgBase flex items-center justify-center overflow-hidden">
-                          <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-32 max-w-full object-contain" />
+                      ? <div className="h-36 w-full bg-bgBase flex items-center justify-center overflow-hidden">
+                          <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-36 max-w-full object-contain" />
                         </div>
-                      : <div className="h-32 bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-4xl"><i className="fas fa-paw" /></div>}
-                    <div className="p-4">
+                      : <div className="h-36 bg-gradient-to-br from-shGreen/20 via-bgHover to-shBlue/10 flex items-center justify-center text-shGreen text-5xl drop-shadow-[0_0_18px_rgba(140,198,63,0.45)]"><i className="fas fa-paw" /></div>}
+                    <div className="p-4 relative">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-lg font-black text-white uppercase truncate">{d.name}</h4>
-                        <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px]"/>
+                        <h4 className="text-lg font-black text-white uppercase italic tracking-tight truncate">{d.name}</h4>
+                        <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px] transition"/>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-1">
-                        <p className="text-[14px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown"}</p>
+                        <p className="text-[12px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown breed"}</p>
                         {visits > 0 && (
-                          <span className="shrink-0 bg-shGreen/15 text-shGreen text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full" data-testid={`visit-badge-${d.id}`}>
+                          <span className="shrink-0 bg-shGreen/20 text-shGreen text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-shGreen/30" data-testid={`visit-badge-${d.id}`}>
                             <i className="fas fa-trophy mr-1"/>{visits}{visits >= 100 ? "+" : ""} {visits === 1 ? "visit" : "visits"}
                           </span>
                         )}
                       </div>
-                      <p className="text-[14px] text-gray-400 mt-2">Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=today?"text-shGreen":"text-red-400"}>{d.vaccines?.rabies||"Missing"}</span></p>
+                      <p className="text-[13px] text-gray-400 mt-2"><i className="fas fa-shield-virus text-shBlue mr-1"/>Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=today?"text-shGreen font-black":"text-red-400 font-black"}>{d.vaccines?.rabies||"Missing"}</span></p>
                     </div>
                   </button>
                   {expiringVaccines.length > 0 && (
@@ -1335,8 +1351,15 @@ export default function Portal() {
                 <p className="text-[12px] text-gray-500 mt-3 italic">Questions? Text us anytime — we love new pups.</p>
               </div>
             )}
-            <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
-              <h2 className="text-xl font-black text-white uppercase italic tracking-tight">My Bookings</h2>
+            {/* Sprint 110z — My Bookings header gets matching eyebrow + italic
+                headline so it aligns with rest of polished portal. */}
+            <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+                  <i className="fas fa-calendar-day mr-1.5"/>{bookings.length} on file
+                </p>
+                <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">My Bookings.</h2>
+              </div>
               {/* Tabbed filter — keeps the list short. Counts shown on each tab. */}
               {(() => {
                 // Today is "upcoming". A booking is "past" iff its end_date (or date) is
@@ -1442,15 +1465,34 @@ export default function Portal() {
                   {monthDropdown}
                   <div className="space-y-3" data-testid="portal-bookings">
                     {sorted.map(b => (
-                <div key={b.id} className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden">
-                  <div className="flex items-center justify-between p-4">
-                    <div>
-                      <p className="text-sm font-black text-white uppercase tracking-tight">{b.dog_name}</p>
-                      <p className="text-[14px] text-gray-400 font-black uppercase tracking-widest mt-1">{b.service_type} · {b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</p>
+                <div key={b.id}
+                     className={`relative overflow-hidden rounded-2xl border shadow-xl transition-all hover:-translate-y-0.5 ${
+                       b.status === "approved"  ? "bg-gradient-to-br from-shGreen/15 via-bgPanel to-bgPanel border-shGreen/40"
+                       : b.status === "pending" ? "bg-gradient-to-br from-shOrange/15 via-bgPanel to-bgPanel border-shOrange/40"
+                       : b.status === "rejected" ? "bg-gradient-to-br from-red-500/10 via-bgPanel to-bgPanel border-red-500/30"
+                       : b.status === "completed" ? "bg-gradient-to-br from-shBlue/15 via-bgPanel to-bgPanel border-shBlue/40"
+                       : "bg-bgPanel border-bgHover"
+                     }`}>
+                  {/* Sprint 110z — booking cards get gradient + per-status
+                      glow halo so the list reads "this is approved / pending /
+                      completed" at a glance without needing to find the
+                      status pill. */}
+                  <div className="absolute inset-0 pointer-events-none opacity-25"
+                       style={{ background: b.status === "approved"
+                         ? "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.45) 0%, transparent 50%)"
+                         : b.status === "pending"
+                         ? "radial-gradient(circle at 100% 0%, rgba(242,101,34,0.45) 0%, transparent 50%)"
+                         : b.status === "completed"
+                         ? "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.4) 0%, transparent 50%)"
+                         : "transparent" }}/>
+                  <div className="relative flex items-center justify-between p-4 gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-black text-white uppercase italic tracking-tight">{b.dog_name}</p>
+                      <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1">{b.service_type} · {b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`text-[14px] font-black uppercase px-2 py-1 rounded ${b.status==="approved"?"bg-shGreen/15 text-shGreen":b.status==="pending"?"bg-shOrange/15 text-shOrange":b.status==="rejected"?"bg-red-500/15 text-red-400":b.status==="completed"?"bg-shBlue/15 text-shBlue":"bg-gray-500/15 text-gray-400"}`}>{b.status}</span>
-                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase text-red-400 hover:underline tracking-widest">Cancel</button>}
+                    <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+                      <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{b.status}</span>
+                      {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-2 py-1 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
                       {["completed","cancelled","rejected"].includes(b.status) && (
                         <button onClick={()=>{
                                   setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type });
@@ -1458,7 +1500,7 @@ export default function Portal() {
                                   document.getElementById("portal-book-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
                                 }}
                                 data-testid={`book-again-${b.id}`}
-                                className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:text-white px-2 py-1 rounded border border-shBlue/40">
+                                className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-white px-2 py-1 rounded border border-shBlue/40 hover:bg-shBlue/15 transition">
                           <i className="fas fa-rotate-right mr-1"/>Book Again
                         </button>
                       )}

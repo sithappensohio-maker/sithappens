@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110z — Portal: Trophy Wall / My Dogs cards / My Bookings cards unification (2026-02)
+- ✅ **Trophy Wall**: shadow-2xl + dual brand-glow halos (orange top-left + blue bottom-right), "{N} EARNED" eyebrow, italic "TROPHY WALL." headline, section labels with user/paw icons
+- ✅ **My Dogs cards**: each card gets gradient bg + shGreen radial halo top-right, hover lift, larger photo area (h-36), italic dog name, brand-colored "Mixed/Lab" pill, shield-iconed vaccine status with bold green/red
+- ✅ **My Bookings cards**: per-status gradient + radial halo (green/orange/blue/red based on status), italic dog name, polished status pills with colored borders, action buttons with hover transitions
+- ✅ Lint clean; smoke screenshots confirm full visual cohesion across portal — every major section now uses the same eyebrow + italic headline + brand-glow rhythm
+
 ## Sprint 110y — Portal: My Dogs / Homework / Quick Links visual unification (2026-02)
 - ✅ **Homework plan cards** rebuilt with gradient + brand-color radial glow: purple for daily-tracker plans, orange for session-template plans, green for completed. Title goes to italic uppercase. Shadow elevation added.
 - ✅ **My Dogs** header gets eyebrow ("THE REAL STARS") + italic "MY DOGS" headline; Add a Dog button polished
