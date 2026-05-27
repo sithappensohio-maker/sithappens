@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
+import PageHero from "../components/PageHero";
 
 const TYPES = [
   { key: "bite", label: "Bite", color: "bg-red-500/15 text-red-400" },
@@ -76,14 +77,19 @@ export default function Incidents() {
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="incidents-screen">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Incident Reports</h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Permanent legal record · all bite/injury/escape events</p>
-        </div>
-        <button onClick={openNew} data-testid="add-incident-button"
-                className="bg-red-500 text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-red-500/90">+ Log Incident</button>
-      </div>
+      <PageHero
+        eyebrow={{ icon: "fa-triangle-exclamation", text: `${incidents.length} total report${incidents.length === 1 ? "" : "s"}`, color: "text-red-400" }}
+        title="Incident Reports."
+        highlight="Permanent record."
+        subtitle="Bite · injury · escape — the legal record for every event."
+        right={(
+          <button onClick={openNew} data-testid="add-incident-button"
+                  className="bg-red-500 text-white px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-red-500/90 transition">
+            <i className="fas fa-plus mr-2"/>Log Incident
+          </button>
+        )}
+        testid="incidents-hero"
+      />
 
       <div className="flex flex-wrap gap-2">
         <button onClick={()=>setFilter("all")} className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${filter==="all"?"bg-shBlue text-white":"bg-bgPanel text-gray-400 border border-bgHover"}`}>All · {incidents.length}</button>

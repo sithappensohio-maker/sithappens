@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
+import PageHero from "../components/PageHero";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
@@ -257,32 +258,37 @@ export default function Income() {
         </div>
       )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-dollar-sign text-shGreen mr-2"/>Income & Services</h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Weekly tally, transaction log, and quick service entry</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={exportCSV} data-testid="income-export-csv"
-                  className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
-            <i className="fas fa-file-csv mr-1"/>Export CSV
-          </button>
-          <button onClick={downloadPL} disabled={plBusy} data-testid="pl-download-btn"
-                  className="bg-bgPanel border border-shBlue/40 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-50">
-            <i className={`fas ${plBusy ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1`}/>P&L PDF
-          </button>
-          <button onClick={emailPL} disabled={plBusy} data-testid="pl-email-btn"
-                  className="bg-bgPanel border border-shOrange/40 text-shOrange px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/10 disabled:opacity-50">
-            <i className="fas fa-envelope mr-1"/>Email Me
-          </button>
-          <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn"
-                  className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30">
-            <i className="fas fa-bag-shopping mr-1"/>Log Retail Sale
-          </button>
-          <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
-                  className="bg-shGreen text-black px-5 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
-            <i className="fas fa-plus mr-1"/>Log Service
-          </button>
-        </div>
+        <PageHero
+          eyebrow={{ icon: "fa-dollar-sign", text: "Money in, money out", color: "text-shGreen" }}
+          title="Income & Services."
+          highlight="The cash story."
+          subtitle="Weekly tally, transaction log, and quick service entry."
+          right={(
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={exportCSV} data-testid="income-export-csv"
+                      className="bg-bgBase border border-bgHover text-gray-200 px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:border-shBlue transition">
+                <i className="fas fa-file-csv mr-1"/>Export CSV
+              </button>
+              <button onClick={downloadPL} disabled={plBusy} data-testid="pl-download-btn"
+                      className="bg-bgBase border border-shBlue/40 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-50 transition">
+                <i className={`fas ${plBusy ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1`}/>P&L PDF
+              </button>
+              <button onClick={emailPL} disabled={plBusy} data-testid="pl-email-btn"
+                      className="bg-bgBase border border-shOrange/40 text-shOrange px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shOrange/10 disabled:opacity-50 transition">
+                <i className="fas fa-envelope mr-1"/>Email Me
+              </button>
+              <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn"
+                      className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-purple-500/30 transition">
+                <i className="fas fa-bag-shopping mr-1"/>Log Retail Sale
+              </button>
+              <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
+                      className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/90 transition">
+                <i className="fas fa-plus mr-1"/>Log Service
+              </button>
+            </div>
+          )}
+          testid="income-hero"
+        />
       </div>
       {plMsg && (
         <div className="bg-shBlue/10 border border-shBlue/30 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">

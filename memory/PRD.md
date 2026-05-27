@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110w — PageHero rolled out to all remaining admin screens (2026-02)
+- ✅ Settings ("Settings. Make it yours."), Run Sheet ("Daily Run Sheet. For the team."), Recurring ("Recurring. Set it. Forget it."), Dogs ("Dog Records. The real stars."), Pipeline ("Training Pipeline. At a glance."), Trophies ("Trophy Catalog. Earn it. Show it."), Income ("Income & Services. The cash story."), Staff ("Staff. The crew that makes it happen."), Incidents ("Incident Reports. Permanent record.")
+- ✅ Every admin screen now opens with the same landing-page hero rhythm: brand glow backdrop, eyebrow tag, uppercase-italic-black title + highlight, subhead, right-side action slot
+- ✅ All 9 screens lint-clean and smoke-tested — every hero testid (`{screen}-hero`) confirmed present
+- ✅ Client portal already received the matching treatment in 110u (glowing logo + "Welcome back, [Name]") — verified the entire app now feels visually unified
+
 ## Sprint 110v — Page-hero rollout to Schedule / Clients / Homework / Bookings (2026-02)
 - ✅ New reusable `PageHero` component (`/app/frontend/src/components/PageHero.jsx`) — brand-glow backdrop, eyebrow + uppercase-italic-black title + highlight + subtitle + right-slot for tiles/CTAs. Used across admin screens for visual consistency with the landing page.
 - ✅ Applied to Schedule ("THE CALENDAR. EVERY PUP. EVERY DAY."), Clients ("CLIENT HUB. WHERE HUMANS LIVE."), Homework ("TRAINING HOMEWORK. BUILT AROUND THE DOG."), and Bookings ("BOOKINGS. EVERY STAY, EVERY DAY.")

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import PageHero from "../components/PageHero";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function daysAgoISO(n) { return new Date(Date.now() - n*86400000).toISOString().split("T")[0]; }
@@ -48,16 +49,19 @@ export default function Staff() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="staff-screen">
       {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px] font-black uppercase tracking-widest">{err}</div>}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-users-gear text-shGreen mr-2"/>Staff</h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Employees, schedules, time clock</p>
-        </div>
-        <button onClick={()=>setModal({ mode: "new" })} data-testid="staff-new-btn"
-                className="bg-shGreen text-black px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/80">
-          <i className="fas fa-plus mr-1"/>Add Employee
-        </button>
-      </div>
+      <PageHero
+        eyebrow={{ icon: "fa-users-gear", text: "Team operations", color: "text-shGreen" }}
+        title="Staff."
+        highlight="The crew that makes it happen."
+        subtitle="Employees, schedules, timecards, payroll, and tax estimates."
+        right={(
+          <button onClick={()=>setModal({ mode: "new" })} data-testid="staff-new-btn"
+                  className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+            <i className="fas fa-plus mr-2"/>Add Employee
+          </button>
+        )}
+        testid="staff-hero"
+      />
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-bgHover overflow-x-auto" data-testid="staff-subtabs">

@@ -8,6 +8,7 @@ import Lightbox from "../components/Lightbox";
 import DogTrainingTab from "../components/DogTrainingTab";
 import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
+import PageHero from "../components/PageHero";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -244,11 +245,19 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="dogs-screen">
-      <div className="flex justify-between items-center">
-        <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Dog Records</h3>
-        <button onClick={openNew} data-testid="add-dog-button"
-                className="bg-shGreen text-bgHeader px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">+ Add Dog</button>
-      </div>
+      <PageHero
+        eyebrow={{ icon: "fa-paw", text: `${dogs.length} pup${dogs.length === 1 ? "" : "s"} on file`, color: "text-shGreen" }}
+        title="Dog Records."
+        highlight="The real stars."
+        subtitle="Photos, breed, vaccines, feeding, meds, behaviour notes — all here."
+        right={(
+          <button onClick={openNew} data-testid="add-dog-button"
+                  className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+            <i className="fas fa-plus mr-2"/>Add Dog
+          </button>
+        )}
+        testid="dogs-hero"
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="dog-grid">
         {dogs.length === 0 && <div className="col-span-full text-center text-gray-500 text-xs font-black uppercase py-16">No dog records yet.</div>}

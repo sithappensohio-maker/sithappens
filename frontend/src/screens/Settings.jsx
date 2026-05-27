@@ -6,6 +6,7 @@ import ServicesSettings from "../components/ServicesSettings";
 import CreditPacksSettings from "../components/CreditPacksSettings";
 import IconPicker from "../components/IconPicker";
 import { useTheme, FONT_OPTIONS } from "../lib/theme";
+import PageHero from "../components/PageHero";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -74,11 +75,15 @@ export default function Settings() {
   ];
 
   return (
-    <div className="animate-slide-in" data-testid="settings-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Settings</h3>
-        {msg && <span className={`text-[14px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
-      </div>
+    <div className="animate-slide-in space-y-6" data-testid="settings-screen">
+      <PageHero
+        eyebrow={{ icon: "fa-sliders", text: "Configuration", color: "text-shBlue" }}
+        title="Settings."
+        highlight="Make it yours."
+        subtitle="Hours, brand, services, automation, and everything in between."
+        right={msg ? (<span className={`text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded ${msg==="Saved"?"bg-shGreen/15 text-shGreen border border-shGreen/30":"bg-red-500/15 text-red-400 border border-red-500/30"}`}>{msg==="Saved"&&<i className="fas fa-check mr-1"/>}{msg}</span>) : null}
+        testid="settings-hero"
+      />
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-6">
         <nav className="w-full md:w-56 md:shrink-0 flex md:block overflow-x-auto md:overflow-visible gap-1 md:space-y-1 md:gap-0 pb-2 md:pb-0">

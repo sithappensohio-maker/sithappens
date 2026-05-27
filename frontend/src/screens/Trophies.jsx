@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import TrophyBadge from "../components/TrophyBadge";
 import { compressImage } from "../lib/imageCompress";
+import PageHero from "../components/PageHero";
 
 const TIER_OPTIONS = ["bronze", "silver", "gold", "platinum"];
 const TRIGGER_KIND_OPTIONS = [
@@ -49,14 +50,19 @@ export default function Trophies() {
 
   return (
     <div className="space-y-6 animate-slide-in" data-testid="trophies-screen">
-      <div className="flex justify-between items-center flex-wrap gap-3">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Trophy Catalog</h3>
-          <p className="text-xs text-gray-500 mt-1">15 trophies seeded by default — add custom ones for your business below.</p>
-        </div>
-        <button onClick={()=>setCreating(true)} data-testid="add-trophy-button"
-                className="bg-shOrange text-white px-5 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/90">+ New Trophy</button>
-      </div>
+      <PageHero
+        eyebrow={{ icon: "fa-trophy", text: "Achievement catalog", color: "text-shOrange" }}
+        title="Trophy Catalog."
+        highlight="Earn it. Show it."
+        subtitle="15 trophies seeded by default — add custom ones for your business below."
+        right={(
+          <button onClick={()=>setCreating(true)} data-testid="add-trophy-button"
+                  className="bg-shOrange text-white px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/90 transition">
+            <i className="fas fa-plus mr-2"/>New Trophy
+          </button>
+        )}
+        testid="trophies-hero"
+      />
       {err && <div className="bg-red-500/10 text-red-400 rounded p-3 text-sm">{err}</div>}
 
       <TrophySection title="Client Trophies" trophies={clientTrophies} onEdit={setEditing} onDelete={removeTrophy}/>

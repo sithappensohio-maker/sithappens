@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import PageHero from "../components/PageHero";
 
 /**
  * Admin tool: saved per-dog "recurring schedule" templates (e.g. Daisy · M/W/F
@@ -84,16 +85,19 @@ export default function RecurringTemplates() {
 
   return (
     <div className="space-y-6" data-testid="recurring-screen">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-black uppercase italic text-white tracking-tight">Recurring</h1>
-          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-2">Per-dog weekly schedules · roll forward N weeks with one click</p>
-        </div>
-        <button onClick={openNew} data-testid="new-template-btn"
-                className="bg-shBlue text-white px-5 py-2.5 rounded font-black text-[15px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
-          <i className="fas fa-plus mr-2"/>New Schedule
-        </button>
-      </div>
+      <PageHero
+        eyebrow={{ icon: "fa-rotate", text: "Weekly schedules", color: "text-shBlue" }}
+        title="Recurring."
+        highlight="Set it. Forget it."
+        subtitle="Per-dog weekly schedules · roll forward N weeks with one click."
+        right={(
+          <button onClick={openNew} data-testid="new-template-btn"
+                  className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+            <i className="fas fa-plus mr-2"/>New Schedule
+          </button>
+        )}
+        testid="recurring-hero"
+      />
 
       {toast && (
         <div data-testid="recurring-toast"

@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../lib/api";
+import PageHero from "../components/PageHero";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -52,19 +53,22 @@ export default function Pipeline({ onJumpToDog }) {
   }, [rows]);
 
   return (
-    <div className="p-8 max-w-7xl mx-auto" data-testid="pipeline-screen">
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-line-chart text-shGreen mr-2"/>Training Pipeline</h1>
-          <p className="text-[14px] text-gray-400 mt-1">Every dog enrolled in a training program, at a glance.</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <Stat label="Active" value={stats.active} color="#8cc63f" />
-          <Stat label="On Hold" value={stats.on_hold} color="#f59e0b" />
-          <Stat label="Completed" value={stats.completed} color="#00a9e0" />
-          {stats.overdue > 0 && <Stat label="Overdue" value={stats.overdue} color="#ef4444" />}
-        </div>
-      </div>
+    <div className="p-8 max-w-7xl mx-auto space-y-6" data-testid="pipeline-screen">
+      <PageHero
+        eyebrow={{ icon: "fa-line-chart", text: "Active dog programs", color: "text-shGreen" }}
+        title="Training Pipeline."
+        highlight="At a glance."
+        subtitle="Every dog enrolled in a training program — and where they are right now."
+        right={(
+          <div className="flex gap-2 flex-wrap">
+            <Stat label="Active" value={stats.active} color="#8cc63f" />
+            <Stat label="On Hold" value={stats.on_hold} color="#f59e0b" />
+            <Stat label="Completed" value={stats.completed} color="#00a9e0" />
+            {stats.overdue > 0 && <Stat label="Overdue" value={stats.overdue} color="#ef4444" />}
+          </div>
+        )}
+        testid="pipeline-hero"
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2 mb-5 items-center" data-testid="pipeline-filters">

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import PageHero from "../components/PageHero";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmtTime(t) { return t || "—"; }
@@ -21,19 +22,26 @@ export default function RunSheet() {
   const bookings = data.bookings || [];
 
   return (
-    <div className="animate-slide-in" data-testid="run-sheet">
+    <div className="animate-slide-in space-y-6" data-testid="run-sheet">
       <style>{`@media print { .no-print{display:none!important;} body{background:white!important;} .print-card{background:white!important;color:black!important;border-color:#ccc!important;} .print-card *{color:black!important;} }`}</style>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6 no-print">
-        <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight">Daily Run Sheet</h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">Feeding · Medication · Notes · Times — for the team (and the fridge)</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="rs-date"
-                 className="bg-bgPanel border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-          <button onClick={()=>window.print()} data-testid="rs-print"
-                  className="bg-shGreen text-bgHeader px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest shadow"><i className="fas fa-print mr-1"/>Print</button>
-        </div>
+      <div className="no-print">
+        <PageHero
+          eyebrow={{ icon: "fa-clipboard-list", text: `${bookings.length} dogs on premises`, color: "text-shGreen" }}
+          title="Daily Run Sheet."
+          highlight="For the team."
+          subtitle="Feeding · Medication · Notes · Times — print-ready for the fridge."
+          right={(
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="rs-date"
+                     className="bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}}/>
+              <button onClick={()=>window.print()} data-testid="rs-print"
+                      className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90 transition">
+                <i className="fas fa-print mr-1"/>Print
+              </button>
+            </div>
+          )}
+          testid="runsheet-hero"
+        />
       </div>
 
       <div className="print-card bg-bgPanel border border-bgHover rounded-xl p-6 mb-6 shadow-2xl">
