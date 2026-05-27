@@ -77,6 +77,10 @@ def test_create_tracker_initial_state(admin_headers, a_dog):
 
 
 def test_submit_then_approve_unlocks_next_day(admin_headers, a_dog):
+    """Sprint 110p — client-driven advancement. Submitting Day 1 now unlocks
+    Day 2 immediately (the trainer no longer needs to approve before the
+    client can advance). Admin approval still flips the status from
+    `submitted` → `approved` but is no longer a gate for the next day."""
     hw = _make_tracker(admin_headers, a_dog["id"], days=2)
     hwid = hw["id"]
     try:
@@ -90,28 +94,61 @@ def test_submit_then_approve_unlocks_next_day(admin_headers, a_dog):
         assert r.status_code == 200
         d = r.json()
         statuses = [p["status"] for p in d["daily_progress"]]
-        assert statuses == ["submitted", "locked"]
+        # Day 2 should now be unlocked the moment Day 1 is submitted.
+        assert statuses == ["submitted", "available"], statuses
 
-        # Pending queue should include this
+        # Pending queue should still include Day 1 (trainer can still review)
         q = requests.get(f"{BASE}/api/admin/homework/pending-reviews", headers=admin_headers, timeout=15).json()
         assert any(it["homework_id"] == hwid and it["day_number"] == 1 for it in q)
 
-        # Day 2 cannot be submitted yet
+        # Day 2 can be submitted now — no admin approval needed for advancement.
         r = requests.post(
             f"{BASE}/api/homework/{hwid}/day/2/submit", headers=admin_headers,
-            json={"field_values": {}}, timeout=15,
+            json={"field_values": {"sets-2": 4}}, timeout=15,
         )
-        assert r.status_code == 400
+        assert r.status_code == 200, r.text
+        d = r.json()
+        statuses = [p["status"] for p in d["daily_progress"]]
+        assert statuses == ["submitted", "submitted"], statuses
 
-        # Approve Day 1
+        # Approve Day 1 — Day 2 stays at its own status (submitted).
         r = requests.post(
             f"{BASE}/api/homework/{hwid}/day/1/review", headers=admin_headers,
             json={"action": "approve", "note": "Looks great"}, timeout=15,
         )
         d = r.json()
         statuses = [p["status"] for p in d["daily_progress"]]
-        assert statuses == ["approved", "available"]
+        assert statuses == ["approved", "submitted"], statuses
         assert d["streak"] == 1
+    finally:
+        requests.delete(f"{BASE}/api/homework/{hwid}", headers=admin_headers)
+
+
+def test_needs_redo_relocks_unlogged_days(admin_headers, a_dog):
+    """Sprint 110p — when an unlogged day's predecessor is `needs_redo`,
+    the unlogged day re-locks. (A subsequent day that was already submitted
+    keeps its own status — the client doesn't lose advancement they've
+    already earned.)"""
+    hw = _make_tracker(admin_headers, a_dog["id"], days=3)
+    hwid = hw["id"]
+    try:
+        # Submit only Day 1 — Day 2 and Day 3 are unlogged.
+        requests.post(
+            f"{BASE}/api/homework/{hwid}/day/1/submit", headers=admin_headers,
+            json={"field_values": {"sets-1": 3}}, timeout=15,
+        )
+        d = requests.get(f"{BASE}/api/homework/{hwid}", headers=admin_headers, timeout=15).json()
+        statuses = [p["status"] for p in d["daily_progress"]]
+        # Day 2 should be available (auto-advance), Day 3 should be locked.
+        assert statuses == ["submitted", "available", "locked"], statuses
+        # Trainer sends Day 1 back. Day 2 has no log, so it re-locks. Day 3 too.
+        r = requests.post(
+            f"{BASE}/api/homework/{hwid}/day/1/review", headers=admin_headers,
+            json={"action": "needs_redo", "note": "Try again"}, timeout=15,
+        )
+        d = r.json()
+        statuses = [p["status"] for p in d["daily_progress"]]
+        assert statuses == ["needs_redo", "locked", "locked"], statuses
     finally:
         requests.delete(f"{BASE}/api/homework/{hwid}", headers=admin_headers)
 

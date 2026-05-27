@@ -222,6 +222,38 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                 )}
               </div>
 
+              {/* Sprint 110p — Day advancement strip. Shows ALL days inline as a
+                  pill row: done days filled, current pulsing, future days
+                  greyed-out & lock-iconed. Makes the "you have to finish Day 1
+                  before Day 2 opens" rule visible at a glance. */}
+              {(item.day_statuses || []).length > 1 && (
+                <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1" data-testid={`today-plan-day-strip-${item.homework_id}`}>
+                  {item.day_statuses.map((d) => {
+                    const isCurrent = d.day_number === item.day_number;
+                    const isDone = d.status === "approved" || d.status === "rest" || d.status === "skipped";
+                    const isSubmitted = d.status === "submitted";
+                    const isLocked = d.status === "locked";
+                    const isNeedsRedo = d.status === "needs_redo";
+                    let cls = "border-bgHover bg-bgBase/40 text-gray-600";
+                    let icon = "fa-lock";
+                    if (isDone) { cls = "border-shGreen/50 bg-shGreen/15 text-shGreen"; icon = "fa-check"; }
+                    else if (isSubmitted) { cls = "border-shOrange/50 bg-shOrange/15 text-shOrange"; icon = "fa-hourglass-half"; }
+                    else if (isNeedsRedo) { cls = "border-red-500/50 bg-red-500/15 text-red-300"; icon = "fa-rotate-left"; }
+                    else if (isCurrent) { cls = "border-shGreen bg-shGreen/25 text-white ring-2 ring-shGreen/40"; icon = "fa-circle-play"; }
+                    else if (isLocked) { cls = "border-bgHover bg-bgBase/40 text-gray-600"; icon = "fa-lock"; }
+                    return (
+                      <div key={d.day_number}
+                           data-testid={`today-plan-day-pip-${item.homework_id}-${d.day_number}`}
+                           title={`Day ${d.day_number} · ${d.status}${isLocked ? " (finish previous day first)" : ""}`}
+                           className={`shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded border font-black text-[11px] uppercase tracking-widest ${cls} ${isCurrent ? "animate-pulse" : ""}`}>
+                        <i className={`fas ${icon} text-[10px]`}/>
+                        Day {d.day_number}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               {/* Open-fullscreen affordance + instructions accordion */}
               <div className="flex items-center justify-end gap-2 mb-2">
                 <button onClick={() => setFullscreenItem(item)}

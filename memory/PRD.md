@@ -28,6 +28,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110p — Client-driven daily-tracker advancement + visible day strip (2026-02)
+- ✅ Auto-advancement: once the client submits a day's log, the NEXT day immediately unlocks (no admin approval required to progress). `_compute_daily_progress` chain now treats `submitted` as a pass status.
+- ✅ Trainer can still flag a day `needs_redo` — that re-locks any *unlogged* subsequent days. Already-submitted future days keep their own status.
+- ✅ Day-pip strip rendered inline at the top of every `TodayPlanCard`: shows Day 1 (current/pulsing), Day 2-N greyed out with lock icons, done days marked green-check. Each pip has `data-testid="today-plan-day-pip-{hwid}-{day}"`.
+- ✅ Backend `/api/portal/today-plan` now returns `day_statuses: [{day_number, status}, ...]` per item.
+- ✅ Tests: 63/63 homework + tracker tests passing. `test_submit_then_approve_unlocks_next_day` updated; `test_needs_redo_relocks_unlogged_days` added.
+
 ## Sprint 110o — Auto-backup removed + vaccine_dismissals excluded from backup (2026-02)
 - ✅ Auto-backup feature fully removed (never worked reliably across unprivileged Docker → Bazzite host boundary)
   - Backend: deleted `/admin/backup/run-now`, `/admin/backup/status`, `/admin/backup/detect-drives`, `/admin/backup/inspect` endpoints (~339 lines)

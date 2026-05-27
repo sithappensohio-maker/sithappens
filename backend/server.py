@@ -3862,7 +3862,14 @@ def _normalize_resources(items: list) -> list:
 
 def _compute_daily_progress(hw: dict) -> List[dict]:
     """Walk template_snapshot.sections (sorted by day_number) and emit a
-    per-day status: locked / available / submitted / approved / needs_redo."""
+    per-day status: locked / available / submitted / approved / needs_redo.
+
+    Sprint 110p — once a client submits a day's log, the NEXT day unlocks
+    immediately so they can advance themselves (client-driven advancement
+    system). Trainer can still flag a day `needs_redo` later — that re-locks
+    subsequent days via the normal chain because `needs_redo` is NOT a
+    pass status.
+    """
     snap = hw.get("template_snapshot") or {}
     sections = sorted(
         [s for s in snap.get("sections", []) if s.get("day_number")],
@@ -3902,7 +3909,9 @@ def _compute_daily_progress(hw: dict) -> List[dict]:
             "questions": (log or {}).get("questions") or [],
             "log": log,                  # full submission incl. mood/photo/note
         })
-        prev_passed = status in ("approved", "rest", "skipped")
+        # Sprint 110p — `submitted` is now a pass status too, so the next day
+        # unlocks the moment the client logs the current one.
+        prev_passed = status in ("approved", "submitted", "rest", "skipped")
     return progress
 
 
@@ -5040,6 +5049,13 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
             "title": hw.get("title", ""),
             "day_number": current["day_number"],
             "total_days": len(prog),
+            # Sprint 110p — full per-day status list so the portal can render a
+            # greyed-out pip strip showing the whole advancement chain at-a-glance
+            # (Day 1 done / Day 2 today / Day 3,4,5 locked).
+            "day_statuses": [
+                {"day_number": p["day_number"], "status": p["status"]}
+                for p in prog
+            ],
             "day_focus": current.get("day_focus", ""),
             "instructions": current.get("instructions", ""),
             "status": current["status"],
