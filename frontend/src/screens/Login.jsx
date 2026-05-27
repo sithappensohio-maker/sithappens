@@ -130,7 +130,9 @@ export default function Login() {
       <header className="sticky top-0 z-30 backdrop-blur bg-bgBase/80 border-b border-bgHover/60">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
-            <img src="/logo.png" alt="Sit Happens" className="h-10 sm:h-12 shrink-0" data-testid="landing-logo"/>
+            <img src="/logo.png" alt="Sit Happens"
+                 className="h-14 sm:h-16 lg:h-20 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.35)]"
+                 data-testid="landing-logo"/>
             <div className="hidden sm:block min-w-0">
               <p className="text-[11px] uppercase font-black tracking-[0.25em] text-gray-400 truncate">
                 Dog Training · Daycare · Boarding · Photography
@@ -151,12 +153,22 @@ export default function Login() {
              style={{ background:
                "radial-gradient(circle at 12% 18%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 78%, #8cc63f 0%, transparent 42%), radial-gradient(circle at 70% 10%, #f26522 0%, transparent 30%)"
              }}/>
-        <div className="absolute inset-0 pointer-events-none opacity-[0.04]"
-             style={{ backgroundImage: "url('/logo.png')", backgroundSize: "240px", backgroundPosition: "100% 0%", backgroundRepeat: "no-repeat" }}/>
 
         <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-20 grid lg:grid-cols-5 gap-8 lg:gap-12 items-center">
-          {/* Hero copy */}
+          {/* Hero copy + feature logo */}
           <div className="lg:col-span-3" data-testid="landing-hero-copy">
+            {/* Sprint 110u — feature logo, large and proud at the top of the
+                hero. Previously a 4%-opacity background watermark; now the
+                actual brand mark sits front-and-centre with a soft brand-color
+                halo behind it so it pops without overpowering the headline. */}
+            <div className="relative inline-block mb-6">
+              <div className="absolute inset-0 -m-6 rounded-full pointer-events-none opacity-60 blur-3xl"
+                   style={{ background: "radial-gradient(circle, rgba(140,198,63,0.6) 0%, rgba(0,169,224,0.35) 45%, transparent 70%)" }}/>
+              <img src="/logo.png" alt="Sit Happens"
+                   className="relative h-32 sm:h-40 lg:h-48 drop-shadow-[0_8px_30px_rgba(0,0,0,0.65)]"
+                   data-testid="landing-hero-logo"/>
+            </div>
+
             <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-3">
               <i className="fas fa-paw mr-2"/>For pups who deserve more than a kennel
             </p>
