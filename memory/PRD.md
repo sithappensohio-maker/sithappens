@@ -28,6 +28,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110ae — Daily-Tracker badge on template picker (2026-02)
+- ✅ `HomeworkTemplatePicker` now shows a purple "DAILY TRACKER" pill (with calendar-check icon) on every card AND in the selected-template detail panel — instantly distinguishes day-by-day tracker templates from session-log templates
+- ✅ Tracker cards also get a purple ring border so they stand out at a glance in the grid
+- ✅ Testid `template-tracker-badge-{slug}` for automation; lint clean
+
 ## Sprint 110ad — Daily-tracker template re-assign bug fix (2026-02)
 - ✅ Bug: saving a daily tracker as a template then re-assigning it from the template produced a `daily_tracker=False` instance, rendering as a session-log catalog instead of the day-pip / Today's-plan tracker UX
 - ✅ Root cause: `create_homework_from_template` endpoint did not carry the template's `daily_tracker` flag through onto the new homework doc; `total_days` was also left at 0

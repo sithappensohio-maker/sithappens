@@ -95,10 +95,19 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
                   {byTier[tier].map(t => (
                     <button key={t.id} onClick={()=>{ setSelected(t); setTitleOverride(""); setInstructionsOverride(""); setDueDate(""); }}
                             data-testid={`template-card-${t.slug}`}
-                            className={`text-left p-4 rounded-xl border ${tierMeta(tier).ring} bg-bgBase hover:bg-bgHover transition relative`}>
+                            className={`text-left p-4 rounded-xl border ${t.daily_tracker ? "border-purple-500/50 ring-1 ring-purple-500/20" : tierMeta(tier).ring} bg-bgBase hover:bg-bgHover transition relative`}>
                       <div className={`absolute top-3 right-3 ${tierMeta(tier).bg} ${tierMeta(tier).color} rounded p-2`}>
                         <i className={`fas ${t.icon || "fa-paw"}`} />
                       </div>
+                      {/* Sprint 110ae — Daily-Tracker badge so admins instantly
+                          know which templates produce the day-by-day Tracker
+                          UX (purple) vs. the session-log style (no badge). */}
+                      {t.daily_tracker && (
+                        <span className="inline-flex items-center gap-1 bg-purple-500/15 text-purple-300 border border-purple-500/40 text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded mb-2"
+                              data-testid={`template-tracker-badge-${t.slug}`}>
+                          <i className="fas fa-calendar-check text-[9px]"/>Daily Tracker
+                        </span>
+                      )}
                       <h4 className="text-white font-black text-[15px] uppercase tracking-tight pr-10">{t.name}</h4>
                       <p className="text-gray-400 text-[15px] mt-2 leading-snug line-clamp-3">{t.description}</p>
                       <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mt-3"><i className="fas fa-list mr-1"/>{(t.sections || []).length} sections · {t.default_duration_days}d</p>
@@ -111,11 +120,18 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
         ) : (
           <div className="p-5 grid grid-cols-1 lg:grid-cols-5 gap-5">
             <div className="lg:col-span-3 space-y-4">
-              <div className={`rounded-xl border ${tierMeta(selected.tier).ring} ${tierMeta(selected.tier).bg} p-4`}>
+              <div className={`rounded-xl border ${selected.daily_tracker ? "border-purple-500/50 ring-1 ring-purple-500/20" : tierMeta(selected.tier).ring} ${tierMeta(selected.tier).bg} p-4`}>
                 <div className="flex items-center gap-3 mb-3">
                   <i className={`fas ${selected.icon} text-2xl ${tierMeta(selected.tier).color}`} />
-                  <div>
-                    <p className={`text-[13px] font-black uppercase tracking-widest ${tierMeta(selected.tier).color}`}>{tierMeta(selected.tier).label}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`text-[13px] font-black uppercase tracking-widest ${tierMeta(selected.tier).color}`}>{tierMeta(selected.tier).label}</p>
+                      {selected.daily_tracker && (
+                        <span className="inline-flex items-center gap-1 bg-purple-500/15 text-purple-300 border border-purple-500/40 text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded">
+                          <i className="fas fa-calendar-check text-[9px]"/>Daily Tracker
+                        </span>
+                      )}
+                    </div>
                     <h4 className="text-white font-black uppercase tracking-tight">{selected.name}</h4>
                   </div>
                 </div>
