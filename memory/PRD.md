@@ -28,6 +28,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110ab — Dashboard hero tile bug fix (2026-02)
+- ✅ Dashboard hero tiles (Daycare/Boarding/Training today) were reading wrong field names — `daycare_today`/`boarding_tonight` instead of the actual backend keys `daycare_occupancy`/`boarding_today`/`training_today`. Tiles always showed 0.
+- ✅ Now correctly reads `stats.daycare_occupancy / stats.daycare_capacity` (displays `2/30`), `stats.boarding_today`, `stats.training_today`
+- ✅ Verified via curl that backend returns valid numbers; lint clean
+
 ## Sprint 110aa — Italic clipping fix + admin Bookings gradient + Achievements panel polish (2026-02)
 - ✅ **Italic header clipping fixed**: PageHero title now has `pr-1 sm:pr-2`, plus global admin header h2 + portal welcome line get matching right-padding so italic D/S/B tails no longer clip against `overflow-hidden`
 - ✅ **Admin Bookings rows**: per-status colored left-border + gradient tint (approved=green, pending=orange, completed=blue, rejected=red) on both desktop table rows and mobile cards. Status pill now has matching colored border. Hover-state row highlight added.

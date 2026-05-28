@@ -136,8 +136,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           </div>
           {stats && (
             <div className="flex flex-wrap gap-2 shrink-0" data-testid="dashboard-hero-tiles">
-              <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={stats?.daycare_today ?? 0}/>
-              <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_tonight ?? 0}/>
+              <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>
+              <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>
               <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>
             </div>
           )}
