@@ -71,6 +71,13 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
   const imgClass = imageFit === "contain"
     ? "w-[88%] h-[88%] object-contain"
     : "w-full h-full object-cover";
+  // Sprint 110al — focal point for circle mode. Admin can drag the upload
+  // around to pick which part of the image stays visible after the cover-crop.
+  const offX = typeof (t.trophy_image_offset_x ?? t.image_offset_x) === "number"
+    ? (t.trophy_image_offset_x ?? t.image_offset_x) : 50;
+  const offY = typeof (t.trophy_image_offset_y ?? t.image_offset_y) === "number"
+    ? (t.trophy_image_offset_y ?? t.image_offset_y) : 50;
+  const imgStyle = imageFit === "circle" ? { objectPosition: `${offX}% ${offY}%` } : undefined;
   return (
     <button
       type="button"
@@ -80,7 +87,7 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
       className={`relative ${dim} rounded-full bg-gradient-to-br ${ring} ring-2 grid place-items-center transition transform ${onClick ? "hover:scale-105 cursor-pointer" : "cursor-default"} ${locked ? "opacity-30 grayscale" : ""}`}
     >
       {image ? (
-        <img src={image} alt={name} className={`${imgClass} rounded-full`}/>
+        <img src={image} alt={name} style={imgStyle} className={`${imgClass} rounded-full`}/>
       ) : (
         <i className={`fas ${icon} ${txt} drop-shadow`}/>
       )}

@@ -137,6 +137,98 @@ def test_share_card_renders_for_every_fit_mode(admin_headers):
             requests.delete(f"{BASE}/api/trophies/catalog/{code}", headers=admin_headers, timeout=15)
 
 
+def test_trophy_image_offset_defaults_and_persists(admin_headers):
+    """Sprint 110al — image_offset_x / _y default to 50 (centre), accept
+    0–100, and round-trip on PATCH so the drag-to-reposition handle survives
+    a reload."""
+    code = f"test_offset_{uuid.uuid4().hex[:8]}"
+    body = {
+        "code": code,
+        "name": "Offset test",
+        "category": "dog",
+        "tier": "silver",
+        "custom_image": TINY_PNG,
+        "image_offset_x": 25,
+        "image_offset_y": 75,
+    }
+    r = requests.post(f"{BASE}/api/trophies/catalog", json=body, headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    try:
+        created = r.json()
+        assert created["image_offset_x"] == 25
+        assert created["image_offset_y"] == 75
+        # PATCH each axis independently
+        r2 = requests.put(
+            f"{BASE}/api/trophies/catalog/{code}",
+            json={"image_offset_x": 90, "image_offset_y": 10},
+            headers=admin_headers,
+            timeout=15,
+        )
+        assert r2.status_code == 200
+        assert r2.json()["image_offset_x"] == 90
+        assert r2.json()["image_offset_y"] == 10
+    finally:
+        requests.delete(f"{BASE}/api/trophies/catalog/{code}", headers=admin_headers, timeout=15)
+
+
+def test_trophy_image_offset_clamped(admin_headers):
+    """Offsets outside 0-100 must be rejected by the Field validator."""
+    code = f"test_offset_oor_{uuid.uuid4().hex[:8]}"
+    for bad in (-10, 200):
+        r = requests.post(
+            f"{BASE}/api/trophies/catalog",
+            json={"code": code, "name": "Bad offset", "category": "dog", "image_offset_x": bad},
+            headers=admin_headers, timeout=15,
+        )
+        assert r.status_code == 422, f"offset {bad} should be rejected · got {r.status_code}: {r.text}"
+
+
+def test_image_offset_snapshotted_and_propagated(admin_headers):
+    """Awards snapshot the offsets at award-time, and editing the catalog row
+    propagates the new offsets to historical awards."""
+    code = f"test_offset_prop_{uuid.uuid4().hex[:8]}"
+    requests.post(
+        f"{BASE}/api/trophies/catalog",
+        json={
+            "code": code, "name": "Offset prop", "category": "dog",
+            "tier": "gold", "custom_image": TINY_PNG,
+            "image_offset_x": 30, "image_offset_y": 70,
+        },
+        headers=admin_headers, timeout=15,
+    )
+    try:
+        dogs = requests.get(f"{BASE}/api/dogs", headers=admin_headers, timeout=15).json()
+        dogs = dogs if isinstance(dogs, list) else dogs.get("items", [])
+        dog_id = dogs[0]["id"]
+        award = requests.post(
+            f"{BASE}/api/dogs/{dog_id}/trophies/{code}/award",
+            json={"note": "prop"},
+            headers=admin_headers, timeout=15,
+        ).json()
+        awarded_id = award["id"]
+        assert award["trophy_image_offset_x"] == 30
+        assert award["trophy_image_offset_y"] == 70
+
+        # Move it
+        requests.put(
+            f"{BASE}/api/trophies/catalog/{code}",
+            json={"image_offset_x": 80, "image_offset_y": 20},
+            headers=admin_headers, timeout=15,
+        )
+
+        # Historical award reflects new offset
+        dog_awards = requests.get(f"{BASE}/api/dogs/{dog_id}/trophies", headers=admin_headers, timeout=15).json()
+        awards = dog_awards if isinstance(dog_awards, list) else dog_awards.get("awarded", []) or dog_awards.get("trophies", [])
+        ours = next((a for a in awards if a["id"] == awarded_id), None)
+        assert ours is not None
+        assert ours["trophy_image_offset_x"] == 80
+        assert ours["trophy_image_offset_y"] == 20
+
+        requests.delete(f"{BASE}/api/awarded-trophies/{awarded_id}", headers=admin_headers, timeout=15)
+    finally:
+        requests.delete(f"{BASE}/api/trophies/catalog/{code}", headers=admin_headers, timeout=15)
+
+
 def test_image_fit_propagates_to_historical_awards(admin_headers):
     """Editing image_fit on the catalog row must update every previously
     awarded copy, the same way custom_image already does."""

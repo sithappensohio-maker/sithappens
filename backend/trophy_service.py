@@ -95,6 +95,9 @@ async def award_trophy(
         # Sprint 110ak — snapshot the layout mode too so the wall + share-card
         # honour the admin's chosen fit even after the catalog row is edited.
         "trophy_image_fit": trophy.get("image_fit", "circle") or "circle",
+        # Sprint 110al — focal point for circle mode (default centred).
+        "trophy_image_offset_x": int(trophy.get("image_offset_x", 50) or 50),
+        "trophy_image_offset_y": int(trophy.get("image_offset_y", 50) or 50),
         "trophy_description": trophy.get("description", ""),
         "recipient_type": recipient_type,
         "recipient_id": recipient_id,
@@ -359,11 +362,18 @@ def render_share_card_png(awarded: Dict[str, Any]) -> bytes:
                     bg.paste(fitted, ((size - new_w) // 2, (size - new_h) // 2), fitted if fitted.mode == "RGBA" else None)
                     tile = bg
                 else:
-                    # "circle" — cover-fit (crop to square then scale to size)
+                    # "circle" — cover-fit (crop to square then scale to size).
+                    # Sprint 110al — focal point comes from
+                    # `trophy_image_offset_x` / `_y` so admins can drag-pan
+                    # the visible area off-centre.
+                    off_x = max(0, min(100, int(awarded.get("trophy_image_offset_x", 50) or 50)))
+                    off_y = max(0, min(100, int(awarded.get("trophy_image_offset_y", 50) or 50)))
                     w, h = tile.size
                     short = min(w, h)
-                    left = (w - short) // 2
-                    top = (h - short) // 2
+                    extra_w = max(0, w - short)
+                    extra_h = max(0, h - short)
+                    left = int(extra_w * off_x / 100)
+                    top = int(extra_h * off_y / 100)
                     tile = tile.crop((left, top, left + short, top + short)).resize((size, size), Image.LANCZOS)
                 # Circular mask
                 mask = Image.new("L", (size, size), 0)

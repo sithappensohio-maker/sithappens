@@ -7627,6 +7627,12 @@ class TrophyIn(BaseModel):
     #   "contain"  — fit the whole design inside the circle (tier ring kept)
     #   "freeform" — no clip, rectangular card, no tier ring (image IS the trophy)
     image_fit: Literal["circle", "contain", "freeform"] = "circle"
+    # Sprint 110al — focal point inside the badge for `circle` mode (0-100%).
+    # CSS object-position semantics: 50/50 is centred (legacy default), 0/0
+    # pins the image's top-left to the badge's top-left, 100/100 the opposite
+    # corner. Ignored for `contain` and `freeform`.
+    image_offset_x: int = Field(default=50, ge=0, le=100)
+    image_offset_y: int = Field(default=50, ge=0, le=100)
     trigger_type: Literal["auto", "manual"] = "manual"
     trigger_kind: Optional[str] = ""
     threshold: int = 0
@@ -7640,6 +7646,8 @@ class TrophyPatch(BaseModel):
     icon: Optional[str] = None
     custom_image: Optional[str] = None
     image_fit: Optional[Literal["circle", "contain", "freeform"]] = None
+    image_offset_x: Optional[int] = Field(default=None, ge=0, le=100)
+    image_offset_y: Optional[int] = Field(default=None, ge=0, le=100)
     threshold: Optional[int] = None
     active: Optional[bool] = None
 
@@ -7693,6 +7701,17 @@ async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_
             await db.awarded_trophies.update_many(
                 {"trophy_code": code},
                 {"$set": {"trophy_image_fit": patch["image_fit"] or "circle"}},
+            )
+        # Sprint 110al — propagate focal-point repositioning to historical awards.
+        offset_patch = {}
+        if "image_offset_x" in patch:
+            offset_patch["trophy_image_offset_x"] = int(patch["image_offset_x"])
+        if "image_offset_y" in patch:
+            offset_patch["trophy_image_offset_y"] = int(patch["image_offset_y"])
+        if offset_patch:
+            await db.awarded_trophies.update_many(
+                {"trophy_code": code},
+                {"$set": offset_patch},
             )
     return existing
 
@@ -8112,15 +8131,25 @@ async def trophy_share_card(awarded_id: str):
     # it (so the share PNG always reflects the *current* catalog image when the
     # award doesn't have its own).
     if not row.get("trophy_custom_image"):
-        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "custom_image": 1, "image_fit": 1})
+        trophy = await db.trophies.find_one(
+            {"code": row.get("trophy_code")},
+            {"_id": 0, "custom_image": 1, "image_fit": 1, "image_offset_x": 1, "image_offset_y": 1},
+        )
         if trophy and trophy.get("custom_image"):
             row["trophy_custom_image"] = trophy["custom_image"]
             row["trophy_image_fit"] = trophy.get("image_fit") or "circle"
+            row["trophy_image_offset_x"] = trophy.get("image_offset_x", 50)
+            row["trophy_image_offset_y"] = trophy.get("image_offset_y", 50)
     # Backfill image_fit for awards minted before Sprint 110ak (defaults to
     # legacy "circle" behaviour so historical shares stay pixel-identical).
     if not row.get("trophy_image_fit"):
-        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "image_fit": 1})
+        trophy = await db.trophies.find_one(
+            {"code": row.get("trophy_code")},
+            {"_id": 0, "image_fit": 1, "image_offset_x": 1, "image_offset_y": 1},
+        )
         row["trophy_image_fit"] = (trophy or {}).get("image_fit") or "circle"
+        row.setdefault("trophy_image_offset_x", (trophy or {}).get("image_offset_x", 50))
+        row.setdefault("trophy_image_offset_y", (trophy or {}).get("image_offset_y", 50))
     try:
         png = render_share_card_png(row)
     except Exception as exc:

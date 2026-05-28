@@ -121,6 +121,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
   const [form, setForm] = useState(trophy || {
     code: "", name: "", description: "", category: "dog", tier: "bronze",
     icon: "fa-trophy", custom_image: "", image_fit: "circle",
+    image_offset_x: 50, image_offset_y: 50,
     trigger_type: "manual", trigger_kind: "", threshold: 0, active: true,
   });
   const [busy, setBusy] = useState(false);
@@ -132,7 +133,9 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
     // 512px is plenty for the in-app badge AND for the 1200×630 share PNG
     // (we paste it into a 328px circle on the share card).
     const compressed = await compressImage(f, { maxWidth: 512, maxHeight: 512, quality: 0.85 });
-    setForm(s => ({ ...s, custom_image: compressed }));
+    // Sprint 110al — reset focal point to centre whenever a fresh image is
+    // picked, so admin starts from a known-good position.
+    setForm(s => ({ ...s, custom_image: compressed, image_offset_x: 50, image_offset_y: 50 }));
   };
 
   const save = async () => {
@@ -144,6 +147,8 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
         const patch = {
           name: form.name, description: form.description, tier: form.tier,
           icon: form.icon, custom_image: form.custom_image, image_fit: form.image_fit || "circle",
+          image_offset_x: typeof form.image_offset_x === "number" ? form.image_offset_x : 50,
+          image_offset_y: typeof form.image_offset_y === "number" ? form.image_offset_y : 50,
           threshold: form.threshold, active: form.active,
         };
         await api.put(`/trophies/catalog/${form.code}`, patch);
@@ -246,6 +251,14 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
               </p>
             </Field>
           )}
+          {form.custom_image && (form.image_fit || "circle") === "circle" && (
+            <FocalPointPicker
+              src={form.custom_image}
+              offsetX={form.image_offset_x ?? 50}
+              offsetY={form.image_offset_y ?? 50}
+              onChange={(x, y)=>setForm(s => ({ ...s, image_offset_x: x, image_offset_y: y }))}
+            />
+          )}
           {!isNew && (
             <label className="flex items-center gap-2 text-[15px] text-gray-300">
               <input type="checkbox" checked={form.active !== false} onChange={(e)=>setForm({...form, active: e.target.checked})}/>
@@ -272,5 +285,67 @@ function Field({ label, required, children }) {
       <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{label}{required && <span className="text-red-400 ml-1">*</span>}</span>
       <div className="mt-1">{children}</div>
     </label>
+  );
+}
+
+
+
+// Sprint 110al — drag-to-reposition the focal point inside the cover-cropped
+// circle. Stores x/y as 0-100 (CSS object-position semantics). Updates as the
+// admin drags, so the parent TrophyBadge preview reflects the new framing in
+// real time without an intermediate "apply" step.
+function FocalPointPicker({ src, offsetX, offsetY, onChange }) {
+  const onPointerMove = (e, force = false) => {
+    const buttons = e.buttons ?? 0;
+    if (!force && buttons === 0) return;  // only update while a drag is active
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.min(100, Math.max(0, Math.round(((e.clientX - rect.left) / rect.width) * 100)));
+    const y = Math.min(100, Math.max(0, Math.round(((e.clientY - rect.top) / rect.height) * 100)));
+    onChange?.(x, y);
+  };
+  const reset = (e) => {
+    e.preventDefault();
+    onChange?.(50, 50);
+  };
+  return (
+    <Field label="Focal point — drag the dot to pick what stays inside the circle">
+      <div className="flex items-center gap-4 flex-wrap">
+        <div
+          className="relative w-40 h-40 rounded-full overflow-hidden border-2 border-shGreen/40 shadow-inner cursor-crosshair select-none touch-none"
+          onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); onPointerMove(e, true); }}
+          onPointerMove={(e) => onPointerMove(e)}
+          onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
+          data-testid="trophy-focal-picker"
+        >
+          <img
+            src={src}
+            alt="focal point preview"
+            draggable={false}
+            style={{ objectPosition: `${offsetX}% ${offsetY}%` }}
+            className="w-full h-full object-cover pointer-events-none"
+          />
+          <div
+            className="absolute w-5 h-5 rounded-full border-2 border-white shadow-lg pointer-events-none transition-transform"
+            style={{
+              left: `${offsetX}%`, top: `${offsetY}%`,
+              transform: "translate(-50%, -50%)",
+              background: "rgba(140, 198, 63, 0.85)",
+            }}
+            data-testid="trophy-focal-dot"
+          />
+        </div>
+        <div className="text-[13px] text-gray-300 space-y-1.5 max-w-xs">
+          <p><i className="fas fa-hand-pointer text-shGreen mr-1"/>Click or drag inside the circle to pick the focal point.</p>
+          <p className="text-gray-500 font-mono text-[12px]">
+            position: <span className="text-shBlue">{offsetX}%</span> / <span className="text-shBlue">{offsetY}%</span>
+          </p>
+          <button type="button" onClick={reset}
+                  data-testid="trophy-focal-reset"
+                  className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
+            <i className="fas fa-arrows-to-dot mr-1"/>Reset to centre
+          </button>
+        </div>
+      </div>
+    </Field>
   );
 }
