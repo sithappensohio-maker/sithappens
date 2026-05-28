@@ -66,6 +66,98 @@ def _booking_nights(b: dict) -> int:
         return 1
 
 
+async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict[str, Any]:
+    """Compute real payroll cost (gross + employer burden) for clocked-in
+    employees in the window. Mirrors `/api/admin/today-pnl` so the PDF and the
+    in-app tile reconcile. Returns a payroll block ready to embed in the P&L
+    JSON / PDF, plus per-employee breakdown for the PDF table.
+
+    Pulls payroll tax settings from `db.settings` (id=`payroll_tax`) so the
+    rates configured under Admin → Payroll-tax flow through to this report.
+    """
+    # Lazy import to avoid a circular dependency at module load time.
+    from server import _get_payroll_tax_settings, _compute_payroll_tax  # type: ignore
+
+    tax = await _get_payroll_tax_settings()
+
+    period_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+
+    uids = list({e["user_id"] for e in period_entries})
+    if not uids:
+        return {
+            "total_hours": 0.0,
+            "gross": 0.0,
+            "employer_burden": 0.0,
+            "total_cost": 0.0,
+            "per_employee": [],
+            "entry_count": 0,
+        }
+
+    rate_users = await db.users.find(
+        {"id": {"$in": uids}},
+        {"_id": 0, "id": 1, "hourly_rate": 1, "name": 1, "display_name": 1},
+    ).to_list(500)
+    rate_map = {u["id"]: u for u in rate_users}
+
+    # YTD pre-period hours per user — required so wage caps (FICA / FUTA /
+    # SUTA) are respected. Without this an employee who hit the SS cap in
+    # February would still get billed for SS for the whole year.
+    try:
+        end_year = datetime.strptime(end_date, "%Y-%m-%d").year
+    except Exception:
+        end_year = date.today().year
+    ytd_start = f"{end_year}-01-01"
+    pre_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lt": f"{start_date}T00:00:00"},
+         "clock_out_at": {"$ne": None, "$exists": True},
+         "user_id": {"$in": uids}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(100000)
+    pre_hours: Dict[str, float] = defaultdict(float)
+    for e in pre_entries:
+        pre_hours[e["user_id"]] += float(e.get("hours") or 0)
+
+    period_hours: Dict[str, float] = defaultdict(float)
+    for e in period_entries:
+        period_hours[e["user_id"]] += float(e.get("hours") or 0)
+
+    per_employee: List[Dict[str, Any]] = []
+    total_hours = 0.0
+    total_gross = 0.0
+    total_burden = 0.0
+    for uid, hrs in period_hours.items():
+        u = rate_map.get(uid, {})
+        rate = float(u.get("hourly_rate") or 0)
+        ytd_gross_for_user = pre_hours.get(uid, 0) * rate
+        c = _compute_payroll_tax(hrs, rate, ytd_gross_for_user, tax)
+        per_employee.append({
+            "user_id": uid,
+            "name": u.get("display_name") or u.get("name") or "Unknown",
+            "hours": round(hrs, 2),
+            "rate": round(rate, 2),
+            "gross": c["gross"],
+            "employer_burden": c["employer_burden"],
+            "total_cost": c["total_cost"],
+        })
+        total_hours += hrs
+        total_gross += c["gross"]
+        total_burden += c["employer_burden"]
+
+    per_employee.sort(key=lambda x: -x["total_cost"])
+    return {
+        "total_hours": round(total_hours, 1),
+        "gross": round(total_gross, 2),
+        "employer_burden": round(total_burden, 2),
+        "total_cost": round(total_gross + total_burden, 2),
+        "per_employee": per_employee,
+        "entry_count": len(period_entries),
+    }
+
+
 async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     """Build the full Profit & Loss dataset for a date range."""
     bookings = await db.bookings.find(
@@ -177,6 +269,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     boarding_hours_total = round(boarding_hours_total, 1)
     staff_hours_total = round(shift_hours_total + boarding_hours_total, 1)
 
+    # ── Actual payroll cost from clocked-in time_clock_entries.
+    # Mirrors the math used by /api/admin/today-pnl so the P&L PDF and the
+    # in-app Income tile agree on "true labor cost" (gross wages + employer
+    # taxes/burden). Sprint 110ai.
+    payroll = await _compute_payroll_for_range(db, start_date, end_date)
+
     # ── Expenses
     expenses_total = round(sum(float(e.get("amount") or 0) for e in expenses), 2)
     exp_by_cat_map: Dict[str, Dict[str, Any]] = {}
@@ -222,6 +320,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     gross_income = round(completed_total + retail_total, 2)
     ytd_gross = round(ytd_income + ytd_retail, 2)
 
+    # YTD payroll cost — uses calendar-year start through end_date so the
+    # P&L footer reconciles with the same payroll line on /api/admin/today-pnl.
+    ytd_payroll = await _compute_payroll_for_range(db, ytd_start, end_date)
+
     return {
         "start_date": start_date,
         "end_date": end_date,
@@ -246,7 +348,9 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "count": len(expenses),
             "by_category": expenses_by_category,
         },
-        "net": round(gross_income - expenses_total, 2),
+        "payroll": payroll,
+        "net": round(gross_income - expenses_total - payroll["total_cost"], 2),
+        "net_before_payroll": round(gross_income - expenses_total, 2),
         "top_clients": top_clients,
         "top_dogs": top_dogs,
         "staff_hours": {
@@ -266,7 +370,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "service_income": ytd_income,
             "retail_income": ytd_retail,
             "expenses": ytd_expenses,
-            "net": round(ytd_gross - ytd_expenses, 2),
+            "payroll": ytd_payroll["total_cost"],
+            "payroll_gross": ytd_payroll["gross"],
+            "payroll_burden": ytd_payroll["employer_burden"],
+            "net": round(ytd_gross - ytd_expenses - ytd_payroll["total_cost"], 2),
         },
     }
 
@@ -325,11 +432,13 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         sub,
     ))
 
-    # ── KPI tiles (4 across)
+    # ── KPI tiles (5 across — adds Payroll so the bottom-line NET is clearly
+    # backed by real labor cost from clocked-in hours, not just expenses).
     service_income = data["income"]["completed_total"]
     retail_income = float(data.get("retail", {}).get("total") or 0)
     income_total = data["income"].get("gross_total") or (service_income + retail_income)
     exp_total = data["expenses"]["total"]
+    payroll_total = float(data.get("payroll", {}).get("total_cost") or 0)
     net = data["net"]
     net_color = colors.HexColor("#16a34a") if net >= 0 else colors.HexColor("#dc2626")
     active_days = max(len(data["income"]["by_day"]), 1)
@@ -339,12 +448,12 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         return Table(
             [[Paragraph(label_text, label)],
              [Paragraph(value_text, ParagraphStyle("v", parent=money_med, textColor=value_color))]],
-            colWidths=[1.7 * inch],
+            colWidths=[1.4 * inch],
             style=TableStyle([
                 ("BOX", (0, 0), (-1, -1), 0.5, LINE),
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
                 ("TOPPADDING", (0, 0), (-1, -1), 8),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
             ]),
@@ -354,10 +463,11 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         [[
             tile("INCOME (GROSS)", _fmt_money(income_total), BRAND),
             tile("EXPENSES", _fmt_money(exp_total), colors.HexColor("#dc2626")),
+            tile("PAYROLL COST", _fmt_money(payroll_total), colors.HexColor("#dc2626")),
             tile("NET PROFIT", _fmt_money(net), net_color),
             tile("AVG / ACTIVE DAY", _fmt_money(avg_per_day), BLUE),
         ]],
-        colWidths=[1.85 * inch] * 4,
+        colWidths=[1.5 * inch] * 5,
         style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]),
     )
     story.append(kpi_row)
@@ -496,6 +606,48 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         story.append(Spacer(1, 4))
         story.append(t2)
 
+    # ── Payroll cost (clocked-in staff) — actual time_clock_entries × rate +
+    # employer burden, mirrors the Income page's labor tile.
+    pay = data.get("payroll") or {}
+    story.append(Paragraph("Payroll Cost · clocked-in staff", h2))
+    if pay.get("entry_count"):
+        pay_rows = [
+            ["Total clocked-in hours", f"{pay['total_hours']:.1f}"],
+            ["Gross wages", _fmt_money(pay["gross"])],
+            ["Employer burden (FICA · FUTA · SUTA · Workers' comp · Medicare)", _fmt_money(pay["employer_burden"])],
+            ["TOTAL PAYROLL COST", _fmt_money(pay["total_cost"])],
+        ]
+        t = Table(pay_rows, colWidths=[4.5 * inch, 1.5 * inch])
+        t.setStyle(_table_style(INK, LINE, colors.HexColor("#dc2626"), header=False))
+        story.append(t)
+        if pay.get("per_employee"):
+            story.append(Spacer(1, 6))
+            emp_rows = [["Employee", "Hours", "Rate", "Gross", "Burden", "Total"]]
+            for e in pay["per_employee"]:
+                emp_rows.append([
+                    e["name"],
+                    f"{e['hours']:.1f}",
+                    _fmt_money(e["rate"]),
+                    _fmt_money(e["gross"]),
+                    _fmt_money(e["employer_burden"]),
+                    _fmt_money(e["total_cost"]),
+                ])
+            t = Table(emp_rows, colWidths=[1.8 * inch, 0.7 * inch, 0.8 * inch, 1.0 * inch, 0.9 * inch, 1.0 * inch])
+            t.setStyle(_table_style(INK, LINE, colors.HexColor("#dc2626")))
+            story.append(t)
+        story.append(Paragraph(
+            "Payroll cost is computed from real time-clock entries × each employee's hourly rate, "
+            "with employer FICA/FUTA/SUTA/workers'-comp added on top using the rates configured in "
+            "Admin → Payroll-tax settings. Numbers reconcile with the live Income tile.",
+            small,
+        ))
+    else:
+        story.append(Paragraph(
+            "<i>No completed time-clock entries in this window — payroll cost is $0. "
+            "Make sure your staff clock in/out via the Time tab so this line reflects reality.</i>",
+            small,
+        ))
+
     # ── YTD running totals
     ytd = data["ytd"]
     story.append(Paragraph("Year-to-Date", h2))
@@ -504,6 +656,7 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         ["YTD retail income", _fmt_money(ytd.get("retail_income") or 0)],
         ["YTD gross income", _fmt_money(ytd["income"])],
         ["YTD expenses", _fmt_money(ytd["expenses"])],
+        ["YTD payroll cost", _fmt_money(ytd.get("payroll") or 0)],
         ["YTD net", _fmt_money(ytd["net"])],
     ]
     t = Table(ytd_rows, colWidths=[3.5 * inch, 2.5 * inch])
