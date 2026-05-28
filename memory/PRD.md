@@ -28,6 +28,12 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110ad — Daily-tracker template re-assign bug fix (2026-02)
+- ✅ Bug: saving a daily tracker as a template then re-assigning it from the template produced a `daily_tracker=False` instance, rendering as a session-log catalog instead of the day-pip / Today's-plan tracker UX
+- ✅ Root cause: `create_homework_from_template` endpoint did not carry the template's `daily_tracker` flag through onto the new homework doc; `total_days` was also left at 0
+- ✅ Fix: read `daily_tracker` from the template, compute `total_days` from section count or `default_duration_days`, persist both on the new instance
+- ✅ Regression test: `tests/test_daily_tracker_template_roundtrip.py` — creates a tracker w/ save_as_template → fetches the saved template → assigns via `/homework/from-template` → asserts result has `daily_tracker=True`, `total_days=3`, and that `daily_progress` is computed with correct lock chain
+
 ## Sprint 110ac — Dashboard hero: full service-category coverage (2026-02)
 - ✅ Backend `/dashboard/stats` now also returns `grooming_today` and `photography_today` counts (same live-occupancy logic as the existing 3 categories — excludes already-checked-out dogs)
 - ✅ Dashboard hero now shows 5 tiles: Daycare (occupancy/capacity), Boarding tonight, Training today, Grooming today, Photography today

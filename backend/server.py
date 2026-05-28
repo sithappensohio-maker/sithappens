@@ -3601,6 +3601,15 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
         "sections": tpl.get("sections", []),
     }
 
+    # Sprint 110ad — Carry the `daily_tracker` flag from the template through to
+    # the new homework instance, otherwise day-pip / Today's-plan UX is lost
+    # and the plan rendered as a session-log template (the screenshot bug).
+    is_daily_tracker = bool(tpl.get("daily_tracker"))
+    total_days = 0
+    if is_daily_tracker:
+        secs = [s for s in tpl.get("sections", []) if s.get("day_number")]
+        total_days = len(secs) or int(tpl.get("default_duration_days") or 0)
+
     doc = {
         "id": str(uuid.uuid4()),
         "dog_id": dog["id"],
@@ -3619,6 +3628,8 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
         "completion_photo": "",
         "template_snapshot": snapshot,
         "section_logs": [],
+        "daily_tracker": is_daily_tracker,
+        "total_days": total_days,
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
