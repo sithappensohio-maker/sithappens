@@ -105,7 +105,10 @@ def test_toggle_step_persists_state(admin_headers, client_headers, client_dog):
         requests.delete(f"{BASE}/api/homework/{hwid}", headers=admin_headers)
 
 
-def test_all_steps_auto_submit_day(admin_headers, client_headers, client_dog):
+def test_all_steps_do_not_auto_submit_day(admin_headers, client_headers, client_dog):
+    """Sprint 110ah — checking off every step must NOT auto-submit the day.
+    The client still needs to capture mood / note / photo and tap Mark
+    Complete via `/day/{n}/submit` for the day to enter the review queue."""
     hw = _make_tracker_with_steps(admin_headers, client_dog["id"], days=2)
     hwid = hw["id"]
     try:
@@ -118,10 +121,15 @@ def test_all_steps_auto_submit_day(admin_headers, client_headers, client_dog):
             )
             assert r.status_code == 200, r.text
         d = r.json()
-        assert d["daily_progress"][0]["status"] == "submitted", f"day 1 should auto-submit · got {d['daily_progress'][0]['status']}"
-        # And the pending review queue picks it up
+        # Status stays available/in_progress — never auto-flips to submitted
+        assert d["daily_progress"][0]["status"] in ("available", "in_progress"), (
+            f"day 1 should stay open · got {d['daily_progress'][0]['status']}"
+        )
+        # And the pending review queue MUST NOT pick it up yet
         q = requests.get(f"{BASE}/api/admin/homework/pending-reviews", headers=admin_headers).json()
-        assert any(it["homework_id"] == hwid and it["day_number"] == 1 for it in q)
+        assert not any(it["homework_id"] == hwid and it["day_number"] == 1 for it in q), (
+            "day must not appear in review queue before client taps Mark Complete"
+        )
     finally:
         requests.delete(f"{BASE}/api/homework/{hwid}", headers=admin_headers)
 

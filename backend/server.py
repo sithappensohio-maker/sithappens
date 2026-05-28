@@ -4760,9 +4760,11 @@ class StepToggleIn(BaseModel):
 
 @api.post("/homework/{homework_id}/day/{day_number}/toggle-step")
 async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn, user: dict = Depends(get_current_user)):
-    """Check/uncheck a single step within a day. When ALL steps on the day are
-    checked, the day's section_log auto-flips to `submission_status=submitted`
-    so the admin review queue picks it up — same as a full form submission."""
+    """Check/uncheck a single step within a day. The day's section_log stays
+    `in_progress` until the client (or admin) explicitly hits Mark Complete via
+    `/day/{n}/submit` — checking steps alone never auto-submits, so the client
+    still has time to fill in mood, note, photo, and any extra fields before the
+    day moves to the admin review queue."""
     hw = await db.homework.find_one({"id": homework_id}, {"_id": 0})
     if not hw:
         raise HTTPException(status_code=404, detail="Homework not found")
@@ -4825,13 +4827,10 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
     states[body.step_id] = bool(body.done)
     log["step_states"] = states
 
-    # If every step is now done, auto-submit the day
+    # Sprint 110ah — don't auto-submit when all steps check off. The client
+    # still needs to fill in mood/note/photo/extra fields before tapping
+    # "Mark Complete" themselves. Tracked via `all_done` flag for the live feed.
     all_done = all(states.get(s["id"]) for s in steps_def)
-    if all_done and log.get("submission_status") in (None, "in_progress", "needs_redo"):
-        log["submission_status"] = "submitted"
-        log["logged_at"] = now_iso()
-        log["logged_by"] = user.get("name", log.get("logged_by", ""))
-        log["logged_by_role"] = user.get("role", log.get("logged_by_role", "client"))
 
     if existing_idx is None:
         await db.homework.update_one({"id": homework_id}, {"$set": {"section_logs": logs}})
@@ -4868,16 +4867,8 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
         except Exception as e:
             logger.warning("step_event insert failed: %s", e)
 
-    # Notify admin when the auto-submit fires (so the review queue gets a heads-up
-    # — same UX as filling in fields and tapping Submit).
-    if all_done and user.get("role") != "admin":
-        try:
-            client = await db.clients.find_one({"id": refreshed.get("client_id")}, {"_id": 0})
-            dog = await db.dogs.find_one({"id": refreshed.get("dog_id")}, {"_id": 0})
-            if client and dog:
-                await notify_admin_homework_section_log(refreshed, log, client, dog)
-        except Exception:
-            pass
+    # Notify admin only when a real Mark Complete submission flips status to
+    # `submitted` — toggle-step alone no longer auto-submits.
 
     # Sprint 105 — per-step email (off by default, opt-in via settings.email_per_step)
     if body.done and user.get("role") != "admin":
