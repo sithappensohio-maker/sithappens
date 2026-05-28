@@ -7622,6 +7622,11 @@ class TrophyIn(BaseModel):
     tier: Literal["bronze", "silver", "gold", "platinum"] = "bronze"
     icon: Optional[str] = "fa-trophy"
     custom_image: Optional[str] = ""  # base64 data URL
+    # Sprint 110ak — how the uploaded custom_image is displayed:
+    #   "circle"   — current behaviour, cover-crop into a perfect circle
+    #   "contain"  — fit the whole design inside the circle (tier ring kept)
+    #   "freeform" — no clip, rectangular card, no tier ring (image IS the trophy)
+    image_fit: Literal["circle", "contain", "freeform"] = "circle"
     trigger_type: Literal["auto", "manual"] = "manual"
     trigger_kind: Optional[str] = ""
     threshold: int = 0
@@ -7634,6 +7639,7 @@ class TrophyPatch(BaseModel):
     tier: Optional[Literal["bronze", "silver", "gold", "platinum"]] = None
     icon: Optional[str] = None
     custom_image: Optional[str] = None
+    image_fit: Optional[Literal["circle", "contain", "freeform"]] = None
     threshold: Optional[int] = None
     active: Optional[bool] = None
 
@@ -7679,6 +7685,14 @@ async def update_trophy(code: str, body: TrophyPatch, _: dict = Depends(require_
             await db.awarded_trophies.update_many(
                 {"trophy_code": code},
                 {"$set": {"trophy_custom_image": patch["custom_image"] or ""}},
+            )
+        # Sprint 110ak — same propagation for the new image_fit toggle so
+        # historical awards reflect the admin's latest layout choice on the
+        # wall + share cards.
+        if "image_fit" in patch:
+            await db.awarded_trophies.update_many(
+                {"trophy_code": code},
+                {"$set": {"trophy_image_fit": patch["image_fit"] or "circle"}},
             )
     return existing
 
@@ -8098,9 +8112,15 @@ async def trophy_share_card(awarded_id: str):
     # it (so the share PNG always reflects the *current* catalog image when the
     # award doesn't have its own).
     if not row.get("trophy_custom_image"):
-        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "custom_image": 1})
+        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "custom_image": 1, "image_fit": 1})
         if trophy and trophy.get("custom_image"):
             row["trophy_custom_image"] = trophy["custom_image"]
+            row["trophy_image_fit"] = trophy.get("image_fit") or "circle"
+    # Backfill image_fit for awards minted before Sprint 110ak (defaults to
+    # legacy "circle" behaviour so historical shares stay pixel-identical).
+    if not row.get("trophy_image_fit"):
+        trophy = await db.trophies.find_one({"code": row.get("trophy_code")}, {"_id": 0, "image_fit": 1})
+        row["trophy_image_fit"] = (trophy or {}).get("image_fit") or "circle"
     try:
         png = render_share_card_png(row)
     except Exception as exc:

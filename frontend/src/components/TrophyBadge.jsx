@@ -12,6 +12,14 @@ const TIER_TEXT = {
   gold: "text-yellow-300",
   platinum: "text-cyan-200",
 };
+// Sprint 110ak — tier-coloured border used by the freeform layout, where the
+// circular tier ring is dropped in favour of the design itself.
+const TIER_BORDER = {
+  bronze: "border-amber-600/70",
+  silver: "border-slate-300/70",
+  gold: "border-yellow-400/80",
+  platinum: "border-cyan-300/80",
+};
 
 /**
  * Reusable trophy badge. Pass either:
@@ -29,9 +37,40 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
   // `custom_image`. Check both so the badge shows the uploaded picture on
   // dog/client cards instead of falling back to the icon placeholder.
   const image = t.trophy_custom_image || t.custom_image || "";
+  // Sprint 110ak — image_fit chooses how the upload fills the badge:
+  //   "circle"   — cover-crop, full bleed circle (legacy default)
+  //   "contain"  — fit inside the circle, keep the tier ring
+  //   "freeform" — no clip / no ring; design IS the trophy, rendered as a
+  //                rounded square with a thin tier-coloured border
+  const imageFit = t.trophy_image_fit || t.image_fit || "circle";
   const dim = size === "sm" ? "w-12 h-12 text-xl" : size === "lg" ? "w-28 h-28 text-5xl" : "w-20 h-20 text-3xl";
   const ring = TIER_RING[tier] || TIER_RING.bronze;
   const txt = TIER_TEXT[tier] || TIER_TEXT.bronze;
+  const tierBorder = TIER_BORDER[tier] || TIER_BORDER.bronze;
+
+  // Freeform: rectangular card, no circle clip, thin tier border so the
+  // bronze/silver/gold/platinum signal isn't lost.
+  if (image && imageFit === "freeform") {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={name}
+        data-testid={testId || `trophy-${t.trophy_code || t.code || "badge"}`}
+        className={`relative ${dim} rounded-2xl bg-bgBase grid place-items-center transition transform overflow-hidden border-2 ${tierBorder} shadow-lg ${onClick ? "hover:scale-105 cursor-pointer" : "cursor-default"} ${locked ? "opacity-30 grayscale" : ""}`}
+      >
+        <img src={image} alt={name} className="w-full h-full object-contain"/>
+        {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-bgBase rounded-full p-1 text-gray-400"/>}
+      </button>
+    );
+  }
+
+  // Circle (legacy) and Contain — both keep the round badge + tier ring.
+  // Difference is `object-cover` (crop) vs `object-contain` (whole design,
+  // blank padding inside the circle).
+  const imgClass = imageFit === "contain"
+    ? "w-[88%] h-[88%] object-contain"
+    : "w-full h-full object-cover";
   return (
     <button
       type="button"
@@ -41,7 +80,7 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
       className={`relative ${dim} rounded-full bg-gradient-to-br ${ring} ring-2 grid place-items-center transition transform ${onClick ? "hover:scale-105 cursor-pointer" : "cursor-default"} ${locked ? "opacity-30 grayscale" : ""}`}
     >
       {image ? (
-        <img src={image} alt={name} className="w-full h-full rounded-full object-cover"/>
+        <img src={image} alt={name} className={`${imgClass} rounded-full`}/>
       ) : (
         <i className={`fas ${icon} ${txt} drop-shadow`}/>
       )}

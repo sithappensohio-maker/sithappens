@@ -120,7 +120,8 @@ function TrophySection({ title, trophies, onEdit, onDelete }) {
 function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
   const [form, setForm] = useState(trophy || {
     code: "", name: "", description: "", category: "dog", tier: "bronze",
-    icon: "fa-trophy", custom_image: "", trigger_type: "manual", trigger_kind: "", threshold: 0, active: true,
+    icon: "fa-trophy", custom_image: "", image_fit: "circle",
+    trigger_type: "manual", trigger_kind: "", threshold: 0, active: true,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -142,7 +143,8 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
       } else {
         const patch = {
           name: form.name, description: form.description, tier: form.tier,
-          icon: form.icon, custom_image: form.custom_image, threshold: form.threshold, active: form.active,
+          icon: form.icon, custom_image: form.custom_image, image_fit: form.image_fit || "circle",
+          threshold: form.threshold, active: form.active,
         };
         await api.put(`/trophies/catalog/${form.code}`, patch);
       }
@@ -214,7 +216,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
             )}
           </div>
           <Field label="Custom image (overrides icon)">
-            <input type="file" accept="image/*" onChange={onFile} className="text-sm text-gray-300"/>
+            <input type="file" accept="image/*" onChange={onFile} className="text-sm text-gray-300" data-testid="trophy-image-input"/>
             {form.custom_image && (
               <div className="mt-2 flex items-center gap-2">
                 <img src={form.custom_image} alt="preview" className="w-12 h-12 rounded-full object-cover"/>
@@ -222,6 +224,28 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
               </div>
             )}
           </Field>
+          {form.custom_image && (
+            <Field label="Image fit (how the upload sits inside the badge)">
+              <select
+                value={form.image_fit || "circle"}
+                onChange={(e)=>setForm({...form, image_fit: e.target.value})}
+                data-testid="trophy-image-fit-select"
+                className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none focus:border-shBlue"
+              >
+                <option value="circle">Crop to circle — cover-fit, best for photos</option>
+                <option value="contain">Fit inside — whole design visible, tier ring kept</option>
+                <option value="freeform">Full-bleed design — no clip, no ring, your art IS the trophy</option>
+              </select>
+              <p className="text-[12px] text-gray-500 mt-1.5 italic">
+                <i className="fas fa-circle-info mr-1"/>
+                {form.image_fit === "freeform"
+                  ? "Trophy renders as a rounded card with a thin tier-coloured border."
+                  : form.image_fit === "contain"
+                    ? "Whole design fits inside the circle with padding — nothing gets cropped."
+                    : "Image is cropped to fill the circle (legacy default)."}
+              </p>
+            </Field>
+          )}
           {!isNew && (
             <label className="flex items-center gap-2 text-[15px] text-gray-300">
               <input type="checkbox" checked={form.active !== false} onChange={(e)=>setForm({...form, active: e.target.checked})}/>

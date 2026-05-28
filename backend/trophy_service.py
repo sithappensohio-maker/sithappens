@@ -92,6 +92,9 @@ async def award_trophy(
         # Snapshot the custom image at award-time so historical shares keep
         # their visual even if the admin later edits/removes the catalog image.
         "trophy_custom_image": trophy.get("custom_image", "") or "",
+        # Sprint 110ak — snapshot the layout mode too so the wall + share-card
+        # honour the admin's chosen fit even after the catalog row is edited.
+        "trophy_image_fit": trophy.get("image_fit", "circle") or "circle",
         "trophy_description": trophy.get("description", ""),
         "recipient_type": recipient_type,
         "recipient_id": recipient_id,
@@ -305,7 +308,12 @@ def render_share_card_png(awarded: Dict[str, Any]) -> bytes:
 
     # Centerpiece: admin-uploaded image (preferred) circular-masked inside the
     # ring, falling back to the universal ★ glyph if no image is on the trophy.
+    # Sprint 110ak — `trophy_image_fit` controls how the upload is composed:
+    #   "circle"   — cover-crop into the inner circle (legacy)
+    #   "contain"  — fit whole design inside circle, keep tier ring
+    #   "freeform" — replace the ring with a rounded rectangle of the design
     custom_image = awarded.get("trophy_custom_image") or ""
+    image_fit = (awarded.get("trophy_image_fit") or "circle").lower()
     pasted = False
     if custom_image:
         try:
@@ -314,19 +322,54 @@ def render_share_card_png(awarded: Dict[str, Any]) -> bytes:
             payload = re.sub(r"\s+", "", payload)
             raw = base64.b64decode(payload)
             tile = Image.open(io.BytesIO(raw)).convert("RGBA")
-            inner = radius - 36  # leave room for the inner highlight ring
-            size = inner * 2
-            # Cover-fit (crop to square then scale to size)
-            w, h = tile.size
-            short = min(w, h)
-            left = (w - short) // 2
-            top = (h - short) // 2
-            tile = tile.crop((left, top, left + short, top + short)).resize((size, size), Image.LANCZOS)
-            # Circular mask
-            mask = Image.new("L", (size, size), 0)
-            ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
-            img.paste(tile, (cx - inner, cy - inner), mask)
-            pasted = True
+
+            if image_fit == "freeform":
+                # Re-paint the left-hand slot as a rounded card carrying the
+                # original aspect ratio. We blank out the ring drawn above
+                # (so it doesn't leak through), then paste a contained version
+                # of the artwork.
+                slot = radius * 2 + 24
+                card_x0, card_y0 = cx - slot // 2, cy - slot // 2
+                # Erase the ring we drew earlier
+                draw.rectangle((card_x0 - 8, card_y0 - 8, card_x0 + slot + 8, card_y0 + slot + 8), fill=(16, 22, 30))
+                # Contain-fit the artwork inside the slot, preserving ratio
+                w, h = tile.size
+                scale = min(slot / w, slot / h)
+                new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+                tile = tile.resize((new_w, new_h), Image.LANCZOS)
+                # Rounded-corner mask so the card has the same soft feel as the badge
+                mask = Image.new("L", (slot, slot), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, slot, slot), radius=36, fill=255)
+                bg = Image.new("RGBA", (slot, slot), (0, 0, 0, 0))
+                bg.paste(tile, ((slot - new_w) // 2, (slot - new_h) // 2), tile if tile.mode == "RGBA" else None)
+                img.paste(bg, (card_x0, card_y0), mask)
+                pasted = True
+            else:
+                inner = radius - 36  # leave room for the inner highlight ring
+                size = inner * 2
+                if image_fit == "contain":
+                    # Contain-fit (no crop) — preserves the design, blank space
+                    # around it inside the circle mask. White-ish padding so
+                    # the design pops on the dark page.
+                    w, h = tile.size
+                    scale = min(size / w, size / h)
+                    new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+                    fitted = tile.resize((new_w, new_h), Image.LANCZOS)
+                    bg = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+                    bg.paste(fitted, ((size - new_w) // 2, (size - new_h) // 2), fitted if fitted.mode == "RGBA" else None)
+                    tile = bg
+                else:
+                    # "circle" — cover-fit (crop to square then scale to size)
+                    w, h = tile.size
+                    short = min(w, h)
+                    left = (w - short) // 2
+                    top = (h - short) // 2
+                    tile = tile.crop((left, top, left + short, top + short)).resize((size, size), Image.LANCZOS)
+                # Circular mask
+                mask = Image.new("L", (size, size), 0)
+                ImageDraw.Draw(mask).ellipse((0, 0, size, size), fill=255)
+                img.paste(tile, (cx - inner, cy - inner), mask)
+                pasted = True
         except Exception as exc:
             logger.warning("trophy share-card image paste failed (%s); falling back to glyph", exc)
 
