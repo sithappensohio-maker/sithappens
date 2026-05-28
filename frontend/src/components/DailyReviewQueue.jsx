@@ -125,48 +125,113 @@ export default function DailyReviewQueue({ onClose, onReviewed }) {
             </div>
 
             {/* Submission body */}
-            <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-3">
+            <div className="bg-bgBase border border-bgHover rounded-xl p-4 space-y-4">
               <p className="text-[13px] font-black uppercase tracking-widest text-shBlue">
                 <i className="fas fa-clipboard-list mr-1" />Client's submission
               </p>
+
+              {/* Sprint 110af — Show the full instructional context the client
+                  was working from so the trainer reviews against the actual
+                  prompt, not from memory. */}
+              {dayObj?.instructions && (
+                <div className="bg-bgPanel/60 rounded p-3 border-l-2 border-shBlue/40">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1"><i className="fas fa-circle-info mr-1"/>What they were asked to do</p>
+                  <p className="text-gray-300 text-[13px] whitespace-pre-wrap leading-relaxed">{dayObj.instructions}</p>
+                </div>
+              )}
+
+              {/* Equipment they were told to bring */}
+              {(dayObj?.equipment || []).length > 0 && (
+                <div className="bg-bgPanel/60 rounded p-3">
+                  <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1.5"><i className="fas fa-toolbox mr-1"/>Equipment</p>
+                  <ul className="flex flex-wrap gap-1.5">
+                    {dayObj.equipment.map((eq, i) => (
+                      <li key={i} className="text-[12px] bg-bgBase border border-bgHover rounded px-2 py-0.5 text-gray-300">{eq}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Step checkboxes — which named drills the client actually
+                  ticked off. Greys-out missed ones so the trainer sees both
+                  what was done AND what was skipped. */}
+              {(dayObj?.steps || []).length > 0 && (
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1.5"><i className="fas fa-list-check mr-1"/>Steps logged</p>
+                  <div className="space-y-1" data-testid="review-steps-list">
+                    {dayObj.steps.map((step) => {
+                      const sid = step.id || step.label;
+                      const checked = !!(dayObj.step_states || {})[sid];
+                      return (
+                        <div key={sid} className={`flex items-start gap-2 text-[13px] px-2 py-1.5 rounded border ${checked ? "bg-shGreen/10 border-shGreen/30" : "bg-bgPanel/40 border-bgHover opacity-60"}`}>
+                          <i className={`fas ${checked ? "fa-square-check text-shGreen" : "fa-square text-gray-500"} mt-0.5`}/>
+                          <div className="flex-1 min-w-0">
+                            <span className={checked ? "text-white" : "text-gray-400 line-through decoration-gray-500/50"}>{step.label}</span>
+                            {step.minutes && <span className="ml-2 text-[11px] text-gray-500 uppercase tracking-widest">~{step.minutes} min</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <p className="text-[11px] text-gray-500 uppercase tracking-widest mt-1.5">
+                    <i className="fas fa-check-double text-shGreen mr-1"/>
+                    {dayObj.steps.filter(s => (dayObj.step_states || {})[s.id || s.label]).length} / {dayObj.steps.length} completed
+                  </p>
+                </div>
+              )}
+
               {/* Mood */}
               {mood && (
                 <div className="flex items-center gap-2">
                   <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Mood:</span>
                   <span className="text-2xl">{["", "😞", "😅", "😐", "💪", "😄"][mood] || "—"}</span>
-                  <span className="text-gray-300 text-[14px] font-black">{mood}/5</span>
+                  <span className="text-gray-300 text-[14px] font-black">{mood}/5 — {["","Rough","Tricky","OK","Great","Amazing"][mood] || ""}</span>
                 </div>
               )}
-              {/* Field values */}
-              <div className="space-y-1.5">
-                {(dayObj?.fields || []).map(f => {
-                  const v = submission.field_values?.[f.id];
-                  if (v === undefined || v === "" || v === null) return null;
-                  let display = v;
-                  if (typeof v === "boolean") display = v ? "✓ yes" : "✗ no";
-                  return (
-                    <div key={f.id} className="flex justify-between items-start gap-3 border-b border-bgHover/40 pb-1.5 last:border-0">
-                      <span className="text-[14px] font-black uppercase tracking-widest text-gray-500">{f.label}</span>
-                      <span className="text-white text-[14px] font-black text-right whitespace-pre-wrap">{String(display)}</span>
-                    </div>
-                  );
-                })}
-              </div>
+              {/* Field values (numeric / text / checkbox metrics) */}
+              {(dayObj?.fields || []).some(f => {
+                const v = submission.field_values?.[f.id];
+                return v !== undefined && v !== "" && v !== null;
+              }) && (
+                <div>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-1.5"><i className="fas fa-chart-simple mr-1"/>Metrics</p>
+                  <div className="space-y-1.5">
+                    {(dayObj?.fields || []).map(f => {
+                      const v = submission.field_values?.[f.id];
+                      if (v === undefined || v === "" || v === null) return null;
+                      let display = v;
+                      if (typeof v === "boolean") display = v ? "✓ yes" : "✗ no";
+                      return (
+                        <div key={f.id} className="flex justify-between items-start gap-3 border-b border-bgHover/40 pb-1.5 last:border-0">
+                          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{f.label}</span>
+                          <span className="text-white text-[14px] font-black text-right whitespace-pre-wrap">{String(display)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {submission.note && (
-                <div className="bg-bgPanel/60 rounded p-3 mt-2">
-                  <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Client's note</p>
+                <div className="bg-bgPanel/60 rounded p-3 mt-2 border-l-2 border-shOrange/40">
+                  <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1"><i className="fas fa-comment mr-1"/>Client's note</p>
                   <p className="text-gray-200 text-[14px] italic whitespace-pre-wrap">"{submission.note}"</p>
                 </div>
               )}
               {photo && (
                 <div className="mt-2">
-                  <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Photo</p>
+                  <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1"><i className="fas fa-camera mr-1"/>Photo</p>
                   <img src={photo} alt="Day submission" loading="lazy" className="max-h-72 rounded border border-bgHover" data-testid="review-photo" />
                 </div>
               )}
               {submission.field_values?.__video_id && (
                 <ReviewVideo homeworkId={active.homework_id} mediaId={submission.field_values.__video_id} />
               )}
+
+              {/* Submitted-at footnote so the trainer knows how stale the entry is */}
+              <p className="text-[11px] text-gray-500 uppercase tracking-widest pt-2 border-t border-bgHover/40">
+                <i className="fas fa-clock mr-1"/>Submitted {(submission.logged_at || active.submitted_at || "").slice(0, 16).replace("T", " ")}
+                {submission.previous_status === "needs_redo" && <span className="ml-2 text-red-400">· This is a re-submission</span>}
+              </p>
             </div>
 
             {/* Question thread */}

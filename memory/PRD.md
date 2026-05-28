@@ -28,6 +28,20 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110af — Review window + Report panel deeper visibility (2026-02)
+- ✅ **DailyReviewQueue** day-detail now surfaces everything the client filled out:
+  - Day instructions (what they were asked to do) in a blue-bordered context block
+  - Equipment list (chips of what they should've had ready)
+  - Step checkboxes with strikethrough for skipped steps + "X/Y completed" counter
+  - Mood with emoji + label ("4/5 — Great")
+  - Metrics section header, client note (orange-bordered), photo, video
+  - Submitted-at footnote w/ re-submission flag
+- ✅ **HomeworkReportPanel** now ALSO fetches `/homework/{id}` so it can detect daily-tracker plans. For tracker plans it renders a per-day timeline:
+  - Collapsible day rows with status pill (Approved/Submitted/Needs-redo/Rest/Skipped) + one-line summary
+  - Expanded view: instructions, steps w/ checkmarks, metrics, client note, photo, questions+answers thread, trainer's review note
+  - Session-template aggregate tiles still render below for backwards compat
+- ✅ Lint clean across both components
+
 ## Sprint 110ae — Daily-Tracker badge on template picker (2026-02)
 - ✅ `HomeworkTemplatePicker` now shows a purple "DAILY TRACKER" pill (with calendar-check icon) on every card AND in the selected-template detail panel — instantly distinguishes day-by-day tracker templates from session-log templates
 - ✅ Tracker cards also get a purple ring border so they stand out at a glance in the grid
