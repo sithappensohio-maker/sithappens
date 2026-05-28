@@ -7133,14 +7133,42 @@ async def calendar_events(_: dict = Depends(require_admin)):
 
 
 # -------- Backup & Restore --------
-# Sprint 110o — vaccine_dismissals removed from backup/restore (accumulates
-# thousands of audit-trail rows that bloat snapshots and aren't needed for DR).
+# Sprint 110aj — expanded backup to cover EVERYTHING the user touches.
+# Earlier the snapshot only captured 9 collections, so homework templates,
+# trophies, programs, credits, training sessions, time-clock history, etc.
+# were silently lost on restore. Now we capture every catalog + every piece
+# of per-dog / per-client progress + retail + financial state.
+#
+# Intentionally excluded:
+#   • users               — passwords are hashed; use /admin/users/export-with-hashes
+#                            for credentialed migrations between hosts.
+#   • vaccine_dismissals  — audit trail, can balloon to thousands of rows.
+#   • notification_log    — email-send audit; not needed for DR.
+#   • commands            — admin command audit.
+#   • system_runs         — cron-job audit.
 BACKUP_COLLECTIONS = [
-    "clients", "dogs", "bookings", "incidents", "homework",
-    "waiver_signatures", "settings", "expenses",
-    "retail_sales",
+    # Core directory
+    "clients", "dogs", "bookings", "incidents",
+    "waiver_signatures", "client_files", "claim_tokens",
+    # Settings + catalog (the "templates" the user explicitly called out)
+    "settings", "services", "credit_packs",
+    "homework_templates", "recurring_templates", "shift_templates",
+    "programs", "trophies",
+    # Per-dog / per-client progress
+    "homework", "homework_media", "step_events",
+    "dog_programs", "training_sessions",
+    "awarded_trophies", "referrals",
+    # Financial state
+    "expenses", "retail_sales", "credit_lots", "credit_adjustments",
+    # Front-desk inbox + admin task state
+    "quote_requests", "tasks", "task_dismissals",
+    # Staff scheduling + actual clocked hours (drives payroll)
+    "shifts", "time_clock_entries",
 ]
-BACKUP_VERSION = 1
+# Bumped to v2 with the expanded collection list. Restore accepts v1 backups
+# too (older snapshots simply won't include the new collections — restore
+# leaves missing collections untouched rather than wiping them).
+BACKUP_VERSION = 2
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -7552,8 +7580,14 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
        - replace: drops each collection and bulk-inserts the backup contents
        - merge:   upserts each document by `id` (existing docs with same id are overwritten; new ones added)
     User accounts are never touched."""
-    if body.version != BACKUP_VERSION:
-        raise HTTPException(status_code=400, detail=f"Unsupported backup version {body.version}; expected {BACKUP_VERSION}")
+    if body.version > BACKUP_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Backup version {body.version} is newer than this server (v{BACKUP_VERSION}). Update the server first.",
+        )
+    # Older versions are accepted — they simply contain fewer collections.
+    # Collections not in the payload are left alone (never wiped), so restoring
+    # a v1 snapshot won't blow away homework_templates, trophies, etc.
     summary = {}
     for c, docs in (body.collections or {}).items():
         if c not in BACKUP_COLLECTIONS:

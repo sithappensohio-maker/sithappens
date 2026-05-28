@@ -1200,8 +1200,15 @@ function BackupPanel() {
       <div>
         <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-download mr-2"/>Download Backup</h4>
         <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
-          Save a full snapshot of everything: clients, dogs, bookings, incidents, homework, waiver signatures, and settings.
-          We recommend downloading one every week or before any major change.
+          Saves a full snapshot of <span className="text-white font-black">everything that matters</span>:
+          clients, dogs, bookings, incidents, waivers, client files, claim invites;
+          every catalog you've customised (services, credit packs, homework templates, programs, trophies, recurring/shift templates);
+          per-dog progress (homework + media, step history, training sessions, awarded trophies, program enrollments, referrals);
+          financial state (expenses, retail, credit lots, credit adjustments);
+          quote-request inbox, admin tasks and dismissals;
+          plus staff scheduling and clocked-in time entries.
+          <br/><span className="text-gray-500">User logins are migrated separately via Settings → Users → Export-with-hashes.</span>
+          <br/>Download one every week or before any major change.
         </p>
         <button onClick={download} disabled={busy} data-testid="backup-download"
                 className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
