@@ -28,6 +28,11 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+## Sprint 110ac — Dashboard hero: full service-category coverage (2026-02)
+- ✅ Backend `/dashboard/stats` now also returns `grooming_today` and `photography_today` counts (same live-occupancy logic as the existing 3 categories — excludes already-checked-out dogs)
+- ✅ Dashboard hero now shows 5 tiles: Daycare (occupancy/capacity), Boarding tonight, Training today, Grooming today, Photography today
+- ✅ Verified via curl that all 5 fields populate correctly
+
 ## Sprint 110ab — Dashboard hero tile bug fix (2026-02)
 - ✅ Dashboard hero tiles (Daycare/Boarding/Training today) were reading wrong field names — `daycare_today`/`boarding_tonight` instead of the actual backend keys `daycare_occupancy`/`boarding_today`/`training_today`. Tiles always showed 0.
 - ✅ Now correctly reads `stats.daycare_occupancy / stats.daycare_capacity` (displays `2/30`), `stats.boarding_today`, `stats.training_today`

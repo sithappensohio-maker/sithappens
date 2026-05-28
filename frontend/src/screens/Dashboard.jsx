@@ -139,6 +139,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
               <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>
               <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>
               <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>
+              <DashHeroTile icon="fa-bath"          color="#06b6d4" label="Grooming today" value={stats?.grooming_today ?? 0}/>
+              <DashHeroTile icon="fa-camera-retro"  color="#f97316" label="Photography today" value={stats?.photography_today ?? 0}/>
             </div>
           )}
         </div>

@@ -6486,18 +6486,21 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     daycare_today = 0
     boarding_today = 0
     training_today = 0
+    grooming_today = 0
+    photography_today = 0
     roster = []
     for b in today_bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
         if today in days:
             # Live counts: a dog that's already checked out no longer occupies its slot.
             already_out = bool(b.get("checked_out_at"))
-            if b["service_type"] == "daycare" and not already_out:
-                daycare_today += 1
-            elif b["service_type"] == "boarding" and not already_out:
-                boarding_today += 1
-            elif b["service_type"] == "training" and not already_out:
-                training_today += 1
+            svc = b["service_type"]
+            if not already_out:
+                if   svc == "daycare":     daycare_today += 1
+                elif svc == "boarding":    boarding_today += 1
+                elif svc == "training":    training_today += 1
+                elif svc == "grooming":    grooming_today += 1
+                elif svc == "photography": photography_today += 1
             enriched = dict(b)
             enriched["dog"] = dog_map.get(b["dog_id"], {})
             enriched["client_credits"] = client_bal_map.get(b.get("client_id"), {
@@ -6509,6 +6512,10 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         "daycare_capacity": daycare_cap,
         "boarding_today": boarding_today,
         "training_today": training_today,
+        # Sprint 110ac — surface grooming & photography day counts so the
+        # admin dashboard hero tiles cover all five service categories.
+        "grooming_today": grooming_today,
+        "photography_today": photography_today,
         "health_flags": health_flags,
         "total_dogs": len(dogs),
         "today_roster": roster,
