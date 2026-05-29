@@ -25,6 +25,7 @@ REQUIRED_COLLECTIONS = {
     "awarded_trophies", "referrals",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
+    "price_overrides",
     # Front-desk inbox & admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling & clocked hours (drives payroll)

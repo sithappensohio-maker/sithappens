@@ -2443,6 +2443,15 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
         )
         if default_svc:
             unit = float(default_svc.get("base_price") or 0)
+            # Sprint 110am — honour the client's legacy-pricing override in the
+            # check-out preview so admins see the locked rate before confirming.
+            pricing = await resolve_client_price(
+                booking.get("client_id"),
+                "service",
+                default_svc.get("id") or "",
+                unit,
+            )
+            unit = pricing["effective_price"]
             if booking.get("service_type") == "boarding":
                 try:
                     s = date.fromisoformat(booking.get("date"))
@@ -2492,6 +2501,8 @@ async def check_out(
     # base_price wins; otherwise fall back to the booking's default service price.
     # For BOARDING the per-night rate is multiplied by the actual nights stayed
     # so a 3-night boarding at $50/night auto-prefills as $150.
+    # Sprint 110am — when no manual override is given, look up the client's
+    # legacy-pricing rate so grandfathered customers keep their locked price.
     async def _resolve_service_value(default_for_zero: float = 0.0) -> float:
         if body.base_price is not None:
             return float(body.base_price)
@@ -2500,7 +2511,14 @@ async def check_out(
             {"_id": 0},
         )
         if default_svc:
-            unit_price = float(default_svc.get("base_price") or 0)
+            list_price = float(default_svc.get("base_price") or 0)
+            pricing = await resolve_client_price(
+                booking.get("client_id"),
+                "service",
+                default_svc.get("id") or "",
+                list_price,
+            )
+            unit_price = pricing["effective_price"]
             if booking.get("service_type") == "boarding":
                 try:
                     start_d = date.fromisoformat(booking.get("date"))
@@ -7160,6 +7178,7 @@ BACKUP_COLLECTIONS = [
     "awarded_trophies", "referrals",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
+    "price_overrides",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling + actual clocked hours (drives payroll)
@@ -10176,6 +10195,178 @@ async def retail_sale_categories(_: dict = Depends(require_admin)):
     return {"categories": cats}
 
 
+# ──────────────────────── Legacy Pricing (per-client price overrides) ──────────
+# Sprint 110am — Some clients are grandfathered into the OLD prices when an
+# admin raises the public rate. We never modify the catalog row itself —
+# instead each grandfathered client gets one row per (target_kind, target_code)
+# with the locked rate and an optional expiry date. Booking creation +
+# credit-pack purchase + check-out price-resolution all consult this table
+# server-side, so the client portal / public booking flow can never bypass it
+# even if the catalog later shows a different number.
+
+
+class PriceOverrideIn(BaseModel):
+    target_kind: Literal["service", "credit_pack"]
+    # The catalog row's `id` (uuid). Stable across rename and price edits, so
+    # an override survives even if the admin renames "Daycare" later.
+    target_code: str = Field(min_length=1)
+    override_price: float = Field(ge=0)
+    # ISO date `YYYY-MM-DD`. Empty / null = grandfathered forever.
+    expires_on: Optional[str] = None
+    note: Optional[str] = ""
+
+
+class PriceOverridePatch(BaseModel):
+    override_price: Optional[float] = Field(default=None, ge=0)
+    expires_on: Optional[str] = None
+    note: Optional[str] = None
+
+
+def _override_is_active(row: dict, today: Optional[date] = None) -> bool:
+    """An override is active when expires_on is empty OR ≥ today."""
+    exp = (row or {}).get("expires_on")
+    if not exp:
+        return True
+    today = today or date.today()
+    try:
+        return date.fromisoformat(exp) >= today
+    except Exception:
+        return True  # malformed date — assume still active rather than silently dropping rate
+
+
+async def resolve_client_price(
+    client_id: Optional[str],
+    target_kind: str,
+    target_code: str,
+    list_price: float,
+) -> dict:
+    """Return `{effective_price, list_price, override_id, override_row}` for the
+    given client + catalog item. When no active override exists, effective ==
+    list. Used by booking-create + credit-pack-sell so the same source of
+    truth covers both."""
+    out = {
+        "effective_price": float(list_price or 0),
+        "list_price": float(list_price or 0),
+        "override_id": None,
+        "override_row": None,
+    }
+    if not client_id or not target_code:
+        return out
+    row = await db.price_overrides.find_one(
+        {"client_id": client_id, "target_kind": target_kind, "target_code": target_code},
+        {"_id": 0},
+    )
+    if row and _override_is_active(row):
+        out["effective_price"] = float(row.get("override_price") or 0)
+        out["override_id"] = row.get("id")
+        out["override_row"] = row
+    return out
+
+
+@api.get("/clients/{client_id}/price-overrides")
+async def list_client_price_overrides(client_id: str, _: dict = Depends(require_admin), include_expired: bool = False):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    rows = await db.price_overrides.find({"client_id": client_id}, {"_id": 0}).to_list(500)
+    if not include_expired:
+        rows = [r for r in rows if _override_is_active(r)]
+    # Enrich with the catalog row so the UI can show "Daycare · was $35 → now $30"
+    svc_codes = [r["target_code"] for r in rows if r["target_kind"] == "service"]
+    pack_ids = [r["target_code"] for r in rows if r["target_kind"] == "credit_pack"]
+    svcs = {s["id"]: s for s in await db.services.find({"id": {"$in": svc_codes}}, {"_id": 0}).to_list(500)} if svc_codes else {}
+    packs = {p["id"]: p for p in await db.credit_packs.find({"id": {"$in": pack_ids}}, {"_id": 0}).to_list(500)} if pack_ids else {}
+    for r in rows:
+        if r["target_kind"] == "service":
+            s = svcs.get(r["target_code"])
+            r["target_name"] = (s or {}).get("name") or r["target_code"]
+            r["list_price"] = float((s or {}).get("base_price") or 0)
+        else:
+            p = packs.get(r["target_code"])
+            r["target_name"] = (p or {}).get("name") or r["target_code"]
+            r["list_price"] = float((p or {}).get("price") or 0)
+        r["active"] = _override_is_active(r)
+        r["savings"] = round(r["list_price"] - float(r["override_price"]), 2)
+    rows.sort(key=lambda r: (not r["active"], r["target_kind"], r["target_name"]))
+    return {"overrides": rows}
+
+
+@api.post("/clients/{client_id}/price-overrides")
+async def create_client_price_override(client_id: str, body: PriceOverrideIn, user: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1, "name": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    # Validate the catalog item exists so we don't accumulate orphan overrides
+    if body.target_kind == "service":
+        target = await db.services.find_one({"id": body.target_code}, {"_id": 0, "name": 1, "base_price": 1})
+    else:
+        target = await db.credit_packs.find_one({"id": body.target_code}, {"_id": 0, "name": 1, "price": 1})
+    if not target:
+        raise HTTPException(status_code=404, detail=f"Unknown {body.target_kind} `{body.target_code}`")
+    # Light date validation
+    if body.expires_on:
+        try:
+            date.fromisoformat(body.expires_on)
+        except Exception:
+            raise HTTPException(status_code=422, detail="expires_on must be YYYY-MM-DD or empty")
+    # Upsert — one override per (client, kind, code). New value wins.
+    existing = await db.price_overrides.find_one(
+        {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code},
+        {"_id": 0, "id": 1},
+    )
+    doc = {
+        "id": existing["id"] if existing else str(uuid.uuid4()),
+        "client_id": client_id,
+        "target_kind": body.target_kind,
+        "target_code": body.target_code,
+        "override_price": float(body.override_price),
+        "expires_on": body.expires_on or None,
+        "note": (body.note or "").strip(),
+        "created_by": user.get("name", "Admin"),
+        "created_at": now_iso() if not existing else None,
+        "updated_at": now_iso(),
+    }
+    doc = {k: v for k, v in doc.items() if v is not None}
+    await db.price_overrides.update_one(
+        {"client_id": client_id, "target_kind": body.target_kind, "target_code": body.target_code},
+        {"$set": doc},
+        upsert=True,
+    )
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/price-overrides/{override_id}")
+async def update_price_override(override_id: str, body: PriceOverridePatch, _: dict = Depends(require_admin)):
+    row = await db.price_overrides.find_one({"id": override_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Override not found")
+    patch: Dict[str, Any] = {"updated_at": now_iso()}
+    if body.override_price is not None:
+        patch["override_price"] = float(body.override_price)
+    if body.expires_on is not None:
+        if body.expires_on == "":
+            patch["expires_on"] = None
+        else:
+            try:
+                date.fromisoformat(body.expires_on)
+            except Exception:
+                raise HTTPException(status_code=422, detail="expires_on must be YYYY-MM-DD or empty")
+            patch["expires_on"] = body.expires_on
+    if body.note is not None:
+        patch["note"] = body.note.strip()
+    await db.price_overrides.update_one({"id": override_id}, {"$set": patch})
+    return {**row, **patch}
+
+
+@api.delete("/price-overrides/{override_id}")
+async def delete_price_override(override_id: str, _: dict = Depends(require_admin)):
+    res = await db.price_overrides.delete_one({"id": override_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Override not found")
+    return {"ok": True, "deleted": 1}
+
+
 # ────────────────────────── Credit Packs + FIFO Lots ──────────────────────────
 from credit_packs_data import SEED_CREDIT_PACKS
 
@@ -10369,7 +10560,11 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     if not pack:
         raise HTTPException(status_code=404, detail="Pack not found")
     qty = int(pack["qty"])
-    value_each = round(float(pack["price"]) / max(qty, 1), 2)
+    # Sprint 110am — honour a legacy-pricing override if one is active for this
+    # client + pack. Falls back to the catalog price when no override exists.
+    pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack["price"]))
+    effective_price = pricing["effective_price"]
+    value_each = round(effective_price / max(qty, 1), 2)
     svc_type = pack.get("service_type") or "daycare"
     lot = {
         "id": str(uuid.uuid4()),
@@ -10379,7 +10574,9 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
         "service_type": svc_type,
         "qty_total": qty,
         "qty_remaining": qty,
-        "price_paid": float(pack["price"]),
+        "price_paid": effective_price,
+        "list_price": float(pack["price"]),
+        "price_override_id": pricing["override_id"],
         "value_each": value_each,
         "payment_method": body.payment_method,
         "note": body.note or "",
@@ -10423,7 +10620,10 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     for item in body.items:
         pack = packs[item.pack_id]
         qty = int(pack["qty"])
-        value_each = round(float(pack["price"]) / max(qty, 1), 2)
+        # Sprint 110am — same legacy-pricing resolution as the single-sell path
+        pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack["price"]))
+        effective_price = pricing["effective_price"]
+        value_each = round(effective_price / max(qty, 1), 2)
         svc_type = pack.get("service_type") or "daycare"
         pool_key = svc_type if svc_type in pool_increments else "daycare"
         for _ in range(item.quantity):
@@ -10435,7 +10635,9 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
                 "service_type": svc_type,
                 "qty_total": qty,
                 "qty_remaining": qty,
-                "price_paid": float(pack["price"]),
+                "price_paid": effective_price,
+                "list_price": float(pack["price"]),
+                "price_override_id": pricing["override_id"],
                 "value_each": value_each,
                 "payment_method": body.payment_method,
                 "note": body.note or "",
@@ -10445,7 +10647,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             new_lots.append(lot)
             pool_increments[pool_key] += qty
             totals_by_pool[pool_key]["qty"] += qty
-            totals_by_pool[pool_key]["price"] += float(pack["price"])
+            totals_by_pool[pool_key]["price"] += effective_price
 
     await db.credit_lots.insert_many(new_lots)
     inc_doc: Dict[str, int] = {}

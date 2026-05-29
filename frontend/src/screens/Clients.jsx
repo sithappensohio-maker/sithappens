@@ -8,6 +8,7 @@ import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import Avatar from "../components/Avatar";
 import { startImpersonation } from "../lib/impersonation";
 import ClientFilesModal from "../components/ClientFilesModal";
+import LegacyPricingModal from "../components/LegacyPricingModal";
 import PageHero from "../components/PageHero";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
@@ -30,6 +31,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [adjustOpen, setAdjustOpen] = useState(null); // client object
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [filesOpen, setFilesOpen] = useState(null); // client object — shows files/homework manager
+  const [legacyOpen, setLegacyOpen] = useState(null); // client object — shows the grandfathered-price overrides
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
@@ -320,6 +322,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                     className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
               <i className="fas fa-folder-open mr-1"/>Files & Homework
             </button>
+            <button onClick={()=>setLegacyOpen(c)} data-testid={`legacy-pricing-${c.id}`}
+                    className="mt-2 w-full bg-amber-500/10 text-amber-400 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-amber-500/20">
+              <i className="fas fa-lock mr-1"/>Legacy Pricing
+            </button>
             <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
@@ -516,6 +522,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                            onReprint={(r)=>{ setReceipt({ client: receiptsOpen, ...r }); setReceiptsOpen(null); }} />
       )}
       {filesOpen && <ClientFilesModal client={filesOpen} onClose={()=>setFilesOpen(null)} />}
+      {legacyOpen && <LegacyPricingModal client={legacyOpen} onClose={()=>setLegacyOpen(null)} />}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
       {adjustOpen && <AdjustCreditsModal client={adjustOpen} onClose={()=>setAdjustOpen(null)} onSaved={()=>{ setAdjustOpen(null); load(); }} />}
     </div>
