@@ -18,7 +18,17 @@ const SERVICE_TYPES = [
   { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
-const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true };
+const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true, is_addon: false, addon_for: [] };
+
+// Sprint 110an — add-ons can be eligible for multiple base service types
+// (e.g. nail trim makes sense as a daycare + grooming + boarding add-on).
+const BASE_TYPES_FOR_ADDON = [
+  { key: "daycare", label: "Daycare" },
+  { key: "boarding", label: "Boarding" },
+  { key: "training", label: "Training" },
+  { key: "grooming", label: "Grooming" },
+  { key: "photography", label: "Photography" },
+];
 
 
 export default function ServicesSettings() {
@@ -108,8 +118,21 @@ export default function ServicesSettings() {
                     <i className={`fas ${s.icon || "fa-tag"}`} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-white font-black text-[14px] tracking-tight truncate">{s.name}</p>
-                    <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">{s.is_default ? "default" : "custom"}{!s.active ? " · inactive" : ""}</p>
+                    <p className="text-white font-black text-[14px] tracking-tight truncate">
+                      {s.name}
+                      {s.is_addon && (
+                        <span className="ml-2 inline-block bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest align-middle">
+                          <i className="fas fa-plus-circle mr-1"/>Add-on
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">
+                      {s.is_default ? "default" : "custom"}
+                      {!s.active ? " · inactive" : ""}
+                      {s.is_addon && (s.addon_for || []).length > 0 && (
+                        <span className="ml-2 text-amber-400/80 normal-case tracking-normal">→ shows under: {(s.addon_for || []).join(", ")}</span>
+                      )}
+                    </p>
                   </div>
                   <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${s.base_price?.toFixed(2)}</p>
                   <button onClick={()=>openEdit(s)} className="text-shBlue text-[14px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
@@ -192,6 +215,66 @@ export default function ServicesSettings() {
                   />
                   <p className="text-[13px] text-gray-500 mt-1 normal-case">{(form.description || "").length}/500 — appears on client portal under the service name.</p>
                 </div>
+                {/* Sprint 110an — flag this service as an add-on the client/admin
+                    can tack on to another base booking. When checked, the catalog
+                    hides the row from the main service list and instead surfaces
+                    it on the chosen base service's booking + check-in flows. */}
+                <div className="md:col-span-2">
+                  <label className="flex items-start gap-2 cursor-pointer" data-testid="service-is-addon-toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!form.is_addon}
+                      onChange={(e)=>setForm({...form, is_addon: e.target.checked, addon_for: e.target.checked ? form.addon_for : []})}
+                      className="mt-1"
+                    />
+                    <div>
+                      <span className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
+                        <i className="fas fa-plus-circle mr-1"/>Show as add-on
+                      </span>
+                      <p className="text-[13px] text-gray-500 mt-0.5 normal-case">
+                        When checked, this service is hidden from the main bookable list and offered as an upsell under the base services you pick below (booking, quick check-in, and check-out).
+                      </p>
+                    </div>
+                  </label>
+                </div>
+                {form.is_addon && (
+                  <div className="md:col-span-2" data-testid="service-addon-for-picker">
+                    <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">
+                      Show under these base services
+                    </label>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {BASE_TYPES_FOR_ADDON.map(t => {
+                        const picked = (form.addon_for || []).includes(t.key);
+                        return (
+                          <button
+                            key={t.key}
+                            type="button"
+                            data-testid={`addon-for-chip-${t.key}`}
+                            onClick={()=>{
+                              const next = picked
+                                ? (form.addon_for || []).filter(x => x !== t.key)
+                                : [...(form.addon_for || []), t.key];
+                              setForm({...form, addon_for: next});
+                            }}
+                            className={`px-3 py-1.5 rounded-full text-[13px] font-black uppercase tracking-widest border transition ${
+                              picked
+                                ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
+                                : "bg-bgBase border-bgHover text-gray-500 hover:border-amber-500/40 hover:text-amber-400"
+                            }`}
+                          >
+                            {picked && <i className="fas fa-check mr-1"/>}
+                            {t.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(form.addon_for || []).length === 0 && (
+                      <p className="text-[12px] text-red-400 italic mt-2">
+                        Pick at least one base service or this add-on won't appear anywhere.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
               {/* Live preview — exactly how this row will render in the catalog. */}
               <div className="mt-4">

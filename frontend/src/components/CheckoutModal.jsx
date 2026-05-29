@@ -73,7 +73,18 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const boardingRate = (services || []).find(s => s.service_type === "boarding" && s.is_default && s.active)?.base_price || 0;
   const extraRateEffective = extraRate !== "" ? Number(extraRate) || 0 : Number(boardingRate || 0);
   const isBoarding = booking.service_type === "boarding";
-  const addOnCandidates = (services || []).filter(s => s.active && s.service_type !== booking.service_type);
+  // Sprint 110an — only show services that are flagged as add-ons AND
+  // eligible for this booking's service type. Falls back to the legacy
+  // "any non-base service" rule for any service that hasn't been flagged
+  // yet (so existing setups keep working). The flagged-only list wins
+  // when there are any eligible add-ons configured.
+  const flaggedAddons = (services || []).filter(
+    s => s.active && s.is_addon && (s.addon_for || []).includes(booking.service_type)
+  );
+  const legacyCandidates = (services || []).filter(
+    s => s.active && !s.is_addon && s.service_type !== booking.service_type
+  );
+  const addOnCandidates = flaggedAddons.length > 0 ? flaggedAddons : legacyCandidates;
   const [cart, setCart] = useState({});
 
   const [busy, setBusy] = useState(false);
@@ -283,6 +294,25 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         {/* Section 2 — Add-ons */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
+          {/* Sprint 110an — pre-attached add-ons (added at booking or check-in)
+              are already on the booking and will auto-bill at checkout. Show
+              them so the admin doesn't accidentally re-add them as extras. */}
+          {(booking.add_ons || []).length > 0 && (
+            <div className="mb-3 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3" data-testid="checkout-pre-attached-addons">
+              <p className="text-[11px] uppercase tracking-widest text-amber-400 font-black mb-2">
+                <i className="fas fa-lock mr-1"/>Already on this booking
+              </p>
+              <ul className="space-y-1.5">
+                {(booking.add_ons || []).map((ao, i) => (
+                  <li key={i} className="flex items-center justify-between text-[13px]">
+                    <span className="text-white"><i className={`fas ${ao.icon || "fa-plus"} text-amber-400 mr-1.5"`}/>{ao.name} × {ao.qty || 1}</span>
+                    <span className="text-shGreen font-black">+${(Number(ao.price || 0) * (ao.qty || 1)).toFixed(2)}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-[11px] text-gray-400 italic mt-2">Auto-billed at checkout. No need to re-add below.</p>
+            </div>
+          )}
           {addOnCandidates.length === 0 ? (
             <p className="text-[14px] text-gray-500 italic">No add-on services configured. Add some in Settings → Services & Prices.</p>
           ) : (

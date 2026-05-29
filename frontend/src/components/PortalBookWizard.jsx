@@ -33,6 +33,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [step, setStep] = useState(1);
   const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
+  // Sprint 110an — add-ons eligible for the chosen base service.
+  const [eligibleAddons, setEligibleAddons] = useState([]);
+  const [selectedAddonIds, setSelectedAddonIds] = useState([]);
   const [date, setDate] = useState(todayISO());
   const [endDate, setEndDate] = useState("");
   const [time, setTime] = useState("");
@@ -77,6 +80,21 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
        .finally(() => { if (!cancelled) setSlotLoading(false); });
     return () => { cancelled = true; };
   }, [step, serviceType, date]);
+
+  // Sprint 110an — load add-ons whenever a service type is picked.
+  useEffect(() => {
+    if (!serviceType) { setEligibleAddons([]); setSelectedAddonIds([]); return; }
+    let cancelled = false;
+    api.get("/services/addons", { params: { for: serviceType } })
+       .then(r => {
+         if (cancelled) return;
+         const list = r.data || [];
+         setEligibleAddons(list);
+         setSelectedAddonIds(prev => prev.filter(id => list.some(a => a.id === id)));
+       })
+       .catch(() => { if (!cancelled) setEligibleAddons([]); });
+    return () => { cancelled = true; };
+  }, [serviceType]);
 
   // Daycare availability check
   useEffect(() => {
@@ -125,6 +143,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           dates: multiDates,
           service_type: "daycare",
           notes,
+          addon_service_ids: selectedAddonIds,
         });
         const c = data.created?.length || 0;
         const s = data.skipped?.length || 0;
@@ -141,6 +160,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         date,
         service_type: serviceType,
         notes,
+        addon_service_ids: selectedAddonIds,
       };
       if (serviceType === "boarding") body.end_date = endDate;
       if (TIME_SLOTTED.has(serviceType)) body.time = time;
@@ -340,6 +360,51 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                     )}
                   </>
                 )}
+              </div>
+            )}
+
+            {/* Sprint 110an — eligible add-ons for the chosen base service.
+                Hidden when the base service has no add-ons configured. */}
+            {eligibleAddons.length > 0 && (
+              <div data-testid="portal-addons-picker">
+                <label className="text-[13px] uppercase tracking-widest text-amber-400 font-black">
+                  <i className="fas fa-plus-circle mr-1"/>Add a little extra (optional)
+                </label>
+                <div className="mt-2 space-y-2">
+                  {eligibleAddons.map(a => {
+                    const picked = selectedAddonIds.includes(a.id);
+                    return (
+                      <button
+                        key={a.id}
+                        type="button"
+                        data-testid={`portal-addon-${a.id}`}
+                        onClick={() => setSelectedAddonIds(prev =>
+                          picked ? prev.filter(x => x !== a.id) : [...prev, a.id]
+                        )}
+                        className={`w-full flex items-center gap-3 p-3 rounded-lg border transition text-left ${
+                          picked
+                            ? "bg-amber-500/15 border-amber-500/60"
+                            : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                        }`}
+                      >
+                        <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                             style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+                          <i className={`fas ${a.icon || "fa-plus"}`}/>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                          {a.description && (
+                            <div className="text-[12px] text-gray-400 line-clamp-2">{a.description}</div>
+                          )}
+                        </div>
+                        <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                          +${(a.base_price || 0).toFixed(2)}
+                        </div>
+                        {picked && <i className="fas fa-check-circle text-amber-400"/>}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
 

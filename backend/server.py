@@ -17,7 +17,7 @@ import jwt
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal, Dict, Any
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -319,6 +319,13 @@ class BookingIn(BaseModel):
     override_vaccines: bool = False
     override_capacity: bool = False
     check_in_now: bool = False
+    # Sprint 110an — add-ons selected at booking time. Each id refers to a
+    # service whose `is_addon=True` AND whose `addon_for` includes this
+    # booking's `service_type`. Prices are resolved server-side at booking
+    # time (with legacy-pricing overrides honoured), then snapshotted onto
+    # `booking.add_ons` so the rate is locked in even if the catalog
+    # changes later.
+    addon_service_ids: List[str] = []
 
 class RecurringBookingIn(BaseModel):
     dog_id: str
@@ -438,6 +445,18 @@ class CheckInIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     accuracy_m: Optional[float] = None
+    # Sprint 110an — add-ons selected at check-in (admin Quick Check-in or
+    # client-portal check-in). Resolved + appended to booking.add_ons,
+    # honouring the legacy-pricing override per add-on.
+    addon_service_ids: List[str] = []
+
+
+class BookingAddonsIn(BaseModel):
+    """Body for `POST /bookings/{id}/add-ons` — add-ons attached after the
+    booking was created (e.g. client adds a nail trim from the portal,
+    or admin tacks one on before check-out). Each id is validated against
+    `is_addon` + `addon_for` server-side."""
+    addon_service_ids: List[str] = Field(min_length=1, max_length=20)
 
 
 # -------- Auth --------
@@ -1396,6 +1415,15 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # use predictable and prevents accidental deductions for bookings that get
     # rescheduled, cancelled before drop-off, or paid with cash on the day.
     doc["credits_deducted"] = 0
+    # Sprint 110an — attach any add-ons the client picked at booking time
+    # (e.g. "Add a nail trim with my daycare"). Snapshots include price &
+    # legacy-pricing override so the rate is locked in for this booking.
+    if body.addon_service_ids:
+        doc["add_ons"] = await resolve_addon_snapshots(
+            client.get("id"),
+            body.addon_service_ids,
+            body.service_type,
+        )
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     # Best-effort notification: tell admin when a client books from the portal.
@@ -2303,8 +2331,68 @@ async def check_in(
         "checked_in_lng": body.lng,
         "checked_in_accuracy_m": body.accuracy_m,
     }
+    # Sprint 110an — admin can tack on add-ons during quick check-in. Resolves
+    # legacy-pricing + appends to the existing add_ons list (no overwrite).
+    if body.addon_service_ids:
+        new_addons = await resolve_addon_snapshots(
+            booking.get("client_id"),
+            body.addon_service_ids,
+            booking.get("service_type") or "",
+        )
+        update["add_ons"] = list(booking.get("add_ons") or []) + new_addons
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
+    return booking
+
+
+@api.post("/bookings/{booking_id}/add-ons", response_model=BookingOut)
+async def attach_booking_addons(
+    booking_id: str,
+    body: BookingAddonsIn,
+    user: dict = Depends(get_current_user),
+):
+    """Add one or more add-ons to an existing booking (e.g. client adds a
+    nail trim from the portal, or admin tacks on a service before check-out).
+    Append-only — does not replace prior add-ons. Honours legacy pricing."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    # Clients can only modify their own bookings
+    if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your booking")
+    new_addons = await resolve_addon_snapshots(
+        booking.get("client_id"),
+        body.addon_service_ids,
+        booking.get("service_type") or "",
+    )
+    merged = list(booking.get("add_ons") or []) + new_addons
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": merged}})
+    booking["add_ons"] = merged
+    return booking
+
+
+@api.delete("/bookings/{booking_id}/add-ons/{addon_index}", response_model=BookingOut)
+async def remove_booking_addon(
+    booking_id: str,
+    addon_index: int,
+    user: dict = Depends(get_current_user),
+):
+    """Remove a previously-attached add-on by its index in `booking.add_ons`.
+    Index-based because clients can have multiple of the same add-on
+    (e.g. two nail trims) and we can't dedupe by service_id."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your booking")
+    if booking.get("checked_out_at"):
+        raise HTTPException(status_code=400, detail="Booking already checked out — add-ons are locked in.")
+    addons = list(booking.get("add_ons") or [])
+    if addon_index < 0 or addon_index >= len(addons):
+        raise HTTPException(status_code=404, detail="Add-on not found at that index")
+    addons.pop(addon_index)
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"add_ons": addons}})
+    booking["add_ons"] = addons
     return booking
 
 async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_balance: int) -> None:
@@ -2709,16 +2797,45 @@ async def check_out(
         }
 
     # ── Add-ons: sum prices, persist line items, fold into actual_price.
+    # Sprint 110an — pre-attached add-ons (added at booking or check-in) live
+    # on booking.add_ons already. We merge those with any new ones the admin
+    # is adding right now at check-out, dedupe by (service_id + added_at) to
+    # avoid double-billing, and tally the combined total.
     add_on_total = 0.0
     add_on_rows: List[Dict[str, Any]] = []
+    seen_keys = set()
+    # Pre-attached first (preserves price-at-time-of-booking semantics)
+    for ao in (booking.get("add_ons") or []):
+        key = (ao.get("service_id"), ao.get("added_at"))
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        line_total = float(ao.get("price") or 0) * int(ao.get("qty") or 1)
+        add_on_total += line_total
+        add_on_rows.append({
+            "service_id": ao.get("service_id"),
+            "name": ao.get("name"),
+            "icon": ao.get("icon"),
+            "price": float(ao.get("price") or 0),
+            "list_price": ao.get("list_price"),
+            "price_override_id": ao.get("price_override_id"),
+            "qty": int(ao.get("qty") or 1),
+            "line_total": round(line_total, 2),
+            "added_at": ao.get("added_at"),
+            "added_stage": ao.get("added_stage") or "booking",
+        })
+    # New add-ons specified in this check-out call (admin POS upsell moment)
     for ao in body.add_ons:
-        add_on_total += float(ao.price) * int(ao.qty)
+        line_total = float(ao.price) * int(ao.qty)
+        add_on_total += line_total
         add_on_rows.append({
             "service_id": ao.service_id,
             "name": ao.name,
             "price": float(ao.price),
             "qty": int(ao.qty),
-            "line_total": round(float(ao.price) * int(ao.qty), 2),
+            "line_total": round(line_total, 2),
+            "added_at": ts,
+            "added_stage": "checkout",
         })
     if add_on_rows:
         update["add_ons"] = add_on_rows
@@ -8313,6 +8430,16 @@ class ServiceIn(BaseModel):
     # Daycare and boarding ignore this since they're date-based, not time-based.
     duration_minutes: Optional[int] = 60
     active: bool = True
+    # Sprint 110an — opt-in add-on flow. When `is_addon=True`, the service
+    # is hidden from the main booking list and instead surfaces as an
+    # "add-on" tile under any base service whose `service_type` is in
+    # `addon_for`. Examples: nail trim shows under daycare + grooming;
+    # extra-night boarding shows under boarding; spotlight training shows
+    # under daycare + training. Add-ons are billed alongside the base
+    # service at booking-confirm or check-out via the existing `add_ons`
+    # array on bookings.
+    is_addon: bool = False
+    addon_for: List[Literal["daycare", "boarding", "training", "grooming", "photography", "other"]] = []
 
 
 class LogServiceIn(BaseModel):
@@ -8338,20 +8465,49 @@ class TransactionUpdateIn(BaseModel):
 
 
 @api.get("/services")
-async def list_services(user: dict = Depends(get_current_user), include_inactive: bool = False):
+async def list_services(
+    user: dict = Depends(get_current_user),
+    include_inactive: bool = False,
+    # Sprint 110an — booking + check-in flows can filter to just the eligible
+    # add-ons for a base service type, while the catalog editor still gets
+    # the full list. Three modes:
+    #   addons_only=true       → only add-ons (optionally filtered by `for`)
+    #   for=daycare            → returns BASE services + addons eligible for daycare
+    #   default (no params)    → unchanged: every active service
+    addons_only: bool = False,
+    for_service_type: Optional[str] = Query(default=None, alias="for"),
+):
     q: Dict = {} if include_inactive else {"active": True}
+    if addons_only:
+        q["is_addon"] = True
+        if for_service_type:
+            q["addon_for"] = for_service_type
     items = await db.services.find(q, {"_id": 0}).sort("name", 1).to_list(500)
+    return items
+
+
+@api.get("/services/addons")
+async def list_eligible_addons(
+    for_service_type: str = Query(alias="for"),
+    _: dict = Depends(get_current_user),
+):
+    """Add-ons eligible to be tacked on to a base service of the given type.
+    Used by the client booking form, admin quick check-in modal, and the
+    check-out add-on picker so the same source of truth gates all three."""
+    q = {"active": True, "is_addon": True, "addon_for": for_service_type}
+    items = await db.services.find(q, {"_id": 0}).sort("base_price", 1).to_list(200)
     return items
 
 
 # Sprint 110t — public, no-auth catalog of active services used by the
 # landing/login page so prospects can see what's offered before they sign up.
 # Returns only marketing-safe fields (name, description, price, category,
-# color, icon). Internal admin flags + slug omitted.
+# color, icon). Internal admin flags + slug omitted. Add-ons excluded so
+# the public landing page only shows top-level services.
 @api.get("/public/services")
 async def public_list_services():
     items = await db.services.find(
-        {"active": True},
+        {"active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}]},
         {"_id": 0, "id": 1, "name": 1, "description": 1, "base_price": 1,
          "service_type": 1, "color": 1, "icon": 1, "duration_minutes": 1},
     ).sort("name", 1).to_list(500)
@@ -10263,6 +10419,55 @@ async def resolve_client_price(
     return out
 
 
+async def resolve_addon_snapshots(
+    client_id: Optional[str],
+    addon_service_ids: List[str],
+    base_service_type: str,
+) -> List[Dict[str, Any]]:
+    """Sprint 110an — turn a list of add-on `service_id`s into the snapshot
+    dicts we store on `booking.add_ons`. Validates each one:
+      • exists and is active,
+      • has `is_addon=True`,
+      • base_service_type is in its `addon_for` list.
+    Resolves the per-client legacy-pricing override per add-on so
+    grandfathered customers keep their locked rate. Raises 400 on any
+    invalid id so we never silently drop a paid add-on at booking time.
+    """
+    if not addon_service_ids:
+        return []
+    addons = await db.services.find(
+        {"id": {"$in": list(addon_service_ids)}, "active": True},
+        {"_id": 0},
+    ).to_list(100)
+    by_id = {a["id"]: a for a in addons}
+    snapshots: List[Dict[str, Any]] = []
+    for aid in addon_service_ids:
+        svc = by_id.get(aid)
+        if not svc:
+            raise HTTPException(status_code=400, detail=f"Unknown / inactive add-on `{aid}`")
+        if not svc.get("is_addon"):
+            raise HTTPException(status_code=400, detail=f"Service `{svc.get('name')}` is not flagged as an add-on")
+        eligible = svc.get("addon_for") or []
+        if eligible and base_service_type not in eligible:
+            raise HTTPException(
+                status_code=400,
+                detail=f"`{svc.get('name')}` isn't eligible as an add-on for {base_service_type} services",
+            )
+        list_price = float(svc.get("base_price") or 0)
+        pricing = await resolve_client_price(client_id, "service", aid, list_price)
+        snapshots.append({
+            "service_id": aid,
+            "name": svc.get("name") or "Add-on",
+            "icon": svc.get("icon") or "fa-plus",
+            "price": pricing["effective_price"],
+            "list_price": list_price,
+            "price_override_id": pricing["override_id"],
+            "qty": 1,
+            "added_at": now_iso(),
+        })
+    return snapshots
+
+
 @api.get("/clients/{client_id}/price-overrides")
 async def list_client_price_overrides(client_id: str, _: dict = Depends(require_admin), include_expired: bool = False):
     client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
@@ -10798,6 +11003,9 @@ class MultiDateBookingIn(BaseModel):
     time: Optional[str] = ""  # HH:MM — used by time-slotted services (training/grooming/photography)
     override_capacity: Optional[bool] = False  # admin only
     override_vaccines: Optional[bool] = False  # admin only
+    # Sprint 110an — every booking in the batch gets the same add-ons attached
+    # (e.g. "Mon/Wed/Fri daycare with a nail trim each day").
+    addon_service_ids: List[str] = []
 
 
 @api.post("/bookings/multi-dates")
@@ -10832,6 +11040,7 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
                     time=body.time or "" if body.service_type in ("training", "grooming", "photography") else "",
                     override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
                     override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
+                    addon_service_ids=body.addon_service_ids or [],
                 )
                 booking = await create_booking(inn, user)
                 created.append(booking)

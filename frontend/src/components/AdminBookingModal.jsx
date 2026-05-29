@@ -37,6 +37,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [err, setErr] = useState("");
   const [conflicts, setConflicts] = useState([]);
   const isEdit = !!existing;
+  // Sprint 110an — add-ons eligible for the chosen base service type.
+  // Re-fetched whenever serviceType changes so the picker stays in sync
+  // with the catalog (e.g. admin flips an add-on's "for: boarding" toggle
+  // and immediately sees it appear / disappear from the booking modal).
+  const [eligibleAddons, setEligibleAddons] = useState([]);
+  const [selectedAddonIds, setSelectedAddonIds] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -112,6 +118,25 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     }
   }, [serviceType, isEdit]);
 
+  // Re-load eligible add-ons whenever the base service type changes.
+  useEffect(() => {
+    if (isEdit) return; // editing doesn't re-attach add-ons (do it via the booking detail)
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/services/addons", { params: { for: serviceType } });
+        if (!cancelled) {
+          setEligibleAddons(data || []);
+          // Drop selections that no longer apply (e.g. switched daycare → boarding)
+          setSelectedAddonIds(prev => prev.filter(id => (data || []).some(a => a.id === id)));
+        }
+      } catch {
+        if (!cancelled) setEligibleAddons([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [serviceType, isEdit]);
+
   const submit = async () => {
     setErr("");
     if (!dogId) { setErr("Pick a dog"); return; }
@@ -128,6 +153,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           notes,
           override_capacity: overrideCapacity,
           override_vaccines: overrideVaccines,
+          addon_service_ids: selectedAddonIds,
         });
         const c = data.created?.length || 0;
         const s = data.skipped?.length || 0;
@@ -171,6 +197,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           override_vaccines: overrideVaccines,
           override_capacity: overrideCapacity,
           check_in_now: checkInNow,
+          addon_service_ids: selectedAddonIds,
         };
         await api.post("/bookings", body);
       }
@@ -374,6 +401,63 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} placeholder="Special instructions, food, meds…"
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
           </div>
+
+          {/* Sprint 110an — add-ons picker. Only shown for new bookings (editing
+              bookings should attach add-ons via the booking detail view).
+              Tile-style multi-select so admins can quickly tack on a nail
+              trim, bath, etc. at booking time. */}
+          {!isEdit && eligibleAddons.length > 0 && (
+            <div data-testid="booking-addons-picker">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
+                  <i className="fas fa-plus-circle mr-1"/>Add-ons (optional)
+                </label>
+                {selectedAddonIds.length > 0 && (
+                  <span className="text-[12px] text-amber-300 font-black uppercase tracking-widest">
+                    {selectedAddonIds.length} selected · +${eligibleAddons
+                      .filter(a => selectedAddonIds.includes(a.id))
+                      .reduce((s, a) => s + (a.base_price || 0), 0)
+                      .toFixed(2)}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {eligibleAddons.map(a => {
+                  const picked = selectedAddonIds.includes(a.id);
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      data-testid={`booking-addon-${a.id}`}
+                      onClick={() => setSelectedAddonIds(prev =>
+                        picked ? prev.filter(x => x !== a.id) : [...prev, a.id]
+                      )}
+                      className={`flex items-center gap-3 p-3 rounded-lg border transition text-left ${
+                        picked
+                          ? "bg-amber-500/15 border-amber-500/60 shadow"
+                          : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                      }`}
+                    >
+                      <div className="w-9 h-9 rounded grid place-items-center shrink-0"
+                           style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+                        <i className={`fas ${a.icon || "fa-plus"}`}/>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                        {a.description && (
+                          <div className="text-[12px] text-gray-400 truncate">{a.description}</div>
+                        )}
+                      </div>
+                      <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                        +${(a.base_price || 0).toFixed(2)}
+                      </div>
+                      {picked && <i className="fas fa-check-circle text-amber-400"/>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="border-t border-bgHover pt-4 space-y-3">
             {!isMultiDate && (
