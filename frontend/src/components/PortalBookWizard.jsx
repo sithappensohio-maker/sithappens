@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import MultiDatePicker from "./MultiDatePicker";
+import { useEditLock } from "../lib/useLiveRefresh";
 
 /**
  * Client-portal Book Service wizard.
@@ -30,6 +31,7 @@ const SERVICE_OPTIONS = [
 const TIME_SLOTTED = new Set(["training", "grooming", "photography"]);
 
 export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
+  useEditLock(true);
   const [step, setStep] = useState(1);
   const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
   const [serviceType, setServiceType] = useState(seed?.service_type || "");

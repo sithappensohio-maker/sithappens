@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -42,6 +43,8 @@ export default function Pipeline({ onJumpToDog }) {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+  // Sprint 110ao — quietly stay current with new program enrolments / status flips.
+  useLiveRefresh(load, { intervalMs: 30_000 });
 
   const stats = useMemo(() => {
     const s = { active: 0, on_hold: 0, completed: 0, overdue: 0 };

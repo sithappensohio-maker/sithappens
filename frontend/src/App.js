@@ -1,3 +1,4 @@
+import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
@@ -223,6 +224,9 @@ export default function App() {
             <Gate />
             <InstallPrompt />
             <BrandFooter />
+            {/* Sprint 110ao — global toast layer for live-refresh new-arrival
+                pings (e.g. "🐶 New booking · Bella · daycare tomorrow"). */}
+            <Toaster theme="dark" position="top-right" richColors closeButton expand />
           </ConfirmProvider>
         </ThemeProvider>
       </AuthProvider>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useEditLock } from "../lib/useLiveRefresh";
 
 // Sprint 110am — Per-client price overrides ("legacy pricing"). Admins use
 // this to grandfather an existing client into the OLD price of a service or
@@ -8,6 +9,7 @@ import { api, formatErr } from "../lib/api";
 // and credit-pack-sell time, so the override can't be bypassed via the
 // client portal even if a curious user inspects the network tab.
 export default function LegacyPricingModal({ client, onClose }) {
+  useEditLock(true);
   const [overrides, setOverrides] = useState([]);
   const [services, setServices] = useState([]);
   const [packs, setPacks] = useState([]);

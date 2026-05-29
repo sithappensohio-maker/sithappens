@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useEditLock } from "../lib/useLiveRefresh";
 
 /**
  * Shared check-out modal — used by the admin Dashboard AND the Employee
@@ -16,6 +17,9 @@ import { api } from "../lib/api";
  *   onRequestCancel  — optional; fires when the user clicks "Cancel booking instead"
  */
 export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
+  // Sprint 110ao — pauses background polling while this modal is open so
+  // the booking row can't churn under the admin's input.
+  useEditLock(true);
   // Pre-deducted credit info — if non-zero, the owner already has a pending charge
   // on their pack that we'll either consume (default) or refund.
   const hadCredit = !!booking.credit_value && !booking.actual_price;
@@ -412,6 +416,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
 
 export function CancelBookingModal({ booking, onClose }) {
+  useEditLock(true);
   const credits = Number(booking.credits_deducted || 0);
   const pool = booking.credit_service_type || booking.service_type;
   const [busy, setBusy] = useState(false);

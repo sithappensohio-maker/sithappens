@@ -7,6 +7,8 @@ import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { toast } from "sonner";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
 
@@ -34,6 +36,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const [quoteRequests, setQuoteRequests] = useState([]);
   const confirm = useConfirm();
+  // Sprint 110ao — Live-refresh state. We track which booking IDs we've
+  // already seen so the 30 s tick only toasts NEW arrivals, not the existing
+  // list. Same for quote-requests + vaccine-cert uploads. `seededRef`
+  // prevents a flood of toasts on the very first load.
+  const seenBookingIdsRef = useRef(null);
+  const seenQuoteIdsRef = useRef(null);
+  const seenVaxIdsRef = useRef(null);
+  const seededRef = useRef(false);
 
   const load = async () => {
     try {
@@ -55,9 +65,45 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
       setTodayPnl(pnl.data);
+
+      // ── New-arrival toasts (skip the first load to avoid greeting flood)
+      const currentBookings = [
+        ...(s.data?.bookings_today || []),
+        ...(s.data?.checked_in || []),
+        ...(s.data?.pending_approval || []),
+      ];
+      const bookingIds = new Set(currentBookings.map(b => b.id).filter(Boolean));
+      const quoteIds = new Set((Array.isArray(qr.data) ? qr.data : []).map(q => q.id).filter(Boolean));
+      const vaxIds = new Set((Array.isArray(vx.data) ? vx.data : []).map(v => v.id || `${v.dog_id}-${v.vaccine}`).filter(Boolean));
+
+      if (seededRef.current) {
+        const newBookings = currentBookings.filter(b => b.id && !seenBookingIdsRef.current?.has(b.id));
+        const newQuotes = (Array.isArray(qr.data) ? qr.data : []).filter(q => q.id && !seenQuoteIdsRef.current?.has(q.id));
+        const newVax = (Array.isArray(vx.data) ? vx.data : []).filter(v => {
+          const id = v.id || `${v.dog_id}-${v.vaccine}`;
+          return id && !seenVaxIdsRef.current?.has(id);
+        });
+        newBookings.forEach(b => {
+          const svc = b.service_type ? ` · ${b.service_type}` : "";
+          toast.success(`🐶 New booking · ${b.dog_name || "Dog"}${svc}`, { duration: 6000 });
+        });
+        newQuotes.forEach(q => {
+          toast.info(`📩 New quote request${q.client_name ? ` · ${q.client_name}` : ""}`, { duration: 6000 });
+        });
+        newVax.forEach(v => {
+          toast.warning(`📎 Vaccine upload · ${v.dog_name || "Dog"}${v.vaccine ? ` · ${v.vaccine}` : ""}`, { duration: 6000 });
+        });
+      }
+      seenBookingIdsRef.current = bookingIds;
+      seenQuoteIdsRef.current = quoteIds;
+      seenVaxIdsRef.current = vaxIds;
+      seededRef.current = true;
     } catch {}
   };
   useEffect(() => { load(); }, []);
+  // Sprint 110ao — Live refresh every 30 s. Auto-pauses while a modal is
+  // open (CheckoutModal / ReportCardModal acquire the edit lock).
+  useLiveRefresh(load, { intervalMs: 30_000 });
 
   const captureGeo = () => new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({});

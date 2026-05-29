@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import { useEditLock } from "../lib/useLiveRefresh";
 
 export default function ReportCardModal({ booking, onClose, moodTags: moodTagsProp }) {
+  useEditLock(true);
   const existing = booking.report_card || { photos: [], mood_tags: [], note: "" };
   const [photos, setPhotos] = useState(existing.photos || []);
   const [moods, setMoods] = useState(existing.mood_tags || []);

@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import MultiDatePicker from "./MultiDatePicker";
+import { useEditLock } from "../lib/useLiveRefresh";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
 export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, onClose, onCreated }) {
+  useEditLock(true);
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [kennels, setKennels] = useState([]);

@@ -4,6 +4,7 @@ import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 
 function isoOnly(d) { return d.toISOString().split("T")[0]; }
 function isMobile() {
@@ -71,17 +72,9 @@ export default function Schedule() {
     } catch (e) { console.warn("clients load failed", e); }
   };
   useEffect(() => { load(); loadDogs(); loadClients(); }, []);
-  // Auto-refresh on tab focus so bookings created elsewhere appear right away.
-  useEffect(() => {
-    const onVisible = () => { if (document.visibilityState === "visible") load(); };
-    const onFocus = () => load();
-    document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", onFocus);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, []);
+  // Sprint 110ao — replaced bespoke focus-refresh with the shared
+  // useLiveRefresh hook (30s polling + focus refresh + edit-lock aware).
+  useLiveRefresh(load, { intervalMs: 30_000 });
 
   const onDrop = async (info) => {
     const newStart = isoOnly(info.event.start);

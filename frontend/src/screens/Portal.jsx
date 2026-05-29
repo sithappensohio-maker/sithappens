@@ -22,6 +22,7 @@ import ServicesByCategory from "../components/ServicesByCategory";
 import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 
@@ -667,6 +668,11 @@ export default function Portal() {
   }, [bookDogId, reloadUser]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+  // Sprint 110ao — Client portal also auto-refreshes every 30 s so booking
+  // approvals, new trophies, and updated daily reports show up without a
+  // manual reload. Auto-pauses while a modal is open (PortalBookWizard
+  // acquires the edit lock).
+  useLiveRefresh(loadAll, { intervalMs: 30_000 });
 
   // ── Onboarding state — compute total missing/expired required vaccines.
   // Anything > 0 here keeps the orange "finish setup" banner pinned.

@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import PageHero from "../components/PageHero";
+import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { toast } from "sonner";
 
 export default function Bookings() {
   const [bookings, setBookings] = useState([]);
@@ -19,10 +21,28 @@ export default function Bookings() {
   const [archiveTotal, setArchiveTotal] = useState(0);
 
   const confirm = useConfirm();
+  // Sprint 110ao — toast a new booking the moment it lands in this list.
+  const seenIdsRef = useRef(null);
+  const seededRef = useRef(false);
   const load = async () => {
-    try { const { data } = await api.get("/bookings"); setBookings(data); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    try {
+      const { data } = await api.get("/bookings");
+      setBookings(data);
+      // New-arrival detection (skip first load)
+      const ids = new Set((data || []).map(b => b.id).filter(Boolean));
+      if (seededRef.current && seenIdsRef.current) {
+        (data || []).filter(b => b.id && !seenIdsRef.current.has(b.id)).forEach(b => {
+          const who = b.dog_name || "Dog";
+          const svc = b.service_type ? ` · ${b.service_type}` : "";
+          toast.success(`🐶 New booking · ${who}${svc}`, { duration: 6000 });
+        });
+      }
+      seenIdsRef.current = ids;
+      seededRef.current = true;
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { load(); }, []);
+  useLiveRefresh(load, { intervalMs: 30_000 });
 
   const loadArchive = async () => {
     setArchiveLoading(true);
