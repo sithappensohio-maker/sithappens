@@ -5,6 +5,7 @@ import interactionPlugin from "@fullcalendar/interaction";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import BookingDetailModal from "../components/BookingDetailModal";
 
 function isoOnly(d) { return d.toISOString().split("T")[0]; }
 function isMobile() {
@@ -200,9 +201,9 @@ export default function Schedule() {
       </div>
 
       {detailId && (
-        <BookingDetailModal id={detailId}
+        <BookingDetailModal booking={{ id: detailId }}
                             onClose={()=>setDetailId(null)}
-                            onChanged={() => { load(); loadClients(); setDetailId(null); }} />
+                            onJumpToDog={(dogId)=>{ window.location.hash = `#/dogs?dogId=${dogId}`; setDetailId(null); }} />
       )}
 
       {dayOpen && (

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
+import BookingDetailModal from "../components/BookingDetailModal";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import PageHero from "../components/PageHero";
@@ -13,6 +14,8 @@ export default function Bookings() {
   const [err, setErr] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState(null);
+  // Sprint 110as — read-only detail overview opened by clicking any booking row.
+  const [detailFor, setDetailFor] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [groupByDate, setGroupByDate] = useState(false);
   const [archived, setArchived] = useState([]);
@@ -142,7 +145,10 @@ export default function Bookings() {
               testid="bookings-history-groups"
               emptyText="No history yet."
               renderRow={(b) => (
-                <div key={b.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2" data-testid={`booking-history-row-${b.id}`}>
+                <div key={b.id}
+                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
+                     data-testid={`booking-history-row-${b.id}`}
+                     onClick={()=>setDetailFor(b)}>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-black text-white uppercase truncate">
                       {b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span>
@@ -153,7 +159,7 @@ export default function Bookings() {
                     </p>
                   </div>
                   <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
-                  {!b._archived && <button onClick={()=>setEditing(b)} className="text-[13px] font-black uppercase text-shBlue hover:underline shrink-0">Open</button>}
+                  {!b._archived && <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} className="text-[13px] font-black uppercase text-shBlue hover:underline shrink-0">Open</button>}
                 </div>
               )}
             />
@@ -168,7 +174,10 @@ export default function Bookings() {
               testid="bookings-active-groups"
               emptyText="No active bookings."
               renderRow={(b) => (
-                <div key={b.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2" data-testid={`booking-grouped-row-${b.id}`}>
+                <div key={b.id}
+                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
+                     data-testid={`booking-grouped-row-${b.id}`}
+                     onClick={()=>setDetailFor(b)}>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-black text-white uppercase truncate">{b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span></p>
                     <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
@@ -178,12 +187,12 @@ export default function Bookings() {
                   </div>
                   <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
                   <div className="flex flex-wrap gap-x-3 shrink-0">
-                    <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shBlue hover:underline">Edit</button>
+                    <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shBlue hover:underline">Edit</button>
                     {b.status === "pending" && <>
-                      <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shGreen hover:underline">Approve</button>
-                      <button onClick={()=>reject(b.id)} className="text-[13px] font-black uppercase text-red-400 hover:underline">Reject</button>
+                      <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shGreen hover:underline">Approve</button>
+                      <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[13px] font-black uppercase text-red-400 hover:underline">Reject</button>
                     </>}
-                    {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[13px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
+                    {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[13px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
                   </div>
                 </div>
               )}
@@ -208,7 +217,10 @@ export default function Bookings() {
                               : b.status === "rejected" ? "border-l-4 border-l-red-500 bg-gradient-to-r from-red-500/10 to-transparent"
                               : "border-l-4 border-l-transparent";
               return (
-              <tr key={b.id} className={`border-t border-bgHover/40 ${rowAccent} hover:bg-bgHover/30 transition`}>
+              <tr key={b.id}
+                  className={`border-t border-bgHover/40 ${rowAccent} hover:bg-bgHover/40 transition cursor-pointer`}
+                  onClick={()=>setDetailFor(b)}
+                  data-testid={`booking-row-${b.id}`}>
                 <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}</td>
                 <td className="px-6 py-4 text-gray-300 text-xs">{b.client_name}</td>
                 <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</td>
@@ -218,12 +230,12 @@ export default function Bookings() {
                 </td>
                 <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
-                  <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shBlue hover:underline">Edit</button>
+                  <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shBlue hover:underline">Edit</button>
                   {b.status === "pending" && <>
-                    <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}`} className="text-[14px] font-black uppercase text-shGreen hover:underline">Approve</button>
-                    <button onClick={()=>reject(b.id)} className="text-[14px] font-black uppercase text-red-400 hover:underline">Reject</button>
+                    <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}`} className="text-[14px] font-black uppercase text-shGreen hover:underline">Approve</button>
+                    <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[14px] font-black uppercase text-red-400 hover:underline">Reject</button>
                   </>}
-                  {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
+                  {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase text-gray-400 hover:underline">Cancel</button>}
                 </td>
               </tr>
               );
@@ -241,7 +253,12 @@ export default function Bookings() {
                             : b.status === "rejected" ? "border-l-4 border-l-red-500 bg-gradient-to-r from-red-500/10 to-transparent"
                             : "";
             return (
-            <div key={b.id} className={`p-4 space-y-2 ${cardAccent}`} data-testid={`booking-card-${b.id}`}>
+            <div key={b.id}
+                 className={`p-4 space-y-2 ${cardAccent} cursor-pointer hover:bg-bgHover/30 transition`}
+                 data-testid={`booking-card-${b.id}`}
+                 onClick={()=>setDetailFor(b)}
+                 role="button" tabIndex={0}
+                 onKeyDown={(e)=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setDetailFor(b); } }}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="text-sm font-black uppercase text-white">{b.dog_name}</p>
@@ -254,12 +271,12 @@ export default function Bookings() {
                 <span className="text-gray-400">{b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}</span>
               </div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1">
-                <button onClick={()=>setEditing(b)} data-testid={`edit-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
+                <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:underline">Edit</button>
                 {b.status === "pending" && <>
-                  <button onClick={()=>approve(b.id)} data-testid={`approve-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shGreen hover:underline">Approve</button>
-                  <button onClick={()=>reject(b.id)} className="text-[14px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
+                  <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-m`} className="text-[14px] font-black uppercase tracking-widest text-shGreen hover:underline">Approve</button>
+                  <button onClick={(e)=>{ e.stopPropagation(); reject(b.id); }} className="text-[14px] font-black uppercase tracking-widest text-red-400 hover:underline">Reject</button>
                 </>}
-                {(b.status === "approved" || b.status === "pending") && <button onClick={()=>cancel(b.id)} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
+                {(b.status === "approved" || b.status === "pending") && <button onClick={(e)=>{ e.stopPropagation(); cancel(b.id); }} className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:underline">Cancel</button>}
               </div>
             </div>
             );
@@ -270,6 +287,7 @@ export default function Bookings() {
       </div>
       {showModal && <AdminBookingModal onClose={()=>setShowModal(false)} onCreated={load} />}
       {editing && <AdminBookingModal existing={editing} onClose={()=>setEditing(null)} onCreated={load} />}
+      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} />}
     </div>
   );
 }

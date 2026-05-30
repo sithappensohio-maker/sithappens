@@ -2524,7 +2524,10 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
         raise HTTPException(status_code=404, detail="Booking not found")
     # Resolve a tentative price the same way check_out() would.
     tentative_price = float(booking.get("actual_price") or 0)
-    if tentative_price <= 0:
+    # Sprint 110ar — Training visits are package-paid; never auto-suggest a
+    # catalog price in the preview (admin types the amount manually when one
+    # is owed). Without this the modal showed e.g. "$75" on a $0 visit.
+    if tentative_price <= 0 and booking.get("service_type") != "training":
         default_svc = await db.services.find_one(
             {"service_type": booking.get("service_type"), "is_default": True, "active": True},
             {"_id": 0},
@@ -2723,16 +2726,23 @@ async def check_out(
             base_price = float(body.base_price)
             update["actual_price"] = base_price
         elif not booking.get("service_id"):
-            default_svc = await db.services.find_one(
-                {"service_type": booking.get("service_type"), "is_default": True, "active": True},
-                {"_id": 0},
-            )
-            if default_svc:
-                update["service_id"] = default_svc["id"]
-                update["service_name"] = default_svc["name"]
-                unit_price = float(default_svc.get("base_price") or 0)
-                base_price = _maybe_apply_nights(unit_price)
-                update["actual_price"] = round(base_price, 2)
+            # Sprint 110ar — Training visits are sold via packages, so a
+            # check-out without an explicit amount means "$0 owed today".
+            # Don't pre-fill from the catalog (was causing phantom revenue).
+            if booking.get("service_type") == "training":
+                base_price = 0.0
+                update["actual_price"] = 0.0
+            else:
+                default_svc = await db.services.find_one(
+                    {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+                    {"_id": 0},
+                )
+                if default_svc:
+                    update["service_id"] = default_svc["id"]
+                    update["service_name"] = default_svc["name"]
+                    unit_price = float(default_svc.get("base_price") or 0)
+                    base_price = _maybe_apply_nights(unit_price)
+                    update["actual_price"] = round(base_price, 2)
         else:
             base_price = float(booking.get("actual_price") or 0)
     elif booking.get("actual_price"):
@@ -10009,15 +10019,26 @@ async def today_pnl(_: dict = Depends(require_admin)):
     completed_count = 0
     for b in bookings:
         booked_count += 1
-        if b.get("status") == "completed":
+        is_completed = b.get("status") == "completed"
+        if is_completed:
             completed_count += 1
-        # Strongest signal wins
+        # Sprint 110ar — For COMPLETED bookings, the `actual_price` (even if
+        # explicitly 0) is the source of truth. Don't fall back to catalog
+        # defaults — that was producing phantom revenue after the admin
+        # checked out at $0 (e.g. training visits paid by package).
+        if is_completed:
+            revenue += float(b.get("actual_price") or 0)
+            continue
+        # ── For not-yet-completed bookings, estimate the forecast price.
         price = float(b.get("actual_price") or 0)
         if not price:
             price = float(b.get("credit_value") or 0)
         if not price and b.get("service_id"):
             price = svc_price.get(b["service_id"], 0)
-        if not price and b.get("service_type"):
+        # Training is normally pre-paid via packages — never auto-estimate
+        # individual visits, since the admin enters the amount manually at
+        # check-out only when a non-package session is involved.
+        if not price and b.get("service_type") and b.get("service_type") != "training":
             price = default_by_type.get(b["service_type"], 0)
             # Boarding is per-night — multiply by nights between date and end_date
             if price and b.get("service_type") == "boarding":
