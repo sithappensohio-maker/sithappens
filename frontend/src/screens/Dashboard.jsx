@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
+import BookingDetailModal from "../components/BookingDetailModal";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
@@ -26,6 +27,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [reportFor, setReportFor] = useState(null); // booking
   const [checkoutFor, setCheckoutFor] = useState(null); // booking — opens checkout modal
   const [cancelFor, setCancelFor] = useState(null); // booking — opens cancel-confirm modal
+  // Sprint 110aq — read-only "what's the deal with this booking" overview
+  // modal launched from any roster row on the Today's Check-in Board.
+  const [detailFor, setDetailFor] = useState(null);
   const [services, setServices] = useState([]);
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
@@ -398,10 +402,19 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
               : credits > 0 ? "bg-shGreen/15 text-shGreen border-shGreen/40"
               : "bg-gray-700/50 text-gray-400 border-gray-600";
             return (
-              <div key={b.id} className="px-6 py-4 flex items-center justify-between hover:bg-bgBase/30 transition" data-testid={`roster-${b.id}`}>
+              <div
+                key={b.id}
+                className="px-6 py-4 flex items-center justify-between hover:bg-bgBase/30 transition cursor-pointer focus-within:bg-bgBase/30"
+                data-testid={`roster-${b.id}`}
+                role="button"
+                tabIndex={0}
+                onClick={()=>setDetailFor(b)}
+                onKeyDown={(e)=>{ if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailFor(b); } }}
+                title="View booking details"
+              >
                 <button
                   type="button"
-                  onClick={() => b.dog_id ? onJumpToDog(b.dog_id) : null}
+                  onClick={(e) => { e.stopPropagation(); if (b.dog_id) onJumpToDog(b.dog_id); }}
                   title="Open dog profile"
                   className="flex items-center gap-4 -ml-2 pl-2 pr-3 py-1 rounded text-left transition hover:bg-bgPanel/60 cursor-pointer focus:outline-none focus:ring-2 focus:ring-shGreen/40"
                   data-testid={`roster-dog-link-${b.id}`}
@@ -434,14 +447,14 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     )}
                   </div>
                   {!b.checked_in_at && (
-                    <button onClick={()=>checkIn(b.id)} data-testid={`checkin-${b.id}`}
+                    <button onClick={(e)=>{ e.stopPropagation(); checkIn(b.id); }} data-testid={`checkin-${b.id}`}
                             className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
                   )}
                   {onPremises && (
                     <>
-                      <button onClick={()=>setCheckoutFor(b)} data-testid={`checkout-${b.id}`}
+                      <button onClick={(e)=>{ e.stopPropagation(); setCheckoutFor(b); }} data-testid={`checkout-${b.id}`}
                               className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
-                      <button onClick={()=>setCancelFor(b)} data-testid={`cancel-${b.id}`}
+                      <button onClick={(e)=>{ e.stopPropagation(); setCancelFor(b); }} data-testid={`cancel-${b.id}`}
                               title="Cancel booking — refunds any credit deducted"
                               className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-red-500/40 hover:text-white">
                         <i className="fas fa-times mr-1"/>Cancel
@@ -449,11 +462,11 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     </>
                   )}
                   {done && !b.report_card && (
-                    <button onClick={()=>setReportFor(b)} data-testid={`report-${b.id}`}
+                    <button onClick={(e)=>{ e.stopPropagation(); setReportFor(b); }} data-testid={`report-${b.id}`}
                             className="bg-shOrange/15 text-shOrange border border-shOrange/40 px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shOrange/25">+ Report Card</button>
                   )}
                   {done && b.report_card && (
-                    <button onClick={()=>setReportFor(b)} data-testid={`view-report-${b.id}`}
+                    <button onClick={(e)=>{ e.stopPropagation(); setReportFor(b); }} data-testid={`view-report-${b.id}`}
                             className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/25">View Card</button>
                   )}
                 </div>
@@ -522,6 +535,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       )}
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
+      {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onJumpToDog={onJumpToDog} />}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
