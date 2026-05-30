@@ -10175,6 +10175,13 @@ class ExpenseIn(BaseModel):
     category: Optional[str] = ""
     notes: Optional[str] = ""
     payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "card"
+    # Sprint 110ap — optional photo/PDF/scan of the receipt for IRS audit
+    # peace-of-mind. Stored inline as a base64 data URL (`data:image/jpeg;…`
+    # or `data:application/pdf;…`). Front-end compresses images to <800kB
+    # before upload; PDFs are passed through as-is up to ~2MB. Empty string
+    # means no receipt on file.
+    receipt_image: Optional[str] = ""
+    receipt_filename: Optional[str] = ""
 
 
 @api.get("/expenses")
@@ -10208,9 +10215,13 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
         "payment_method": body.payment_method or "card",
+        "receipt_image": (body.receipt_image or "") or None,
+        "receipt_filename": (body.receipt_filename or "").strip() or None,
         "created_at": now_iso(),
         "created_by": user.get("id"),
     }
+    # Strip None so we don't store empty receipt keys for legacy rows
+    doc = {k: v for k, v in doc.items() if v is not None}
     await db.expenses.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -10230,6 +10241,20 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
         "payment_method": body.payment_method or "card",
         "updated_at": now_iso(),
     }
+    # Receipt is editable — empty string means "remove the receipt", non-empty
+    # replaces it. We intentionally don't clobber an existing receipt when
+    # `receipt_image` is omitted entirely (Pydantic default).
+    if body.receipt_image is not None:
+        patch["receipt_image"] = body.receipt_image or None
+        patch["receipt_filename"] = (body.receipt_filename or "").strip() or None
+        # Drop None values so Mongo's $set doesn't store explicit nulls
+        if patch["receipt_image"] is None:
+            patch.pop("receipt_image")
+            patch.pop("receipt_filename", None)
+            await db.expenses.update_one(
+                {"id": expense_id},
+                {"$unset": {"receipt_image": "", "receipt_filename": ""}},
+            )
     await db.expenses.update_one({"id": expense_id}, {"$set": patch})
     return {**existing, **patch}
 

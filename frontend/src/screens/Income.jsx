@@ -3,6 +3,8 @@ import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import PageHero from "../components/PageHero";
+import { compressImage } from "../lib/imageCompress";
+import Lightbox from "../components/Lightbox";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
@@ -474,7 +476,14 @@ export default function Income() {
             renderRow={(e) => (
               <div key={e.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`expense-row-${e.id}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white truncate">{e.description}</p>
+                  <p className="text-sm font-black text-white truncate flex items-center gap-2">
+                    {e.description}
+                    {e.receipt_image && (
+                      <span className="inline-flex items-center gap-1 bg-shGreen/15 text-shGreen px-1.5 py-0.5 rounded text-[10px] uppercase tracking-widest font-black" title="Receipt attached">
+                        <i className="fas fa-paperclip"/>RCPT
+                      </span>
+                    )}
+                  </p>
                   <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
                     {e.category || "—"} · <span className="capitalize">{e.payment_method || "—"}</span>
                   </p>
@@ -830,8 +839,49 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
     category: expense?.category || "",
     payment_method: expense?.payment_method || "card",
     notes: expense?.notes || "",
+    receipt_image: expense?.receipt_image || "",
+    receipt_filename: expense?.receipt_filename || "",
   });
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+
+  // Sprint 110ap — upload a photo or PDF receipt. Images get client-side
+  // compressed to ~800kB so the JSON payload stays under typical 2MB limits.
+  // PDFs are passed through as data URLs up to ~2MB (we warn beyond that).
+  const onReceiptFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      if (file.type.startsWith("image/")) {
+        const compressed = await compressImage(file, { maxWidth: 1400, maxHeight: 1800, quality: 0.78 });
+        setForm(s => ({ ...s, receipt_image: compressed, receipt_filename: file.name }));
+      } else if (file.type === "application/pdf") {
+        if (file.size > 2_500_000) {
+          onError && onError("PDF is over 2.5 MB — please compress before uploading.");
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+          setForm(s => ({ ...s, receipt_image: reader.result, receipt_filename: file.name }));
+        };
+        reader.readAsDataURL(file);
+      } else {
+        onError && onError("Receipt must be an image (PNG/JPG) or a PDF.");
+      }
+    } catch (err) {
+      onError && onError(`Receipt upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+      // Reset the input so re-selecting the same file fires onChange again
+      e.target.value = "";
+    }
+  };
+
+  const removeReceipt = () => setForm(s => ({ ...s, receipt_image: "", receipt_filename: "" }));
+
+  const isPdf = (form.receipt_image || "").startsWith("data:application/pdf");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const save = async () => {
     if (!form.description.trim()) { onError && onError("Description is required"); return; }
@@ -847,6 +897,8 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
         category: (form.category || "").trim(),
         notes: (form.notes || "").trim(),
         payment_method: form.payment_method,
+        receipt_image: form.receipt_image || "",
+        receipt_filename: form.receipt_filename || "",
       };
       if (isEdit) await api.put(`/expenses/${expense.id}`, body);
       else await api.post("/expenses", body);
@@ -914,6 +966,54 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
         </div>
+
+        {/* Sprint 110ap — receipt photo / PDF upload for IRS-grade audit trail. */}
+        <div data-testid="expense-receipt-field">
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
+            <i className="fas fa-receipt text-red-300 mr-1"/>Receipt (optional)
+          </label>
+          {form.receipt_image ? (
+            <div className="mt-2 flex items-center gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+              {isPdf ? (
+                <a href={form.receipt_image} download={form.receipt_filename || "receipt.pdf"}
+                   className="w-16 h-16 grid place-items-center rounded bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
+                   title="Download PDF receipt">
+                  <i className="fas fa-file-pdf text-2xl"/>
+                </a>
+              ) : (
+                <button type="button" onClick={()=>setPreviewOpen(true)}
+                        className="w-16 h-16 rounded overflow-hidden border border-bgHover hover:border-shGreen">
+                  <img src={form.receipt_image} alt="receipt preview" className="w-full h-full object-cover"/>
+                </button>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] text-white truncate font-bold">{form.receipt_filename || (isPdf ? "receipt.pdf" : "receipt.jpg")}</div>
+                <div className="text-[12px] text-gray-500">{isPdf ? "PDF document" : "Tap to view full size"}</div>
+              </div>
+              <button type="button" onClick={removeReceipt} data-testid="expense-receipt-remove"
+                      className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">
+                <i className="fas fa-trash mr-1"/>Remove
+              </button>
+            </div>
+          ) : (
+            <label className="mt-2 flex items-center gap-3 bg-bgBase/40 border border-dashed border-bgHover rounded-lg p-4 cursor-pointer hover:border-shGreen/60 transition" data-testid="expense-receipt-uploader">
+              <div className="w-12 h-12 grid place-items-center rounded bg-shGreen/10 text-shGreen">
+                <i className={`fas ${uploading ? "fa-spinner fa-spin" : "fa-camera"} text-xl`}/>
+              </div>
+              <div className="flex-1">
+                <div className="text-[14px] font-black text-white">{uploading ? "Uploading…" : "Snap or attach receipt"}</div>
+                <div className="text-[12px] text-gray-500">JPG/PNG (auto-compressed) or PDF up to 2.5 MB</div>
+              </div>
+              <input type="file" accept="image/*,application/pdf" capture="environment"
+                     onChange={onReceiptFile} className="hidden"
+                     data-testid="expense-receipt-input" />
+            </label>
+          )}
+        </div>
+
+        {previewOpen && form.receipt_image && !isPdf && (
+          <Lightbox src={form.receipt_image} onClose={()=>setPreviewOpen(false)} />
+        )}
 
         <div className="flex gap-2 justify-end pt-2">
           <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
