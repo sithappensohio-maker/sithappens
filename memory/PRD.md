@@ -1681,6 +1681,12 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110aq+ — Unified BookingDetailModal verification (2026-05-30)
+- ✅ **Build-breaking duplicate fixed in `/app/frontend/src/screens/Schedule.jsx`**: the previous session left a legacy local `BookingDetailModal` function alongside the new imported unified component, causing `SyntaxError: Identifier 'BookingDetailModal' has already been declared` and crashing the whole app to a runtime-error overlay. Removed the dead 178-line trailing block (incl. local `Row` helper) — file now ends at line 361 after the main `Schedule` export.
+- ✅ **Verified unified modal opens from Schedule calendar**: clicking an `.fc-event` in the calendar opens `[data-testid="booking-detail-modal"]` and renders dog, client, service, date, timeline, booking notes, and pricing in one read-only view.
+- ✅ **Training $0 P&L fix re-verified** by pytest (`test_training_pnl.py` — 3/3 pass): unbilled training rows do **not** pad today's P&L; $0 explicit checkout keeps P&L at $0; non-zero checkout still records revenue correctly.
+- ✅ **BookingDetail backend payload re-verified** (`test_booking_detail_payload.py` — 3/3 pass): `/bookings/{id}`, `/dogs/{id}`, `/clients/{id}` all return the composite fields the modal needs (dog photo/care/vaccines, client contact, booking add-ons & credit info).
+
 ## Backlog / Next Up
 - **P1** Public booking page (`yourdomain.com/book` — no login required)
 - **P1** Vaccine expiry email blast
