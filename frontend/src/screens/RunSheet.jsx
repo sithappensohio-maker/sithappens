@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
+import BookingDetailModal from "../components/BookingDetailModal";
 
 function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmtTime(t) { return t || "—"; }
@@ -9,6 +10,10 @@ function fmtTs(iso) { if (!iso) return "—"; try { return new Date(iso).toLocal
 export default function RunSheet() {
   const [date, setDate] = useState(todayISO());
   const [data, setData] = useState(null);
+  // Sprint 110ar — clicking any run-sheet card opens the unified
+  // BookingDetailModal so staff can peek vaccines/meds/care/report-card
+  // history without leaving the run sheet.
+  const [detailId, setDetailId] = useState(null);
 
   const load = async (d) => {
     const { data } = await api.get("/run-sheet", { params: { date_str: d } });
@@ -66,7 +71,13 @@ export default function RunSheet() {
               {list.map(b => {
                 const d = b.dog || {};
                 return (
-                  <div key={b.id} className="print-card bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg" data-testid={`rs-card-${b.id}`}>
+                  <div key={b.id}
+                       onClick={() => setDetailId(b.id)}
+                       role="button"
+                       tabIndex={0}
+                       onKeyDown={(e)=>{ if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailId(b.id); } }}
+                       className="print-card bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg cursor-pointer hover:border-shGreen/60 hover:bg-bgPanel/80 transition print:cursor-auto print:hover:border-bgHover"
+                       data-testid={`rs-card-${b.id}`}>
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-3">
                       <div>
                         <h5 className="text-lg font-black text-white uppercase tracking-tight">{b.dog_name}</h5>
@@ -128,6 +139,11 @@ export default function RunSheet() {
           </div>
         );
       })}
+
+      {detailId && (
+        <BookingDetailModal booking={{ id: detailId }}
+                            onClose={()=>setDetailId(null)} />
+      )}
     </div>
   );
 }

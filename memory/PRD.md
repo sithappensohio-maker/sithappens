@@ -1681,6 +1681,12 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110ar — BookingDetailModal wired into Run Sheet (2026-05-30)
+- ✅ Run Sheet cards (`/app/frontend/src/screens/RunSheet.jsx`) are now clickable and open the same unified `BookingDetailModal` used by Dashboard / Bookings / Schedule.
+- ✅ Adds `cursor-pointer` + green-border hover state for the on-screen surface, but uses `print:cursor-auto print:hover:border-bgHover` so the print stylesheet stays clean.
+- ✅ Keyboard accessible: `role="button"`, `tabIndex={0}`, Enter/Space open the modal.
+- ✅ Smoke-tested live: 2 cards on premises today, click on Buddy → modal opened (`booking-detail-modal` count = 1) showing booking timeline, service, pricing, status.
+
 ## Sprint 110aq+ — Unified BookingDetailModal verification (2026-05-30)
 - ✅ **Build-breaking duplicate fixed in `/app/frontend/src/screens/Schedule.jsx`**: the previous session left a legacy local `BookingDetailModal` function alongside the new imported unified component, causing `SyntaxError: Identifier 'BookingDetailModal' has already been declared` and crashing the whole app to a runtime-error overlay. Removed the dead 178-line trailing block (incl. local `Row` helper) — file now ends at line 361 after the main `Schedule` export.
 - ✅ **Verified unified modal opens from Schedule calendar**: clicking an `.fc-event` in the calendar opens `[data-testid="booking-detail-modal"]` and renders dog, client, service, date, timeline, booking notes, and pricing in one read-only view.
