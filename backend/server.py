@@ -7240,8 +7240,11 @@ async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_cu
 # -------- Calendar Events --------
 @api.get("/events")
 async def calendar_events(_: dict = Depends(require_admin)):
+    # Sprint 110at — keep completed bookings on the calendar (they used to
+    # disappear the moment the dog was checked out). They render with a
+    # muted gray tone so the active queue (pending/approved) still pops.
     bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending"]}}, {"_id": 0}
+        {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
     ).to_list(2000)
     events = []
     for b in bookings:
@@ -7262,6 +7265,10 @@ async def calendar_events(_: dict = Depends(require_admin)):
         color = _svc_colors.get(b["service_type"], "#64748b")
         if b["status"] == "pending":
             color = "#f26522"
+        elif b["status"] == "completed":
+            # Muted slate so completed bookings stay visible without competing
+            # with today's live queue.
+            color = "#64748b"
         # Add grooming sub-type to title so it shows on the calendar at a glance
         svc_label = b["service_type"]
         if b["service_type"] == "grooming" and b.get("grooming_type"):

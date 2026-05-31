@@ -1681,6 +1681,11 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110at — Calendar keeps completed bookings, Bookings list still hides them (2026-05-31)
+- ✅ `/api/events` now includes `status="completed"` bookings (previously only `approved` + `pending`). Completed events render with a muted slate (`#64748b`) color so the active queue still pops visually.
+- ✅ Bookings list view already hides `completed` / `cancelled` / `rejected` by default via `showHistory=false` — verified unchanged. Operator can still toggle "Show history" to peek.
+- ✅ Pytest `test_calendar_completed_events.py` (2/2 pass): completed booking surfaces in `/events` with muted color; active bookings still render.
+
 ## Sprint 110as — Cancel-with-charge from today's check-in board (2026-05-31)
 - ✅ **Backend** `DELETE /api/bookings/{id}` now accepts `?forfeit=true|false` (default `false`).
   - `forfeit=true` (admin/employee only): credits stay deducted, status flips to `cancelled` with a `cancellation_charged=true` flag and a snapshot `cancellation_fee` (pulled from `actual_price → credit_value → service.base_price`, in that order). Client role gets a 403.
