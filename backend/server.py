@@ -402,6 +402,12 @@ class BookingOut(BaseModel):
     checked_out_lat: Optional[float] = None
     checked_out_lng: Optional[float] = None
     checked_out_accuracy_m: Optional[float] = None
+    # Sprint 110as — late-cancel / no-show fee tracking. Set when a staff
+    # member cancels with `?forfeit=true` so P&L can count the booking as
+    # revenue even though it never happened.
+    cancelled_at: Optional[str] = None
+    cancellation_charged: Optional[bool] = None
+    cancellation_fee: Optional[float] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -1859,13 +1865,27 @@ async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
     return booking
 
 @api.delete("/bookings/{booking_id}")
-async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)):
+async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user)):
+    """Cancel a booking.
+
+    Default behavior (`forfeit=False`): credits previously deducted are refunded
+    to the client and the booking drops out of the P&L.
+
+    When `forfeit=True` (admin / employee only — i.e. "charge the client for the
+    cancellation"): credits stay deducted (or cash price stays on the books),
+    the booking is marked with `cancellation_charged=True` plus a snapshot
+    `cancellation_fee`, and downstream P&L queries treat it as revenue. Useful
+    for late-cancels / no-shows where the policy is "we keep the money".
+    """
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     # Admins + employees can cancel any booking; clients only their own.
     if user.get("role") == "client" and booking["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    # Clients cannot trigger a charge — only staff can do that.
+    if forfeit and user.get("role") == "client":
+        raise HTTPException(status_code=403, detail="Only staff can issue a cancellation charge")
     # Cancellation cutoff for clients only (admins + employees bypass)
     if user.get("role") == "client":
         settings = await get_settings()
@@ -1876,16 +1896,31 @@ async def cancel_booking(booking_id: str, user: dict = Depends(get_current_user)
                 raise HTTPException(status_code=400, detail=f"Cancellations must be at least {cutoff_hours}h in advance")
         except ValueError:
             pass
-    # Refund credits (daycare or training) if previously approved
-    if booking["status"] == "approved":
-        refund = int(booking.get("credits_deducted") or 0)
-        if refund > 0:
-            credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
-            balance_field = _credit_balance_field(credit_pool) or "credits"
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
-            await _restore_credit_lots(booking.get("credit_lot_ids") or [], refund)
-    await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "cancelled"}})
-    return {"ok": True}
+    update_payload: Dict[str, Any] = {"status": "cancelled", "cancelled_at": now_iso()}
+    if forfeit:
+        # Snapshot the fee at the moment of cancellation so later price changes
+        # don't retroactively alter what the client was charged.
+        fee = float(booking.get("actual_price") or 0)
+        if not fee:
+            fee = float(booking.get("credit_value") or 0)
+        if not fee and booking.get("service_id"):
+            svc = await db.services.find_one(
+                {"id": booking["service_id"]}, {"_id": 0, "base_price": 1}
+            )
+            fee = float((svc or {}).get("base_price") or 0)
+        update_payload["cancellation_charged"] = True
+        update_payload["cancellation_fee"] = round(fee, 2)
+    else:
+        # Refund credits (daycare or training) if previously approved
+        if booking["status"] == "approved":
+            refund = int(booking.get("credits_deducted") or 0)
+            if refund > 0:
+                credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
+                balance_field = _credit_balance_field(credit_pool) or "credits"
+                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
+                await _restore_credit_lots(booking.get("credit_lot_ids") or [], refund)
+    await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
+    return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 @api.get("/bookings/availability")
 async def availability(date_str: str, dog_id: str, user: dict = Depends(get_current_user)):
@@ -8705,9 +8740,15 @@ async def list_transactions(
     rows = await db.bookings.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
     enriched = []
     for r in rows:
-        if r.get("status") in ("cancelled", "rejected"):
+        # Skip rejected and unchargeable cancellations — keep cancelled bookings
+        # where the operator explicitly charged a no-show / late-cancel fee so
+        # they show up as revenue events.
+        if r.get("status") == "rejected":
             continue
-        is_revenue = bool(r.get("service_id")) or bool(r.get("actual_price"))
+        is_cancel_fee = r.get("status") == "cancelled" and r.get("cancellation_charged")
+        if r.get("status") == "cancelled" and not is_cancel_fee:
+            continue
+        is_revenue = bool(r.get("service_id")) or bool(r.get("actual_price")) or bool(is_cancel_fee)
         if revenue_only:
             if is_revenue:
                 enriched.append(r)
@@ -9990,10 +10031,17 @@ async def today_pnl(_: dict = Depends(require_admin)):
     real clocked hours; any currently-open shift is projected to "now"."""
     today = date.today().isoformat()
     now_dt = datetime.now(timezone.utc)
-    # ── Expected revenue today
+    # ── Expected revenue today (includes "no-show" / late-cancel charges
+    # — see DELETE /bookings/{id}?forfeit=true)
     bookings = await db.bookings.find(
-        {"date": today, "status": {"$in": ["approved", "completed"]}},
-        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1},
+        {
+            "date": today,
+            "$or": [
+                {"status": {"$in": ["approved", "completed"]}},
+                {"status": "cancelled", "cancellation_charged": True},
+            ],
+        },
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1},
     ).to_list(2000)
     # Build a service-id → base_price lookup
     svc_ids = list({b.get("service_id") for b in bookings if b.get("service_id")})
@@ -10022,6 +10070,11 @@ async def today_pnl(_: dict = Depends(require_admin)):
         is_completed = b.get("status") == "completed"
         if is_completed:
             completed_count += 1
+        # Cancellation fee — late-cancel/no-show charges recognized as revenue
+        # using the snapshot stored at cancel time.
+        if b.get("status") == "cancelled" and b.get("cancellation_charged"):
+            revenue += float(b.get("cancellation_fee") or 0)
+            continue
         # Sprint 110ar — For COMPLETED bookings, the `actual_price` (even if
         # explicitly 0) is the source of truth. Don't fall back to catalog
         # defaults — that was producing phantom revenue after the admin

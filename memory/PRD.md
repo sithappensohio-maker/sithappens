@@ -1681,6 +1681,19 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110as — Cancel-with-charge from today's check-in board (2026-05-31)
+- ✅ **Backend** `DELETE /api/bookings/{id}` now accepts `?forfeit=true|false` (default `false`).
+  - `forfeit=true` (admin/employee only): credits stay deducted, status flips to `cancelled` with a `cancellation_charged=true` flag and a snapshot `cancellation_fee` (pulled from `actual_price → credit_value → service.base_price`, in that order). Client role gets a 403.
+  - `forfeit=false`: existing behaviour (credits refunded, lot history restored, booking exits the P&L).
+- ✅ **P&L / Income coverage**: `/api/admin/today-pnl` now includes cancelled bookings where `cancellation_charged=true`, counting `cancellation_fee` as revenue. `/api/transactions` keeps charged cancels in the income feed but still hides plain refunded cancels.
+- ✅ **BookingOut** model extended with `cancelled_at`, `cancellation_charged`, `cancellation_fee` so the UI can surface the late-cancel marker.
+- ✅ **Dashboard today's check-in board** (`Dashboard.jsx`): the Cancel button now shows on every row that hasn't been checked out yet (was previously only when on-premises).
+- ✅ **`CancelBookingModal`** (`CheckoutModal.jsx`) redesigned:
+  - Two big stacked actions — green **Cancel · refund in full** vs red **Cancel · charge $X / no-show fee**.
+  - Context block shows whether the booking has credits / cash attached, or pulls from catalog when neither is set.
+  - Both buttons always available so the operator never has to "Check In then immediately Check Out" to record a no-show.
+- ✅ **Pytest** `test_cancel_with_charge.py` (3/3): forfeit cancel keeps credits + flags + fee; default cancel still refunds and drops out of P&L; clients get 403 on `?forfeit=true`.
+
 ## Sprint 110ar — BookingDetailModal wired into Run Sheet (2026-05-30)
 - ✅ Run Sheet cards (`/app/frontend/src/screens/RunSheet.jsx`) are now clickable and open the same unified `BookingDetailModal` used by Dashboard / Bookings / Schedule.
 - ✅ Adds `cursor-pointer` + green-border hover state for the on-screen surface, but uses `print:cursor-auto print:hover:border-bgHover` so the print stylesheet stays clean.

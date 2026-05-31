@@ -451,15 +451,18 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                             className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90">Check In</button>
                   )}
                   {onPremises && (
-                    <>
-                      <button onClick={(e)=>{ e.stopPropagation(); setCheckoutFor(b); }} data-testid={`checkout-${b.id}`}
-                              className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
-                      <button onClick={(e)=>{ e.stopPropagation(); setCancelFor(b); }} data-testid={`cancel-${b.id}`}
-                              title="Cancel booking — refunds any credit deducted"
-                              className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-red-500/40 hover:text-white">
-                        <i className="fas fa-times mr-1"/>Cancel
-                      </button>
-                    </>
+                    <button onClick={(e)=>{ e.stopPropagation(); setCheckoutFor(b); }} data-testid={`checkout-${b.id}`}
+                            className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
+                  )}
+                  {/* Sprint 110as — cancel is now available on EVERY row that
+                      hasn't been checked out yet (not just on-premises). The
+                      modal lets the operator choose refund vs charge. */}
+                  {!done && (
+                    <button onClick={(e)=>{ e.stopPropagation(); setCancelFor(b); }} data-testid={`cancel-${b.id}`}
+                            title="Cancel booking — choose to refund or charge"
+                            className="bg-bgHover/40 text-gray-300 px-3 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-red-500/40 hover:text-white">
+                      <i className="fas fa-times mr-1"/>Cancel
+                    </button>
                   )}
                   {done && !b.report_card && (
                     <button onClick={(e)=>{ e.stopPropagation(); setReportFor(b); }} data-testid={`report-${b.id}`}

@@ -419,13 +419,19 @@ export function CancelBookingModal({ booking, onClose }) {
   useEditLock(true);
   const credits = Number(booking.credits_deducted || 0);
   const pool = booking.credit_service_type || booking.service_type;
+  const cashPrice = Number(booking.actual_price || 0);
+  // Best-guess "what would we charge them" for the no-show fee. The backend
+  // makes the authoritative snapshot — this is just for the button label.
+  const previewFee = cashPrice || Number(booking.credit_value || 0) || 0;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const confirm = async () => {
+  const submit = async (forfeit) => {
     setBusy(true); setErr("");
-    try { await api.delete(`/bookings/${booking.id}`); onClose(); }
-    catch (e) {
+    try {
+      await api.delete(`/bookings/${booking.id}`, { params: { forfeit: forfeit ? "true" : "false" } });
+      onClose();
+    } catch (e) {
       setErr(e.response?.data?.detail || "Cancel failed");
       setBusy(false);
     }
@@ -445,31 +451,45 @@ export function CancelBookingModal({ booking, onClose }) {
         </div>
 
         <p className="text-[14px] text-gray-300 leading-relaxed mb-4">
-          This will remove the booking from today's list. Use it if the dog was checked in by mistake or the client changed their mind.
+          Removes this booking from the roster. Pick <strong>refund</strong> for honest cancels, or <strong>charge</strong> for late-cancels / no-shows where the policy is "we keep the money".
         </p>
 
-        {credits > 0 ? (
-          <div className="bg-shGreen/10 border border-shGreen/40 rounded p-3 mb-4 flex items-center gap-2">
-            <i className="fas fa-coins text-shGreen text-lg"/>
-            <p className="text-[15px] text-white">
-              <span className="text-shGreen font-black">{credits} {pool} credit{credits === 1 ? "" : "s"}</span> will be refunded to <strong>{booking.client_name}</strong>.
-            </p>
+        {credits > 0 && (
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-300 flex items-center gap-2">
+            <i className="fas fa-coins text-shGreen"/>
+            <span><strong className="text-shGreen">{credits} {pool} credit{credits === 1 ? "" : "s"}</strong> were deducted for this booking.</span>
           </div>
-        ) : (
-          <div className="bg-bgBase border border-bgHover rounded p-3 mb-4 text-[15px] text-gray-400">
-            <i className="fas fa-info-circle mr-1.5"/>No credits to refund on this booking.
+        )}
+        {cashPrice > 0 && (
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-300 flex items-center gap-2">
+            <i className="fas fa-dollar-sign text-shGreen"/>
+            <span><strong className="text-shGreen">${cashPrice.toFixed(2)}</strong> has been charged on this booking.</span>
+          </div>
+        )}
+        {credits === 0 && cashPrice === 0 && (
+          <div className="bg-bgBase border border-bgHover rounded p-3 mb-2 text-[14px] text-gray-400">
+            <i className="fas fa-info-circle mr-1.5"/>No money or credits attached yet — a charge will pull from the service's catalog price.
           </div>
         )}
 
-        {err && <p className="text-red-400 text-[15px] mb-3">{err}</p>}
+        {err && <p className="text-red-400 text-[15px] mt-2 mb-1" data-testid="cancel-error">{err}</p>}
 
-        <div className="flex justify-end gap-3">
-          <button onClick={onClose} disabled={busy} data-testid="cancel-keep" className="text-gray-400 font-black uppercase text-[14px] tracking-widest hover:text-white disabled:opacity-50">
-            Keep it
+        <div className="grid grid-cols-1 gap-2 mt-4">
+          <button onClick={()=>submit(false)} disabled={busy} data-testid="cancel-refund"
+                  className="bg-shGreen text-bgHeader px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shGreen/90 disabled:opacity-50 flex items-center justify-between">
+            <span><i className="fas fa-rotate-left mr-2"/>Cancel · refund {credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "in full"}</span>
+            <i className="fas fa-chevron-right text-[14px] opacity-70"/>
           </button>
-          <button onClick={confirm} disabled={busy} data-testid="cancel-confirm"
-                  className="bg-red-500 text-white px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-red-600 disabled:opacity-50">
-            {busy ? "Cancelling…" : "Yes, cancel it"}
+          <button onClick={()=>submit(true)} disabled={busy} data-testid="cancel-charge"
+                  className="bg-red-500 text-white px-4 py-3 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-red-600 disabled:opacity-50 flex items-center justify-between">
+            <span>
+              <i className="fas fa-ban mr-2"/>Cancel · charge {previewFee > 0 ? `$${previewFee.toFixed(2)}` : (credits > 0 ? `${credits} credit${credits === 1 ? "" : "s"}` : "no-show fee")}
+            </span>
+            <i className="fas fa-chevron-right text-[14px] opacity-70"/>
+          </button>
+          <button onClick={onClose} disabled={busy} data-testid="cancel-keep"
+                  className="text-gray-400 hover:text-white font-black uppercase text-[14px] tracking-widest mt-1 py-2 disabled:opacity-50">
+            Keep it
           </button>
         </div>
       </div>
