@@ -1681,6 +1681,16 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110av — Disk usage monitor + nightly auto-backup (2026-05-31)
+- ✅ **`GET /api/admin/disk-usage`** — returns every mountpoint visible from inside the container, using `shutil.disk_usage()` + `/proc/mounts` to detect fs_type. Each row carries `pct_used`, `verdict` (ok/warn/danger), `likely_ephemeral` (true for overlay/tmpfs), `free_bytes`, `total_bytes`, etc.
+- ✅ **Auto-backup loop** (in-process asyncio task): nightly at configurable HH:MM, writes a gzipped JSON of all 32 collections to a configurable folder, prunes anything older than retain-days. Honors the `enabled` flag on every iteration so toggling is instant.
+- ✅ **`/api/admin/auto-backup/{config,run-now,runs}`** — config get/put, manual trigger, last-N history.
+- ✅ **Settings → Backup & Restore** UI adds two new panels at the top:
+  - **Disk Usage** — live tile with color-coded usage bars, fs_type pill, free/used/total GB, ephemeral warning, Refresh button.
+  - **Auto-Backup · Nightly** — Enable toggle (ON/OFF status pill), hour+minute, target folder (with live free-space + ephemeral warning), retain-days slider, Save & Run Now buttons, Last Run summary, expandable run history.
+- ✅ **Pytest** `test_disk_and_auto_backup.py` (3/3): disk-usage payload contract; config round-trip; run-now writes a valid `.json.gz` and shows in history.
+- ✅ **Live smoke-tested**: ran-now wrote `/app/backups/sit-happens-2026-05-31_215452.json.gz` (1.3 MB, 32 collections, 816 docs).
+
 ## Sprint 110au — Bookings list = upcoming only (2026-05-31)
 - ✅ Bookings list now filters to **upcoming** (today + future) by default. Past-dated rows fall into history alongside completed / cancelled / rejected — still reachable via the existing "Show History" toggle.
 - ✅ Hero eyebrow updated to `${upcoming} upcoming · ${total} total` so the operator can see at a glance how much is hidden.

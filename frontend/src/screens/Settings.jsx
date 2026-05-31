@@ -1197,7 +1197,9 @@ function BackupPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
-      <div>
+      <DiskUsagePanel />
+      <AutoBackupPanel />
+      <div className="border-t border-bgHover pt-6">
         <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-download mr-2"/>Download Backup</h4>
         <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
           Saves a full snapshot of <span className="text-white font-black">everything that matters</span>:
@@ -1294,6 +1296,236 @@ function BackupPanel() {
       <BulkClaimEmailsSection />
 
       <PhotoCompressionPanel />
+    </div>
+  );
+}
+
+// ─────── Sprint 110av · Disk Usage panel ───────
+function fmtBytes(n) {
+  if (n == null || isNaN(n)) return "—";
+  const gb = n / (1024 ** 3);
+  if (gb >= 1) return `${gb.toFixed(2)} GB`;
+  const mb = n / (1024 ** 2);
+  return `${mb.toFixed(1)} MB`;
+}
+function DiskUsagePanel() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true); setErr("");
+    try { const { data } = await api.get("/admin/disk-usage"); setData(data); }
+    catch (e) { setErr(e.response?.data?.detail || "Could not read disk usage"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  const tone = (v) => v === "danger" ? "text-red-400 bg-red-500/15 border-red-500/40"
+                    : v === "warn"   ? "text-shOrange bg-shOrange/15 border-shOrange/40"
+                    :                  "text-shGreen bg-shGreen/15 border-shGreen/40";
+  return (
+    <div data-testid="disk-usage-panel">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-hard-drive mr-2"/>Disk Usage</h4>
+        <button onClick={load} disabled={busy} data-testid="disk-usage-refresh"
+                className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white disabled:opacity-50">
+          <i className={`fas fa-rotate ${busy ? "fa-spin" : ""} mr-1`}/>Refresh
+        </button>
+      </div>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        Live snapshot of every drive/path this container can see. Mount more host drives into <code className="text-shBlue">docker-compose.yml</code> to make them appear here.
+      </p>
+      {err && <p className="text-red-400 text-[14px] mb-2">{err}</p>}
+      {!data && !err && <p className="text-[14px] text-gray-500"><i className="fas fa-circle-notch fa-spin mr-2"/>Reading…</p>}
+      {data && data.mountpoints.length === 0 && <p className="text-[14px] text-gray-500">No mountpoints found.</p>}
+      <div className="space-y-2">
+        {(data?.mountpoints || []).map((m) => (
+          <div key={m.path} className="bg-bgBase border border-bgHover rounded-lg p-3"
+               data-testid={`disk-row-${m.path}`}>
+            <div className="flex items-baseline justify-between gap-3 mb-1">
+              <div className="min-w-0">
+                <p className="text-sm font-black text-white uppercase truncate">{m.label}</p>
+                <p className="text-[12px] text-gray-500 font-mono truncate">{m.path} · {m.fs_type}{m.likely_ephemeral ? " · ephemeral!" : ""}</p>
+              </div>
+              <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${tone(m.verdict)}`}>
+                {m.pct_used}% used
+              </span>
+            </div>
+            <div className="h-2 rounded-full bg-bgHover overflow-hidden">
+              <div className={`h-full ${m.verdict === "danger" ? "bg-red-500" : m.verdict === "warn" ? "bg-shOrange" : "bg-shGreen"}`}
+                   style={{ width: `${Math.min(100, m.pct_used)}%` }} />
+            </div>
+            <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1">
+              {fmtBytes(m.free_bytes)} free · {fmtBytes(m.used_bytes)} used · {fmtBytes(m.total_bytes)} total
+            </p>
+          </div>
+        ))}
+      </div>
+      {data && (
+        <p className="text-[11px] text-gray-500 mt-2 uppercase tracking-widest font-black">
+          Checked {new Date(data.checked_at).toLocaleString()}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────── Sprint 110av · Auto-Backup panel ───────
+function AutoBackupPanel() {
+  const [cfg, setCfg] = useState(null);
+  const [runs, setRuns] = useState([]);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [draft, setDraft] = useState({});
+  const load = async () => {
+    setBusy(true); setErr("");
+    try {
+      const [c, r] = await Promise.all([
+        api.get("/admin/auto-backup/config"),
+        api.get("/admin/auto-backup/runs", { params: { limit: 10 } }),
+      ]);
+      setCfg(c.data); setDraft(c.data); setRuns(r.data || []);
+    } catch (e) { setErr(e.response?.data?.detail || "Failed to load auto-backup status"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  const save = async () => {
+    setBusy(true); setErr(""); setMsg("");
+    try {
+      const patch = {
+        enabled: !!draft.enabled,
+        hour: Number(draft.hour ?? 3),
+        minute: Number(draft.minute ?? 0),
+        path: draft.path || "/app/backups",
+        retain_days: Math.max(1, Number(draft.retain_days ?? 30)),
+      };
+      const { data } = await api.put("/admin/auto-backup/config", patch);
+      setCfg(data); setDraft(data); setMsg("Saved ✓");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+    finally { setBusy(false); }
+  };
+  const runNow = async () => {
+    setRunning(true); setErr(""); setMsg("");
+    try {
+      const { data } = await api.post("/admin/auto-backup/run-now");
+      setMsg(data.ok ? `Backup written · ${fmtBytes(data.size_bytes)}` : `Failed · ${data.error}`);
+      await load();
+    } catch (e) { setErr(e.response?.data?.detail || "Run failed"); }
+    finally { setRunning(false); }
+  };
+  if (!cfg) return null;
+  const targetVerdict = cfg.path_info?.verdict;
+  const ephemeralWarn = cfg.path_info?.likely_ephemeral;
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="auto-backup-panel">
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-sm font-black text-shGreen uppercase tracking-widest"><i className="fas fa-clock-rotate-left mr-2"/>Auto-Backup · Nightly</h4>
+        <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${cfg.enabled ? "bg-shGreen/15 text-shGreen" : "bg-gray-500/15 text-gray-400"}`}
+              data-testid="auto-backup-status">
+          {cfg.enabled ? "On" : "Off"}
+        </span>
+      </div>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        Writes a gzipped JSON snapshot of <strong className="text-white">every business collection</strong> at the scheduled hour, prunes anything older than the retain window, and logs every run. Point the path at a host-mounted folder so backups survive container rebuilds.
+      </p>
+
+      {err && <p className="text-red-400 text-[14px] mb-2" data-testid="auto-backup-error">{err}</p>}
+      {msg && <p className="text-shGreen text-[14px] mb-2" data-testid="auto-backup-msg"><i className="fas fa-check mr-1"/>{msg}</p>}
+
+      <div className="space-y-3">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={!!draft.enabled}
+                 onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+                 data-testid="auto-backup-enabled"
+                 className="w-5 h-5 accent-shGreen"/>
+          <span className="text-[14px] font-black text-white uppercase tracking-widest">Enable nightly backup</span>
+        </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Hour (0-23)</span>
+            <input type="number" min={0} max={23} value={draft.hour ?? 3}
+                   onChange={(e) => setDraft({ ...draft, hour: e.target.value })}
+                   data-testid="auto-backup-hour"
+                   className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+          <label className="block">
+            <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Minute</span>
+            <input type="number" min={0} max={59} value={draft.minute ?? 0}
+                   onChange={(e) => setDraft({ ...draft, minute: e.target.value })}
+                   data-testid="auto-backup-minute"
+                   className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Backup folder (in-container path)</span>
+          <input type="text" value={draft.path || ""}
+                 onChange={(e) => setDraft({ ...draft, path: e.target.value })}
+                 placeholder="/app/backups"
+                 data-testid="auto-backup-path"
+                 className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+          {cfg.path_info && (
+            <p className={`text-[12px] mt-1 ${targetVerdict === "danger" ? "text-red-400" : targetVerdict === "warn" ? "text-shOrange" : "text-shGreen"}`}>
+              <i className="fas fa-hard-drive mr-1"/>
+              {fmtBytes(cfg.path_info.free_bytes)} free on {cfg.path_info.fs_type}
+              {ephemeralWarn && <span className="text-red-400"> · ⚠️ ephemeral — mount a host folder here!</span>}
+            </p>
+          )}
+        </label>
+
+        <label className="block">
+          <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Retain (days)</span>
+          <input type="number" min={1} max={3650} value={draft.retain_days ?? 30}
+                 onChange={(e) => setDraft({ ...draft, retain_days: e.target.value })}
+                 data-testid="auto-backup-retain"
+                 className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        </label>
+
+        <div className="flex gap-2">
+          <button onClick={save} disabled={busy} data-testid="auto-backup-save"
+                  className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+            <i className="fas fa-save mr-1"/>Save
+          </button>
+          <button onClick={runNow} disabled={running} data-testid="auto-backup-run-now"
+                  className="bg-shBlue text-bgHeader px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+            <i className={`fas ${running ? "fa-circle-notch fa-spin" : "fa-play"} mr-1`}/>{running ? "Running…" : "Run Now"}
+          </button>
+        </div>
+      </div>
+
+      {cfg.last_run && (
+        <div className="mt-4 bg-bgBase border border-bgHover rounded p-3 text-[13px] text-gray-300" data-testid="auto-backup-last-run">
+          <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">Last run</p>
+          <p>
+            {new Date(cfg.last_run).toLocaleString()} · {cfg.last_ok ? <span className="text-shGreen font-black">OK</span> : <span className="text-red-400 font-black">FAILED</span>}
+            {cfg.last_size_bytes ? ` · ${fmtBytes(cfg.last_size_bytes)}` : ""}
+          </p>
+          {cfg.last_file && <p className="text-[12px] text-gray-500 font-mono mt-1 truncate">{cfg.last_file}</p>}
+          {cfg.last_error && <p className="text-[12px] text-red-400 mt-1">{cfg.last_error}</p>}
+        </div>
+      )}
+
+      {runs.length > 0 && (
+        <details className="mt-3" data-testid="auto-backup-history">
+          <summary className="text-[12px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-white">
+            Show last {runs.length} run{runs.length === 1 ? "" : "s"}
+          </summary>
+          <div className="mt-2 space-y-1">
+            {runs.map(r => (
+              <div key={r.id} className="bg-bgBase/60 border border-bgHover/40 rounded px-3 py-2 text-[12px] flex items-center justify-between gap-3">
+                <span className="font-mono text-gray-300 truncate">{new Date(r.started_at).toLocaleString()}</span>
+                <span className="text-gray-400 font-black uppercase tracking-widest">{r.trigger}</span>
+                <span className={r.ok ? "text-shGreen font-black" : "text-red-400 font-black"}>
+                  {r.ok ? fmtBytes(r.size_bytes) : "FAIL"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }

@@ -7392,6 +7392,340 @@ async def backup_export(_: dict = Depends(require_admin)):
     return payload
 
 
+# ─────────────── Sprint 110av · Disk Usage Monitor ───────────────
+# Shows free/used space for every path the container can see. Helps the
+# operator know when they're running out of room for backups / Mongo data
+# before disaster strikes. Works inside an unprivileged container — uses
+# pure shutil.disk_usage (no host privileges needed).
+import shutil
+
+# Paths the container is *likely* to care about. Anything that doesn't
+# exist is silently skipped; anything mounted from the host shows up via
+# /proc/mounts scan below.
+_DISK_PROBE_PATHS = [
+    ("/app",            "App code & data"),
+    ("/app/data",       "App data dir"),
+    ("/app/backups",    "Backups"),
+    ("/data",           "Mongo data dir"),
+    ("/data/db",        "Mongo db dir"),
+    ("/mnt/ext",        "External mount"),
+    ("/mnt/backups",    "Backups mount"),
+    ("/var/lib/mongo",  "Mongo system dir"),
+]
+
+# Filesystem types that suggest data won't survive container rebuilds.
+# (Overlay = container layer; tmpfs = RAM; ramfs = RAM.)
+_EPHEMERAL_FS_TYPES = {"overlay", "tmpfs", "ramfs", "overlay2"}
+
+
+def _read_mounts() -> List[Dict[str, str]]:
+    """Parse /proc/mounts → list of {device, mountpoint, fs_type}."""
+    rows: List[Dict[str, str]] = []
+    try:
+        with open("/proc/mounts") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                rows.append({
+                    "device": parts[0],
+                    "mountpoint": parts[1],
+                    "fs_type": parts[2],
+                })
+    except Exception:
+        pass
+    return rows
+
+
+def _disk_row(path: str, label: str, mounts: List[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+    """Build a usage row for `path` if it exists. Returns None on failure."""
+    try:
+        total, used, free = shutil.disk_usage(path)
+    except Exception:
+        return None
+    pct_used = round((used / total) * 100, 1) if total else 0.0
+    # Find the most specific mountpoint that contains `path`
+    best = {"mountpoint": "/", "fs_type": "unknown", "device": "?"}
+    for m in mounts:
+        if path == m["mountpoint"] or path.startswith(m["mountpoint"].rstrip("/") + "/"):
+            if len(m["mountpoint"]) > len(best["mountpoint"]):
+                best = m
+    fs_type = best["fs_type"]
+    likely_ephemeral = fs_type in _EPHEMERAL_FS_TYPES
+    verdict = (
+        "danger" if pct_used >= 90 else
+        "warn" if pct_used >= 70 or likely_ephemeral else
+        "ok"
+    )
+    return {
+        "path": path,
+        "label": label,
+        "mountpoint": best["mountpoint"],
+        "fs_type": fs_type,
+        "device": best["device"],
+        "total_bytes": total,
+        "used_bytes": used,
+        "free_bytes": free,
+        "total_gb": round(total / (1024 ** 3), 2),
+        "used_gb": round(used / (1024 ** 3), 2),
+        "free_gb": round(free / (1024 ** 3), 2),
+        "pct_used": pct_used,
+        "likely_ephemeral": likely_ephemeral,
+        "verdict": verdict,
+    }
+
+
+@api.get("/admin/disk-usage")
+async def admin_disk_usage(_: dict = Depends(require_admin)):
+    """Snapshot of disk usage for every meaningful path inside the container.
+    Includes a `likely_ephemeral` flag so the operator knows when a path lives
+    on the container overlay (i.e. will be lost on rebuild) vs a real host
+    mount. Used by Admin → Settings → Backup & Restore → Disk usage tile.
+    """
+    mounts = _read_mounts()
+    rows: List[Dict[str, Any]] = []
+    seen_paths = set()
+    # Probe the curated list first so labels are nice
+    for path, label in _DISK_PROBE_PATHS:
+        if not os.path.exists(path):
+            continue
+        row = _disk_row(path, label, mounts)
+        if row:
+            rows.append(row)
+            seen_paths.add(path)
+    # Now scan /proc/mounts for any real host-mounted filesystems we missed
+    interesting_fs = {"ext4", "xfs", "btrfs", "zfs", "nfs", "nfs4", "cifs", "smb"}
+    for m in mounts:
+        mp = m["mountpoint"]
+        if mp in seen_paths:
+            continue
+        if m["fs_type"] not in interesting_fs:
+            continue
+        # Skip system paths the operator can't act on
+        if mp == "/" or mp.startswith("/proc") or mp.startswith("/sys") or mp.startswith("/dev"):
+            continue
+        row = _disk_row(mp, mp, mounts)
+        if row:
+            rows.append(row)
+            seen_paths.add(mp)
+    return {
+        "checked_at": now_iso(),
+        "mountpoints": rows,
+    }
+
+
+# ─────────────── Sprint 110av · Auto-Backup (Tier A) ───────────────
+# Nightly snapshot of every business collection → gzipped JSON file. Runs
+# inside the FastAPI process via a lightweight asyncio loop (no extra
+# dependency). The operator points `path` at a host-mounted folder so
+# backups survive container rebuilds.
+import gzip
+import json as _json
+
+
+async def _get_auto_backup_config() -> Dict[str, Any]:
+    """Returns the auto-backup config, seeding defaults if missing."""
+    row = await db.app_settings.find_one({"_id": "auto_backup"}, {"_id": 0})
+    if not row:
+        row = {
+            "enabled": False,
+            "hour": 3,             # 3 AM local
+            "minute": 0,
+            "path": "/app/backups",
+            "retain_days": 30,
+            "last_run": None,      # filled in by the runner
+            "last_ok": None,
+            "last_error": None,
+            "last_size_bytes": None,
+            "last_file": None,
+        }
+        await db.app_settings.update_one(
+            {"_id": "auto_backup"}, {"$set": row}, upsert=True
+        )
+    return row
+
+
+async def _save_auto_backup_config(patch: Dict[str, Any]) -> Dict[str, Any]:
+    await db.app_settings.update_one(
+        {"_id": "auto_backup"}, {"$set": patch}, upsert=True
+    )
+    return await _get_auto_backup_config()
+
+
+async def _build_backup_payload() -> Dict[str, Any]:
+    payload = {
+        "version": BACKUP_VERSION,
+        "exported_at": now_iso(),
+        "collections": {},
+    }
+    for c in BACKUP_COLLECTIONS:
+        docs = await db[c].find({}, {"_id": 0}).to_list(50000)
+        payload["collections"][c] = docs
+    return payload
+
+
+async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
+    """Write a gzipped snapshot to disk and prune older files past retention."""
+    cfg = await _get_auto_backup_config()
+    started = now_iso()
+    try:
+        target_dir = cfg.get("path") or "/app/backups"
+        os.makedirs(target_dir, exist_ok=True)
+        payload = await _build_backup_payload()
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+        fname = f"sit-happens-{ts}.json.gz"
+        full_path = os.path.join(target_dir, fname)
+        body = _json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        with gzip.open(full_path, "wb", compresslevel=6) as fh:
+            fh.write(body)
+        size = os.path.getsize(full_path)
+        # Prune older files past retention (only this app's files)
+        retain = max(1, int(cfg.get("retain_days") or 30))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retain)
+        pruned: List[str] = []
+        for old in sorted(os.listdir(target_dir)):
+            if not (old.startswith("sit-happens-") and old.endswith(".json.gz")):
+                continue
+            try:
+                stamp = old.split("sit-happens-", 1)[1].split(".json.gz", 1)[0]
+                file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S").replace(tzinfo=timezone.utc)
+                if file_dt < cutoff:
+                    os.remove(os.path.join(target_dir, old))
+                    pruned.append(old)
+            except Exception:
+                pass
+        # Record run history
+        run_row = {
+            "id": str(uuid.uuid4()),
+            "trigger": trigger,
+            "started_at": started,
+            "finished_at": now_iso(),
+            "ok": True,
+            "path": full_path,
+            "size_bytes": size,
+            "collections": len(payload["collections"]),
+            "total_docs": sum(len(v) for v in payload["collections"].values()),
+            "pruned": pruned,
+            "error": None,
+        }
+        await db.auto_backup_runs.insert_one(run_row)
+        await _save_auto_backup_config({
+            "last_run": run_row["finished_at"],
+            "last_ok": True,
+            "last_error": None,
+            "last_size_bytes": size,
+            "last_file": full_path,
+        })
+        run_row.pop("_id", None)
+        return run_row
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        run_row = {
+            "id": str(uuid.uuid4()),
+            "trigger": trigger,
+            "started_at": started,
+            "finished_at": now_iso(),
+            "ok": False,
+            "path": None,
+            "size_bytes": 0,
+            "collections": 0,
+            "total_docs": 0,
+            "pruned": [],
+            "error": err,
+        }
+        await db.auto_backup_runs.insert_one(run_row)
+        await _save_auto_backup_config({
+            "last_run": run_row["finished_at"],
+            "last_ok": False,
+            "last_error": err,
+        })
+        run_row.pop("_id", None)
+        logger.warning("auto-backup run failed: %s", err)
+        return run_row
+
+
+def _seconds_until_next_run(hour: int, minute: int) -> float:
+    """Compute seconds until the next HH:MM (local-tz wall clock)."""
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target = target + timedelta(days=1)
+    return max(60.0, (target - now).total_seconds())
+
+
+_auto_backup_task: Optional[asyncio.Task] = None
+
+
+async def _auto_backup_loop():
+    """Background loop — sleeps until next scheduled run, then fires."""
+    while True:
+        try:
+            cfg = await _get_auto_backup_config()
+            if not cfg.get("enabled"):
+                # Re-check every 5 minutes so toggling it on takes effect quickly
+                await asyncio.sleep(300)
+                continue
+            wait = _seconds_until_next_run(
+                int(cfg.get("hour") or 3),
+                int(cfg.get("minute") or 0),
+            )
+            logger.info("auto-backup: next run in %.0fs", wait)
+            await asyncio.sleep(wait)
+            # Re-check config — operator may have disabled it while we slept
+            cfg = await _get_auto_backup_config()
+            if cfg.get("enabled"):
+                await _run_auto_backup_once(trigger="scheduled")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("auto-backup loop error: %s", e)
+            await asyncio.sleep(60)
+
+
+class AutoBackupConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    hour: Optional[int] = Field(default=None, ge=0, le=23)
+    minute: Optional[int] = Field(default=None, ge=0, le=59)
+    path: Optional[str] = None
+    retain_days: Optional[int] = Field(default=None, ge=1, le=3650)
+
+
+@api.get("/admin/auto-backup/config")
+async def get_auto_backup_config(_: dict = Depends(require_admin)):
+    cfg = await _get_auto_backup_config()
+    # Augment with current path state so the UI can warn about ephemeral mounts
+    mounts = _read_mounts()
+    path_row = _disk_row(cfg.get("path") or "/app/backups", "Backup target", mounts) if os.path.exists(cfg.get("path") or "") else None
+    cfg["path_exists"] = path_row is not None
+    cfg["path_info"] = path_row
+    return cfg
+
+
+@api.put("/admin/auto-backup/config")
+async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(require_admin)):
+    patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "path" in patch:
+        # Ensure the target dir exists (create if needed); silently ignore failures
+        try:
+            os.makedirs(patch["path"], exist_ok=True)
+        except Exception:
+            pass
+    cfg = await _save_auto_backup_config(patch)
+    return cfg
+
+
+@api.post("/admin/auto-backup/run-now")
+async def run_auto_backup_now(_: dict = Depends(require_admin)):
+    """Trigger a backup immediately, regardless of the schedule."""
+    return await _run_auto_backup_once(trigger="manual")
+
+
+@api.get("/admin/auto-backup/runs")
+async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin)):
+    rows = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(limit)
+    return rows
+
+
 # Sprint 110o — Auto-backup feature removed (never worked reliably across the
 # unprivileged Docker container ↔ Bazzite host boundary). Admin uses manual
 # Download Backup / Restore and the host-side rclone systemd timer instead.
@@ -8455,10 +8789,23 @@ async def startup():
         await seed_trophies_if_empty(db)
     except Exception as exc:
         logger.warning("Trophy seeding failed: %s", exc)
+    # Sprint 110av — start the auto-backup loop. Loop honors the
+    # `enabled` flag on every iteration so disabling the feature simply
+    # makes it a no-op (it doesn't get cancelled).
+    global _auto_backup_task
+    if _auto_backup_task is None or _auto_backup_task.done():
+        _auto_backup_task = asyncio.create_task(_auto_backup_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown():
+    global _auto_backup_task
+    if _auto_backup_task and not _auto_backup_task.done():
+        _auto_backup_task.cancel()
+        try:
+            await _auto_backup_task
+        except (asyncio.CancelledError, Exception):
+            pass
     mongo_client.close()
 
 
