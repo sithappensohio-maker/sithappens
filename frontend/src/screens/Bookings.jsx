@@ -71,11 +71,21 @@ export default function Bookings() {
   // Hide completed / cancelled / rejected by default — they clutter the active queue.
   // Toggle "Show history" reveals them when needed.
   const FINISHED = new Set(["completed", "cancelled", "canceled", "rejected"]);
-  const liveHistoryRows = bookings.filter(b => FINISHED.has(b.status));
+  // Sprint 110au — Bookings list defaults to UPCOMING only (today + future).
+  // Past-dated rows fall into "history" along with completed/cancelled —
+  // they're still reachable via the "Show History" toggle.
+  const today = new Date().toISOString().slice(0, 10);
+  const isPastDate = (b) => {
+    const last = (b.end_date && b.end_date >= b.date) ? b.end_date : b.date;
+    return !!last && last < today;
+  };
+  const isUpcoming = (b) => !FINISHED.has(b.status) && !isPastDate(b);
+  const upcomingRows = bookings.filter(isUpcoming);
+  const liveHistoryRows = bookings.filter(b => !isUpcoming(b));
   const visible = showHistory
-    ? [...liveHistoryRows, ...(archiveLoaded ? archived.map(a => ({ ...a, _archived: true })) : []), ...bookings.filter(b => !FINISHED.has(b.status))]
-    : bookings.filter(b => !FINISHED.has(b.status));
-  const hiddenCount = bookings.length - bookings.filter(b => !FINISHED.has(b.status)).length;
+    ? [...liveHistoryRows, ...(archiveLoaded ? archived.map(a => ({ ...a, _archived: true })) : []), ...upcomingRows]
+    : upcomingRows;
+  const hiddenCount = bookings.length - upcomingRows.length;
 
   const statusStyle = (s) => ({
     pending: "bg-shOrange/15 text-shOrange",
@@ -91,7 +101,7 @@ export default function Bookings() {
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
       <RefreshSpinner pulling={pulling} progress={progress} />
       <PageHero
-        eyebrow={{ icon: "fa-calendar-check", text: `${bookings.length} active booking${bookings.length === 1 ? "" : "s"}`, color: "text-shOrange" }}
+        eyebrow={{ icon: "fa-calendar-check", text: `${upcomingRows.length} upcoming · ${bookings.length} total`, color: "text-shOrange" }}
         title="Bookings."
         highlight="Every stay, every day."
         subtitle="Daycare, boarding, training & grooming — all in one feed."

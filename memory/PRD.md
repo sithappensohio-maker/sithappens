@@ -1681,6 +1681,11 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110au — Bookings list = upcoming only (2026-05-31)
+- ✅ Bookings list now filters to **upcoming** (today + future) by default. Past-dated rows fall into history alongside completed / cancelled / rejected — still reachable via the existing "Show History" toggle.
+- ✅ Hero eyebrow updated to `${upcoming} upcoming · ${total} total` so the operator can see at a glance how much is hidden.
+- ✅ Smoke-tested live: 15 upcoming visible / 244 total in DB / 229 history rows correctly stashed.
+
 ## Sprint 110at — Calendar keeps completed bookings, Bookings list still hides them (2026-05-31)
 - ✅ `/api/events` now includes `status="completed"` bookings (previously only `approved` + `pending`). Completed events render with a muted slate (`#64748b`) color so the active queue still pops visually.
 - ✅ Bookings list view already hides `completed` / `cancelled` / `rejected` by default via `showHistory=false` — verified unchanged. Operator can still toggle "Show history" to peek.
