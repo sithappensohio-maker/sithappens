@@ -76,7 +76,9 @@ export default function Staff() {
           ["schedule", "Schedule", "fa-calendar-week"],
           ["tasks", "Tasks", "fa-list-check"],
           ["payroll", "Payroll", "fa-file-csv"],
-          ["taxes", "Tax Estimator", "fa-calculator"],
+          ["taxes", "Payroll Tax", "fa-calculator"],
+          ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
+          ["timeoff", "Time Off", "fa-umbrella-beach"],
         ].map(([k, label, icon]) => (
           <button key={k} onClick={()=>setSubtab(k)} data-testid={`staff-subtab-${k}`}
                   className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`}>
@@ -249,6 +251,8 @@ export default function Staff() {
       {subtab === "tasks" && <TasksTab employees={employees} />}
       {subtab === "payroll" && <PayrollTab employees={employees} />}
       {subtab === "taxes" && <TaxEstimatorTab />}
+      {subtab === "quarterly" && <QuarterlyTaxTab />}
+      {subtab === "timeoff" && <TimeOffAdminTab />}
 
       {modal && <EmployeeFormModal mode={modal.mode} emp={modal.emp}
                                   onClose={()=>setModal(null)}
@@ -1007,6 +1011,455 @@ function TaxKpi({ label, value, color, emphasis = false }) {
     <div className={`bg-bgPanel border ${emphasis ? "border-shGreen/40" : "border-bgHover"} rounded-xl p-3 ${emphasis ? "md:col-span-1" : ""}`}>
       <p className={`text-[11px] font-black uppercase tracking-widest text-${color}`}>{label}</p>
       <p className={`text-${emphasis ? "2xl" : "xl"} font-black text-${color} mt-1`}>${value.toFixed(2)}</p>
+    </div>
+  );
+}
+
+
+// ─── Quarterly Tax Estimate (Sole-Proprietor / Schedule C) ──────────────────
+const QUARTERLY_TAX_FIELDS = [
+  ["federal_income_pct", "Federal income tax %", "Effective rate — match your bracket"],
+  ["state_income_pct", "State income tax %", "Ohio default ~2.75%"],
+  ["local_income_pct", "Local income tax %", "Warren city ~2.5%"],
+  ["ss_rate_pct", "Social Security % (both halves)", "Default 12.4%"],
+  ["medicare_rate_pct", "Medicare % (both halves)", "Default 2.9%"],
+  ["se_tax_taxable_pct", "SE taxable %", "IRS default 92.35%"],
+  ["ss_wage_base", "SS wage base ($)", "2026 estimate $176,100"],
+  ["estimated_payments_made", "Quarterly payments already made ($)", "Subtracted from YTD owed"],
+];
+
+function QuarterlyTaxTab() {
+  const [data, setData] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [defaults, setDefaults] = useState(null);
+  const [payments, setPayments] = useState([]);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [payModal, setPayModal] = useState(null); // {quarter, suggested}
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const confirm = useConfirm();
+
+  const load = async () => {
+    setErr("");
+    try {
+      const [est, s, p] = await Promise.all([
+        api.get("/admin/quarterly-tax", { params: { year } }),
+        api.get("/admin/quarterly-tax/settings"),
+        api.get("/admin/quarterly-tax/payments", { params: { year } }),
+      ]);
+      setData(est.data);
+      setSettings(s.data.current);
+      setDefaults(s.data.defaults);
+      setPayments(p.data.payments || []);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [year]);
+
+  const save = async () => {
+    setSaving(true);
+    try { await api.put("/admin/quarterly-tax/settings", settings); await load(); setSettingsOpen(false); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    finally { setSaving(false); }
+  };
+  const reset = () => setSettings({ ...defaults });
+
+  const deletePayment = async (p) => {
+    if (!(await confirm({ title: `Delete payment?`, body: `$${p.amount.toFixed(2)} on ${p.payment_date} (Q${p.quarter})`, confirmText: "Delete", tone: "danger" }))) return;
+    try { await api.delete(`/admin/quarterly-tax/payments/${p.id}`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
+  if (!data) {
+    return <div className="text-gray-400 p-6 text-center" data-testid="qt-loading">Loading…</div>;
+  }
+
+  const statusColor = (s) => s === "current" ? "shGreen" : s === "past" ? "gray-500" : "shBlue";
+  const statusLabel = (s) => s === "current" ? "DUE NEXT" : s === "past" ? "PAST" : "UPCOMING";
+
+  return (
+    <div className="space-y-4" data-testid="quarterly-tax-tab">
+      <div className="bg-shOrange/10 border border-shOrange/40 rounded p-3 text-[13px] text-gray-300" data-testid="qt-disclaimer">
+        <i className="fas fa-triangle-exclamation text-shOrange mr-2"/>
+        <strong className="text-shOrange">Sole-Proprietor estimator.</strong> {data.disclaimer}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400">
+          <span className="block mb-1">Tax year</span>
+          <select value={year} onChange={(e)=>setYear(Number(e.target.value))}
+                  data-testid="qt-year"
+                  style={{colorScheme:"dark"}}
+                  className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm">
+            {[0,1,2].map(off => {
+              const y = new Date().getFullYear() - off;
+              return <option key={y} value={y}>{y}</option>;
+            })}
+          </select>
+        </label>
+        <button onClick={()=>setSettingsOpen(s=>!s)} data-testid="qt-settings-toggle"
+                className="bg-bgPanel border border-bgHover px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-shGreen">
+          <i className="fas fa-sliders mr-1"/>Edit Rates
+        </button>
+        <p className="ml-auto text-[12px] text-gray-500 italic">As of {data.as_of}</p>
+      </div>
+
+      {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px]">{err}</div>}
+
+      {settingsOpen && settings && (
+        <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-4 space-y-4" data-testid="qt-settings-panel">
+          <div className="flex justify-between items-center flex-wrap gap-2">
+            <h4 className="text-white font-black uppercase italic"><i className="fas fa-sliders text-shGreen mr-2"/>Tax Rates</h4>
+            <div className="flex gap-2">
+              <button onClick={reset} data-testid="qt-reset"
+                      className="text-[13px] text-gray-400 hover:text-shOrange font-black uppercase tracking-widest">
+                <i className="fas fa-rotate-left mr-1"/>Reset to defaults
+              </button>
+              <button onClick={save} disabled={saving} data-testid="qt-save"
+                      className="bg-shGreen text-bgHeader px-4 py-1.5 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {QUARTERLY_TAX_FIELDS.filter(([k]) => k !== "estimated_payments_made").map(([key, label, hint]) => (
+              <label key={key} className="block">
+                <span className="text-[13px] text-gray-300">{label}</span>
+                <input type="number" step="0.01" value={settings[key] ?? 0}
+                       onChange={(e)=>setSettings({...settings, [key]: Number(e.target.value)})}
+                       data-testid={`qt-field-${key}`}
+                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                <span className="text-[11px] text-gray-500">{hint}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-500 italic">Tip: log individual quarterly payments below — they automatically reduce your balance owed.</p>
+        </div>
+      )}
+
+      {/* YTD KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="qt-kpis">
+        <TaxKpi label="YTD Gross Income" value={data.income.gross} color="white"/>
+        <TaxKpi label="YTD Expenses" value={data.expenses.total} color="shOrange"/>
+        <TaxKpi label="Net Profit (Schedule C)" value={data.net_profit} color="shGreen" emphasis/>
+        <TaxKpi label="Est. Tax Owed YTD" value={data.balance_owed_ytd} color="shBlue" emphasis/>
+      </div>
+
+      {/* Quarterly cards with Mark-Paid CTA */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3" data-testid="qt-quarters">
+        {data.quarters.map(q => {
+          const fullyPaid = q.paid >= q.suggested_payment && q.suggested_payment > 0;
+          return (
+            <div key={q.quarter}
+                 data-testid={`qt-quarter-${q.quarter}`}
+                 className={`bg-bgPanel border rounded-xl p-3 ${q.status === "current" ? "border-shGreen" : "border-bgHover"} ${fullyPaid ? "opacity-90" : ""}`}>
+              <div className="flex justify-between items-center">
+                <p className="text-[11px] font-black uppercase tracking-widest text-gray-400">Q{q.quarter}</p>
+                <span className={`text-[10px] font-black uppercase tracking-widest text-${statusColor(q.status)}`}>{statusLabel(q.status)}</span>
+              </div>
+              <p className="text-white text-xl font-black mt-1">${q.suggested_payment.toFixed(2)}</p>
+              <p className="text-[11px] text-gray-500 mt-1">{q.period}</p>
+              <p className={`text-[12px] font-black uppercase tracking-widest text-${statusColor(q.status)} mt-1`}>
+                <i className="fas fa-calendar-day mr-1"/>Due {q.due}
+              </p>
+              {q.paid > 0 && (
+                <p className="text-[11px] text-shGreen font-black uppercase tracking-widest mt-1" data-testid={`qt-q${q.quarter}-paid`}>
+                  <i className="fas fa-check-circle mr-1"/>${q.paid.toFixed(2)} paid
+                  {q.remaining > 0 && <span className="text-gray-500 normal-case ml-1">· ${q.remaining.toFixed(2)} left</span>}
+                </p>
+              )}
+              <button onClick={()=>setPayModal({ quarter: q.quarter, suggested: q.remaining || q.suggested_payment })}
+                      data-testid={`qt-q${q.quarter}-mark-paid`}
+                      className="mt-2 w-full bg-shGreen/10 border border-shGreen/40 text-shGreen px-2 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shGreen/20">
+                {fullyPaid ? <><i className="fas fa-plus mr-1"/>Add payment</> : <><i className="fas fa-check mr-1"/>Mark paid</>}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Breakdown table */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="qt-income-breakdown">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-arrow-trend-up text-shGreen mr-2"/>Income & Expenses</h4>
+          <div className="space-y-1 text-[13px]">
+            <Row label="Service bookings" value={data.income.service_bookings}/>
+            <Row label="Retail sales" value={data.income.retail_sales}/>
+            <Row label="GROSS INCOME" value={data.income.gross} bold/>
+            <div className="border-t border-bgHover my-2"/>
+            <Row label="Recorded expenses" value={data.expenses.recorded} neg/>
+            <Row label="Labor (gross wages)" value={data.expenses.labor_gross} neg/>
+            <Row label="Labor (employer burden)" value={data.expenses.labor_burden} neg/>
+            <Row label="TOTAL EXPENSES" value={data.expenses.total} neg bold/>
+            <div className="border-t border-bgHover my-2"/>
+            <Row label="NET PROFIT" value={data.net_profit} bold color="shGreen"/>
+          </div>
+        </div>
+
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="qt-tax-breakdown">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-receipt text-shBlue mr-2"/>Tax Breakdown</h4>
+          <div className="space-y-1 text-[13px]">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shOrange mb-1">Self-Employment Tax</p>
+            <Row label={`Social Security (on $${data.se_tax.taxable_base.toFixed(0)})`} value={data.se_tax.social_security}/>
+            <Row label="Medicare" value={data.se_tax.medicare}/>
+            <Row label="SE TAX TOTAL" value={data.se_tax.total} bold color="shOrange"/>
+            <p className="text-[11px] text-gray-500 italic">Half deductible (${data.se_tax.deductible_half.toFixed(2)})</p>
+            <div className="border-t border-bgHover my-2"/>
+            <p className="text-[11px] font-black uppercase tracking-widest text-shBlue mb-1">Income Tax (on ${data.income_tax.taxable_income.toFixed(0)})</p>
+            <Row label={`Federal (${data.settings.federal_income_pct}%)`} value={data.income_tax.federal}/>
+            <Row label={`State (${data.settings.state_income_pct}%)`} value={data.income_tax.state}/>
+            <Row label={`Local (${data.settings.local_income_pct}%)`} value={data.income_tax.local}/>
+            <Row label="INCOME TAX TOTAL" value={data.income_tax.total} bold color="shBlue"/>
+            <div className="border-t border-bgHover my-2"/>
+            <Row label="TOTAL TAX YTD" value={data.total_tax_ytd} bold color="white"/>
+            <Row label="Payments applied" value={data.payments_applied} neg/>
+            <Row label="BALANCE OWED" value={data.balance_owed_ytd} bold color="shGreen"/>
+          </div>
+        </div>
+      </div>
+
+      {/* Payment history */}
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="qt-payment-history">
+        <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-clock-rotate-left text-shGreen mr-2"/>Payment history — {year}</h4>
+        {payments.length === 0 ? (
+          <p className="text-gray-500 text-sm italic">No payments logged yet for this year. Tap "Mark paid" on any quarter to record one.</p>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead className="text-[11px] font-black uppercase tracking-widest text-gray-500 border-b border-bgHover">
+              <tr>
+                <th className="px-2 py-1.5 text-left">Date</th>
+                <th className="px-2 py-1.5 text-left">Quarter</th>
+                <th className="px-2 py-1.5 text-right">Amount</th>
+                <th className="px-2 py-1.5 text-left">Method</th>
+                <th className="px-2 py-1.5 text-left">Memo</th>
+                <th className="px-2 py-1.5"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map(p => (
+                <tr key={p.id} className="border-b border-bgHover/40" data-testid={`qt-pay-row-${p.id}`}>
+                  <td className="px-2 py-2 text-gray-300">{p.payment_date}</td>
+                  <td className="px-2 py-2"><span className="bg-bgBase px-2 py-0.5 rounded text-shBlue text-[11px] font-black">Q{p.quarter}</span></td>
+                  <td className="px-2 py-2 text-right text-shGreen font-black">${p.amount.toFixed(2)}</td>
+                  <td className="px-2 py-2 text-gray-400 text-[12px]">{p.payment_method}</td>
+                  <td className="px-2 py-2 text-gray-400 text-[12px] truncate max-w-[200px]">{p.memo}</td>
+                  <td className="px-2 py-2 text-right">
+                    <button onClick={()=>deletePayment(p)} data-testid={`qt-pay-delete-${p.id}`}
+                            className="text-gray-500 hover:text-red-400 text-[12px]">
+                      <i className="fas fa-trash"/>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {payModal && (
+        <TaxPaymentModal year={year} quarter={payModal.quarter} suggested={payModal.suggested}
+                         onClose={()=>setPayModal(null)}
+                         onSaved={()=>{ setPayModal(null); load(); }}/>
+      )}
+    </div>
+  );
+}
+
+function TaxPaymentModal({ year, quarter, suggested, onClose, onSaved }) {
+  const [amount, setAmount] = useState(suggested ? suggested.toFixed(2) : "");
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [method, setMethod] = useState("EFTPS");
+  const [memo, setMemo] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!amount || Number(amount) <= 0) { setErr("Enter an amount > 0"); return; }
+    setSaving(true);
+    try {
+      await api.post("/admin/quarterly-tax/payments", {
+        year, quarter, amount: Number(amount), payment_date: paymentDate,
+        payment_method: method, memo,
+      });
+      onSaved();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" data-testid="qt-pay-modal" onClick={onClose}>
+      <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 max-w-md w-full space-y-3" onClick={e=>e.stopPropagation()}>
+        <h3 className="text-white font-black uppercase italic text-lg"><i className="fas fa-circle-check text-shGreen mr-2"/>Log Q{quarter} payment</h3>
+        <p className="text-[12px] text-gray-500">Tax year {year}</p>
+
+        {err && <div className="text-red-400 bg-red-500/10 rounded p-2 text-[13px]">{err}</div>}
+
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Amount paid ($)</span>
+          <input type="number" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)}
+                 data-testid="qt-pay-amount"
+                 className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+        </label>
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Payment date</span>
+          <input type="date" value={paymentDate} onChange={e=>setPaymentDate(e.target.value)}
+                 style={{colorScheme:"dark"}} data-testid="qt-pay-date"
+                 className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+        </label>
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Method</span>
+          <select value={method} onChange={e=>setMethod(e.target.value)} data-testid="qt-pay-method"
+                  style={{colorScheme:"dark"}}
+                  className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1">
+            {["EFTPS","Check","Card","ACH","Other"].map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Memo (optional)</span>
+          <input type="text" value={memo} onChange={e=>setMemo(e.target.value)} maxLength={120}
+                 data-testid="qt-pay-memo"
+                 className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+        </label>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} data-testid="qt-pay-cancel"
+                  className="bg-bgBase border border-bgHover px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-red-400">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving} data-testid="qt-pay-save"
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+            {saving ? "Saving…" : "Log payment"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin → Time Off Review ────────────────────────────────────────────────
+function TimeOffAdminTab() {
+  const [filter, setFilter] = useState("pending");
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [reviewModal, setReviewModal] = useState(null); // {req, status}
+
+  const load = async () => {
+    setErr("");
+    try {
+      const params = filter === "all" ? {} : { status: filter };
+      const r = await api.get("/admin/time-off", { params });
+      setData(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [filter]);
+
+  const review = async (req, status, notes) => {
+    try { await api.put(`/admin/time-off/${req.id}`, { status, admin_notes: notes || "" }); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
+  if (!data) return <div className="text-gray-400 p-6 text-center">Loading…</div>;
+
+  const statusColor = { pending: "shBlue", approved: "shGreen", rejected: "red-400", cancelled: "gray-500" };
+
+  return (
+    <div className="space-y-3" data-testid="timeoff-admin-tab">
+      <div className="flex items-center gap-2 flex-wrap">
+        <p className="text-[12px] font-black uppercase tracking-widest text-gray-400">Filter:</p>
+        {["pending","approved","rejected","cancelled","all"].map(f => (
+          <button key={f} onClick={()=>setFilter(f)} data-testid={`timeoff-filter-${f}`}
+                  className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest border ${filter===f ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgPanel border-bgHover text-gray-400 hover:border-shGreen"}`}>
+            {f}
+          </button>
+        ))}
+        <p className="ml-auto text-[12px] text-gray-500">
+          <i className="fas fa-bell text-shBlue mr-1"/>{data.pending_count} pending
+        </p>
+      </div>
+
+      {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px]">{err}</div>}
+
+      {data.requests.length === 0 && (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No requests in this filter.</div>
+      )}
+
+      {data.requests.map(r => (
+        <div key={r.id} className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid={`timeoff-row-${r.id}`}>
+          <div className="flex justify-between items-start flex-wrap gap-2">
+            <div>
+              <p className="text-white font-black">{r.user_name}</p>
+              <p className="text-[12px] text-gray-400">{r.start_date} → {r.end_date} · <span className="capitalize">{r.request_type}</span></p>
+              {r.reason && <p className="text-[12px] text-gray-300 mt-1 italic">"{r.reason}"</p>}
+              {r.admin_notes && <p className="text-[12px] text-shOrange mt-1">Admin: {r.admin_notes}</p>}
+            </div>
+            <div className="text-right">
+              <span className={`text-[11px] font-black uppercase tracking-widest text-${statusColor[r.status] || "gray-400"}`}>{r.status}</span>
+              <p className="text-[11px] text-gray-500 mt-0.5">{(r.created_at||"").slice(0,10)}</p>
+            </div>
+          </div>
+          {r.status === "pending" && (
+            <div className="flex gap-2 mt-3">
+              <button onClick={()=>setReviewModal({ req: r, status: "approved" })}
+                      data-testid={`timeoff-approve-${r.id}`}
+                      className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-check mr-1"/>Approve
+              </button>
+              <button onClick={()=>setReviewModal({ req: r, status: "rejected" })}
+                      data-testid={`timeoff-reject-${r.id}`}
+                      className="bg-red-500/10 border border-red-400 text-red-300 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-red-500/20">
+                <i className="fas fa-xmark mr-1"/>Reject
+              </button>
+            </div>
+          )}
+        </div>
+      ))}
+
+      {reviewModal && (
+        <TimeOffReviewModal req={reviewModal.req} status={reviewModal.status}
+                            onClose={()=>setReviewModal(null)}
+                            onSaved={(notes)=>{ review(reviewModal.req, reviewModal.status, notes); setReviewModal(null); }}/>
+      )}
+    </div>
+  );
+}
+
+function TimeOffReviewModal({ req, status, onClose, onSaved }) {
+  const [notes, setNotes] = useState("");
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" data-testid="timeoff-review-modal" onClick={onClose}>
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-5 max-w-md w-full space-y-3" onClick={e=>e.stopPropagation()}>
+        <h3 className="text-white font-black uppercase italic text-lg">
+          {status === "approved" ? <><i className="fas fa-check text-shGreen mr-2"/>Approve request</> : <><i className="fas fa-xmark text-red-400 mr-2"/>Reject request</>}
+        </h3>
+        <p className="text-[12px] text-gray-400">{req.user_name} · {req.start_date} → {req.end_date} · {req.request_type}</p>
+        {req.reason && <p className="text-[12px] text-gray-500 italic">Their reason: "{req.reason}"</p>}
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Note to employee (optional)</span>
+          <textarea value={notes} onChange={e=>setNotes(e.target.value)} maxLength={300} rows={3}
+                    data-testid="timeoff-review-notes"
+                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+        </label>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} data-testid="timeoff-review-cancel"
+                  className="bg-bgBase border border-bgHover px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-red-400">
+            Cancel
+          </button>
+          <button onClick={()=>onSaved(notes)} data-testid="timeoff-review-save"
+                  className={`px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest ${status === "approved" ? "bg-shGreen text-bgHeader" : "bg-red-500 text-white"}`}>
+            {status === "approved" ? "Approve" : "Reject"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, value, neg = false, bold = false, color = "" }) {
+  const sign = neg ? "-" : "";
+  const colorCls = color ? `text-${color}` : (neg ? "text-shOrange" : "text-white");
+  return (
+    <div className="flex justify-between items-baseline">
+      <span className={`text-gray-300 ${bold ? "font-black uppercase tracking-widest text-[11px]" : ""}`}>{label}</span>
+      <span className={`${colorCls} ${bold ? "font-black" : ""}`}>{sign}${value.toFixed(2)}</span>
     </div>
   );
 }

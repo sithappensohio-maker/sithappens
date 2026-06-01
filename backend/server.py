@@ -17,7 +17,7 @@ import jwt
 from datetime import datetime, timezone, timedelta, date
 from typing import List, Optional, Literal, Dict, Any
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -7547,7 +7547,9 @@ BACKUP_COLLECTIONS = [
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling + actual clocked hours (drives payroll)
-    "shifts", "time_clock_entries",
+    "shifts", "time_clock_entries", "time_off_requests",
+    # Tax tracker
+    "tax_payments",
 ]
 # Bumped to v2 with the expanded collection list. Restore accepts v1 backups
 # too (older snapshots simply won't include the new collections — restore
@@ -10318,6 +10320,500 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
     return {"snapshot": snapshot, "totals": totals}
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Quarterly Tax Estimate (Sole-Proprietor / Schedule C)
+# ─────────────────────────────────────────────────────────────────────────────
+# Computes YTD net profit and projects annual federal SE + income tax + state +
+# local tax for a Warren, OH sole proprietor. Defaults are reasonable 2026
+# Schedule-C figures; the operator can override every rate from the UI.
+
+QUARTERLY_TAX_DEFAULTS = {
+    "se_tax_taxable_pct": 92.35,    # IRS allows 92.35% of net SE earnings to be taxed
+    "ss_rate_pct": 12.4,            # Sole-prop pays both halves of Social Security
+    "ss_wage_base": 176100.0,       # 2026 estimated SS wage base
+    "medicare_rate_pct": 2.9,       # Sole-prop pays both halves of Medicare
+    "federal_income_pct": 12.0,     # Effective rate guess (12% bracket sole-prop, married/single)
+    "state_income_pct": 2.75,       # Ohio top effective
+    "local_income_pct": 2.5,        # Warren city
+    "estimated_payments_made": 0.0, # YTD federal quarterly payments already mailed in
+    "filing_status": "single",      # informational only
+}
+
+
+async def _get_quarterly_tax_settings() -> Dict[str, Any]:
+    row = await db.app_settings.find_one({"_id": "quarterly_tax"}, {"_id": 0})
+    if not row:
+        row = dict(QUARTERLY_TAX_DEFAULTS)
+        await db.app_settings.update_one(
+            {"_id": "quarterly_tax"}, {"$set": row}, upsert=True
+        )
+        return row
+    # Backfill missing keys so older docs still work after we add new fields
+    patched = {**QUARTERLY_TAX_DEFAULTS, **row}
+    return patched
+
+
+def _quarter_for(month: int) -> int:
+    return (month - 1) // 3 + 1
+
+
+def _quarter_due_dates(year: int) -> List[Dict[str, str]]:
+    """IRS estimated payment deadlines. Q4 deadline lands in *next* January."""
+    return [
+        {"quarter": 1, "due": f"{year}-04-15", "period": f"Jan 1 – Mar 31, {year}"},
+        {"quarter": 2, "due": f"{year}-06-15", "period": f"Apr 1 – May 31, {year}"},
+        {"quarter": 3, "due": f"{year}-09-15", "period": f"Jun 1 – Aug 31, {year}"},
+        {"quarter": 4, "due": f"{year + 1}-01-15", "period": f"Sep 1 – Dec 31, {year}"},
+    ]
+
+
+@api.get("/admin/quarterly-tax")
+async def admin_quarterly_tax(
+    _: dict = Depends(require_admin),
+    year: Optional[int] = None,
+):
+    """YTD sole-proprietor tax estimate.
+
+    Income  = service bookings (status=completed) + retail sales
+    Expense = recorded expenses + labor cost (gross wages + employer burden)
+    Net     = income - expense
+    SE Tax  = (Net × 92.35%) × (SS rate up to wage base + Medicare rate)
+    Income  = (Net - 50% of SE) × (federal + state + local)
+    """
+    today = date.today()
+    yr = int(year or today.year)
+    start = f"{yr}-01-01"
+    end = f"{yr}-12-31" if yr < today.year else today.isoformat()
+
+    settings = await _get_quarterly_tax_settings()
+
+    # ---- Income: bookings (completed) + retail sales --------------------------
+    booking_rows = await db.bookings.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).to_list(20000)
+    service_income = 0.0
+    for r in booking_rows:
+        if r.get("status") == "completed":
+            service_income += float(r.get("actual_price") or 0)
+    retail_rows = await db.retail_sales.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).to_list(20000)
+    retail_income = sum(float(r.get("amount") or 0) for r in retail_rows)
+    gross_income = service_income + retail_income
+
+    # ---- Expenses: recorded + labor (gross + employer burden) ----------------
+    expense_rows = await db.expenses.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).to_list(20000)
+    recorded_expenses = sum(float(e.get("amount") or 0) for e in expense_rows)
+
+    # Labor: total YTD gross + employer burden (mirrors summary_range pattern)
+    payroll_tax = await _get_payroll_tax_settings()
+    tc_entries = await db.time_clock_entries.find(
+        {"clock_in_at": {"$gte": f"{start}T00:00:00",
+                         "$lte": f"{end}T23:59:59.999Z"},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "user_id": 1, "hours": 1},
+    ).to_list(50000)
+    uids = list({e["user_id"] for e in tc_entries})
+    rate_users = await db.users.find(
+        {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1}
+    ).to_list(500) if uids else []
+    rate_map = {u["id"]: float(u.get("hourly_rate") or 0) for u in rate_users}
+    hours_by_user: Dict[str, float] = {}
+    for e in tc_entries:
+        hours_by_user[e["user_id"]] = hours_by_user.get(e["user_id"], 0) + float(e.get("hours") or 0)
+    labor_gross = 0.0
+    labor_burden = 0.0
+    for uid, hrs in hours_by_user.items():
+        rate = rate_map.get(uid, 0.0)
+        c = _compute_payroll_tax(hrs, rate, 0.0, payroll_tax)
+        labor_gross += c["gross"]
+        labor_burden += c["employer_burden"]
+    labor_total = labor_gross + labor_burden
+    total_expenses = recorded_expenses + labor_total
+
+    net_profit = gross_income - total_expenses
+
+    # ---- SE tax --------------------------------------------------------------
+    se_taxable = max(0.0, net_profit) * (float(settings["se_tax_taxable_pct"]) / 100.0)
+    ss_taxable = min(se_taxable, float(settings["ss_wage_base"]))
+    ss_tax = ss_taxable * (float(settings["ss_rate_pct"]) / 100.0)
+    medicare_tax = se_taxable * (float(settings["medicare_rate_pct"]) / 100.0)
+    se_tax = ss_tax + medicare_tax
+
+    # ---- Income tax (federal + state + local) --------------------------------
+    se_deduction = se_tax * 0.5  # half of SE is deductible above the line
+    taxable_income = max(0.0, net_profit - se_deduction)
+    federal_tax = taxable_income * (float(settings["federal_income_pct"]) / 100.0)
+    state_tax = taxable_income * (float(settings["state_income_pct"]) / 100.0)
+    local_tax = taxable_income * (float(settings["local_income_pct"]) / 100.0)
+    income_tax_total = federal_tax + state_tax + local_tax
+
+    total_tax_ytd = se_tax + income_tax_total
+    estimated_payments = float(settings.get("estimated_payments_made") or 0)
+    balance_owed_ytd = max(0.0, total_tax_ytd - estimated_payments)
+
+    # ---- Quarterly breakdown -------------------------------------------------
+    # Split YTD owed evenly into 4 buckets. Mark quarters that are "past due"
+    # vs "upcoming" based on today's calendar quarter.
+    quarters = _quarter_due_dates(yr)
+    per_quarter = round(total_tax_ytd / 4.0, 2)
+    current_q = _quarter_for(today.month) if yr == today.year else 4
+    for q in quarters:
+        q["suggested_payment"] = per_quarter
+        q["status"] = (
+            "current" if q["quarter"] == current_q
+            else "past" if q["quarter"] < current_q
+            else "upcoming"
+        )
+    next_q = next((q for q in quarters if q["status"] in ("current", "upcoming")), quarters[-1])
+
+    # Recorded payments override the legacy settings field — sum what's been
+    # actually logged via /admin/quarterly-tax/payments for this tax year.
+    pay_rows = await db.tax_payments.find({"year": yr}, {"_id": 0}).to_list(500)
+    recorded_payments_total = round(sum(float(p.get("amount") or 0) for p in pay_rows), 2)
+    by_quarter_paid: Dict[int, float] = {}
+    for p in pay_rows:
+        q_idx = int(p.get("quarter") or 0)
+        if q_idx:
+            by_quarter_paid[q_idx] = round(by_quarter_paid.get(q_idx, 0) + float(p.get("amount") or 0), 2)
+    for q in quarters:
+        q["paid"] = by_quarter_paid.get(q["quarter"], 0.0)
+        q["remaining"] = round(max(0.0, q["suggested_payment"] - q["paid"]), 2)
+
+    # Use the larger of: legacy setting OR recorded payments (recorded wins
+    # if any payment has been logged, otherwise the settings value still works
+    # so the operator can simply type a number if they don't want to log
+    # individual payments).
+    payments_applied = recorded_payments_total if recorded_payments_total > 0 else estimated_payments
+    balance_owed_ytd = max(0.0, total_tax_ytd - payments_applied)
+
+    return {
+        "year": yr,
+        "as_of": today.isoformat(),
+        "period": {"start": start, "end": end},
+        "income": {
+            "service_bookings": round(service_income, 2),
+            "retail_sales": round(retail_income, 2),
+            "gross": round(gross_income, 2),
+        },
+        "expenses": {
+            "recorded": round(recorded_expenses, 2),
+            "labor_gross": round(labor_gross, 2),
+            "labor_burden": round(labor_burden, 2),
+            "labor_total": round(labor_total, 2),
+            "total": round(total_expenses, 2),
+        },
+        "net_profit": round(net_profit, 2),
+        "se_tax": {
+            "taxable_base": round(se_taxable, 2),
+            "social_security": round(ss_tax, 2),
+            "medicare": round(medicare_tax, 2),
+            "total": round(se_tax, 2),
+            "deductible_half": round(se_deduction, 2),
+        },
+        "income_tax": {
+            "taxable_income": round(taxable_income, 2),
+            "federal": round(federal_tax, 2),
+            "state": round(state_tax, 2),
+            "local": round(local_tax, 2),
+            "total": round(income_tax_total, 2),
+        },
+        "total_tax_ytd": round(total_tax_ytd, 2),
+        "estimated_payments_made": round(estimated_payments, 2),
+        "recorded_payments_total": recorded_payments_total,
+        "payments_applied": round(payments_applied, 2),
+        "balance_owed_ytd": round(balance_owed_ytd, 2),
+        "quarters": quarters,
+        "current_quarter": current_q,
+        "next_quarter_due": next_q,
+        "settings": settings,
+        "disclaimer": (
+            "Estimator only. Sole-proprietor Schedule C math with 2026 default "
+            "rates. Adjust federal/state/local % to match your actual bracket. "
+            "Not a substitute for a CPA."
+        ),
+    }
+
+
+@api.put("/admin/quarterly-tax/settings")
+async def admin_quarterly_tax_settings(
+    body: Dict[str, Any] = Body(...),
+    _: dict = Depends(require_admin),
+):
+    """Save the configurable quarterly-tax rates (federal %, state %, local %,
+    SS wage base, estimated payments already made, etc.). Only known keys are
+    persisted so we don't accidentally store typos from the client."""
+    allowed = set(QUARTERLY_TAX_DEFAULTS.keys())
+    patch = {k: v for k, v in (body or {}).items() if k in allowed}
+    if not patch:
+        raise HTTPException(400, "No valid fields to update.")
+    # Coerce numerics
+    for k, v in list(patch.items()):
+        if k == "filing_status":
+            patch[k] = str(v or "single").strip().lower()
+        else:
+            try:
+                patch[k] = float(v)
+            except Exception:
+                raise HTTPException(400, f"Invalid number for {k}")
+    await db.app_settings.update_one(
+        {"_id": "quarterly_tax"}, {"$set": patch}, upsert=True
+    )
+    return {"ok": True, "settings": await _get_quarterly_tax_settings(),
+            "defaults": dict(QUARTERLY_TAX_DEFAULTS)}
+
+
+@api.get("/admin/quarterly-tax/settings")
+async def admin_quarterly_tax_settings_get(_: dict = Depends(require_admin)):
+    return {
+        "current": await _get_quarterly_tax_settings(),
+        "defaults": dict(QUARTERLY_TAX_DEFAULTS),
+    }
+
+
+# ─── Recorded tax payments (one-click "Mark Quarter Paid" tracker) ────────────
+class TaxPaymentIn(BaseModel):
+    year: int
+    quarter: int                       # 1-4
+    amount: float
+    payment_date: Optional[str] = None  # ISO date; defaults to today
+    payment_method: Optional[str] = "EFTPS"  # or "Check", "Card", etc.
+    memo: Optional[str] = ""
+
+
+@api.get("/admin/quarterly-tax/payments")
+async def list_tax_payments(
+    _: dict = Depends(require_admin),
+    year: Optional[int] = None,
+):
+    q: Dict[str, Any] = {}
+    if year:
+        q["year"] = int(year)
+    rows = await db.tax_payments.find(q, {"_id": 0}).sort([("payment_date", -1)]).to_list(2000)
+    total = round(sum(float(r.get("amount") or 0) for r in rows), 2)
+    return {"payments": rows, "total": total}
+
+
+@api.post("/admin/quarterly-tax/payments")
+async def add_tax_payment(
+    body: TaxPaymentIn,
+    _: dict = Depends(require_admin),
+):
+    if body.quarter not in (1, 2, 3, 4):
+        raise HTTPException(400, "quarter must be 1-4")
+    if body.amount <= 0:
+        raise HTTPException(400, "amount must be > 0")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "year": int(body.year),
+        "quarter": int(body.quarter),
+        "amount": round(float(body.amount), 2),
+        "payment_date": body.payment_date or date.today().isoformat(),
+        "payment_method": (body.payment_method or "EFTPS").strip(),
+        "memo": (body.memo or "").strip(),
+        "created_at": now_iso(),
+    }
+    await db.tax_payments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/admin/quarterly-tax/payments/{pid}")
+async def delete_tax_payment(pid: str, _: dict = Depends(require_admin)):
+    res = await db.tax_payments.delete_one({"id": pid})
+    if not res.deleted_count:
+        raise HTTPException(404, "Payment not found")
+    return {"ok": True}
+
+
+# ─── Time-off requests (employee submits, admin approves) ─────────────────────
+TIME_OFF_TYPES = {"vacation", "sick", "personal", "unpaid", "other"}
+TIME_OFF_STATUSES = {"pending", "approved", "rejected", "cancelled"}
+
+
+class TimeOffIn(BaseModel):
+    start_date: str
+    end_date: str
+    request_type: str = "vacation"
+    reason: Optional[str] = ""
+
+
+class TimeOffReview(BaseModel):
+    status: str           # "approved" | "rejected"
+    admin_notes: Optional[str] = ""
+
+
+@api.get("/employee/time-off")
+async def employee_list_time_off(user: dict = Depends(require_employee_or_admin)):
+    rows = await db.time_off_requests.find(
+        {"user_id": user["id"]}, {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    return {"requests": rows}
+
+
+@api.post("/employee/time-off")
+async def employee_submit_time_off(
+    body: TimeOffIn,
+    user: dict = Depends(require_employee_or_admin),
+):
+    if body.start_date > body.end_date:
+        raise HTTPException(400, "start_date must be on or before end_date")
+    if body.request_type not in TIME_OFF_TYPES:
+        raise HTTPException(400, f"request_type must be one of {sorted(TIME_OFF_TYPES)}")
+    # Try to look up the requester's display name for admin lists
+    me = await db.users.find_one(
+        {"id": user["id"]}, {"_id": 0, "name": 1, "display_name": 1, "email": 1}
+    ) or {}
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_name": me.get("display_name") or me.get("name") or me.get("email") or "Employee",
+        "start_date": body.start_date,
+        "end_date": body.end_date,
+        "request_type": body.request_type,
+        "reason": (body.reason or "").strip(),
+        "status": "pending",
+        "created_at": now_iso(),
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "admin_notes": "",
+    }
+    await db.time_off_requests.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/employee/time-off/{rid}")
+async def employee_cancel_time_off(
+    rid: str,
+    user: dict = Depends(require_employee_or_admin),
+):
+    row = await db.time_off_requests.find_one({"id": rid}, {"_id": 0})
+    if not row:
+        raise HTTPException(404, "Request not found")
+    if row.get("user_id") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not your request")
+    if row.get("status") not in ("pending",):
+        raise HTTPException(400, "Only pending requests can be cancelled")
+    await db.time_off_requests.update_one(
+        {"id": rid}, {"$set": {"status": "cancelled", "reviewed_at": now_iso()}}
+    )
+    return {"ok": True}
+
+
+@api.get("/admin/time-off")
+async def admin_list_time_off(
+    _: dict = Depends(require_admin),
+    status: Optional[str] = None,
+):
+    q: Dict[str, Any] = {}
+    if status:
+        if status not in TIME_OFF_STATUSES:
+            raise HTTPException(400, f"status must be one of {sorted(TIME_OFF_STATUSES)}")
+        q["status"] = status
+    rows = await db.time_off_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return {
+        "requests": rows,
+        "pending_count": sum(1 for r in rows if r.get("status") == "pending"),
+    }
+
+
+@api.put("/admin/time-off/{rid}")
+async def admin_review_time_off(
+    rid: str,
+    body: TimeOffReview,
+    admin: dict = Depends(require_admin),
+):
+    if body.status not in ("approved", "rejected"):
+        raise HTTPException(400, "status must be 'approved' or 'rejected'")
+    res = await db.time_off_requests.update_one(
+        {"id": rid},
+        {"$set": {
+            "status": body.status,
+            "reviewed_at": now_iso(),
+            "reviewed_by": admin["id"],
+            "admin_notes": (body.admin_notes or "").strip(),
+        }},
+    )
+    if not res.matched_count:
+        raise HTTPException(404, "Request not found")
+    return await db.time_off_requests.find_one({"id": rid}, {"_id": 0})
+
+
+# ─── Weekly pay history (last N weeks) ────────────────────────────────────────
+@api.get("/employee/pay-history")
+async def employee_pay_history(
+    weeks: int = 12,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Returns the calling employee's per-week pay summary for the last `weeks`
+    weeks (Sunday-anchored). Each row: { week_start, week_end, hours, gross,
+    days_worked }. Helpful for trend charts in the staff portal."""
+    weeks = max(1, min(int(weeks), 52))
+    me = await db.users.find_one(
+        {"id": user["id"]}, {"_id": 0, "hourly_rate": 1}
+    ) or {}
+    rate = float(me.get("hourly_rate") or 0)
+    today = date.today()
+    # Anchor on Sunday (weekday() returns Mon=0..Sun=6 ⇒ Sunday = (wd+1) % 7 days back)
+    days_back_to_sunday = (today.weekday() + 1) % 7
+    current_sunday = today - timedelta(days=days_back_to_sunday)
+    earliest_sunday = current_sunday - timedelta(weeks=weeks - 1)
+    cutoff = f"{earliest_sunday.isoformat()}T00:00:00"
+    entries = await db.time_clock_entries.find(
+        {"user_id": user["id"], "clock_in_at": {"$gte": cutoff},
+         "clock_out_at": {"$ne": None, "$exists": True}},
+        {"_id": 0, "clock_in_at": 1, "hours": 1},
+    ).to_list(10000)
+
+    # Bucket by week-start (Sunday) date
+    buckets: Dict[str, Dict[str, Any]] = {}
+    for w in range(weeks):
+        wk_start = current_sunday - timedelta(weeks=weeks - 1 - w)
+        wk_end = wk_start + timedelta(days=6)
+        buckets[wk_start.isoformat()] = {
+            "week_start": wk_start.isoformat(),
+            "week_end": wk_end.isoformat(),
+            "hours": 0.0,
+            "gross": 0.0,
+            "days_worked": set(),
+        }
+    for e in entries:
+        try:
+            ci = datetime.fromisoformat((e["clock_in_at"]).replace("Z", "+00:00")).date()
+        except Exception:
+            continue
+        wk_start = ci - timedelta(days=(ci.weekday() + 1) % 7)
+        key = wk_start.isoformat()
+        if key not in buckets:
+            continue  # outside requested window
+        h = float(e.get("hours") or 0)
+        buckets[key]["hours"] += h
+        buckets[key]["gross"] += h * rate
+        buckets[key]["days_worked"].add(ci.isoformat())
+
+    rows = []
+    for v in buckets.values():
+        rows.append({
+            "week_start": v["week_start"],
+            "week_end": v["week_end"],
+            "hours": round(v["hours"], 2),
+            "gross": round(v["gross"], 2),
+            "days_worked": len(v["days_worked"]),
+        })
+    rows.sort(key=lambda r: r["week_start"])  # oldest → newest for chart-friendliness
+    total_hours = round(sum(r["hours"] for r in rows), 2)
+    total_gross = round(sum(r["gross"] for r in rows), 2)
+    best = max(rows, key=lambda r: r["gross"], default=None)
+    return {
+        "weeks": rows,
+        "hourly_rate": rate,
+        "total_hours": total_hours,
+        "total_gross": total_gross,
+        "best_week": best,
+    }
 
 
 @api.get("/time-clock/me.csv")

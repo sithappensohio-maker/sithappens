@@ -72,6 +72,7 @@ export default function EmployeePortal() {
           ["tasks", "My Tasks", "fa-list-check"],
           ["schedule", "Schedule", "fa-calendar-week"],
           ["timecard", "Timecard", "fa-receipt"],
+          ["timeoff", "Time Off", "fa-umbrella-beach"],
           ["profile", "Profile", "fa-user"],
         ].map(([k, label, icon]) => (
           <button key={k} onClick={()=>setTab(k)} data-testid={`emp-tab-${k}`}
@@ -87,6 +88,7 @@ export default function EmployeePortal() {
         {tab === "tasks" && <MyTasksTab />}
         {tab === "schedule" && <MyScheduleTab />}
         {tab === "timecard" && <TimecardTab />}
+        {tab === "timeoff" && <TimeOffTab />}
         {tab === "profile" && <ProfileTab user={user} />}
       </main>
 
@@ -461,6 +463,7 @@ function TimecardTab() {
       {Object.keys(grouped).length === 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No entries in this window.</div>
       )}
+      <PayHistoryPanel/>
       {Object.entries(grouped).map(([d, entries]) => {
         const dailyHours = entries.reduce((s,e)=> s + (Number(e.hours)||0), 0);
         const dailyGross = entries.reduce((s,e)=> s + (Number(e.gross)||0), 0);
@@ -658,6 +661,211 @@ function MyScheduleTab() {
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+
+// ─────────────────────── Pay History (weekly trend) ───────────────────────
+function PayHistoryPanel() {
+  const [weeks, setWeeks] = useState(12);
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try { const r = await api.get("/employee/pay-history", { params: { weeks } }); setData(r.data); }
+      catch {}
+    })();
+  }, [weeks, open]);
+
+  const maxGross = Math.max(1, ...(data?.weeks || []).map(w => w.gross));
+
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid="pay-history">
+      <button onClick={()=>setOpen(o=>!o)}
+              data-testid="pay-history-toggle"
+              className="w-full flex justify-between items-center text-left">
+        <p className="text-[13px] font-black uppercase tracking-widest text-white">
+          <i className="fas fa-chart-line text-shBlue mr-2"/>Pay history trend
+        </p>
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-gray-400`}/>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3" data-testid="pay-history-content">
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={weeks} onChange={e=>setWeeks(Number(e.target.value))}
+                    data-testid="pay-history-weeks"
+                    className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm">
+              <option value={4}>Last 4 weeks</option>
+              <option value={8}>Last 8 weeks</option>
+              <option value={12}>Last 12 weeks</option>
+              <option value={26}>Last 26 weeks</option>
+              <option value={52}>Last 52 weeks</option>
+            </select>
+            {data && (
+              <p className="text-[12px] text-gray-400 ml-auto" data-testid="pay-history-total">
+                Total: <span className="text-shGreen font-black">${data.total_gross.toFixed(2)}</span>
+                {" "}· <span className="text-white">{data.total_hours.toFixed(1)}h</span>
+                {data.best_week && data.best_week.gross > 0 && (
+                  <span className="text-gray-500 normal-case ml-2">Best: ${data.best_week.gross.toFixed(2)} ({data.best_week.week_start})</span>
+                )}
+              </p>
+            )}
+          </div>
+          {!data ? <p className="text-gray-500 text-sm">Loading…</p> : (
+            <div className="space-y-1">
+              {data.weeks.map(w => (
+                <div key={w.week_start} className="flex items-center gap-3 text-[12px]" data-testid={`pay-week-${w.week_start}`}>
+                  <span className="text-gray-400 w-24 shrink-0">{w.week_start}</span>
+                  <div className="flex-1 bg-bgBase rounded h-5 relative overflow-hidden">
+                    <div className="absolute inset-y-0 left-0 bg-shGreen/60 rounded"
+                         style={{ width: `${(w.gross / maxGross) * 100}%` }}/>
+                  </div>
+                  <span className="text-shGreen font-black w-20 text-right">${w.gross.toFixed(2)}</span>
+                  <span className="text-gray-500 w-14 text-right">{w.hours.toFixed(1)}h</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────── Time Off tab ───────────────────────
+function TimeOffTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [showForm, setShowForm] = useState(false);
+
+  const load = async () => {
+    setErr("");
+    try { const r = await api.get("/employee/time-off"); setData(r.data); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const cancel = async (id) => {
+    try { await api.delete(`/employee/time-off/${id}`); await load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+
+  if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
+  const statusColor = { pending: "shBlue", approved: "shGreen", rejected: "red-400", cancelled: "gray-500" };
+
+  return (
+    <div className="space-y-3" data-testid="timeoff-tab">
+      <div className="flex justify-between items-center">
+        <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">My requests</p>
+        <button onClick={()=>setShowForm(true)} data-testid="timeoff-new-btn"
+                className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+          <i className="fas fa-plus mr-1"/>Request time off
+        </button>
+      </div>
+
+      {err && <div className="text-red-400 bg-red-500/10 rounded p-3 text-[14px]">{err}</div>}
+
+      {data.requests.length === 0 && (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No requests yet — tap "Request time off" to submit one.</div>
+      )}
+
+      {data.requests.map(r => (
+        <div key={r.id} className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={`timeoff-mine-${r.id}`}>
+          <div className="flex justify-between items-start gap-2">
+            <div>
+              <p className="text-white font-black">{r.start_date} → {r.end_date}</p>
+              <p className="text-[12px] text-gray-400 capitalize">{r.request_type}{r.reason ? ` · "${r.reason}"` : ""}</p>
+              {r.admin_notes && <p className="text-[12px] text-shOrange mt-1">Admin: {r.admin_notes}</p>}
+            </div>
+            <div className="text-right shrink-0">
+              <span className={`text-[11px] font-black uppercase tracking-widest text-${statusColor[r.status] || "gray-400"}`}>{r.status}</span>
+              <p className="text-[10px] text-gray-500 mt-0.5">{(r.created_at||"").slice(0,10)}</p>
+            </div>
+          </div>
+          {r.status === "pending" && (
+            <button onClick={()=>cancel(r.id)} data-testid={`timeoff-cancel-${r.id}`}
+                    className="mt-2 text-[11px] text-gray-400 hover:text-red-400 font-black uppercase tracking-widest">
+              <i className="fas fa-xmark mr-1"/>Cancel request
+            </button>
+          )}
+        </div>
+      ))}
+
+      {showForm && (
+        <TimeOffFormModal onClose={()=>setShowForm(false)}
+                          onSaved={()=>{ setShowForm(false); load(); }}/>
+      )}
+    </div>
+  );
+}
+
+function TimeOffFormModal({ onClose, onSaved }) {
+  const today = new Date().toISOString().split("T")[0];
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [type, setType] = useState("vacation");
+  const [reason, setReason] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (startDate > endDate) { setErr("Start date must be on or before end date"); return; }
+    setSaving(true);
+    try {
+      await api.post("/employee/time-off", {
+        start_date: startDate, end_date: endDate, request_type: type, reason,
+      });
+      onSaved();
+    } catch (e) { setErr(formatErr(e.response?.data?.detail)); setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" data-testid="timeoff-form-modal" onClick={onClose}>
+      <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 max-w-md w-full space-y-3" onClick={e=>e.stopPropagation()}>
+        <h3 className="text-white font-black uppercase italic text-lg"><i className="fas fa-umbrella-beach text-shGreen mr-2"/>Request time off</h3>
+        {err && <div className="text-red-400 bg-red-500/10 rounded p-2 text-[13px]">{err}</div>}
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Start</span>
+            <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}
+                   style={{colorScheme:"dark"}} data-testid="timeoff-start"
+                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+          </label>
+          <label className="block">
+            <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">End</span>
+            <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}
+                   style={{colorScheme:"dark"}} data-testid="timeoff-end"
+                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+          </label>
+        </div>
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Type</span>
+          <select value={type} onChange={e=>setType(e.target.value)} data-testid="timeoff-type"
+                  style={{colorScheme:"dark"}}
+                  className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1">
+            {["vacation","sick","personal","unpaid","other"].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Reason (optional)</span>
+          <textarea value={reason} onChange={e=>setReason(e.target.value)} maxLength={300} rows={3}
+                    data-testid="timeoff-reason"
+                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+        </label>
+        <div className="flex justify-end gap-2 pt-1">
+          <button onClick={onClose} data-testid="timeoff-cancel"
+                  className="bg-bgBase border border-bgHover px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-red-400">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving} data-testid="timeoff-submit"
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+            {saving ? "Submitting…" : "Submit"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

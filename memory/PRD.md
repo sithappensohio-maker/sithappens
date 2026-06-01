@@ -28,6 +28,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - FullCalendar visualization of bookings
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
+
+## Sprint 110bc — Quarterly Tax Estimate (Sole-Proprietor / Schedule C) (2026-02)
+- ✅ **Backend** `GET /api/admin/quarterly-tax` aggregates YTD income (completed bookings + retail), expenses (recorded + labor gross + employer burden), nets to Schedule C profit, computes SE tax (SS+Medicare with wage-base cap), federal/state/local income tax, and splits the YTD owed into four IRS quarterly deadlines (Apr 15 / Jun 15 / Sep 15 / Jan 15 of next year) with status pills (`past` / `current` / `upcoming`).
+- ✅ Configurable rates persisted in `app_settings._id=quarterly_tax`: federal/state/local %, SS rate %, Medicare %, SS wage base, SE taxable %, estimated payments already made. `GET/PUT /api/admin/quarterly-tax/settings` returns `{current, defaults}` so the UI offers a "Reset to defaults" action.
+- ✅ Defaults are 2026 Warren OH sole-proprietor estimates (15.3% SE total, $176,100 wage base, 12% federal effective, 2.75% Ohio, 2.5% Warren).
+- ✅ **Frontend** new `Quarterly Tax` sub-tab in Staff screen — KPI cards (gross income, expenses, net profit, balance owed YTD), 4 quarterly cards highlighting the next due payment, side-by-side income/expense breakdown vs SE+income-tax breakdown, inline rate-edit panel with reset.
+- ✅ **Tests** `backend/tests/test_quarterly_tax.py` — 7/7 pytests passing (payload shape, quarters structure, math consistency, settings roundtrip, balance after payments, year param, admin-required).
+
 ## Sprint 110af — Review window + Report panel deeper visibility (2026-02)
 - ✅ **DailyReviewQueue** day-detail now surfaces everything the client filled out:
   - Day instructions (what they were asked to do) in a blue-bordered context block
