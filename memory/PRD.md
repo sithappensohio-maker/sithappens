@@ -29,6 +29,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bn — Glossy 3D category badges in Dog Trivia (2026-06-01)
+- ✅ **6 badge PNG assets** cropped from the operator-provided reference sheet and saved to `/app/frontend/public/trivia-icons/` (breeds, training, nutrition, health, score, timer). Each ~360–380 KB, 512×512 RGBA.
+- ✅ **`CategoryBadge` component** in `DailyTriviaCard.jsx` — maps every trivia `tag` (breeds/history/training/behavior/health/anatomy/fun/myth) to one of the 6 badges with a sensible fallback chain. Falls back to the "score" ribbon for unknown/fun tags.
+- ✅ **Trivia card header redesigned** — left side now leads with a 48px glossy category badge (with shBlue drop-shadow glow) and a 2-line header: "DOG TRIVIA OF THE DAY" eyebrow + the category name underneath in shGreen. Difficulty + streak chips stay on the right.
+- ✅ Faithful to reference: badges are real PNGs (not SVG approximations) so the gradient ring + cartoon illustration matches the operator's mockup exactly. Other inline UI icons across the app are unchanged — kept the badge style scoped to the minigame so dense UI (sidebar, tables, chips) is unaffected.
+- ✅ Smoke-screenshotted on `/portal` — "History" question shows the husky badge correctly.
+
+
 ## Sprint 110bm — Trivia card inline SVG graphics (2026-06-01)
 - ✅ **`DailyTriviaCard.jsx` gets on-brand SVG decorations** — zero image assets, all inline SVG so colors track the Sit Happens palette (shBlue / shOrange / shGreen).
   - **PawIcon / BoneIcon** — reusable SVG primitives sized via prop. Paw next to the "DOG TRIVIA OF THE DAY" header; bone in front of the "Nd streak" chip.

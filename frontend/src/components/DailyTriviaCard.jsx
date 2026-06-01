@@ -8,6 +8,44 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { todayISO } from "../lib/date";
 
+// ─── Category badge mapping (Sprint 110bn) ──────────────────────────────────
+// Real PNG assets cropped from the reference badge sheet the operator provided.
+// Each trivia question carries a `tag` (breeds/training/health/anatomy/behavior/
+// history/fun/myth); we map every tag to one of the 6 available badges.
+const TAG_ICON = {
+  breeds:   "/trivia-icons/breeds.png",
+  history:  "/trivia-icons/breeds.png",
+  training: "/trivia-icons/training.png",
+  behavior: "/trivia-icons/training.png",
+  health:   "/trivia-icons/health.png",
+  anatomy:  "/trivia-icons/health.png",
+  fun:      "/trivia-icons/score.png",
+  myth:     "/trivia-icons/score.png",
+};
+const TAG_LABEL = {
+  breeds: "Breeds", history: "History", training: "Training", behavior: "Behavior",
+  health: "Health", anatomy: "Anatomy", fun: "Trivia", myth: "Myth-buster",
+};
+function iconForTag(tag) { return TAG_ICON[tag] || "/trivia-icons/score.png"; }
+function labelForTag(tag) { return TAG_LABEL[tag] || "Trivia"; }
+
+function CategoryBadge({ tag, size = 44, withLabel = false }) {
+  // Glossy 3D badge. PNG to faithfully match the reference style.
+  return (
+    <span className="inline-flex items-center gap-2" data-testid={`trivia-cat-${tag || "unknown"}`}>
+      <img src={iconForTag(tag)} alt={labelForTag(tag)}
+           width={size} height={size}
+           className="drop-shadow-[0_4px_10px_rgba(0,169,224,0.45)]"
+           style={{ width: size, height: size, objectFit: "contain" }} />
+      {withLabel && (
+        <span className="text-[11px] font-black uppercase tracking-widest text-shGreen">
+          {labelForTag(tag)}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── Inline SVG decorations (Sprint 110bm) ──────────────────────────────────
 // Sticking with the Sit Happens shBlue / shOrange / shGreen palette. No image
 // assets — everything is inline SVG so it's themable + zero network cost.
@@ -224,9 +262,17 @@ export function DailyTriviaCard() {
       {answered && result?.correct && <PawConfetti />}
       <div className="relative p-5">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue inline-flex items-center gap-2">
-            <PawIcon className="text-shBlue" size={16}/>Dog Trivia of the Day
-          </p>
+          <div className="flex items-center gap-3">
+            <CategoryBadge tag={q.tag} size={48}/>
+            <div className="flex flex-col">
+              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
+                Dog Trivia of the Day
+              </p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-shGreen/80">
+                {labelForTag(q.tag)}
+              </p>
+            </div>
+          </div>
           <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest">
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${diffClass(q.difficulty)}`} data-testid="trivia-difficulty">
               <DifficultyPaws d={q.difficulty}/>
