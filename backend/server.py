@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
 from typing import List, Optional, Literal, Dict, Any
 
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body, UploadFile, File
 from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
@@ -8136,7 +8136,99 @@ async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_
     return {"created": len(docs), "facts": docs}
 
 
-    return {"created": len(docs), "facts": docs}
+# ─────────────── Sprint 110bp · CSV import for dog facts ───────────────
+DOG_FACTS_CSV_NAMESPACE = uuid.UUID("4fd03d11-d164-44c0-bcfc-67614a1b7d5a")
+DOG_FACTS_CSV_HEADERS = ["text", "tag", "emoji"]
+DOG_FACTS_CSV_TEMPLATE_ROWS = [
+    {"text": "Dogs have three eyelids — including a 'haw' that protects the eye.",
+     "tag": "anatomy", "emoji": "👁️"},
+    {"text": "A dog's nose print is as unique as a human fingerprint.",
+     "tag": "fun", "emoji": "🐶"},
+]
+
+
+@api.get("/admin/dog-facts/import-csv/template")
+async def dog_facts_import_csv_template(_: dict = Depends(require_admin)):
+    """Download a CSV template with two example rows."""
+    import io as _io
+    buf = _io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=DOG_FACTS_CSV_HEADERS)
+    writer.writeheader()
+    for row in DOG_FACTS_CSV_TEMPLATE_ROWS:
+        writer.writerow(row)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="dog-facts-import-template.csv"'},
+    )
+
+
+@api.post("/admin/dog-facts/import-csv")
+async def dog_facts_import_csv(
+    file: UploadFile = File(...),
+    _: dict = Depends(require_admin),
+):
+    """Bulk-import dog facts from a CSV file.
+
+    Required header: text. Optional: tag (default "fun"), emoji (default "🐶").
+    Each fact is keyed by uuid5(text) → re-uploading the same row updates
+    it (tag/emoji edits) instead of duplicating.
+    """
+    import io as _io
+    raw = await file.read()
+    try:
+        text_data = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text_data = raw.decode("latin-1", errors="replace")
+    reader = csv.DictReader(_io.StringIO(text_data))
+    if not reader.fieldnames or "text" not in reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV must have a 'text' header column")
+
+    # Find next sort_order so new facts land at the end of the rotation
+    max_sort = await db.dog_facts.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
+    next_sort = (max_sort[0]["sort_order"] + 1) if max_sort else 0
+
+    created = 0
+    updated = 0
+    skipped: List[dict] = []
+    for line_no, row in enumerate(reader, start=2):
+        txt = (row.get("text") or "").strip()
+        tag = (row.get("tag") or "fun").strip().lower()[:40] or "fun"
+        emoji = (row.get("emoji") or "🐶").strip()[:4] or "🐶"
+        if not txt:
+            skipped.append({"line": line_no, "reason": "empty text"})
+            continue
+        if len(txt) < 3:
+            skipped.append({"line": line_no, "reason": "text too short (<3 chars)"})
+            continue
+        if len(txt) > 500:
+            txt = txt[:500]
+        fid = str(uuid.uuid5(DOG_FACTS_CSV_NAMESPACE, txt))
+        existing = await db.dog_facts.find_one({"id": fid}, {"_id": 0})
+        doc = {
+            "id": fid,
+            "text": txt,
+            "tag": tag,
+            "emoji": emoji,
+            "active": True,
+            "seeded": False,
+            "created_at": existing.get("created_at") if existing else now_iso(),
+            "sort_order": existing.get("sort_order") if existing else next_sort,
+            "curated": True,
+        }
+        if existing:
+            await db.dog_facts.update_one({"id": fid}, {"$set": doc})
+            updated += 1
+        else:
+            await db.dog_facts.insert_one(doc)
+            next_sort += 1
+            created += 1
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -8862,6 +8954,142 @@ async def admin_trivia_toggle_active(
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Question not found")
     return {"ok": True, "active": active}
+
+
+# ─────────────── Sprint 110bp · CSV import for trivia questions ───────────────
+# Bulk-load operator-written questions from a spreadsheet. Idempotent: each
+# row is keyed by uuid5(question_text) so re-uploading the same CSV updates
+# rather than duplicates.
+
+TRIVIA_CSV_NAMESPACE = uuid.UUID("5e8e4dac-aaaa-4111-9999-547269766961")
+TRIVIA_CSV_HEADERS = [
+    "question", "choice_a", "choice_b", "choice_c", "choice_d",
+    "correct_letter", "difficulty", "tag",
+]
+TRIVIA_CSV_TEMPLATE_ROWS = [
+    {
+        "question": "Which dog breed is famously known for its distinct black spots on a white coat?",
+        "choice_a": "Dalmatian", "choice_b": "Great Dane",
+        "choice_c": "Border Collie", "choice_d": "Boxer",
+        "correct_letter": "A", "difficulty": "easy", "tag": "breeds",
+    },
+    {
+        "question": "What is the technical name for the moisture-retaining skin that covers a dog's nose?",
+        "choice_a": "Tapetum", "choice_b": "Rhinarium",
+        "choice_c": "Vibrissae", "choice_d": "Philtrum",
+        "correct_letter": "B", "difficulty": "medium", "tag": "anatomy",
+    },
+]
+
+
+@api.get("/admin/trivia/import-csv/template")
+async def trivia_import_csv_template(_: dict = Depends(require_admin)):
+    """Download a CSV template with two example rows."""
+    import io as _io
+    buf = _io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=TRIVIA_CSV_HEADERS)
+    writer.writeheader()
+    for row in TRIVIA_CSV_TEMPLATE_ROWS:
+        writer.writerow(row)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="trivia-import-template.csv"'},
+    )
+
+
+@api.post("/admin/trivia/import-csv")
+async def trivia_import_csv(
+    file: UploadFile = File(...),
+    _: dict = Depends(require_admin),
+):
+    """Bulk-import trivia questions from a CSV file.
+
+    Required headers: question, choice_a..d, correct_letter (A/B/C/D),
+    difficulty (easy/medium/hard), tag (breeds/behavior/health/history/
+    anatomy/training/fun/myth).
+
+    Rows with missing/invalid data are skipped and reported back to the caller.
+    Each question is keyed by uuid5(question_text) → re-uploading updates
+    instead of duplicating.
+    """
+    import io as _io
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")  # handle Excel's BOM
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+    reader = csv.DictReader(_io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no headers")
+    missing = [h for h in TRIVIA_CSV_HEADERS if h not in reader.fieldnames]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Missing required headers: {', '.join(missing)}",
+        )
+
+    created = 0
+    updated = 0
+    skipped: List[dict] = []
+    for line_no, row in enumerate(reader, start=2):  # row 1 is the header
+        q = (row.get("question") or "").strip()
+        choices = [
+            (row.get("choice_a") or "").strip(),
+            (row.get("choice_b") or "").strip(),
+            (row.get("choice_c") or "").strip(),
+            (row.get("choice_d") or "").strip(),
+        ]
+        letter = (row.get("correct_letter") or "").strip().upper()
+        diff = (row.get("difficulty") or "medium").strip().lower()
+        tag = (row.get("tag") or "fun").strip().lower()
+
+        if not q:
+            skipped.append({"line": line_no, "reason": "empty question"})
+            continue
+        if any(not c for c in choices):
+            skipped.append({"line": line_no, "reason": "all 4 choices required"})
+            continue
+        if letter not in {"A", "B", "C", "D"}:
+            skipped.append({"line": line_no, "reason": "correct_letter must be A/B/C/D"})
+            continue
+        if len({c.lower() for c in choices}) != 4:
+            skipped.append({"line": line_no, "reason": "choices must be unique"})
+            continue
+        if diff not in TRIVIA_DIFFICULTIES:
+            diff = "medium"
+        if tag not in TRIVIA_TAGS:
+            tag = "fun"
+        ci = "ABCD".index(letter)
+        qid = str(uuid.uuid5(TRIVIA_CSV_NAMESPACE, q))
+        doc = {
+            "id": qid,
+            "question": q[:200],
+            "choices": [c[:80] for c in choices],
+            "correct_index": ci,
+            "difficulty": diff,
+            "tag": tag,
+            "source": "manual",
+            "active": True,
+            "curated": True,
+            "created_at": now_iso(),
+            "times_used": 0,
+        }
+        existing = await db.trivia_questions.find_one({"id": qid}, {"_id": 0})
+        if existing:
+            doc["times_used"] = existing.get("times_used", 0)
+            doc["created_at"] = existing.get("created_at", doc["created_at"])
+            await db.trivia_questions.update_one({"id": qid}, {"$set": doc})
+            updated += 1
+        else:
+            await db.trivia_questions.insert_one(doc)
+            created += 1
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "skipped_count": len(skipped),
+    }
 
 
 # ─────────────── Sprint 110aw · Sales tax collected report ───────────────

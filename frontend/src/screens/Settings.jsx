@@ -7,6 +7,7 @@ import CreditPacksSettings from "../components/CreditPacksSettings";
 import IconPicker from "../components/IconPicker";
 import { useTheme, FONT_OPTIONS } from "../lib/theme";
 import PageHero from "../components/PageHero";
+import CsvImportRow from "../components/CsvImportRow";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -2498,6 +2499,16 @@ function TriviaPanel() {
       )}
 
       {view === "questions" && (<>
+        <CsvImportRow
+          templateUrl="/admin/trivia/import-csv/template"
+          uploadUrl="/admin/trivia/import-csv"
+          templateFilename="trivia-import-template.csv"
+          testIdPrefix="trivia-csv"
+          helperText="Headers: question, choice_a..d, correct_letter (A/B/C/D), difficulty, tag"
+          onComplete={loadQuestions}
+          borderColor="border-shGreen/30"
+          accentColor="text-shGreen"
+        />
         <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">
           <button onClick={()=>setEditing({ mode: "new" })}
                   data-testid="trivia-q-new-btn"
@@ -2770,6 +2781,17 @@ function DogFactsPanel() {
           <p className="text-[11px] text-gray-500 italic">Staged inactive — you review before they go live.</p>
         </div>
       </div>
+
+      <CsvImportRow
+        templateUrl="/admin/dog-facts/import-csv/template"
+        uploadUrl="/admin/dog-facts/import-csv"
+        templateFilename="dog-facts-import-template.csv"
+        testIdPrefix="dog-facts-csv"
+        helperText="Headers: text (required), tag, emoji"
+        onComplete={load}
+        borderColor="border-shBlue/30"
+        accentColor="text-shBlue"
+      />
 
       {/* Add new */}
       <div className="bg-bgBase border border-bgHover rounded-lg p-3 mb-4">

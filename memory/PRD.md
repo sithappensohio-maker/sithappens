@@ -29,6 +29,15 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bp — Bulk CSV import for trivia + dog facts (2026-06-01)
+- ✅ **Backend `/admin/trivia/import-csv` + `/admin/dog-facts/import-csv`** — multipart UploadFile endpoints that parse a CSV, validate every row, and upsert by `uuid5(content)` so re-uploading the same file updates instead of duplicating. Bad rows are skipped with a `{line, reason}` report instead of failing the whole import.
+- ✅ **Trivia CSV headers**: `question, choice_a, choice_b, choice_c, choice_d, correct_letter (A/B/C/D), difficulty (easy/medium/hard), tag` (8 of TRIVIA_TAGS). Skip reasons: empty question, missing choice, invalid letter, non-unique choices.
+- ✅ **Dog facts CSV headers**: `text (required), tag, emoji`. Skip reasons: empty text, text < 3 chars. New facts join the rotation at `sort_order = max+1` so they get their turn.
+- ✅ **Template download endpoints** `…/import-csv/template` return a ready-to-edit CSV with 2 working example rows + correct `Content-Disposition` filename.
+- ✅ **Reusable `CsvImportRow.jsx`** — single component rendering "Download template" + "Upload CSV" buttons + an inline result panel (`N created · N updated · N skipped` with collapsible per-line skip reasons). Used by both Trivia panel (questions view) and DogFactsPanel (next to AI Generate).
+- ✅ **Tests** `test_csv_imports.py` — 10/10 passing: template shape + headers, create-then-update (idempotency), bad-row skipping with reasons, missing-header validation, auth-required (401 without token), for both endpoints.
+
+
 ## Sprint 110bo — Operator-curated trivia seed (21 questions) (2026-06-01)
 - ✅ **`/app/backend/seed_curated_trivia.py`** — idempotent seeder for 21 hand-written questions covering all 7 categories × 3 difficulty levels (Breeds / Behavior / Health / History / Anatomy / Training / Fun & Myth). Uses `uuid5` from question text so re-running upserts instead of duplicating.
 - ✅ Each curated question gets `source="manual"` + `curated=True` flag for differentiation in the question library, plus the same shape as AI-generated ones (question/choices/correct_index/difficulty/tag/active).
