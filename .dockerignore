@@ -4,8 +4,6 @@
 
 .git
 .gitignore
-.env
-**/.env.local
 **/__pycache__
 **/*.pyc
 **/.pytest_cache
