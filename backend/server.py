@@ -10127,14 +10127,154 @@ async def time_clock_me(
     days: int = 30,
     user: dict = Depends(require_employee_or_admin),
 ):
-    """Return the calling user's clock entries from the last N days plus totals."""
+    """Return the calling user's clock entries from the last N days plus totals.
+
+    Sprint 110ba — adds pay calculations using the user's `hourly_rate`:
+      • per-entry `gross` (hours × rate)
+      • `total_gross` for the window
+      • `this_week` / `last_week` totals (weekly period Sun → Sat)
+      • `ytd_hours` / `ytd_gross` (calendar-year totals)
+      • `live` block: if a shift is currently open, running hours + pay so far
+    No-op friendly: when `hourly_rate` is unset, gross values come back as 0
+    so the UI can fall back to hours-only.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
     entries = await db.time_clock_entries.find(
         {"user_id": user["id"], "clock_in_at": {"$gte": cutoff}},
         {"_id": 0},
     ).sort("clock_in_at", -1).to_list(2000)
-    total_hours = round(sum(float(e.get("hours") or 0) for e in entries if e.get("clock_out_at")), 2)
-    return {"entries": entries, "total_hours": total_hours, "days": days}
+    me = await db.users.find_one(
+        {"id": user["id"]}, {"_id": 0, "hourly_rate": 1, "name": 1, "display_name": 1, "email": 1}
+    ) or {}
+    rate = float(me.get("hourly_rate") or 0)
+
+    def _gross(hrs: float) -> float:
+        return round(float(hrs or 0) * rate, 2)
+
+    # Annotate per-entry gross
+    for e in entries:
+        e["gross"] = _gross(e.get("hours"))
+        e["hourly_rate"] = rate
+
+    closed = [e for e in entries if e.get("clock_out_at") and e.get("hours") is not None]
+    total_hours = round(sum(float(e["hours"]) for e in closed), 2)
+    total_gross = round(total_hours * rate, 2)
+
+    # Week boundary helper (Sunday start, Saturday end — U.S. payroll standard)
+    today_local = date.today()
+    sunday = today_local - timedelta(days=(today_local.weekday() + 1) % 7)
+    last_sunday = sunday - timedelta(days=7)
+    last_saturday = sunday - timedelta(days=1)
+
+    def _in_range(e, start_d: date, end_d: date) -> bool:
+        try:
+            d = datetime.fromisoformat((e.get("clock_in_at") or "").replace("Z", "+00:00")).date()
+        except Exception:
+            return False
+        return start_d <= d <= end_d
+
+    this_week_entries = [e for e in closed if _in_range(e, sunday, today_local)]
+    last_week_entries = [e for e in closed if _in_range(e, last_sunday, last_saturday)]
+    this_week_hours = round(sum(float(e["hours"]) for e in this_week_entries), 2)
+    last_week_hours = round(sum(float(e["hours"]) for e in last_week_entries), 2)
+
+    # YTD — query independently of the `days` window so it's accurate even
+    # for short windows
+    ytd_start = f"{today_local.year}-01-01T00:00:00"
+    ytd = await db.time_clock_entries.find(
+        {"user_id": user["id"], "clock_in_at": {"$gte": ytd_start},
+         "clock_out_at": {"$ne": None, "$exists": True}, "hours": {"$ne": None}},
+        {"_id": 0, "hours": 1},
+    ).to_list(5000)
+    ytd_hours = round(sum(float(r.get("hours") or 0) for r in ytd), 2)
+    ytd_gross = round(ytd_hours * rate, 2)
+
+    # Live running shift (if any)
+    live = None
+    open_entry = next((e for e in entries if not e.get("clock_out_at")), None)
+    if open_entry:
+        try:
+            t_in = datetime.fromisoformat((open_entry["clock_in_at"] or "").replace("Z", "+00:00"))
+            elapsed_hrs = max(0.0, (datetime.now(timezone.utc) - t_in).total_seconds() / 3600.0)
+            br = float(open_entry.get("break_minutes") or 0) / 60.0
+            elapsed_hrs = max(0.0, elapsed_hrs - br)
+            live = {
+                "entry_id": open_entry["id"],
+                "clock_in_at": open_entry["clock_in_at"],
+                "hours_so_far": round(elapsed_hrs, 2),
+                "gross_so_far": round(elapsed_hrs * rate, 2),
+            }
+        except Exception:
+            pass
+
+    return {
+        "entries": entries,
+        "total_hours": total_hours,
+        "total_gross": total_gross,
+        "hourly_rate": rate,
+        "days": days,
+        "this_week": {
+            "start": sunday.isoformat(),
+            "end": today_local.isoformat(),
+            "hours": this_week_hours,
+            "gross": _gross(this_week_hours),
+        },
+        "last_week": {
+            "start": last_sunday.isoformat(),
+            "end": last_saturday.isoformat(),
+            "hours": last_week_hours,
+            "gross": _gross(last_week_hours),
+        },
+        "ytd": {"year": today_local.year, "hours": ytd_hours, "gross": ytd_gross},
+        "live": live,
+    }
+
+
+@api.get("/time-clock/me.csv")
+async def time_clock_me_csv(
+    days: int = 90,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Download a CSV of the caller's own timecard for the last `days` days.
+    Includes per-entry gross pay. Handy for staff to keep their own records."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()
+    entries = await db.time_clock_entries.find(
+        {"user_id": user["id"], "clock_in_at": {"$gte": cutoff}},
+        {"_id": 0},
+    ).sort("clock_in_at", 1).to_list(5000)
+    me = await db.users.find_one(
+        {"id": user["id"]}, {"_id": 0, "hourly_rate": 1, "name": 1, "display_name": 1, "email": 1}
+    ) or {}
+    rate = float(me.get("hourly_rate") or 0)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    name = me.get("display_name") or me.get("name") or me.get("email") or "Me"
+    w.writerow([f"Timecard — {name} — last {days} days"])
+    w.writerow([f"Hourly rate: ${rate:.2f}"])
+    w.writerow([])
+    w.writerow(["Date", "Clock-in", "Clock-out", "Break (min)", "Hours", "Gross ($)"])
+    grand_h = 0.0
+    for e in entries:
+        date_str = (e.get("clock_in_at") or "")[:10]
+        hrs = float(e.get("hours") or 0)
+        grand_h += hrs
+        w.writerow([
+            date_str,
+            e.get("clock_in_at", ""),
+            e.get("clock_out_at", "") or "",
+            int(e.get("break_minutes") or 0),
+            f"{hrs:.2f}",
+            f"{hrs * rate:.2f}",
+        ])
+    w.writerow([])
+    w.writerow(["TOTAL", "", "", "", f"{grand_h:.2f}", f"{grand_h * rate:.2f}"])
+    buf.seek(0)
+    fname = f"timecard-{name.replace(' ', '_')}-{date.today().isoformat()}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
 
 
 @api.get("/admin/time-clock")

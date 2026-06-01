@@ -134,6 +134,9 @@ function ClockTab() {
   if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
   const open = data.open_entry;
   const live = open ? hoursSinceISO(open.clock_in_at) : 0;
+  // Sprint 110ba — running pay during open shift (hourly rate from /employee/me)
+  const rate = Number(data?.user?.hourly_rate || 0);
+  const liveGross = open && rate > 0 ? (live * rate) : 0;
 
   return (
     <div className="space-y-5" data-testid="clock-tab">
@@ -144,6 +147,12 @@ function ClockTab() {
         {open ? (
           <>
             <p className="text-3xl font-black text-shGreen">{live.toFixed(2)} hr</p>
+            {rate > 0 && (
+              <p className="text-[14px] text-gray-300 mt-1" data-testid="clock-live-pay">
+                <i className="fas fa-dollar-sign text-shGreen mr-1"/>Earned today: <span className="font-black text-white">${liveGross.toFixed(2)}</span>
+                <span className="text-gray-500 ml-2 text-[12px] uppercase tracking-widest">@ ${rate.toFixed(2)}/hr</span>
+              </p>
+            )}
             <p className="text-[14px] text-gray-300 mt-1">Started at <span className="font-black text-white">{fmtTime(open.clock_in_at)}</span></p>
             {open.clock_in_lat != null && (
               <p className="text-[12px] text-gray-500 mt-1">
@@ -367,6 +376,13 @@ function TimecardTab() {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [days]);
+  // Sprint 110ba — tick the running-pay clock every 30s if currently clocked in
+  useEffect(() => {
+    if (!data?.live) return;
+    const i = setInterval(load, 30000);
+    return () => clearInterval(i);
+    // eslint-disable-next-line
+  }, [data?.live?.entry_id]);
 
   const grouped = useMemo(() => {
     if (!data) return {};
@@ -381,43 +397,107 @@ function TimecardTab() {
   if (err) return <p className="text-red-400 text-sm">{err}</p>;
   if (!data) return <p className="text-gray-500 text-sm">Loading…</p>;
 
+  const rate = Number(data.hourly_rate || 0);
+  const fmt$ = (v) => `$${Number(v || 0).toFixed(2)}`;
+  const downloadCsv = async () => {
+    try {
+      const token = localStorage.getItem("auth_token") || "";
+      const url = `${process.env.REACT_APP_BACKEND_URL}/api/time-clock/me.csv?days=${days}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      const blob = await r.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = `my-timecard-${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(obj), 5000);
+    } catch {}
+  };
+
   return (
     <div className="space-y-4" data-testid="timecard-tab">
+      {/* Live-pay tile while clocked in */}
+      {data.live && (
+        <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-4" data-testid="timecard-live">
+          <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-1"><i className="fas fa-bolt mr-1"/>Earning right now</p>
+          <div className="flex items-baseline gap-3">
+            <p className="text-3xl font-black text-shGreen">{fmt$(data.live.gross_so_far)}</p>
+            <p className="text-[14px] text-gray-300 font-black uppercase tracking-widest">{data.live.hours_so_far}h so far</p>
+          </div>
+          {rate > 0 && <p className="text-[12px] text-gray-500 mt-1">@ {fmt$(rate)}/hr · updates every 30s</p>}
+        </div>
+      )}
+
+      {/* Pay summary tiles */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="timecard-summary">
+        <SummaryTile label="This week" subtitle={`${data.this_week.start} → ${data.this_week.end}`} hours={data.this_week.hours} gross={data.this_week.gross} testId="tc-this-week"/>
+        <SummaryTile label="Last week" subtitle={`${data.last_week.start} → ${data.last_week.end}`} hours={data.last_week.hours} gross={data.last_week.gross} testId="tc-last-week"/>
+        <SummaryTile label={`Last ${days} days`} subtitle="window total" hours={data.total_hours} gross={data.total_gross} testId="tc-window"/>
+        <SummaryTile label="Year-to-date" subtitle={`${data.ytd?.year || ""}`} hours={data.ytd?.hours || 0} gross={data.ytd?.gross || 0} testId="tc-ytd"/>
+      </div>
+
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Last {days} days</p>
-          <p className="text-3xl font-black text-shGreen">{data.total_hours} hr</p>
+          {rate > 0 ? (
+            <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-dollar-sign mr-1"/>Hourly rate · {fmt$(rate)}</p>
+          ) : (
+            <p className="text-[12px] text-shOrange font-black uppercase tracking-widest"><i className="fas fa-info-circle mr-1"/>No hourly rate set — ask admin</p>
+          )}
         </div>
-        <select value={days} onChange={(e)=>setDays(Number(e.target.value))} data-testid="timecard-days"
-                className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
-          <option value={7}>Last 7 days</option>
-          <option value={14}>Last 14 days</option>
-          <option value={30}>Last 30 days</option>
-          <option value={90}>Last 90 days</option>
-        </select>
+        <div className="flex gap-2">
+          <select value={days} onChange={(e)=>setDays(Number(e.target.value))} data-testid="timecard-days"
+                  className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <button onClick={downloadCsv} data-testid="timecard-csv"
+                  className="bg-shBlue text-bgHeader px-3 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow">
+            <i className="fas fa-download mr-1"/>CSV
+          </button>
+        </div>
       </div>
       {Object.keys(grouped).length === 0 && (
         <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 text-sm">No entries in this window.</div>
       )}
       {Object.entries(grouped).map(([d, entries]) => {
         const dailyHours = entries.reduce((s,e)=> s + (Number(e.hours)||0), 0);
+        const dailyGross = entries.reduce((s,e)=> s + (Number(e.gross)||0), 0);
         return (
           <div key={d} className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={`tc-day-${d}`}>
             <div className="flex justify-between items-center mb-2">
               <p className="text-[14px] font-black uppercase tracking-widest text-white">{d}</p>
-              <p className="text-[14px] font-black text-shGreen">{dailyHours.toFixed(2)}h</p>
+              <p className="text-[14px] font-black">
+                <span className="text-shGreen">{dailyHours.toFixed(2)}h</span>
+                {rate > 0 && <span className="text-gray-400 normal-case ml-2">· {fmt$(dailyGross)}</span>}
+              </p>
             </div>
             <div className="space-y-1">
               {entries.map(e => (
                 <div key={e.id} className="bg-bgBase/60 rounded p-2 text-[13px] flex justify-between items-center gap-2">
                   <span className="text-gray-300">{fmtTime(e.clock_in_at)} → {e.clock_out_at ? fmtTime(e.clock_out_at) : <span className="text-shGreen">open</span>}</span>
-                  <span className="font-black text-white">{e.hours ? `${e.hours.toFixed(2)}h` : "—"}</span>
+                  <span className="font-black text-right">
+                    <span className="text-white">{e.hours ? `${e.hours.toFixed(2)}h` : "—"}</span>
+                    {rate > 0 && e.gross > 0 && <span className="text-gray-400 normal-case ml-2">{fmt$(e.gross)}</span>}
+                  </span>
                 </div>
               ))}
             </div>
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function SummaryTile({ label, subtitle, hours, gross, testId }) {
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-xl p-3" data-testid={testId}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+      <p className="text-2xl font-black text-white">${Number(gross || 0).toFixed(2)}</p>
+      <p className="text-[12px] text-shGreen font-black uppercase tracking-widest">{Number(hours || 0).toFixed(2)}h</p>
+      {subtitle && <p className="text-[10px] text-gray-600 truncate mt-1">{subtitle}</p>}
     </div>
   );
 }

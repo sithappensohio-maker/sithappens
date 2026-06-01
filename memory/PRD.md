@@ -1681,6 +1681,18 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110ba — Staff timecard now shows PAY (2026-06-01)
+- ✅ `/api/time-clock/me` enriched: per-entry `gross`, `total_gross`, `hourly_rate`, `this_week` / `last_week` (Sun → Sat U.S. weekly period), `ytd` (calendar year), and a `live` block with `hours_so_far` + `gross_so_far` while currently clocked in.
+- ✅ New `/api/time-clock/me.csv?days=N` — staff can download their own timecard for personal records.
+- ✅ **EmployeePortal Timecard tab** redesigned:
+  - 4 summary tiles (This Week / Last Week / Last 30 / YTD) each showing both $ and hours
+  - "Hourly Rate · $X.XX" badge (or orange "No hourly rate set — ask admin" hint when missing)
+  - CSV download button
+  - Each daily row + each entry shows $ alongside hours
+  - Live tile auto-refreshes every 30s while clocked in
+- ✅ **Clock tab** now shows `"Earned today: $X.XX @ $Y/hr"` line beneath running hours while a shift is open.
+- ✅ Pytest `test_staff_timecard_pay.py` (3/3): pay fields present, live shift gross_so_far matches hours × rate, CSV download has Hourly rate + Gross + TOTAL.
+
 ## Sprint 110az — Legacy pricing impact chip on today's P&L (2026-06-01)
 - ✅ `/api/admin/today-pnl` response now returns three new fields: `catalog_forecast` (what today would be at catalog list), `legacy_delta` (forecast − catalog, negative = below catalog), `legacy_client_count`.
 - ✅ Dashboard P&L tile renders a chip `"$X.XX below/above catalog (N legacy clients)"` in orange (below) or green (above), only when at least one of today's bookings has an active override. Hover tooltip shows the catalog forecast.
