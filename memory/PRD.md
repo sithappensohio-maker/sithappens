@@ -29,6 +29,15 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bd — Mark Quarter Paid + Time Off + Pay History Trend (2026-02)
+- ✅ **Mark Quarter Paid tracker** — `tax_payments` collection + 3 endpoints (`GET/POST/DELETE /api/admin/quarterly-tax/payments`). Quarterly-tax endpoint now sums recorded payments per quarter, returns `paid`/`remaining` per quarter and `payments_applied`/`recorded_payments_total` totals. Frontend: green "Mark paid" button on each quarter card opens `TaxPaymentModal` (amount/date/method/memo), "Paid" chip on cards, full payment history table with delete-with-confirm.
+- ✅ **Employee Time-Off Requests** — new `time_off_requests` collection + 5 endpoints. Employees submit via Employee Portal → new **Time Off** tab (`TimeOffFormModal` with start/end/type/reason). Admin reviews via Staff → new **Time Off** sub-tab (`TimeOffAdminTab`) with pending/approved/rejected/cancelled/all filters and `TimeOffReviewModal` for approve/reject with optional notes.
+- ✅ **Weekly Pay History Trend** — new `GET /api/employee/pay-history?weeks=N` endpoint (Sunday-anchored, max 52 weeks). Added collapsible `PayHistoryPanel` to Employee Portal → Timecard tab with bar visualization, best-week highlight, totals.
+- ✅ Both collections added to backup coverage list (`shifts`, `time_clock_entries`, **`time_off_requests`**, **`tax_payments`**).
+- ✅ **Tests** — `test_tax_payments.py` (4), `test_time_off.py` (6), `test_pay_history.py` (4). 14/14 new tests passing; 27/27 combined with prior staff suites.
+- ✅ **Frontend regression** — Testing agent verified all three features end-to-end via UI (Quarterly Tax Mark Paid flow, employee time-off submit + admin approval, pay history trend chart). Zero bugs found.
+
+
 ## Sprint 110bc — Quarterly Tax Estimate (Sole-Proprietor / Schedule C) (2026-02)
 - ✅ **Backend** `GET /api/admin/quarterly-tax` aggregates YTD income (completed bookings + retail), expenses (recorded + labor gross + employer burden), nets to Schedule C profit, computes SE tax (SS+Medicare with wage-base cap), federal/state/local income tax, and splits the YTD owed into four IRS quarterly deadlines (Apr 15 / Jun 15 / Sep 15 / Jan 15 of next year) with status pills (`past` / `current` / `upcoming`).
 - ✅ Configurable rates persisted in `app_settings._id=quarterly_tax`: federal/state/local %, SS rate %, Medicare %, SS wage base, SE taxable %, estimated payments already made. `GET/PUT /api/admin/quarterly-tax/settings` returns `{current, defaults}` so the UI offers a "Reset to defaults" action.
