@@ -29,6 +29,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110be — CPA hand-off PDF on Quarterly Tax tab (2026-02)
+- ✅ **`GET /api/admin/quarterly-tax/cpa.pdf`** — one-page Schedule C summary PDF: header w/ tax year + period, 4 top KPIs (Gross / Expenses / Net / Balance), Income detail, Expenses-by-Category table (auto-grouped from `db.expenses`), Net Profit highlight box, Tax breakdown table (SS / Medicare / Federal / OH state / Warren local with rates and bases), Quarterly payments table (all `tax_payments` for the year w/ totals), bottom-line Balance Still Owed box.
+- ✅ New `backend/cpa_report.py` mirroring the `pl_report.py` ReportLab pattern (LETTER page, brand color tiles, BG/LINE/INK palette).
+- ✅ Frontend: **"Send PDF to CPA"** blue button (`data-testid="qt-cpa-pdf"`) in QuarterlyTaxTab header that downloads `cpa-tax-summary-{year}.pdf` via blob.
+- ✅ **Tests** `test_cpa_pdf.py` — 4/4 passing (valid PDF bytes, year filename, generation after logging a payment, admin-required). Combined backend: 15/15 pass on quarterly-tax + payments + CPA PDF suite.
+
+
 ## Sprint 110bd — Mark Quarter Paid + Time Off + Pay History Trend (2026-02)
 - ✅ **Mark Quarter Paid tracker** — `tax_payments` collection + 3 endpoints (`GET/POST/DELETE /api/admin/quarterly-tax/payments`). Quarterly-tax endpoint now sums recorded payments per quarter, returns `paid`/`remaining` per quarter and `payments_applied`/`recorded_payments_total` totals. Frontend: green "Mark paid" button on each quarter card opens `TaxPaymentModal` (amount/date/method/memo), "Paid" chip on cards, full payment history table with delete-with-confirm.
 - ✅ **Employee Time-Off Requests** — new `time_off_requests` collection + 5 endpoints. Employees submit via Employee Portal → new **Time Off** tab (`TimeOffFormModal` with start/end/type/reason). Admin reviews via Staff → new **Time Off** sub-tab (`TimeOffAdminTab`) with pending/approved/rejected/cancelled/all filters and `TimeOffReviewModal` for approve/reject with optional notes.

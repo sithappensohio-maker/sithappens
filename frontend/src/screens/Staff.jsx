@@ -1070,6 +1070,22 @@ function QuarterlyTaxTab() {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
+  const downloadCpaPdf = async () => {
+    try {
+      const token = localStorage.getItem("sh_token") || "";
+      const url = `${process.env.REACT_APP_BACKEND_URL}/api/admin/quarterly-tax/cpa.pdf?year=${year}`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) { setErr(`PDF download failed (${r.status})`); return; }
+      const blob = await r.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = `cpa-tax-summary-${year}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(obj), 5000);
+    } catch (e) { setErr(formatErr(e.message)); }
+  };
+
   if (!data) {
     return <div className="text-gray-400 p-6 text-center" data-testid="qt-loading">Loading…</div>;
   }
@@ -1100,6 +1116,10 @@ function QuarterlyTaxTab() {
         <button onClick={()=>setSettingsOpen(s=>!s)} data-testid="qt-settings-toggle"
                 className="bg-bgPanel border border-bgHover px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest text-gray-300 hover:border-shGreen">
           <i className="fas fa-sliders mr-1"/>Edit Rates
+        </button>
+        <button onClick={downloadCpaPdf} data-testid="qt-cpa-pdf"
+                className="bg-shBlue text-bgHeader px-3 py-2 rounded text-[13px] font-black uppercase tracking-widest shadow hover:bg-shBlue/90">
+          <i className="fas fa-file-pdf mr-1"/>Send PDF to CPA
         </button>
         <p className="ml-auto text-[12px] text-gray-500 italic">As of {data.as_of}</p>
       </div>

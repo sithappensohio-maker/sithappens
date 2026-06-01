@@ -10628,6 +10628,54 @@ async def delete_tax_payment(pid: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+@api.get("/admin/quarterly-tax/cpa.pdf")
+async def quarterly_tax_cpa_pdf(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin),
+):
+    """One-page Schedule C summary PDF for the operator's CPA. Pulls the
+    same numbers as the Quarterly Tax tab plus expense-by-category and the
+    full list of recorded payments for the year."""
+    from cpa_report import render_cpa_pdf  # local import — keeps cold-start lean
+
+    # Reuse the live estimator math by calling it directly. The function reads
+    # from `db` (closure) so we get exactly what the UI sees.
+    payload = await admin_quarterly_tax(_=_, year=year)  # type: ignore[arg-type]
+
+    yr = int(payload["year"])
+    start = payload["period"]["start"]
+    end = payload["period"]["end"]
+
+    # Expenses grouped by category for the period
+    exp_rows = await db.expenses.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).to_list(20000)
+    cat_buckets: Dict[str, Dict[str, Any]] = {}
+    for e in exp_rows:
+        cat = (e.get("category") or "Uncategorized").strip() or "Uncategorized"
+        b = cat_buckets.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
+        b["count"] += 1
+        b["total"] = round(b["total"] + float(e.get("amount") or 0), 2)
+    expenses_by_category = list(cat_buckets.values())
+
+    # Recorded quarterly payments for the year (oldest → newest)
+    payments = await db.tax_payments.find(
+        {"year": yr}, {"_id": 0},
+    ).sort("payment_date", 1).to_list(2000)
+
+    # Brand from settings if available
+    settings_row = await db.app_settings.find_one({"_id": "brand"}, {"_id": 0}) or {}
+    brand_name = settings_row.get("name") or "Sit Happens"
+
+    pdf_bytes = render_cpa_pdf(payload, expenses_by_category, payments, brand_name=brand_name)
+    fname = f"cpa-tax-summary-{yr}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 # ─── Time-off requests (employee submits, admin approves) ─────────────────────
 TIME_OFF_TYPES = {"vacation", "sick", "personal", "unpaid", "other"}
 TIME_OFF_STATUSES = {"pending", "approved", "rejected", "cancelled"}
