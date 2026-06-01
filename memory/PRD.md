@@ -29,6 +29,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bm — Trivia card inline SVG graphics (2026-06-01)
+- ✅ **`DailyTriviaCard.jsx` gets on-brand SVG decorations** — zero image assets, all inline SVG so colors track the Sit Happens palette (shBlue / shOrange / shGreen).
+  - **PawIcon / BoneIcon** — reusable SVG primitives sized via prop. Paw next to the "DOG TRIVIA OF THE DAY" header; bone in front of the "Nd streak" chip.
+  - **DifficultyPaws** — easy = 1 paw, medium = 2, hard = 3 (replaces plain text label).
+  - **PawBackdrop** — 5-paw low-opacity scatter behind the card content for ambient brand texture.
+  - **PawConfetti** — burst of 14 multi-colored paw prints raining down (`@keyframes paw-fall`) when the player gets the daily question correct. Also re-used on a perfect quiz score.
+  - **DogMascot** — minimal cartoon pup face with three moods (happy / thinking / sad). Renders next to the result line ("Correct! 🐾" vs "Not quite — keep your streak going tomorrow!") and in the quiz-complete summary tile.
+- ✅ Lint clean. Smoke-screenshotted as `testclient@sithappens.com` — header paw, difficulty paws, streak bone, A/B/C/D buttons with green-correct highlight, happy dog mascot next to "Correct!" all render correctly.
+
+
 ## Sprint 110bl — Manually author trivia questions + edit existing (2026-06-01)
 - ✅ **`POST /api/admin/trivia/questions`** — create an operator-authored question with full validation: required question text, exactly 4 unique non-empty choices, valid correct_index 0-3, difficulty auto-falls-back to "medium" if invalid, tag auto-falls-back to "fun". Marked `source: "manual"` to differentiate from AI in the list.
 - ✅ **`PUT /api/admin/trivia/questions/{qid}`** — full edit (typo fixes, better distractors, mark active/inactive).
