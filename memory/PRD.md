@@ -29,6 +29,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bs — Inline tax-savings chip on mileage tile (2026-06-01)
+- ✅ **`/admin/mileage/summary`** now also returns `today_tax_savings / mtd_tax_savings / ytd_tax_savings` plus `combined_tax_rate_pct`.
+- ✅ **Math** mirrors the Quarterly Tax engine so the chip stays honest:
+  - SE effective on profit = `se_taxable_pct × (SS + Medicare)`
+  - Income tax effective  = `(federal + state + local) × (1 − ½ × SE_rate)` (half-SE deduction)
+  - Combined = SE + income → ~30.2% for the default Warren OH sole-prop profile
+- ✅ **Dashboard chip**: green pill `🐖 YTD tax savings $X` in the mileage tile header. Hover-tooltip shows the operator's actual combined marginal rate. Hides automatically when YTD savings = 0 (clean first-run state).
+- ✅ **Enhanced toast**: every log entry now also shows estimated tax saved, e.g. `Logged 47.3 mi · +$33.11 deduction · ~$10.00 tax saved`.
+- ✅ **Tests** `test_mileage_log.py` extended to 9/9 (added `test_summary_tax_savings` verifying combined-rate band 15–45% and savings = deduction × rate within $0.05).
+
+
 ## Sprint 110br — Recent-trips quick-fill on Mileage tile (2026-06-01)
 - ✅ **`GET /admin/mileage/recent-trips`** — returns up to 10 unique (purpose, destination) combos from the most-recent 500 entries, each with `last_miles` so the form can auto-suggest a default. Empty purpose/destination rows are skipped.
 - ✅ **`MileageDashTile` now has a "Re-use a recent trip" dropdown** at the top of the form. Picking an option pre-fills both purpose + destination, and pre-fills miles only if the user hasn't typed any yet. Dropdown auto-hides when there are no eligible entries (clean first-run experience).

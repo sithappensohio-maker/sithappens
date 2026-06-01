@@ -11803,14 +11803,37 @@ async def mileage_summary(
     today_miles = sum(float(r.get("miles") or 0) for r in rows if r.get("date") == today_iso)
     mtd_miles = sum(float(r.get("miles") or 0) for r in rows if r.get("date", "") >= month_start)
     ytd_miles = sum(float(r.get("miles") or 0) for r in rows)
+
+    # Combined marginal tax rate so we can show "real dollars saved" per trip.
+    # Formula mirrors the quarterly-tax math:
+    #   SE rate effective on profit  = se_taxable_pct × (SS + Medicare)
+    #   Income tax on profit         = (federal + state + local) × (1 − ½ × SE rate)
+    # Sum = total tax saved per $1 deducted. Good enough for a motivation chip.
+    se_taxable = float(settings.get("se_tax_taxable_pct", 92.35)) / 100.0
+    ss_rate = float(settings.get("ss_rate_pct", 12.4)) / 100.0
+    medi_rate = float(settings.get("medicare_rate_pct", 2.9)) / 100.0
+    fed = float(settings.get("federal_income_pct", 12.0)) / 100.0
+    state = float(settings.get("state_income_pct", 2.75)) / 100.0
+    local = float(settings.get("local_income_pct", 2.5)) / 100.0
+    se_effective = se_taxable * (ss_rate + medi_rate)
+    income_effective = (fed + state + local) * (1.0 - 0.5 * se_effective)
+    combined_rate = se_effective + income_effective  # roughly 0.30 – 0.35 for sole-prop
+
+    today_ded = today_miles * rate
+    mtd_ded = mtd_miles * rate
+    ytd_ded = ytd_miles * rate
     return {
         "today_miles": round(today_miles, 1),
-        "today_deduction": round(today_miles * rate, 2),
+        "today_deduction": round(today_ded, 2),
+        "today_tax_savings": round(today_ded * combined_rate, 2),
         "mtd_miles": round(mtd_miles, 1),
-        "mtd_deduction": round(mtd_miles * rate, 2),
+        "mtd_deduction": round(mtd_ded, 2),
+        "mtd_tax_savings": round(mtd_ded * combined_rate, 2),
         "ytd_miles": round(ytd_miles, 1),
-        "ytd_deduction": round(ytd_miles * rate, 2),
+        "ytd_deduction": round(ytd_ded, 2),
+        "ytd_tax_savings": round(ytd_ded * combined_rate, 2),
         "rate_per_mile": round(rate, 3),
+        "combined_tax_rate_pct": round(combined_rate * 100, 1),
         "entry_count_ytd": len(rows),
         "year": yr,
     }

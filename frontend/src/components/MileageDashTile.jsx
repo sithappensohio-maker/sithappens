@@ -57,7 +57,13 @@ export function MileageDashTile({ onNavTax }) {
         purpose: purpose.trim(),
         destination: destination.trim(),
       });
-      toast.success(`Logged ${r.data.miles} mi · +$${(r.data.miles * (data?.rate_per_mile || 0.7)).toFixed(2)} deduction`);
+      const ded = r.data.miles * (data?.rate_per_mile || 0.7);
+      const savings = ded * ((data?.combined_tax_rate_pct || 0) / 100);
+      toast.success(
+        savings > 0
+          ? `Logged ${r.data.miles} mi · +$${ded.toFixed(2)} deduction · ~$${savings.toFixed(2)} tax saved`
+          : `Logged ${r.data.miles} mi · +$${ded.toFixed(2)} deduction`
+      );
       setMiles(""); setPurpose(""); setDestination("");
       setDate(todayISO());
       await load();
@@ -72,13 +78,23 @@ export function MileageDashTile({ onNavTax }) {
         <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen">
           <i className="fas fa-car-side mr-2"/>Business Mileage
         </p>
-        {data && (
-          <button onClick={onNavTax}
-                  data-testid="mileage-dash-nav"
-                  className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
-            <i className="fas fa-arrow-right ml-1"/>Quarterly Tax
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {data && data.ytd_tax_savings > 0 && (
+            <span data-testid="mileage-tax-savings-chip"
+                  title={`Approx ${data.combined_tax_rate_pct}% combined marginal rate`}
+                  className="bg-shGreen/10 border border-shGreen/40 text-shGreen px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest">
+              <i className="fas fa-piggy-bank mr-1"/>
+              YTD tax savings ${data.ytd_tax_savings.toFixed(2)}
+            </span>
+          )}
+          {data && (
+            <button onClick={onNavTax}
+                    data-testid="mileage-dash-nav"
+                    className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
+              Quarterly tax<i className="fas fa-arrow-right ml-1"/>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats row */}

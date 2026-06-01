@@ -93,6 +93,21 @@ def test_summary_buckets(admin_headers):
     assert abs(s["ytd_deduction"] - round(s["ytd_miles"] * s["rate_per_mile"], 2)) < 0.05
 
 
+def test_summary_tax_savings(admin_headers):
+    # Log a fresh trip and verify the tax-savings chip math
+    requests.post(f"{API}/admin/mileage", headers=admin_headers,
+                  json={"miles": 100, "purpose": "PYTEST-savings"}, timeout=15)
+    s = requests.get(f"{API}/admin/mileage/summary",
+                     headers=admin_headers, timeout=15).json()
+    assert "ytd_tax_savings" in s
+    assert "combined_tax_rate_pct" in s
+    # Sole-prop combined rate should land in a sane band (15–45%)
+    assert 15.0 <= s["combined_tax_rate_pct"] <= 45.0
+    # Savings = deduction × combined_rate (within rounding tolerance)
+    expected = round(s["ytd_deduction"] * (s["combined_tax_rate_pct"] / 100.0), 2)
+    assert abs(s["ytd_tax_savings"] - expected) <= 0.05
+
+
 def test_update_entry(admin_headers):
     r = requests.post(f"{API}/admin/mileage", headers=admin_headers,
                       json={"miles": 8, "purpose": "PYTEST-update"}, timeout=15)
