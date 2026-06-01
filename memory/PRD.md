@@ -1681,6 +1681,13 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110ay — Today's P&L honors legacy pricing (2026-06-01)
+- ✅ `GET /api/admin/today-pnl` now consults `price_overrides` for each booking's client+service pair before falling back to the catalog list price. So grandfathered clients are forecast at their actual rate, not the new public rate.
+- ✅ Boarding correctly multiplies the legacy nightly rate by the number of nights.
+- ✅ Bulk-loads overrides once per call (single Mongo query for all today's clients) — no N+1.
+- ✅ Pytest `test_today_pnl_legacy_pricing.py`: 1 passed, 1 skipped (skip is benign — every test client already has overrides, so no clean baseline available). The passing test proves the delta in today-pnl revenue equals the override price, not the catalog list.
+- ✅ Regression: existing P&L tests (`test_training_pnl`, `test_cancel_with_charge`, `test_five_feature_batch`) — 14/14 still pass.
+
 ## Sprint 110ax — Dog Fact of the Day (2026-06-01)
 - ✅ **199 curated facts** seeded across anatomy / behavior / breed / health / training / myth-buster / fun. Idempotent seed runs on startup.
 - ✅ **Deterministic daily rotation**: `GET /api/dog-facts/today` picks via `date.toordinal() % len(active_facts)` — same fact for every user same day, ~6.5 months before any repeat.

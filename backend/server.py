@@ -10975,9 +10975,10 @@ async def today_pnl(_: dict = Depends(require_admin)):
     # Build a service_type → default active service for fallback when booking
     # has no service_id (legacy/quick-add bookings)
     default_svcs = await db.services.find(
-        {"active": True}, {"_id": 0, "service_type": 1, "base_price": 1, "is_default": 1}
+        {"active": True}, {"_id": 0, "id": 1, "service_type": 1, "base_price": 1, "is_default": 1}
     ).to_list(500)
     default_by_type: Dict[str, float] = {}
+    default_svc_id_by_type: Dict[str, str] = {}
     for s in default_svcs:
         st = s.get("service_type")
         if not st:
@@ -10985,6 +10986,20 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # Prefer explicit defaults; otherwise first active service for that type
         if s.get("is_default") or st not in default_by_type:
             default_by_type[st] = float(s.get("base_price") or 0)
+            default_svc_id_by_type[st] = s.get("id")
+    # Sprint 110ay — Bulk-load active legacy pricing for today's clients so the
+    # forecast revenue reflects each client's grandfathered rate (not catalog).
+    today_d = date.today()
+    client_ids = list({b.get("client_id") for b in bookings if b.get("client_id")})
+    overrides_by_pair: Dict[tuple, float] = {}
+    if client_ids:
+        ovr_rows = await db.price_overrides.find(
+            {"client_id": {"$in": client_ids}, "target_kind": "service"},
+            {"_id": 0, "client_id": 1, "target_code": 1, "override_price": 1, "expires_on": 1},
+        ).to_list(2000)
+        for row in ovr_rows:
+            if _override_is_active(row, today_d):
+                overrides_by_pair[(row["client_id"], row["target_code"])] = float(row.get("override_price") or 0)
     revenue = 0.0
     booked_count = 0
     completed_count = 0
@@ -11009,6 +11024,25 @@ async def today_pnl(_: dict = Depends(require_admin)):
         price = float(b.get("actual_price") or 0)
         if not price:
             price = float(b.get("credit_value") or 0)
+        # Sprint 110ay — Honor each client's grandfathered (legacy) pricing
+        # before falling back to the catalog. Compares against the booking's
+        # service_id when set, or the default service id for the service_type.
+        client_id_for_lookup = b.get("client_id")
+        legacy_svc_id = b.get("service_id") or default_svc_id_by_type.get(b.get("service_type") or "")
+        legacy_price = None
+        if client_id_for_lookup and legacy_svc_id:
+            legacy_price = overrides_by_pair.get((client_id_for_lookup, legacy_svc_id))
+        if not price and legacy_price is not None:
+            price = float(legacy_price)
+            # Boarding is per-night — multiply the legacy nightly rate too
+            if b.get("service_type") == "boarding":
+                try:
+                    d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
+                    d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
+                    nights = max((d2 - d1).days, 1)
+                    price = price * nights
+                except Exception:
+                    pass
         if not price and b.get("service_id"):
             price = svc_price.get(b["service_id"], 0)
         # Training is normally pre-paid via packages — never auto-estimate
