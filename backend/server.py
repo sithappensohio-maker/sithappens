@@ -8572,6 +8572,132 @@ async def portal_trivia_quiz_answer(
 
 
 # ── Admin trivia management ──
+@api.get("/admin/trivia/leaderboard")
+async def admin_trivia_leaderboard(_: dict = Depends(require_admin)):
+    """Full leaderboard for admin — same math as the client-facing one, but
+    every player (not just top-10), full client names, dog names, last-played
+    date, and the list of streak milestones earned so the admin can award
+    perks at next checkout."""
+    today_d = business_today()
+    attempts = await db.trivia_attempts.find(
+        {}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
+    ).to_list(50000)
+    if not attempts:
+        return {"players": [], "total_players": 0, "total_attempts": 0,
+                "pending_milestones": []}
+    by_client: Dict[str, List[dict]] = {}
+    for a in attempts:
+        by_client.setdefault(a["client_id"], []).append(a)
+    rows = []
+    for cli, atts in by_client.items():
+        by_date = {a["date"]: bool(a.get("correct")) for a in atts}
+        total_attempts = len(atts)
+        total_correct = sum(1 for v in by_date.values() if v)
+        # current streak
+        d = today_d
+        if d.isoformat() not in by_date:
+            d = d - timedelta(days=1)
+        cur = 0
+        while d.isoformat() in by_date and by_date[d.isoformat()]:
+            cur += 1
+            d = d - timedelta(days=1)
+        # best streak
+        srt = sorted(by_date.keys())
+        best = 0; run = 0; prev = None
+        for ds in srt:
+            if not by_date[ds]:
+                run = 0; prev = None; continue
+            if prev is None:
+                run = 1
+            else:
+                try: run = run + 1 if (date.fromisoformat(ds) - prev).days == 1 else 1
+                except Exception: run = 1
+            best = max(best, run)
+            try: prev = date.fromisoformat(ds)
+            except Exception: prev = None
+        last_played = max(by_date.keys())
+        rows.append({
+            "client_id": cli,
+            "current_streak": cur,
+            "best_streak": max(best, cur),
+            "total_correct": total_correct,
+            "total_attempts": total_attempts,
+            "accuracy_pct": round((total_correct / total_attempts) * 100, 1) if total_attempts else 0.0,
+            "last_played": last_played,
+        })
+    # Attach FULL client name + email + dogs + earned milestones
+    cids = [r["client_id"] for r in rows]
+    clients = await db.clients.find(
+        {"id": {"$in": cids}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "trivia_milestones": 1},
+    ).to_list(len(cids))
+    cmap = {c["id"]: c for c in clients}
+    dogs = await db.dogs.find(
+        {"client_id": {"$in": cids},
+         "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+        {"_id": 0, "client_id": 1, "name": 1},
+    ).to_list(5000)
+    dmap: Dict[str, List[str]] = {}
+    for d_ in dogs:
+        dmap.setdefault(d_["client_id"], []).append(d_.get("name") or "")
+    for r in rows:
+        c = cmap.get(r["client_id"], {})
+        r["name"] = c.get("name") or "Unknown"
+        r["email"] = c.get("email") or ""
+        r["phone"] = c.get("phone") or ""
+        r["dogs"] = [n for n in dmap.get(r["client_id"], []) if n]
+        r["milestones"] = c.get("trivia_milestones") or []  # [{days,earned_on}]
+    rows.sort(key=lambda r: (-r["current_streak"], -r["best_streak"], -r["total_correct"]))
+    for i, r in enumerate(rows):
+        r["rank"] = i + 1
+    # Pending perks: any milestones earned but not yet marked redeemed
+    pending = []
+    for r in rows:
+        for m in r["milestones"]:
+            if not m.get("redeemed_at"):
+                pending.append({
+                    "client_id": r["client_id"],
+                    "client_name": r["name"],
+                    "dogs": r["dogs"],
+                    "days": m.get("days"),
+                    "earned_on": m.get("earned_on"),
+                })
+    pending.sort(key=lambda x: x.get("earned_on") or "")
+    return {
+        "players": rows,
+        "total_players": len(rows),
+        "total_attempts": sum(r["total_attempts"] for r in rows),
+        "pending_milestones": pending,
+    }
+
+
+class TriviaMilestoneRedeemIn(BaseModel):
+    client_id: str
+    days: int
+    earned_on: str
+
+
+@api.post("/admin/trivia/milestones/redeem")
+async def admin_trivia_redeem_milestone(
+    body: TriviaMilestoneRedeemIn,
+    admin: dict = Depends(require_admin),
+):
+    """Mark a streak-milestone perk as redeemed (operator just applied the
+    free puzzle toy / retail credit / service upgrade at checkout)."""
+    res = await db.clients.update_one(
+        {"id": body.client_id, "trivia_milestones": {"$elemMatch": {
+            "days": body.days, "earned_on": body.earned_on,
+        }}},
+        {"$set": {
+            "trivia_milestones.$.redeemed_at": now_iso(),
+            "trivia_milestones.$.redeemed_by": admin["id"],
+        }},
+    )
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    return {"ok": True}
+
+
 @api.get("/admin/trivia/questions")
 async def admin_trivia_list(_: dict = Depends(require_admin)):
     rows = await db.trivia_questions.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)

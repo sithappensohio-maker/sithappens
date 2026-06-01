@@ -2236,34 +2236,49 @@ function AutomationPanel() {
 
 // ─────── Sprint 110bi · Dog Trivia question pool management ───────
 function TriviaPanel() {
+  const [view, setView] = useState("leaderboard"); // leaderboard | questions
   const [rows, setRows] = useState([]);
   const [active, setActive] = useState(0);
   const [count, setCount] = useState(15);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [lb, setLb] = useState(null);
 
-  const load = async () => {
+  const loadQuestions = async () => {
     try {
       const r = await api.get("/admin/trivia/questions");
       setRows(r.data.questions || []); setActive(r.data.active || 0);
     } catch (e) { setErr(e.response?.data?.detail || "Could not load"); }
   };
-  useEffect(() => { load(); }, []);
+  const loadLeaderboard = async () => {
+    try { const r = await api.get("/admin/trivia/leaderboard"); setLb(r.data); }
+    catch (e) { setErr(e.response?.data?.detail || "Could not load leaderboard"); }
+  };
+  useEffect(() => { loadQuestions(); loadLeaderboard(); }, []);
 
   const generate = async () => {
     setBusy(true); setErr("");
-    try { await api.post("/admin/trivia/generate", { count: Number(count) || 10 }); await load(); }
+    try { await api.post("/admin/trivia/generate", { count: Number(count) || 10 }); await loadQuestions(); }
     catch (e) { setErr(e.response?.data?.detail || "Generation failed"); }
     finally { setBusy(false); }
   };
   const toggle = async (q) => {
-    try { await api.put(`/admin/trivia/questions/${q.id}/active`, { active: !q.active }); load(); }
+    try { await api.put(`/admin/trivia/questions/${q.id}/active`, { active: !q.active }); loadQuestions(); }
     catch (e) { setErr(e.response?.data?.detail || "Toggle failed"); }
   };
   const del = async (q) => {
     if (!window.confirm("Delete this question? This cannot be undone.")) return;
-    try { await api.delete(`/admin/trivia/questions/${q.id}`); load(); }
+    try { await api.delete(`/admin/trivia/questions/${q.id}`); loadQuestions(); }
     catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
+  };
+  const redeem = async (m) => {
+    if (!window.confirm(`Mark ${m.client_name}'s ${m.days}-day milestone as redeemed?`)) return;
+    try {
+      await api.post("/admin/trivia/milestones/redeem", {
+        client_id: m.client_id, days: m.days, earned_on: m.earned_on,
+      });
+      await loadLeaderboard();
+    } catch (e) { setErr(e.response?.data?.detail || "Redeem failed"); }
   };
 
   const tagColor = {
@@ -2279,7 +2294,116 @@ function TriviaPanel() {
           <h3 className="text-white font-black uppercase italic"><i className="fas fa-puzzle-piece text-shBlue mr-2"/>Dog Trivia</h3>
           <p className="text-[12px] text-gray-500">{active} active question{active === 1 ? "" : "s"} · {rows.length} total · Wordle-style daily card on client portal</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex gap-1 bg-bgBase rounded p-1 border border-bgHover">
+          {[["leaderboard","Leaderboard","fa-trophy"],["questions","Questions","fa-list"]].map(([k,l,i])=>(
+            <button key={k} onClick={()=>setView(k)} data-testid={`trivia-view-${k}`}
+                    className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${view===k ? "bg-shBlue text-bgHeader" : "text-gray-400 hover:text-white"}`}>
+              <i className={`fas ${i} mr-1`}/>{l}
+            </button>
+          ))}
+        </div>
+      </div>
+      {err && <div className="bg-red-500/10 border border-red-400 text-red-300 rounded p-2 text-[13px] mb-3" data-testid="trivia-err">{err}</div>}
+
+      {view === "leaderboard" && (
+        <div className="space-y-3" data-testid="trivia-admin-leaderboard">
+          {!lb ? <p className="text-gray-500 text-sm">Loading…</p> : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <Kpi label="Total players" value={lb.total_players} testId="trivia-lb-players"/>
+                <Kpi label="Total answers" value={lb.total_attempts} testId="trivia-lb-attempts"/>
+                <Kpi label="Pending perks" value={lb.pending_milestones.length} color="shOrange" testId="trivia-lb-pending"/>
+                <Kpi label="Top streak" value={lb.players[0]?.current_streak ?? 0} color="shGreen" testId="trivia-lb-topstreak"/>
+              </div>
+
+              {lb.pending_milestones.length > 0 && (
+                <div className="bg-shOrange/5 border border-shOrange/40 rounded-xl p-3" data-testid="trivia-pending-list">
+                  <p className="text-[12px] font-black uppercase tracking-widest text-shOrange mb-2">
+                    <i className="fas fa-gift mr-1"/>Perks to award at next checkout
+                  </p>
+                  <div className="space-y-1">
+                    {lb.pending_milestones.map((m,i) => (
+                      <div key={`${m.client_id}-${m.days}-${m.earned_on}-${i}`}
+                           className="flex justify-between items-center bg-bgBase rounded p-2 text-[13px]"
+                           data-testid={`trivia-perk-${m.client_id}-${m.days}`}>
+                        <div>
+                          <p className="text-white font-bold">{m.client_name}{m.dogs?.length ? <span className="text-gray-500 font-normal"> · {m.dogs.join(", ")}</span> : null}</p>
+                          <p className="text-[11px] text-gray-400">
+                            <strong className="text-shOrange">{m.days}-day streak</strong> · earned {m.earned_on}
+                          </p>
+                        </div>
+                        <button onClick={()=>redeem(m)} data-testid={`trivia-perk-redeem-${m.client_id}-${m.days}`}
+                                className="bg-shGreen text-bgHeader px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest">
+                          <i className="fas fa-check mr-1"/>Redeemed
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {lb.players.length === 0 ? (
+                <p className="text-gray-500 text-sm italic">No one has played yet — the daily card lives on the client portal home.</p>
+              ) : (
+                <div className="bg-bgBase rounded-xl border border-bgHover overflow-hidden">
+                  <table className="w-full text-[13px]">
+                    <thead className="text-[10px] font-black uppercase tracking-widest text-gray-500 border-b border-bgHover bg-bgPanel/60">
+                      <tr>
+                        <th className="px-3 py-2 text-left">#</th>
+                        <th className="px-3 py-2 text-left">Player</th>
+                        <th className="px-3 py-2 text-left">Dogs</th>
+                        <th className="px-3 py-2 text-right">Current 🔥</th>
+                        <th className="px-3 py-2 text-right">Best</th>
+                        <th className="px-3 py-2 text-right">Correct</th>
+                        <th className="px-3 py-2 text-right hidden sm:table-cell">Accuracy</th>
+                        <th className="px-3 py-2 text-left hidden md:table-cell">Last played</th>
+                        <th className="px-3 py-2 text-left">Earned</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lb.players.map(p => (
+                        <tr key={p.client_id} className="border-b border-bgHover/40 hover:bg-bgPanel/40"
+                            data-testid={`trivia-lb-player-${p.client_id}`}>
+                          <td className="px-3 py-2 text-gray-400 font-black">#{p.rank}</td>
+                          <td className="px-3 py-2">
+                            <p className="text-white font-bold">{p.name}</p>
+                            <p className="text-[11px] text-gray-500">{p.email}</p>
+                          </td>
+                          <td className="px-3 py-2 text-gray-400 text-[12px] truncate max-w-[160px]">{p.dogs.join(", ") || "—"}</td>
+                          <td className="px-3 py-2 text-right">
+                            <span className={`font-black ${p.current_streak >= 7 ? "text-shGreen" : p.current_streak >= 3 ? "text-shOrange" : "text-white"}`}>
+                              {p.current_streak}d
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right text-gray-300">{p.best_streak}d</td>
+                          <td className="px-3 py-2 text-right text-gray-300">{p.total_correct}/{p.total_attempts}</td>
+                          <td className="px-3 py-2 text-right text-gray-400 hidden sm:table-cell">{p.accuracy_pct}%</td>
+                          <td className="px-3 py-2 text-gray-500 text-[12px] hidden md:table-cell">{p.last_played}</td>
+                          <td className="px-3 py-2 text-[11px] text-gray-400">
+                            {p.milestones && p.milestones.length > 0 ? (
+                              <span className="space-x-1">
+                                {p.milestones.map((m,i)=>(
+                                  <span key={i} className={`inline-block px-1.5 py-0.5 rounded ${m.redeemed_at ? "bg-bgPanel text-gray-500" : "bg-shOrange/15 text-shOrange border border-shOrange/30 font-bold"}`}
+                                        title={m.redeemed_at ? `Redeemed ${m.redeemed_at.slice(0,10)}` : `Pending — earned ${m.earned_on}`}>
+                                    {m.days}d{m.redeemed_at ? "✓" : "!"}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : <span className="text-gray-600">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {view === "questions" && (<>
+        <div className="flex justify-end items-center gap-2 mb-3">
           <input type="number" min={1} max={50} value={count} onChange={(e)=>setCount(e.target.value)}
                  data-testid="trivia-gen-count"
                  className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm w-20"/>
@@ -2288,35 +2412,43 @@ function TriviaPanel() {
             {busy ? "Generating…" : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate with AI</>}
           </button>
         </div>
-      </div>
-      {err && <div className="bg-red-500/10 border border-red-400 text-red-300 rounded p-2 text-[13px] mb-3">{err}</div>}
-      <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
-        {rows.length === 0 ? (
-          <p className="text-gray-500 text-sm italic">No questions yet. Tap "Generate with AI" to seed the pool.</p>
-        ) : rows.map(q => (
-          <div key={q.id} className={`flex items-start gap-2 p-2 rounded border ${q.active ? "border-bgHover bg-bgBase/50" : "border-bgHover/40 bg-bgBase/20 opacity-50"}`} data-testid={`trivia-row-${q.id}`}>
-            <div className="flex-1 min-w-0">
-              <p className="text-[13px] text-gray-200 truncate">{q.question}</p>
-              <p className="text-[10px] text-gray-500 mt-0.5">
-                <span className={`font-black uppercase ${tagColor[q.tag] || "text-gray-400"}`}>{q.tag}</span>
-                <span className="mx-1 text-gray-600">·</span>
-                <span className="text-gray-400">{q.difficulty}</span>
-                <span className="mx-1 text-gray-600">·</span>
-                <span className="text-gray-500">A: {q.choices[q.correct_index]}</span>
-                {q.times_used > 0 && <><span className="mx-1 text-gray-600">·</span><span className="text-gray-500">used {q.times_used}x</span></>}
-              </p>
+        <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
+          {rows.length === 0 ? (
+            <p className="text-gray-500 text-sm italic">No questions yet. Tap "Generate with AI" to seed the pool.</p>
+          ) : rows.map(q => (
+            <div key={q.id} className={`flex items-start gap-2 p-2 rounded border ${q.active ? "border-bgHover bg-bgBase/50" : "border-bgHover/40 bg-bgBase/20 opacity-50"}`} data-testid={`trivia-row-${q.id}`}>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] text-gray-200 truncate">{q.question}</p>
+                <p className="text-[10px] text-gray-500 mt-0.5">
+                  <span className={`font-black uppercase ${tagColor[q.tag] || "text-gray-400"}`}>{q.tag}</span>
+                  <span className="mx-1 text-gray-600">·</span>
+                  <span className="text-gray-400">{q.difficulty}</span>
+                  <span className="mx-1 text-gray-600">·</span>
+                  <span className="text-gray-500">A: {q.choices[q.correct_index]}</span>
+                  {q.times_used > 0 && <><span className="mx-1 text-gray-600">·</span><span className="text-gray-500">used {q.times_used}x</span></>}
+                </p>
+              </div>
+              <button onClick={()=>toggle(q)} data-testid={`trivia-toggle-${q.id}`}
+                      className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded ${q.active ? "text-shGreen hover:bg-shGreen/15" : "text-gray-500 hover:bg-gray-500/15"}`}>
+                {q.active ? "active" : "off"}
+              </button>
+              <button onClick={()=>del(q)} data-testid={`trivia-delete-${q.id}`}
+                      className="text-gray-500 hover:text-red-400 text-[12px] px-1">
+                <i className="fas fa-trash"/>
+              </button>
             </div>
-            <button onClick={()=>toggle(q)} data-testid={`trivia-toggle-${q.id}`}
-                    className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded ${q.active ? "text-shGreen hover:bg-shGreen/15" : "text-gray-500 hover:bg-gray-500/15"}`}>
-              {q.active ? "active" : "off"}
-            </button>
-            <button onClick={()=>del(q)} data-testid={`trivia-delete-${q.id}`}
-                    className="text-gray-500 hover:text-red-400 text-[12px] px-1">
-              <i className="fas fa-trash"/>
-            </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </>)}
+    </div>
+  );
+}
+
+function Kpi({ label, value, color = "white", testId }) {
+  return (
+    <div className="bg-bgBase rounded-lg p-3 border border-bgHover" data-testid={testId}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+      <p className={`text-xl font-black text-${color} mt-1`}>{value}</p>
     </div>
   );
 }

@@ -29,6 +29,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bj — Admin view of trivia players + leaderboard + perk redemption (2026-06-01)
+- ✅ **`GET /api/admin/trivia/leaderboard`** — full unredacted leaderboard: rank, full client name, email, phone, dog names, current/best streak, total correct, total attempts, accuracy %, last_played date, all earned milestones with redeemed_at status.
+- ✅ **`POST /api/admin/trivia/milestones/redeem`** — operator marks a streak perk (7/14/30 days) as redeemed at checkout. Stamps `redeemed_at` + `redeemed_by` on the matching item in `clients.trivia_milestones`.
+- ✅ **Settings → Dog Trivia panel** now opens to a **Leaderboard tab** (default) with: 4 KPI tiles (total players, total answers, pending perks count, top streak), a "Perks to award at next checkout" amber-bordered section listing every unredeemed milestone with a one-click "Redeemed" button, and the full player table (rank → player → dogs → current/best streak → correct/total → accuracy % → last played → earned milestone chips). **Questions tab** holds the original AI-generate + CRUD UI.
+- ✅ **Tests** `test_dog_trivia.py` extended to 11/11 passing (full-detail leaderboard shape, 404 on bad redeem).
+
+
 ## Sprint 110bi — Dog Trivia mini-game (Wordle-style daily + adaptive quiz) (2026-02)
 - ✅ **Wordle-style daily question** — every client sees the same multi-choice question per Eastern day. Deterministic SHA-256 hash of date picks from least-used pool, cached in `trivia_daily` collection for idempotency.
 - ✅ **Streak tracking** — `_compute_streak` walks consecutive days; missing today doesn't break streak, breaks only on wrong answer or skipped day. Milestone messages emit at 7/14/30 days (free puzzle toy / $5 retail credit / free service upgrade) — stamped onto `clients.trivia_milestones`. Operator manually applies the perk at next checkout.

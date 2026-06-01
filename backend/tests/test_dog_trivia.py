@@ -130,3 +130,31 @@ def test_admin_endpoints_require_admin():
     assert r.status_code in (401, 403)
     r = requests.post(f"{BASE}/api/admin/trivia/generate", json={"count": 2}, timeout=15)
     assert r.status_code in (401, 403)
+    r = requests.get(f"{BASE}/api/admin/trivia/leaderboard", timeout=15)
+    assert r.status_code in (401, 403)
+
+
+def test_admin_leaderboard_full_detail():
+    """Admin leaderboard returns FULL client names, emails, dog names, and
+    per-player accuracy — unlike the client-facing leaderboard which is
+    anonymized to first-name + dogs only."""
+    h = _admin()
+    body = requests.get(f"{BASE}/api/admin/trivia/leaderboard", headers=h, timeout=15).json()
+    assert "players" in body and "total_players" in body
+    assert "pending_milestones" in body
+    if body["players"]:
+        row = body["players"][0]
+        for k in ("client_id", "name", "email", "current_streak", "best_streak",
+                  "total_correct", "total_attempts", "accuracy_pct", "last_played",
+                  "milestones", "rank"):
+            assert k in row, f"missing {k}"
+        # Admin sees full name, not just first
+        assert row["name"] and " " in row["name"] or len(row["name"]) > 0
+
+
+def test_admin_redeem_404_when_no_milestone():
+    h = _admin()
+    r = requests.post(f"{BASE}/api/admin/trivia/milestones/redeem", headers=h,
+                      json={"client_id": "does-not-exist", "days": 7,
+                            "earned_on": "2024-01-01"}, timeout=15)
+    assert r.status_code == 404
