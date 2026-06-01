@@ -89,6 +89,9 @@ export default function Staff() {
 
       {subtab === "employees" && (<>
 
+      {/* Owner's Draw drill-down — only shown when an owner is configured */}
+      <OwnerDrawCard/>
+
       {/* Employee list */}
       <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="staff-list">
         {paySnap && paySnap.totals.this_week_gross > 0 && (
@@ -110,11 +113,12 @@ export default function Staff() {
               <div className="min-w-0 flex-1">
                 <p className="text-base font-black text-white">
                   {e.name}
+                  {e.is_owner && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shBlue/20 text-shBlue px-2 py-0.5 rounded" data-testid={`staff-owner-${e.id}`}><i className="fas fa-crown mr-1"/>Owner</span>}
                   {!e.active && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-red-500/15 text-red-300 px-2 py-0.5 rounded">Inactive</span>}
                   {snap?.live && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shGreen/20 text-shGreen px-2 py-0.5 rounded animate-pulse" data-testid={`staff-live-${e.id}`}><i className="fas fa-bolt mr-1"/>On the clock</span>}
                 </p>
                 <p className="text-[13px] text-gray-400">{e.email}{e.phone ? ` · ${e.phone}` : ""}</p>
-                <p className="text-[12px] text-gray-500 mt-1">${e.hourly_rate.toFixed(2)}/hr{e.last_login_at ? ` · last login ${fmtTime(e.last_login_at)}` : " · never logged in"}</p>
+                <p className="text-[12px] text-gray-500 mt-1">${e.hourly_rate.toFixed(2)}/hr{e.is_owner ? " · owner's draw" : ""}{e.last_login_at ? ` · last login ${fmtTime(e.last_login_at)}` : " · never logged in"}</p>
                 {/* Sprint 110bb — pay snapshot mini-row */}
                 {snap && e.active && (snap.this_week_hours > 0 || snap.last_week_hours > 0 || snap.live) && (
                   <p className="text-[12px] mt-1.5 font-black uppercase tracking-widest" data-testid={`staff-pay-${e.id}`}>
@@ -273,6 +277,7 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
     active: emp?.active ?? true,
     phone: emp?.phone || "",
     notes: emp?.notes || "",
+    is_owner: emp?.is_owner ?? false,
   });
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -318,6 +323,15 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
                 Active (can log in)
               </label>
             )}
+            <label className="flex items-start gap-2 bg-shBlue/5 border border-shBlue/30 rounded p-2">
+              <input type="checkbox" checked={form.is_owner}
+                     onChange={(e)=>setForm({...form, is_owner: e.target.checked})}
+                     className="w-4 h-4 mt-0.5 accent-shBlue" data-testid="emp-is-owner"/>
+              <div>
+                <span className="text-[13px] font-black uppercase tracking-widest text-shBlue">Owner / self-pay</span>
+                <p className="text-[11px] text-gray-400 mt-0.5">Excluded from payroll tax math, 1099/W2 exports, and quarterly tax labor expense. Pay tracked as owner's draw. Single owner only.</p>
+              </div>
+            </label>
             <label className="block">
               <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Notes</span>
               <textarea value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})} rows={2}
@@ -1165,6 +1179,18 @@ function QuarterlyTaxTab() {
         <TaxKpi label="Est. Tax Owed YTD" value={data.balance_owed_ytd} color="shBlue" emphasis/>
       </div>
 
+      {/* Owner's draw YTD tile — only render when an owner is set */}
+      {Number(data.owner_draw_ytd || 0) > 0 && (
+        <div className="bg-shBlue/5 border border-shBlue/40 rounded-xl p-3 flex items-baseline gap-3 flex-wrap" data-testid="qt-owner-draw">
+          <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+            <i className="fas fa-crown mr-1"/>Owner's Draw YTD
+          </p>
+          <p className="text-2xl font-black text-shBlue">${data.owner_draw_ytd.toFixed(2)}</p>
+          <p className="text-[12px] text-gray-400">{Number(data.owner_draw_hours || 0).toFixed(1)}h logged this year</p>
+          <p className="text-[11px] text-gray-500 ml-auto italic">Excluded from labor expense — owner's draw comes out of net profit.</p>
+        </div>
+      )}
+
       {/* Quarterly cards with Mark-Paid CTA */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3" data-testid="qt-quarters">
         {data.quarters.map(q => {
@@ -1484,3 +1510,42 @@ function Row({ label, value, neg = false, bold = false, color = "" }) {
   );
 }
 
+
+
+// ─── Owner's Draw drill-down (sole-prop self-pay tracker) ──────────────────
+function OwnerDrawCard() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/admin/owner/draw-summary");
+        if (r.data?.owner) setData(r.data);
+      } catch {}
+    })();
+  }, []);
+  if (!data) return null;
+  const o = data.owner;
+  return (
+    <div className="bg-shBlue/5 border border-shBlue/40 rounded-xl p-4" data-testid="owner-draw-card">
+      <div className="flex justify-between items-baseline gap-3 flex-wrap">
+        <p className="text-[13px] font-black uppercase tracking-widest text-shBlue">
+          <i className="fas fa-crown mr-2"/>Owner's Draw · {o.name}
+        </p>
+        <p className="text-[11px] text-gray-500 normal-case italic">${o.hourly_rate.toFixed(2)}/hr · excluded from payroll taxes &amp; 1099/W2</p>
+      </div>
+      <div className="grid grid-cols-3 gap-3 mt-3">
+        {[
+          ["today", "Today"],
+          ["month", "This month"],
+          ["year", "YTD"],
+        ].map(([key, label]) => (
+          <div key={key} className="bg-bgPanel border border-bgHover rounded p-3" data-testid={`owner-draw-${key}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+            <p className="text-xl font-black text-shBlue mt-1">${data[key].draw.toFixed(2)}</p>
+            <p className="text-[12px] text-gray-400">{data[key].hours.toFixed(2)}h</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}

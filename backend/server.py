@@ -8207,15 +8207,19 @@ async def payroll_year_end_csv(
     uids = list({e["user_id"] for e in entries if e.get("user_id")})
     users = await db.users.find(
         {"id": {"$in": uids}},
-        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "phone": 1, "hourly_rate": 1, "active": 1},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "phone": 1, "hourly_rate": 1, "active": 1, "is_owner": 1},
     ).to_list(500) if uids else []
-    user_by_id = {u["id"]: u for u in users}
+    # Sprint 110bf — sole-prop owner does NOT get a 1099/W2; their pay is a draw
+    user_by_id = {u["id"]: u for u in users if not u.get("is_owner")}
 
     # Aggregate per-employee
     per_user: Dict[str, Dict[str, Any]] = {}
     for e in entries:
         uid = e.get("user_id")
         if not uid:
+            continue
+        if uid not in user_by_id:
+            # Owner (filtered above) or deleted user — skip from 1099/W2 export.
             continue
         try:
             t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
@@ -8261,6 +8265,8 @@ async def payroll_year_end_csv(
         w.writerow(["DETAIL — every clocked entry"])
         w.writerow(["Employee", "Clock-in", "Clock-out", "Hours", "Rate", "Gross"])
         for e in sorted(entries, key=lambda r: (r.get("user_id"), r.get("clock_in_at") or "")):
+            if e.get("user_id") not in user_by_id:
+                continue
             u = user_by_id.get(e.get("user_id"), {})
             try:
                 t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
@@ -9935,6 +9941,7 @@ class EmployeeIn(BaseModel):
     active: bool = True
     phone: Optional[str] = ""
     notes: Optional[str] = ""
+    is_owner: bool = False  # Sprint 110bf — exclude from payroll tax math (owner's draw)
 
 
 class EmployeeCreateIn(EmployeeIn):
@@ -9959,10 +9966,31 @@ def _employee_doc_to_out(u: dict) -> dict:
         "active": u.get("active", True),
         "phone": u.get("phone", ""),
         "notes": u.get("notes", ""),
+        "is_owner": bool(u.get("is_owner", False)),
         "role": "employee",
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
     }
+
+
+async def _get_owner_user_ids() -> set:
+    """Return the set of user ids flagged as owner (single-owner enforced, but
+    returned as a set for clean exclusion logic). Empty set when no owner."""
+    rows = await db.users.find(
+        {"role": "employee", "is_owner": True}, {"_id": 0, "id": 1}
+    ).to_list(10)
+    return {r["id"] for r in rows}
+
+
+async def _enforce_single_owner(new_owner_id: Optional[str]) -> None:
+    """When promoting an employee to owner, demote any previous owner so we
+    never have two. Called from create/update employee."""
+    if not new_owner_id:
+        return
+    await db.users.update_many(
+        {"role": "employee", "is_owner": True, "id": {"$ne": new_owner_id}},
+        {"$set": {"is_owner": False}},
+    )
 
 
 @api.get("/admin/employees")
@@ -9987,12 +10015,15 @@ async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admi
         "active": body.active,
         "phone": body.phone or "",
         "notes": body.notes or "",
+        "is_owner": bool(body.is_owner),
         "role": "employee",
         "password_hash": hash_password(body.password),
         "created_at": now_iso(),
         "login_count": 0,
     }
     await db.users.insert_one(doc)
+    if doc["is_owner"]:
+        await _enforce_single_owner(doc["id"])
     return _employee_doc_to_out(doc)
 
 
@@ -10009,8 +10040,11 @@ async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(requ
         "active": body.active,
         "phone": body.phone or "",
         "notes": body.notes or "",
+        "is_owner": bool(body.is_owner),
     }
     await db.users.update_one({"id": user_id}, {"$set": update})
+    if update["is_owner"]:
+        await _enforce_single_owner(user_id)
     u.update(update)
     return _employee_doc_to_out(u)
 
@@ -10039,6 +10073,52 @@ async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
     return {"ok": True}
+
+
+# ── Owner (sole-prop / self-pay) ──
+@api.get("/admin/owner")
+async def get_owner(_: dict = Depends(require_admin)):
+    """Returns the single employee flagged as owner, or null."""
+    row = await db.users.find_one(
+        {"role": "employee", "is_owner": True},
+        {"_id": 0, "password_hash": 0},
+    )
+    return {"owner": _employee_doc_to_out(row) if row else None}
+
+
+@api.get("/admin/owner/draw-summary")
+async def owner_draw_summary(_: dict = Depends(require_admin)):
+    """Today / MTD / YTD draw for the owner: hours × hourly_rate."""
+    row = await db.users.find_one(
+        {"role": "employee", "is_owner": True},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1},
+    )
+    if not row:
+        return {"owner": None}
+    today = date.today()
+    rate = float(row.get("hourly_rate") or 0)
+    spans = {
+        "today":     (f"{today.isoformat()}T00:00:00", f"{today.isoformat()}T23:59:59.999Z"),
+        "month":     (f"{today.strftime('%Y-%m-01')}T00:00:00", f"{today.isoformat()}T23:59:59.999Z"),
+        "year":      (f"{today.year}-01-01T00:00:00", f"{today.isoformat()}T23:59:59.999Z"),
+    }
+    out = {}
+    for label, (s, e) in spans.items():
+        entries = await db.time_clock_entries.find(
+            {"user_id": row["id"], "clock_in_at": {"$gte": s, "$lte": e},
+             "clock_out_at": {"$ne": None, "$exists": True}},
+            {"_id": 0, "hours": 1},
+        ).to_list(10000)
+        hrs = round(sum(float(x.get("hours") or 0) for x in entries), 2)
+        out[label] = {"hours": hrs, "draw": round(hrs * rate, 2)}
+    return {
+        "owner": {
+            "id": row["id"],
+            "name": row.get("display_name") or row.get("name") or "Owner",
+            "hourly_rate": rate,
+        },
+        **out,
+    }
 
 
 # ── Time clock ──
@@ -10239,7 +10319,7 @@ async def time_clock_me(
 async def staff_pay_snapshot(_: dict = Depends(require_admin)):
     employees = await db.users.find(
         {"role": "employee", "active": True},
-        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1, "is_owner": 1},
     ).to_list(500)
     if not employees:
         return {"snapshot": [], "totals": {"this_week_hours": 0, "this_week_gross": 0, "ytd_gross": 0}}
@@ -10261,6 +10341,7 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
             "name": u.get("display_name") or u.get("name") or u.get("email"),
             "email": u.get("email"),
             "hourly_rate": float(u.get("hourly_rate") or 0),
+            "is_owner": bool(u.get("is_owner", False)),
             "this_week_hours": 0.0,
             "last_week_hours": 0.0,
             "ytd_hours": 0.0,
@@ -10417,16 +10498,25 @@ async def admin_quarterly_tax(
     ).to_list(50000)
     uids = list({e["user_id"] for e in tc_entries})
     rate_users = await db.users.find(
-        {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1}
+        {"id": {"$in": uids}}, {"_id": 0, "id": 1, "hourly_rate": 1, "is_owner": 1}
     ).to_list(500) if uids else []
     rate_map = {u["id"]: float(u.get("hourly_rate") or 0) for u in rate_users}
+    owner_ids = {u["id"] for u in rate_users if u.get("is_owner")}
     hours_by_user: Dict[str, float] = {}
     for e in tc_entries:
         hours_by_user[e["user_id"]] = hours_by_user.get(e["user_id"], 0) + float(e.get("hours") or 0)
     labor_gross = 0.0
     labor_burden = 0.0
+    owner_draw_ytd = 0.0
+    owner_draw_hours = 0.0
     for uid, hrs in hours_by_user.items():
         rate = rate_map.get(uid, 0.0)
+        if uid in owner_ids:
+            # Owner's pay is a DRAW (out of net profit) — never an expense
+            # and never subject to employer payroll tax burden.
+            owner_draw_ytd += hrs * rate
+            owner_draw_hours += hrs
+            continue
         c = _compute_payroll_tax(hrs, rate, 0.0, payroll_tax)
         labor_gross += c["gross"]
         labor_burden += c["employer_burden"]
@@ -10506,6 +10596,8 @@ async def admin_quarterly_tax(
             "total": round(total_expenses, 2),
         },
         "net_profit": round(net_profit, 2),
+        "owner_draw_ytd": round(owner_draw_ytd, 2),
+        "owner_draw_hours": round(owner_draw_hours, 2),
         "se_tax": {
             "taxable_base": round(se_taxable, 2),
             "social_security": round(ss_tax, 2),
@@ -11375,11 +11467,20 @@ async def payroll_estimate(
 ):
     """Estimate per-employee employer cost (gross + taxes + workers comp) and
     employee take-home pay for the given pay period. Uses YTD gross from
-    completed clock entries since Jan 1 to respect FICA/FUTA/SUTA wage caps."""
+    completed clock entries since Jan 1 to respect FICA/FUTA/SUTA wage caps.
+
+    Owner (`is_owner=True`) is EXCLUDED — sole-prop owners don't pay employer
+    payroll tax on their own draw. See `/admin/owner/draw-summary`."""
+    owner_ids = await _get_owner_user_ids()
     tax = await _get_payroll_tax_settings()
+    _filter: Dict[str, Any] = {
+        "clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
+        "clock_out_at": {"$ne": None, "$exists": True},
+    }
+    if owner_ids:
+        _filter["user_id"] = {"$nin": list(owner_ids)}
     period_entries = await db.time_clock_entries.find(
-        {"clock_in_at": {"$gte": f"{start_date}T00:00:00", "$lte": f"{end_date}T23:59:59.999Z"},
-         "clock_out_at": {"$ne": None, "$exists": True}},
+        _filter,
         {"_id": 0, "user_id": 1, "hours": 1},
     ).to_list(5000)
     user_ids = list({e["user_id"] for e in period_entries})
@@ -11467,9 +11568,10 @@ async def payroll_csv(
     ).to_list(5000)
     user_ids = list({e["user_id"] for e in entries})
     users = await db.users.find(
-        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "display_name": 1, "hourly_rate": 1}
+        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "display_name": 1, "hourly_rate": 1, "is_owner": 1}
     ).to_list(500) if user_ids else []
-    user_map = {u["id"]: u for u in users}
+    # Sprint 110bf — exclude sole-prop owner (their pay is a draw, not payroll).
+    user_map = {u["id"]: u for u in users if not u.get("is_owner")}
 
     # Pull scheduled-vs-actual to count flags
     sva = await db.shifts.find(
@@ -11497,6 +11599,9 @@ async def payroll_csv(
 
     per_user: Dict[str, Dict[str, Any]] = {}
     for e in entries:
+        if e["user_id"] not in user_map:
+            # Owner (excluded above) or deleted user.
+            continue
         u = user_map.get(e["user_id"], {})
         slot = per_user.setdefault(e["user_id"], {
             "name": u.get("display_name") or u.get("name") or "Unknown",
@@ -11877,16 +11982,19 @@ async def today_pnl(_: dict = Depends(require_admin)):
     ).to_list(500)
     user_ids = list({e["user_id"] for e in entries})
     users = await db.users.find(
-        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1}
+        {"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "name": 1, "display_name": 1, "hourly_rate": 1, "is_owner": 1}
     ).to_list(500) if user_ids else []
     user_map = {u["id"]: u for u in users}
     labor_cost = 0.0
     labor_hours = 0.0
+    owner_draw_today = 0.0
+    owner_hours_today = 0.0
     open_shifts = 0
     per_employee: Dict[str, Dict[str, Any]] = {}
     for e in entries:
         u = user_map.get(e["user_id"], {})
         rate = float(u.get("hourly_rate") or 0)
+        is_owner_u = bool(u.get("is_owner", False))
         if e.get("clock_out_at"):
             hrs = float(e.get("hours") or 0)
         else:
@@ -11901,10 +12009,14 @@ async def today_pnl(_: dict = Depends(require_admin)):
         cost = hrs * rate
         labor_cost += cost
         labor_hours += hrs
+        if is_owner_u:
+            owner_draw_today += cost
+            owner_hours_today += hrs
         slot = per_employee.setdefault(e["user_id"], {
             "user_id": e["user_id"],
             "name": u.get("display_name") or u.get("name") or "Unknown",
             "hourly_rate": rate, "hours": 0.0, "cost": 0.0, "is_clocked_in": False,
+            "is_owner": is_owner_u,
         })
         slot["hours"] = round(slot["hours"] + hrs, 2)
         slot["cost"] = round(slot["cost"] + cost, 2)
@@ -11936,6 +12048,8 @@ async def today_pnl(_: dict = Depends(require_admin)):
         "labor_burden": labor_burden,    # employer-side payroll tax + workers comp
         "labor_total": labor_total,      # gross + burden
         "labor_hours": labor_hours,
+        "owner_draw_today": round(owner_draw_today, 2),
+        "owner_hours_today": round(owner_hours_today, 2),
         "net": net,
         "margin_pct": margin_pct,
         "booked_count": booked_count,

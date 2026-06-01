@@ -593,6 +593,14 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
               <i className="fas fa-bag-shopping mr-1"/>Retail {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})
             </p>
           )}
+          {/* Sprint 110bf — owner's-draw chip (owner's hours still count toward
+              labor cost, but we surface what's specifically the owner's pay) */}
+          {Number(data.owner_draw_today || 0) > 0 && (
+            <p className="text-[12px] text-shBlue font-black uppercase tracking-widest mt-1" data-testid="pnl-owner-draw">
+              <i className="fas fa-crown mr-1"/>Owner's draw today {fmt(data.owner_draw_today)}
+              <span className="text-gray-500 normal-case ml-1">({Number(data.owner_hours_today || 0).toFixed(2)}h)</span>
+            </p>
+          )}
           {/* Sprint 110az — Legacy pricing impact chip. Shown only when at
               least one of today's bookings is for a grandfathered client. */}
           {Math.abs(Number(data.legacy_delta || 0)) >= 0.5 && data.legacy_client_count > 0 && (
@@ -642,6 +650,7 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
                 <div key={e.user_id} className="flex justify-between items-center gap-2 text-[14px]" data-testid={`pnl-emp-${e.user_id}`}>
                   <span className="text-gray-200 truncate">
                     {e.name}
+                    {e.is_owner && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shBlue bg-shBlue/15 border border-shBlue/40 px-1.5 py-0.5 rounded"><i className="fas fa-crown mr-1"/>owner</span>}
                     {e.is_clocked_in && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/15 border border-shGreen/40 px-1.5 py-0.5 rounded">live</span>}
                   </span>
                   <span className="text-gray-400 shrink-0">{e.hours}h · ${e.cost.toFixed(2)} · ${e.hourly_rate.toFixed(2)}/hr</span>
