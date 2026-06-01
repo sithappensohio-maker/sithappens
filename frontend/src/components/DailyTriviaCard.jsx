@@ -8,6 +8,152 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { todayISO } from "../lib/date";
 
+// ─── Inline SVG decorations (Sprint 110bm) ──────────────────────────────────
+// Sticking with the Sit Happens shBlue / shOrange / shGreen palette. No image
+// assets — everything is inline SVG so it's themable + zero network cost.
+
+function PawIcon({ className = "", size = 14 }) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} className={className} aria-hidden="true">
+      {/* main pad */}
+      <ellipse cx="16" cy="22" rx="7" ry="6" fill="currentColor"/>
+      {/* four toe pads */}
+      <ellipse cx="7"  cy="14" rx="3" ry="4" fill="currentColor"/>
+      <ellipse cx="12" cy="8"  rx="3" ry="4" fill="currentColor"/>
+      <ellipse cx="20" cy="8"  rx="3" ry="4" fill="currentColor"/>
+      <ellipse cx="25" cy="14" rx="3" ry="4" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function BoneIcon({ className = "", size = 14 }) {
+  return (
+    <svg viewBox="0 0 32 16" width={size} height={size * 0.5} className={className} aria-hidden="true">
+      <path fill="currentColor"
+            d="M5 3a3 3 0 1 1 1.6 5.6 3 3 0 1 1 0 -1.2A3 3 0 1 1 5 3zm22 0a3 3 0 1 0 -1.6 5.6 3 3 0 1 0 0 -1.2A3 3 0 1 0 27 3zM8 6h16v4H8z"/>
+    </svg>
+  );
+}
+
+function DogMascot({ mood = "happy", size = 56 }) {
+  // Minimal Sit-Happens-style cartoon pup face. Mood swaps the mouth + eyes.
+  const isHappy = mood === "happy";
+  const isThinking = mood === "thinking";
+  return (
+    <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
+      {/* ears */}
+      <path d="M10 18 q-4 10 4 22 q4 4 8 0 z" fill="#f26522"/>
+      <path d="M54 18 q4 10 -4 22 q-4 4 -8 0 z" fill="#f26522"/>
+      {/* face */}
+      <circle cx="32" cy="34" r="20" fill="#fbbf77"/>
+      {/* snout */}
+      <ellipse cx="32" cy="42" rx="12" ry="9" fill="#fde6c4"/>
+      {/* nose */}
+      <ellipse cx="32" cy="37" rx="3" ry="2.2" fill="#1f2937"/>
+      {/* eyes */}
+      {isHappy ? (
+        <>
+          <path d="M22 30 q3 -4 6 0" stroke="#1f2937" strokeWidth="2" fill="none" strokeLinecap="round"/>
+          <path d="M36 30 q3 -4 6 0" stroke="#1f2937" strokeWidth="2" fill="none" strokeLinecap="round"/>
+        </>
+      ) : isThinking ? (
+        <>
+          <circle cx="25" cy="30" r="2" fill="#1f2937"/>
+          <circle cx="39" cy="30" r="2" fill="#1f2937"/>
+        </>
+      ) : (
+        <>
+          <line x1="22" y1="28" x2="28" y2="32" stroke="#1f2937" strokeWidth="2" strokeLinecap="round"/>
+          <line x1="22" y1="32" x2="28" y2="28" stroke="#1f2937" strokeWidth="2" strokeLinecap="round"/>
+          <line x1="36" y1="28" x2="42" y2="32" stroke="#1f2937" strokeWidth="2" strokeLinecap="round"/>
+          <line x1="36" y1="32" x2="42" y2="28" stroke="#1f2937" strokeWidth="2" strokeLinecap="round"/>
+        </>
+      )}
+      {/* mouth */}
+      {isHappy ? (
+        <path d="M26 44 q6 6 12 0" stroke="#1f2937" strokeWidth="2" fill="none" strokeLinecap="round"/>
+      ) : isThinking ? (
+        <line x1="28" y1="46" x2="36" y2="46" stroke="#1f2937" strokeWidth="2" strokeLinecap="round"/>
+      ) : (
+        <path d="M26 46 q6 -4 12 0" stroke="#1f2937" strokeWidth="2" fill="none" strokeLinecap="round"/>
+      )}
+      {/* tongue when happy */}
+      {isHappy && <path d="M30 45 q2 4 4 0 z" fill="#ec4899"/>}
+    </svg>
+  );
+}
+
+function PawBackdrop() {
+  // Decorative paw scatter behind the card content (very low opacity).
+  const paws = [
+    {x: 5,  y: 8,  size: 22, rot: -18, op: 0.06},
+    {x: 88, y: 12, size: 18, rot: 22,  op: 0.05},
+    {x: 76, y: 70, size: 26, rot: -8,  op: 0.05},
+    {x: 18, y: 78, size: 16, rot: 14,  op: 0.06},
+    {x: 50, y: 95, size: 14, rot: 0,   op: 0.04},
+  ];
+  return (
+    <div className="absolute inset-0 pointer-events-none overflow-hidden">
+      {paws.map((p, i) => (
+        <div key={i}
+             className="absolute text-shBlue"
+             style={{ left: `${p.x}%`, top: `${p.y}%`, transform: `rotate(${p.rot}deg)`, opacity: p.op }}>
+          <PawIcon size={p.size} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PawConfetti() {
+  // Burst of paw-prints when the player gets the daily question correct.
+  const palette = ["#8cc63f", "#f26522", "#00a9e0", "#fbbf24", "#ec4899"];
+  const paws = Array.from({ length: 14 }, (_, i) => ({
+    x: 50 + (Math.random() - 0.5) * 80,
+    delay: i * 0.06,
+    drift: (Math.random() - 0.5) * 120,
+    rot: Math.floor(Math.random() * 360),
+    color: palette[i % palette.length],
+    size: 10 + Math.floor(Math.random() * 8),
+  }));
+  return (
+    <div className="absolute inset-x-0 top-0 h-full pointer-events-none overflow-hidden" aria-hidden="true">
+      <style>{`
+        @keyframes paw-fall {
+          0%   { transform: translate(0, -20px) rotate(0deg);   opacity: 0; }
+          15%  { opacity: 1; }
+          100% { transform: translate(var(--drift), 220px) rotate(var(--rot)); opacity: 0; }
+        }
+      `}</style>
+      {paws.map((p, i) => (
+        <div key={i}
+             className="absolute"
+             style={{
+               left: `${p.x}%`, top: 0,
+               color: p.color,
+               // CSS variables consumed by the keyframes above
+               "--drift": `${p.drift}px`,
+               "--rot": `${p.rot}deg`,
+               animation: `paw-fall 1.6s cubic-bezier(.2,.7,.4,1) ${p.delay}s forwards`,
+             }}>
+          <PawIcon size={p.size} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DifficultyPaws({ d }) {
+  const n = d === "hard" ? 3 : d === "medium" ? 2 : 1;
+  return (
+    <span className="inline-flex items-center gap-0.5" aria-label={`${d} difficulty`}>
+      {Array.from({ length: n }).map((_, i) => (
+        <PawIcon key={i} size={10} />
+      ))}
+    </span>
+  );
+}
+
 const DIFFICULTY_COLOR = {
   easy:   "text-shGreen bg-shGreen/15 border-shGreen/30",
   medium: "text-amber-300 bg-amber-500/15 border-amber-500/30",
@@ -74,16 +220,22 @@ export function DailyTriviaCard() {
     <div className="relative overflow-hidden bg-bgPanel card-pop rounded-2xl border border-bgHover shadow-2xl" data-testid="daily-trivia-card">
       <div className="absolute inset-0 pointer-events-none opacity-30"
            style={{ background: "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
+      <PawBackdrop />
+      {answered && result?.correct && <PawConfetti />}
       <div className="relative p-5">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-          <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
-            <i className="fas fa-puzzle-piece mr-2"/>Dog Trivia of the Day
+          <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue inline-flex items-center gap-2">
+            <PawIcon className="text-shBlue" size={16}/>Dog Trivia of the Day
           </p>
           <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-widest">
-            <span className={`px-2 py-0.5 rounded border ${diffClass(q.difficulty)}`} data-testid="trivia-difficulty">{q.difficulty}</span>
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border ${diffClass(q.difficulty)}`} data-testid="trivia-difficulty">
+              <DifficultyPaws d={q.difficulty}/>
+              <span>{q.difficulty}</span>
+            </span>
             {data.current_streak > 0 && (
-              <span className="bg-shOrange/15 text-shOrange border border-shOrange/30 px-2 py-0.5 rounded" data-testid="trivia-streak">
-                <i className="fas fa-fire mr-1"/>{data.current_streak}d streak
+              <span className="inline-flex items-center gap-1 bg-shOrange/15 text-shOrange border border-shOrange/30 px-2 py-0.5 rounded" data-testid="trivia-streak">
+                <BoneIcon className="text-shOrange" size={12}/>
+                <i className="fas fa-fire"/>{data.current_streak}d streak
               </span>
             )}
           </div>
@@ -126,10 +278,12 @@ export function DailyTriviaCard() {
           </div>
         ) : (
           <div className="mt-4 space-y-2" data-testid="trivia-result">
-            <p className={`text-base font-black ${result.correct ? "text-shGreen" : "text-shOrange"}`}>
-              <i className={`fas ${result.correct ? "fa-check-circle" : "fa-circle-info"} mr-2`}/>
-              {result.correct ? "Correct! 🐾" : "Not quite — keep your streak going tomorrow!"}
-            </p>
+            <div className="flex items-center gap-3">
+              <DogMascot mood={result.correct ? "happy" : "sad"} size={48}/>
+              <p className={`text-base font-black ${result.correct ? "text-shGreen" : "text-shOrange"}`}>
+                {result.correct ? "Correct! 🐾" : "Not quite — keep your streak going tomorrow!"}
+              </p>
+            </div>
             {result.milestone && (
               <div className="bg-shGreen/10 border border-shGreen rounded p-2 text-sm text-shGreen font-bold" data-testid="trivia-milestone">
                 {result.milestone.label}
@@ -191,7 +345,10 @@ function LeaderboardPanel() {
           {data.top.map(r => (
             <div key={r.client_id} className={`flex items-center gap-2 text-[13px] ${r.is_me ? "bg-shBlue/10 border border-shBlue/40 rounded px-2 py-1" : "px-2 py-1"}`}
                  data-testid={`trivia-lb-row-${r.rank}`}>
-              <span className="text-gray-400 w-6 font-black">#{r.rank}</span>
+              <span className="text-gray-400 w-7 font-black flex items-center gap-0.5">
+                <span>#{r.rank}</span>
+                {r.rank <= 3 && <PawIcon className={r.rank === 1 ? "text-shOrange" : r.rank === 2 ? "text-shGreen" : "text-shBlue"} size={9}/>}
+              </span>
               <span className={`flex-1 truncate ${r.is_me ? "text-white font-black" : "text-gray-300"}`}>
                 {r.display_name}
                 {r.dogs && r.dogs.length > 0 && (
@@ -247,15 +404,22 @@ function QuizPanel() {
   const curRes = cur && results[cur.id];
 
   if (done) {
+    const perfect = score.right === questions.length;
     return (
-      <div className="mt-4 bg-bgBase rounded-lg border border-shGreen/40 p-4 text-center" data-testid="trivia-quiz-done">
-        <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2">Quiz complete</p>
-        <p className="text-white text-3xl font-black">{score.right} / {questions.length}</p>
-        <p className="text-[12px] text-gray-400 mt-1">{score.right === questions.length ? "Perfect score! 🐶" : score.right >= Math.ceil(questions.length / 2) ? "Nice work — go again?" : "Keep going — practice makes perfect!"}</p>
-        <button onClick={reload} data-testid="trivia-quiz-restart"
-                className="mt-3 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
-          <i className="fas fa-rotate-right mr-1"/>Play again
-        </button>
+      <div className="mt-4 bg-bgBase rounded-lg border border-shGreen/40 p-4 text-center relative overflow-hidden" data-testid="trivia-quiz-done">
+        {perfect && <PawConfetti />}
+        <div className="relative">
+          <div className="flex justify-center mb-2">
+            <DogMascot mood={perfect ? "happy" : score.right >= Math.ceil(questions.length / 2) ? "happy" : "thinking"} size={56}/>
+          </div>
+          <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2">Quiz complete</p>
+          <p className="text-white text-3xl font-black">{score.right} / {questions.length}</p>
+          <p className="text-[12px] text-gray-400 mt-1">{perfect ? "Perfect score! 🐶" : score.right >= Math.ceil(questions.length / 2) ? "Nice work — go again?" : "Keep going — practice makes perfect!"}</p>
+          <button onClick={reload} data-testid="trivia-quiz-restart"
+                  className="mt-3 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
+            <i className="fas fa-rotate-right mr-1"/>Play again
+          </button>
+        </div>
       </div>
     );
   }
