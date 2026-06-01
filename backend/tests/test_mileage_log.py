@@ -159,3 +159,32 @@ def test_admin_required():
     assert r.status_code in (401, 403)
     r = requests.get(f"{API}/admin/mileage/summary", timeout=15)
     assert r.status_code in (401, 403)
+    r = requests.get(f"{API}/admin/mileage/recent-trips", timeout=15)
+    assert r.status_code in (401, 403)
+
+
+def test_recent_trips_dedupes(admin_headers):
+    # Three log entries — two with same (purpose, destination) pair, one different
+    requests.post(f"{API}/admin/mileage", headers=admin_headers,
+                  json={"miles": 5, "purpose": "PYTEST-trip-A",
+                        "destination": "PYTEST-dest-1"}, timeout=15)
+    requests.post(f"{API}/admin/mileage", headers=admin_headers,
+                  json={"miles": 6, "purpose": "PYTEST-trip-A",
+                        "destination": "PYTEST-dest-1"}, timeout=15)  # dup pair
+    requests.post(f"{API}/admin/mileage", headers=admin_headers,
+                  json={"miles": 7, "purpose": "PYTEST-trip-B",
+                        "destination": "PYTEST-dest-2"}, timeout=15)
+    r = requests.get(f"{API}/admin/mileage/recent-trips",
+                     headers=admin_headers, timeout=15).json()
+    trips = r["trips"]
+    keys = [(t["purpose"], t["destination"]) for t in trips]
+    # The two duplicates should collapse to a single entry
+    pytest_a_count = sum(1 for k in keys if k == ("PYTEST-trip-A", "PYTEST-dest-1"))
+    pytest_b_count = sum(1 for k in keys if k == ("PYTEST-trip-B", "PYTEST-dest-2"))
+    assert pytest_a_count == 1
+    assert pytest_b_count == 1
+    # Capped at 10
+    assert len(trips) <= 10
+    # Each entry carries `last_miles` from the most recent log of that pair
+    a = next(t for t in trips if t["purpose"] == "PYTEST-trip-A")
+    assert a["last_miles"] == 6  # the second (more recent) PYTEST-trip-A row was 6 mi

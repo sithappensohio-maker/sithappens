@@ -11,21 +11,36 @@ import { todayISO } from "../lib/date";
 
 export function MileageDashTile({ onNavTax }) {
   const [data, setData] = useState(null);
+  const [recent, setRecent] = useState([]);
   const [date, setDate] = useState(todayISO());
   const [miles, setMiles] = useState("");
   const [purpose, setPurpose] = useState("");
+  const [destination, setDestination] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const load = async () => {
     try {
-      const r = await api.get("/admin/mileage/summary");
-      setData(r.data);
+      const [s, r] = await Promise.all([
+        api.get("/admin/mileage/summary"),
+        api.get("/admin/mileage/recent-trips").catch(() => ({ data: { trips: [] } })),
+      ]);
+      setData(s.data);
+      setRecent(r.data.trips || []);
     } catch (e) {
       setError(e.response?.data?.detail || "Could not load mileage");
     }
   };
   useEffect(() => { load(); }, []);
+
+  const applyRecent = (idx) => {
+    if (idx === "") return;
+    const t = recent[Number(idx)];
+    if (!t) return;
+    setPurpose(t.purpose || "");
+    setDestination(t.destination || "");
+    if (t.last_miles && !miles) setMiles(String(t.last_miles));
+  };
 
   const log = async (e) => {
     e?.preventDefault?.();
@@ -40,9 +55,10 @@ export function MileageDashTile({ onNavTax }) {
         miles: m,
         date,
         purpose: purpose.trim(),
+        destination: destination.trim(),
       });
       toast.success(`Logged ${r.data.miles} mi · +$${(r.data.miles * (data?.rate_per_mile || 0.7)).toFixed(2)} deduction`);
-      setMiles(""); setPurpose("");
+      setMiles(""); setPurpose(""); setDestination("");
       setDate(todayISO());
       await load();
     } catch (err) {
@@ -74,36 +90,66 @@ export function MileageDashTile({ onNavTax }) {
 
       {/* Quick-log form */}
       <form onSubmit={log}
-            className="border-t border-bgHover bg-bgBase/30 px-4 py-3 flex flex-wrap items-end gap-2"
+            className="border-t border-bgHover bg-bgBase/30 px-4 py-3 space-y-2"
             data-testid="mileage-log-form">
-        <label className="block">
-          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Date</span>
-          <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
-                 data-testid="mileage-input-date"
-                 className="mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
-        </label>
-        <label className="block">
-          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Miles</span>
-          <input type="number" min="0" step="0.1" value={miles} onChange={(e)=>setMiles(e.target.value)}
-                 placeholder="e.g. 12.5"
-                 data-testid="mileage-input-miles"
-                 className="mt-1 w-24 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
-        </label>
-        <label className="block flex-1 min-w-[180px]">
-          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Purpose</span>
-          <input type="text" value={purpose} onChange={(e)=>setPurpose(e.target.value)}
-                 placeholder='e.g. "Supply run" or "Client pickup"'
-                 data-testid="mileage-input-purpose"
-                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
-        </label>
-        <button type="submit" disabled={busy}
-                data-testid="mileage-log-submit"
-                className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
-          {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Logging…</> : <><i className="fas fa-plus mr-1"/>Log miles</>}
-        </button>
-        {data?.rate_per_mile && (
-          <span className="text-[11px] text-gray-500 italic">Rate ${data.rate_per_mile}/mi</span>
+        {recent.length > 0 && (
+          <div className="flex items-center gap-2" data-testid="mileage-recent-row">
+            <label className="block flex-1">
+              <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">
+                <i className="fas fa-clock-rotate-left mr-1 text-shBlue"/>Re-use a recent trip
+              </span>
+              <select onChange={(e) => applyRecent(e.target.value)}
+                      defaultValue=""
+                      data-testid="mileage-recent-select"
+                      className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                <option value="">— pick a recent trip —</option>
+                {recent.map((t, i) => (
+                  <option key={i} value={i}>
+                    {[t.purpose, t.destination].filter(Boolean).join(" · ")}
+                    {t.last_miles ? ` (${t.last_miles} mi)` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         )}
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Date</span>
+            <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
+                   data-testid="mileage-input-date"
+                   className="mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+          <label className="block">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Miles</span>
+            <input type="number" min="0" step="0.1" value={miles} onChange={(e)=>setMiles(e.target.value)}
+                   placeholder="e.g. 12.5"
+                   data-testid="mileage-input-miles"
+                   className="mt-1 w-24 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+          <label className="block flex-1 min-w-[160px]">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Purpose</span>
+            <input type="text" value={purpose} onChange={(e)=>setPurpose(e.target.value)}
+                   placeholder='e.g. "Supply run"'
+                   data-testid="mileage-input-purpose"
+                   className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+          <label className="block flex-1 min-w-[160px]">
+            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Destination</span>
+            <input type="text" value={destination} onChange={(e)=>setDestination(e.target.value)}
+                   placeholder='e.g. "Petco · Niles Rd"'
+                   data-testid="mileage-input-destination"
+                   className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+          <button type="submit" disabled={busy}
+                  data-testid="mileage-log-submit"
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+            {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Logging…</> : <><i className="fas fa-plus mr-1"/>Log miles</>}
+          </button>
+          {data?.rate_per_mile && (
+            <span className="text-[11px] text-gray-500 italic">Rate ${data.rate_per_mile}/mi</span>
+          )}
+        </div>
       </form>
 
       {error && (

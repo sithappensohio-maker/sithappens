@@ -11750,6 +11750,36 @@ async def list_mileage(
     return {"rows": rows, "range": {"start": sd, "end": ed}}
 
 
+@api.get("/admin/mileage/recent-trips")
+async def mileage_recent_trips(_: dict = Depends(require_admin)):
+    """Return the most-recent unique (purpose, destination) pairs across all
+    history. Used by the Dashboard widget to one-tap-fill repeat trips."""
+    # Pull most-recent 500 entries (more than enough to dedupe down to 10 unique)
+    rows = await db.mileage_log.find(
+        {}, {"_id": 0, "purpose": 1, "destination": 1, "miles": 1, "created_at": 1}
+    ).sort([("created_at", -1)]).to_list(500)
+    seen = set()
+    out: List[dict] = []
+    for r in rows:
+        purpose = (r.get("purpose") or "").strip()
+        dest = (r.get("destination") or "").strip()
+        if not purpose and not dest:
+            continue
+        key = (purpose.lower(), dest.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "purpose": purpose,
+            "destination": dest,
+            "last_miles": float(r.get("miles") or 0),
+        })
+        if len(out) >= 10:
+            break
+    return {"trips": out}
+
+
+
 @api.get("/admin/mileage/summary")
 async def mileage_summary(
     year: Optional[int] = None,

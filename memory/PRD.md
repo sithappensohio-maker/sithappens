@@ -29,6 +29,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110br — Recent-trips quick-fill on Mileage tile (2026-06-01)
+- ✅ **`GET /admin/mileage/recent-trips`** — returns up to 10 unique (purpose, destination) combos from the most-recent 500 entries, each with `last_miles` so the form can auto-suggest a default. Empty purpose/destination rows are skipped.
+- ✅ **`MileageDashTile` now has a "Re-use a recent trip" dropdown** at the top of the form. Picking an option pre-fills both purpose + destination, and pre-fills miles only if the user hasn't typed any yet. Dropdown auto-hides when there are no eligible entries (clean first-run experience).
+- ✅ Form layout split into two rows (dropdown on top, the date/miles/purpose/destination/log button below) so the inputs don't get cramped.
+- ✅ **New `destination` input** alongside purpose so the dedupe key is meaningful (same purpose ≠ same trip if destination differs).
+- ✅ **Tests** `test_mileage_log.py` extended to 8/8 (added `test_recent_trips_dedupes` — proves duplicates collapse, ordering by created_at, last_miles carries through, capped at 10).
+
+
 ## Sprint 110bq — Business mileage log + quarterly-tax integration (2026-06-01)
 - ✅ **`mileage_log` collection** + full CRUD (`GET/POST/PUT/DELETE /admin/mileage`) with date validation (YYYY-MM-DD), miles range (0 < m ≤ 2000), purpose + destination free-text.
 - ✅ **`GET /admin/mileage/summary`** — Dashboard quick-tiles: today_miles + today_deduction, mtd_miles + mtd_deduction, ytd_miles + ytd_deduction, current rate_per_mile, entry_count_ytd.
