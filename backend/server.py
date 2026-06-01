@@ -11003,6 +11003,11 @@ async def today_pnl(_: dict = Depends(require_admin)):
     revenue = 0.0
     booked_count = 0
     completed_count = 0
+    # Sprint 110az — track legacy-pricing impact so the UI can show
+    # "$X above/below catalog (Y legacy clients)".
+    legacy_delta = 0.0
+    legacy_client_set: set = set()
+    catalog_forecast = 0.0
     for b in bookings:
         booked_count += 1
         is_completed = b.get("status") == "completed"
@@ -11012,6 +11017,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # using the snapshot stored at cancel time.
         if b.get("status") == "cancelled" and b.get("cancellation_charged"):
             revenue += float(b.get("cancellation_fee") or 0)
+            catalog_forecast += float(b.get("cancellation_fee") or 0)
             continue
         # Sprint 110ar — For COMPLETED bookings, the `actual_price` (even if
         # explicitly 0) is the source of truth. Don't fall back to catalog
@@ -11019,6 +11025,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # checked out at $0 (e.g. training visits paid by package).
         if is_completed:
             revenue += float(b.get("actual_price") or 0)
+            catalog_forecast += float(b.get("actual_price") or 0)
             continue
         # ── For not-yet-completed bookings, estimate the forecast price.
         price = float(b.get("actual_price") or 0)
@@ -11032,17 +11039,19 @@ async def today_pnl(_: dict = Depends(require_admin)):
         legacy_price = None
         if client_id_for_lookup and legacy_svc_id:
             legacy_price = overrides_by_pair.get((client_id_for_lookup, legacy_svc_id))
+        # Compute boarding nights once for both branches
+        nights = 1
+        if b.get("service_type") == "boarding":
+            try:
+                d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
+                d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
+                nights = max((d2 - d1).days, 1)
+            except Exception:
+                nights = 1
         if not price and legacy_price is not None:
             price = float(legacy_price)
-            # Boarding is per-night — multiply the legacy nightly rate too
             if b.get("service_type") == "boarding":
-                try:
-                    d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
-                    d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
-                    nights = max((d2 - d1).days, 1)
-                    price = price * nights
-                except Exception:
-                    pass
+                price = price * nights
         if not price and b.get("service_id"):
             price = svc_price.get(b["service_id"], 0)
         # Training is normally pre-paid via packages — never auto-estimate
@@ -11050,17 +11059,32 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # check-out only when a non-package session is involved.
         if not price and b.get("service_type") and b.get("service_type") != "training":
             price = default_by_type.get(b["service_type"], 0)
-            # Boarding is per-night — multiply by nights between date and end_date
             if price and b.get("service_type") == "boarding":
-                try:
-                    d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
-                    d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
-                    nights = max((d2 - d1).days, 1)
-                    price = price * nights
-                except Exception:
-                    pass
+                price = price * nights
         revenue += price
+        # ── Catalog-equivalent forecast (what we WOULD make at the public
+        # rate) — for the legacy-delta UI badge. Mirrors the same fallback
+        # chain but skips the override.
+        catalog_unit = 0.0
+        if b.get("service_id"):
+            catalog_unit = svc_price.get(b["service_id"], 0)
+        if not catalog_unit and b.get("service_type") and b.get("service_type") != "training":
+            catalog_unit = default_by_type.get(b["service_type"], 0)
+        catalog_price = catalog_unit * nights if (catalog_unit and b.get("service_type") == "boarding") else catalog_unit
+        # If price was already set (actual_price / credit_value), and there's
+        # no clean catalog estimate, use price for the catalog forecast too —
+        # avoids artificial deltas on bookings the admin manually priced.
+        if catalog_price == 0 and price > 0 and legacy_price is None:
+            catalog_price = price
+        catalog_forecast += catalog_price
+        # Tally the legacy impact only when an active override actually fired
+        if legacy_price is not None and catalog_price > 0:
+            legacy_delta += (price - catalog_price)
+            if client_id_for_lookup:
+                legacy_client_set.add(client_id_for_lookup)
     revenue = round(revenue, 2)
+    catalog_forecast = round(catalog_forecast, 2)
+    legacy_delta = round(legacy_delta, 2)
 
     # ── Retail sales today (external POS — adds to gross revenue)
     retail_rows = await db.retail_sales.find(
@@ -11144,6 +11168,10 @@ async def today_pnl(_: dict = Depends(require_admin)):
         "completed_count": completed_count,
         "open_shifts": open_shifts,
         "per_employee": sorted(per_employee.values(), key=lambda x: -x["cost"]),
+        # Sprint 110az — legacy-pricing impact summary
+        "legacy_delta": legacy_delta,                # negative = below catalog
+        "legacy_client_count": len(legacy_client_set),
+        "catalog_forecast": catalog_forecast,
     }
 
 

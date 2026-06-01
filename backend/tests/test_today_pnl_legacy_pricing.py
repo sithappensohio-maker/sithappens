@@ -26,7 +26,8 @@ def admin_headers():
 def test_today_pnl_uses_legacy_price_before_checkout(admin_headers):
     """Set a client-specific override well above the catalog price, book that
     client today, and confirm the forecast revenue tile reflects the override
-    (not the catalog default)."""
+    (not the catalog default). Also checks the new legacy_delta / catalog_forecast
+    fields used by the dashboard chip."""
     today = date.today().isoformat()
     # Find an active daycare service
     services = requests.get(f"{BASE}/api/services", headers=admin_headers, timeout=15).json()
@@ -87,6 +88,15 @@ def test_today_pnl_uses_legacy_price_before_checkout(admin_headers):
         assert abs(delta - override_price) < 1.0, (
             f"P&L delta should be ~{override_price} (legacy price), got {delta:.2f}"
             f"\n— catalog list_price was {list_price}, override was {override_price}"
+        )
+        # Sprint 110az — new chip fields surface the catalog comparison
+        assert "legacy_delta" in pnl_after
+        assert "legacy_client_count" in pnl_after
+        assert "catalog_forecast" in pnl_after
+        assert pnl_after["legacy_client_count"] >= 1
+        # legacy_delta = price - catalog_price, positive because override > list
+        assert pnl_after["legacy_delta"] >= (override_price - list_price - 0.5), (
+            f"legacy_delta should reflect override-vs-catalog gap. got {pnl_after['legacy_delta']}"
         )
     finally:
         if bid:

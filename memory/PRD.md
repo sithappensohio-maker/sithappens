@@ -1681,6 +1681,12 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110az — Legacy pricing impact chip on today's P&L (2026-06-01)
+- ✅ `/api/admin/today-pnl` response now returns three new fields: `catalog_forecast` (what today would be at catalog list), `legacy_delta` (forecast − catalog, negative = below catalog), `legacy_client_count`.
+- ✅ Dashboard P&L tile renders a chip `"$X.XX below/above catalog (N legacy clients)"` in orange (below) or green (above), only when at least one of today's bookings has an active override. Hover tooltip shows the catalog forecast.
+- ✅ Live verified: with a $20 override against a $35 catalog daycare → tile shows `$50.00 revenue` + `$15.00 BELOW CATALOG (1 legacy client)` chip.
+- ✅ Pytest extended in `test_today_pnl_legacy_pricing.py`: asserts the new `legacy_delta`, `legacy_client_count`, `catalog_forecast` keys exist and carry the correct values. 7 passed, 1 benign skip; all 14 related P&L tests still green.
+
 ## Sprint 110ay — Today's P&L honors legacy pricing (2026-06-01)
 - ✅ `GET /api/admin/today-pnl` now consults `price_overrides` for each booking's client+service pair before falling back to the catalog list price. So grandfathered clients are forecast at their actual rate, not the new public rate.
 - ✅ Boarding correctly multiplies the legacy nightly rate by the number of nights.

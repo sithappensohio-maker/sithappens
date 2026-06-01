@@ -593,6 +593,17 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
               <i className="fas fa-bag-shopping mr-1"/>Retail {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})
             </p>
           )}
+          {/* Sprint 110az — Legacy pricing impact chip. Shown only when at
+              least one of today's bookings is for a grandfathered client. */}
+          {Math.abs(Number(data.legacy_delta || 0)) >= 0.5 && data.legacy_client_count > 0 && (
+            <p className={`text-[12px] font-black uppercase tracking-widest mt-1 ${data.legacy_delta < 0 ? "text-shOrange" : "text-shGreen"}`}
+               data-testid="pnl-legacy-chip"
+               title={`Catalog forecast would be ${fmt(data.catalog_forecast)}`}>
+              <i className="fas fa-hand-holding-dollar mr-1"/>
+              {fmt(Math.abs(data.legacy_delta))} {data.legacy_delta < 0 ? "below" : "above"} catalog
+              <span className="text-gray-500 normal-case ml-1">({data.legacy_client_count} legacy {data.legacy_client_count === 1 ? "client" : "clients"})</span>
+            </p>
+          )}
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           <div className="bg-bgBase/60 border border-bgHover rounded px-3 py-2 text-center min-w-[88px]">
