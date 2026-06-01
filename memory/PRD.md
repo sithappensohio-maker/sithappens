@@ -29,6 +29,23 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bt — Backup/restore now covers everything in this session (2026-06-01)
+- ✅ **BACKUP_VERSION bumped 2 → 3.** Restore still accepts v1/v2 payloads (older snapshots simply contain fewer collections — never wipes the new ones).
+- ✅ **9 new collections added to `BACKUP_COLLECTIONS`** that were previously missing:
+  - `app_settings` (auto_backup config + quarterly_tax rates + trivia_rewards perks)
+  - `commands` (service-dog training command library — 72 rows)
+  - `payment_transactions` (real revenue records — Stripe history)
+  - `time_off_requests` (PTO tracker)
+  - `trivia_questions` + `trivia_attempts` (curated trivia + client streaks)
+  - `dog_facts` (200+ rows of Fact of the Day content)
+  - `tax_payments` + `mileage_log` (already in, listed for completeness)
+- ✅ **`STRING_ID_COLLECTIONS = {"app_settings"}`** — new mechanism that preserves string-typed `_id` fields (e.g. `_id: "auto_backup"`) through the export/restore roundtrip. Without this, app_settings docs would lose their natural key and restore would duplicate/scramble them.
+- ✅ **`_build_backup_payload`, `/backup/export`, `/backup/restore`** all updated in lock-step. Merge mode upserts string-ID docs by `_id` and uuid docs by `id`. Replace mode wipes and bulk-inserts as before.
+- ✅ **Intentional exclusions documented inline**: `trivia_daily` (1-row regeneratable daily cache), `auto_backup_runs` / `system_runs` / `notification_log` (audit ephemerals), `vaccine_dismissals` (per-user UI state), `users` (separate hash-aware migration).
+- ✅ **Verified end-to-end**: live `/backup/export` now produces a v3 snapshot covering **41 collections, 1,894 rows**.
+- ✅ **Tests** `test_backup_coverage.py` extended to 7 cases: full-collection coverage, exclusion list, string `_id` preservation, today's-data presence (≥21 trivia + ≥100 facts), mileage roundtrip (create → export → delete → restore → verify), legacy v1 acceptance, future-version rejection.
+
+
 ## Sprint 110bs — Inline tax-savings chip on mileage tile (2026-06-01)
 - ✅ **`/admin/mileage/summary`** now also returns `today_tax_savings / mtd_tax_savings / ytd_tax_savings` plus `combined_tax_rate_pct`.
 - ✅ **Math** mirrors the Quarterly Tax engine so the chip stays honest:

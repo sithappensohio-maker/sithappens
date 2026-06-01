@@ -7553,27 +7553,37 @@ BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "incidents",
     "waiver_signatures", "client_files", "claim_tokens",
     # Settings + catalog (the "templates" the user explicitly called out)
-    "settings", "services", "credit_packs",
+    "settings", "app_settings", "services", "credit_packs",
     "homework_templates", "recurring_templates", "shift_templates",
-    "programs", "trophies",
+    "programs", "trophies", "commands",
     # Per-dog / per-client progress
     "homework", "homework_media", "step_events",
     "dog_programs", "training_sessions",
     "awarded_trophies", "referrals",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
-    "price_overrides",
+    "price_overrides", "payment_transactions",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling + actual clocked hours (drives payroll)
     "shifts", "time_clock_entries", "time_off_requests",
     # Tax tracker
     "tax_payments", "mileage_log",
+    # Dog Trivia + Fact of the Day (engagement content + per-client streak history)
+    # NOTE: trivia_daily is intentionally excluded — it's a 1-row daily cache
+    # that regenerates from trivia_questions on the next portal hit. Including
+    # it would create duplicate rows on restore (no stable key field).
+    "trivia_questions", "trivia_attempts", "dog_facts",
 ]
-# Bumped to v2 with the expanded collection list. Restore accepts v1 backups
+# Collections whose primary key is a string `_id` (no separate `id` field).
+# These get special handling during export (we preserve `_id`) and restore
+# (we upsert by `_id` instead of `id`). Currently just `app_settings` which
+# stores things like {_id: "quarterly_tax", ...} and {_id: "trivia_rewards", ...}.
+STRING_ID_COLLECTIONS = {"app_settings"}
+# Bumped to v3 with the expanded collection list. Restore accepts v1/v2 backups
 # too (older snapshots simply won't include the new collections — restore
 # leaves missing collections untouched rather than wiping them).
-BACKUP_VERSION = 2
+BACKUP_VERSION = 3
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -7604,8 +7614,21 @@ async def backup_export(_: dict = Depends(require_admin)):
         "collections": {},
     }
     for c in BACKUP_COLLECTIONS:
-        docs = await db[c].find({}, {"_id": 0}).to_list(50000)
-        payload["collections"][c] = docs
+        if c in STRING_ID_COLLECTIONS:
+            # Preserve string-typed _id so restore can roundtrip the named key.
+            docs = await db[c].find({}).to_list(50000)
+            cleaned: List[Dict[str, Any]] = []
+            for d in docs:
+                _id = d.get("_id")
+                if isinstance(_id, str):
+                    d["_id"] = _id  # keep as-is
+                else:
+                    d.pop("_id", None)  # drop ObjectId — collection isn't actually keyed by it
+                cleaned.append(d)
+            payload["collections"][c] = cleaned
+        else:
+            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
+            payload["collections"][c] = docs
     return payload
 
 
@@ -7776,8 +7799,20 @@ async def _build_backup_payload() -> Dict[str, Any]:
         "collections": {},
     }
     for c in BACKUP_COLLECTIONS:
-        docs = await db[c].find({}, {"_id": 0}).to_list(50000)
-        payload["collections"][c] = docs
+        if c in STRING_ID_COLLECTIONS:
+            docs = await db[c].find({}).to_list(50000)
+            cleaned: List[Dict[str, Any]] = []
+            for d in docs:
+                _id = d.get("_id")
+                if isinstance(_id, str):
+                    d["_id"] = _id
+                else:
+                    d.pop("_id", None)
+                cleaned.append(d)
+            payload["collections"][c] = cleaned
+        else:
+            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
+            payload["collections"][c] = docs
     return payload
 
 
@@ -9657,6 +9692,7 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
         if c not in BACKUP_COLLECTIONS:
             continue
         docs = [d for d in (docs or []) if isinstance(d, dict)]
+        is_string_id = c in STRING_ID_COLLECTIONS
         if body.mode == "replace":
             await db[c].delete_many({})
             if docs:
@@ -9665,6 +9701,12 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
         else:  # merge
             upserts = 0
             for doc in docs:
+                # Pick the right natural key per collection
+                if is_string_id and isinstance(doc.get("_id"), str):
+                    key_filter = {"_id": doc["_id"]}
+                    await db[c].update_one(key_filter, {"$set": doc}, upsert=True)
+                    upserts += 1
+                    continue
                 key = doc.get("id")
                 if not key:
                     await db[c].insert_one(doc)
