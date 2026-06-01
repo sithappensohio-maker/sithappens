@@ -8766,6 +8766,75 @@ async def admin_trivia_list(_: dict = Depends(require_admin)):
     return {"questions": rows, "active": active, "total": len(rows)}
 
 
+class TriviaQuestionIn(BaseModel):
+    question: str
+    choices: List[str]
+    correct_index: int = Field(ge=0, le=3)
+    difficulty: str = "medium"
+    tag: str = "fun"
+    active: bool = True
+
+
+def _validate_trivia_in(body: TriviaQuestionIn) -> dict:
+    q = (body.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Question text is required")
+    if len(body.choices) != 4:
+        raise HTTPException(status_code=400, detail="Exactly 4 choices required")
+    cleaned_choices = [str(c).strip() for c in body.choices]
+    if any(not c for c in cleaned_choices):
+        raise HTTPException(status_code=400, detail="All 4 choices must be filled in")
+    if len({c.lower() for c in cleaned_choices}) != 4:
+        raise HTTPException(status_code=400, detail="Choices must be unique")
+    diff = (body.difficulty or "medium").strip().lower()
+    if diff not in TRIVIA_DIFFICULTIES:
+        diff = "medium"
+    tag = (body.tag or "fun").strip().lower()
+    if tag not in TRIVIA_TAGS:
+        tag = "fun"
+    return {
+        "question": q[:200],
+        "choices": [c[:80] for c in cleaned_choices],
+        "correct_index": int(body.correct_index),
+        "difficulty": diff,
+        "tag": tag,
+    }
+
+
+@api.post("/admin/trivia/questions")
+async def admin_trivia_create(
+    body: TriviaQuestionIn, _: dict = Depends(require_admin),
+):
+    """Operator-authored trivia question. Same shape as AI-generated, but
+    marked `source: "manual"` so it's distinguishable in the admin list."""
+    payload = _validate_trivia_in(body)
+    doc = {
+        "id": str(uuid.uuid4()),
+        **payload,
+        "source": "manual",
+        "active": bool(body.active),
+        "created_at": now_iso(),
+        "times_used": 0,
+    }
+    await db.trivia_questions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/trivia/questions/{qid}")
+async def admin_trivia_update(
+    qid: str, body: TriviaQuestionIn, _: dict = Depends(require_admin),
+):
+    """Full edit of an existing question (typo fixes, better distractors, etc.)."""
+    payload = _validate_trivia_in(body)
+    res = await db.trivia_questions.update_one(
+        {"id": qid}, {"$set": {**payload, "active": bool(body.active)}}
+    )
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return await db.trivia_questions.find_one({"id": qid}, {"_id": 0})
+
+
 @api.post("/admin/trivia/generate")
 async def admin_trivia_generate(
     body: TriviaGenerateIn,

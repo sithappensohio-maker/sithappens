@@ -29,6 +29,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bl — Manually author trivia questions + edit existing (2026-06-01)
+- ✅ **`POST /api/admin/trivia/questions`** — create an operator-authored question with full validation: required question text, exactly 4 unique non-empty choices, valid correct_index 0-3, difficulty auto-falls-back to "medium" if invalid, tag auto-falls-back to "fun". Marked `source: "manual"` to differentiate from AI in the list.
+- ✅ **`PUT /api/admin/trivia/questions/{qid}`** — full edit (typo fixes, better distractors, mark active/inactive).
+- ✅ **Frontend `TriviaQuestionEditor`** component used both for "New question" and "Edit question" — radio-button correct-answer picker with green border, A/B/C/D inline editing, difficulty + tag selects, active toggle, inline validation. "Mine" green badge on rows with `source: "manual"` in the question list.
+- ✅ **Tests** `test_dog_trivia.py` extended to 17/17 passing (create + edit roundtrip, 5 validation cases, auth requirements).
+
+
 ## Sprint 110bk — Dashboard trivia widget + configurable goals/perks (2026-06-01)
 - ✅ **Dashboard tile (`data-testid="trivia-dash-tile"`)** under Today's P&L — top 5 players (rank/name/dogs/streak/accuracy), amber **"N perks to award"** badge in the header when there are pending milestones, taps through to Settings → Trivia.
 - ✅ **`GET/PUT /api/admin/trivia/rewards`** — new endpoints persisting `app_settings._id="trivia_rewards"` with custom milestone list `[{days, label, perk_type}]`. PUT validates (drops empty labels, zero/negative days, dedupes per-day), sorts ascending. Falls back to defaults (7/14/30) when none configured.

@@ -203,3 +203,66 @@ def test_trivia_rewards_requires_admin():
     r = requests.put(f"{BASE}/api/admin/trivia/rewards",
                      json={"milestones": []}, timeout=15)
     assert r.status_code in (401, 403)
+
+
+def test_admin_can_create_manual_question_and_edit_it():
+    h = _admin()
+    body = {
+        "question": "What's the world's tallest dog breed?",
+        "choices": ["Great Dane", "Irish Wolfhound", "Saint Bernard", "Mastiff"],
+        "correct_index": 1,
+        "difficulty": "medium",
+        "tag": "breeds",
+        "active": True,
+    }
+    r = requests.post(f"{BASE}/api/admin/trivia/questions",
+                      headers=h, json=body, timeout=15)
+    assert r.status_code == 200, r.text
+    q = r.json()
+    assert q["id"]
+    assert q["source"] == "manual"
+    assert q["correct_index"] == 1
+    qid = q["id"]
+    # Edit it
+    body["question"] = "What's the world's tallest dog breed (edited)?"
+    body["correct_index"] = 0
+    r = requests.put(f"{BASE}/api/admin/trivia/questions/{qid}",
+                     headers=h, json=body, timeout=15)
+    assert r.status_code == 200, r.text
+    assert r.json()["correct_index"] == 0
+    assert "(edited)" in r.json()["question"]
+    # Cleanup
+    requests.delete(f"{BASE}/api/admin/trivia/questions/{qid}", headers=h, timeout=15)
+
+
+def test_manual_question_validation():
+    h = _admin()
+    # Only 3 choices
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", headers=h,
+                      json={"question":"x","choices":["a","b","c"],"correct_index":0}, timeout=15)
+    assert r.status_code == 400
+    # Empty question
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", headers=h,
+                      json={"question":"","choices":["a","b","c","d"],"correct_index":0}, timeout=15)
+    assert r.status_code == 400
+    # Duplicate choices
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", headers=h,
+                      json={"question":"x","choices":["a","a","c","d"],"correct_index":0}, timeout=15)
+    assert r.status_code == 400
+    # Empty choice
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", headers=h,
+                      json={"question":"x","choices":["a","b","","d"],"correct_index":0}, timeout=15)
+    assert r.status_code == 400
+    # correct_index out of range
+    r = requests.post(f"{BASE}/api/admin/trivia/questions", headers=h,
+                      json={"question":"x","choices":["a","b","c","d"],"correct_index":7}, timeout=15)
+    assert r.status_code == 422
+
+
+def test_manual_question_endpoints_require_admin():
+    r = requests.post(f"{BASE}/api/admin/trivia/questions",
+                      json={"question":"x","choices":["a","b","c","d"],"correct_index":0}, timeout=15)
+    assert r.status_code in (401, 403)
+    r = requests.put(f"{BASE}/api/admin/trivia/questions/any-id",
+                     json={"question":"x","choices":["a","b","c","d"],"correct_index":0}, timeout=15)
+    assert r.status_code in (401, 403)

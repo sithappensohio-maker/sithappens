@@ -2243,6 +2243,7 @@ function TriviaPanel() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [lb, setLb] = useState(null);
+  const [editing, setEditing] = useState(null); // null | {mode: "new"} | {mode: "edit", q}
   const [rewards, setRewards] = useState(null);
   const [rewardsDefaults, setRewardsDefaults] = useState([]);
   const [savingRewards, setSavingRewards] = useState(false);
@@ -2497,7 +2498,12 @@ function TriviaPanel() {
       )}
 
       {view === "questions" && (<>
-        <div className="flex justify-end items-center gap-2 mb-3">
+        <div className="flex justify-end items-center gap-2 mb-3 flex-wrap">
+          <button onClick={()=>setEditing({ mode: "new" })}
+                  data-testid="trivia-q-new-btn"
+                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+            <i className="fas fa-plus mr-1"/>New question
+          </button>
           <input type="number" min={1} max={50} value={count} onChange={(e)=>setCount(e.target.value)}
                  data-testid="trivia-gen-count"
                  className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm w-20"/>
@@ -2506,9 +2512,16 @@ function TriviaPanel() {
             {busy ? "Generating…" : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate with AI</>}
           </button>
         </div>
+        {editing && (
+          <TriviaQuestionEditor
+            initial={editing.mode === "edit" ? editing.q : null}
+            onClose={() => setEditing(null)}
+            onSaved={async () => { setEditing(null); await loadQuestions(); }}
+          />
+        )}
         <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
           {rows.length === 0 ? (
-            <p className="text-gray-500 text-sm italic">No questions yet. Tap "Generate with AI" to seed the pool.</p>
+            <p className="text-gray-500 text-sm italic">No questions yet. Tap "New question" or "Generate with AI" to seed the pool.</p>
           ) : rows.map(q => (
             <div key={q.id} className={`flex items-start gap-2 p-2 rounded border ${q.active ? "border-bgHover bg-bgBase/50" : "border-bgHover/40 bg-bgBase/20 opacity-50"}`} data-testid={`trivia-row-${q.id}`}>
               <div className="flex-1 min-w-0">
@@ -2519,9 +2532,15 @@ function TriviaPanel() {
                   <span className="text-gray-400">{q.difficulty}</span>
                   <span className="mx-1 text-gray-600">·</span>
                   <span className="text-gray-500">A: {q.choices[q.correct_index]}</span>
+                  {q.source === "manual" && <><span className="mx-1 text-gray-600">·</span><span className="text-shGreen font-black"><i className="fas fa-user-pen mr-0.5"/>mine</span></>}
                   {q.times_used > 0 && <><span className="mx-1 text-gray-600">·</span><span className="text-gray-500">used {q.times_used}x</span></>}
                 </p>
               </div>
+              <button onClick={()=>setEditing({ mode: "edit", q })}
+                      data-testid={`trivia-edit-${q.id}`}
+                      className="text-gray-400 hover:text-shBlue text-[12px] px-1">
+                <i className="fas fa-pen-to-square"/>
+              </button>
               <button onClick={()=>toggle(q)} data-testid={`trivia-toggle-${q.id}`}
                       className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded ${q.active ? "text-shGreen hover:bg-shGreen/15" : "text-gray-500 hover:bg-gray-500/15"}`}>
                 {q.active ? "active" : "off"}
@@ -2543,6 +2562,118 @@ function Kpi({ label, value, color = "white", testId }) {
     <div className="bg-bgBase rounded-lg p-3 border border-bgHover" data-testid={testId}>
       <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
       <p className={`text-xl font-black text-${color} mt-1`}>{value}</p>
+    </div>
+  );
+}
+
+const TRIVIA_DIFFICULTIES = ["easy", "medium", "hard"];
+const TRIVIA_TAGS = ["breeds", "behavior", "health", "history", "training", "anatomy", "fun", "myth"];
+
+function TriviaQuestionEditor({ initial, onClose, onSaved }) {
+  const isEdit = !!initial;
+  const [question, setQuestion] = useState(initial?.question || "");
+  const [choices, setChoices] = useState(initial?.choices || ["", "", "", ""]);
+  const [correctIndex, setCorrectIndex] = useState(initial?.correct_index ?? 0);
+  const [difficulty, setDifficulty] = useState(initial?.difficulty || "medium");
+  const [tag, setTag] = useState(initial?.tag || "fun");
+  const [active, setActive] = useState(initial?.active ?? true);
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const updateChoice = (i, v) => setChoices(cs => cs.map((c, idx) => idx === i ? v : c));
+
+  const save = async () => {
+    setErr("");
+    const cleaned = choices.map(c => (c || "").trim());
+    if (!question.trim()) return setErr("Question text is required");
+    if (cleaned.some(c => !c)) return setErr("All 4 choices must be filled in");
+    if (new Set(cleaned.map(c => c.toLowerCase())).size !== 4) return setErr("Choices must be unique");
+    setSaving(true);
+    try {
+      const body = {
+        question: question.trim(), choices: cleaned, correct_index: correctIndex,
+        difficulty, tag, active,
+      };
+      if (isEdit) await api.put(`/admin/trivia/questions/${initial.id}`, body);
+      else await api.post("/admin/trivia/questions", body);
+      onSaved();
+    } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-bgBase rounded-xl border border-shGreen/40 p-4 mb-3 space-y-3" data-testid="trivia-q-editor">
+      <div className="flex justify-between items-center">
+        <p className="text-[12px] font-black uppercase tracking-widest text-shGreen">
+          <i className={`fas ${isEdit ? "fa-pen-to-square" : "fa-plus"} mr-2`}/>
+          {isEdit ? "Edit question" : "New question"}
+        </p>
+        <button onClick={onClose} data-testid="trivia-q-close"
+                className="text-gray-500 hover:text-red-400 text-sm"><i className="fas fa-xmark"/></button>
+      </div>
+      {err && <div className="bg-red-500/10 border border-red-400 text-red-300 rounded p-2 text-[13px]">{err}</div>}
+      <label className="block">
+        <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Question</span>
+        <textarea value={question} onChange={e=>setQuestion(e.target.value)} maxLength={200} rows={2}
+                  data-testid="trivia-q-question"
+                  placeholder="e.g. Which dog breed has a blue-black tongue?"
+                  className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+      </label>
+      <div className="space-y-2" data-testid="trivia-q-choices">
+        <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">Choices — tap the radio to mark correct</p>
+        {choices.map((c, i) => (
+          <div key={i} className={`flex items-center gap-2 bg-bgPanel border rounded p-2 ${correctIndex === i ? "border-shGreen" : "border-bgHover"}`}>
+            <label className="flex items-center cursor-pointer">
+              <input type="radio" name="correct" checked={correctIndex === i}
+                     onChange={()=>setCorrectIndex(i)}
+                     data-testid={`trivia-q-correct-${i}`}
+                     className="w-4 h-4 accent-shGreen"/>
+            </label>
+            <span className="text-[11px] font-black w-5 text-gray-400">{["A","B","C","D"][i]}</span>
+            <input type="text" value={c} onChange={e=>updateChoice(i, e.target.value)} maxLength={80}
+                   data-testid={`trivia-q-choice-${i}`}
+                   placeholder={`Answer ${["A","B","C","D"][i]}`}
+                   className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm"/>
+            {correctIndex === i && <span className="text-[10px] font-black text-shGreen uppercase">correct</span>}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Difficulty</span>
+          <select value={difficulty} onChange={e=>setDifficulty(e.target.value)}
+                  data-testid="trivia-q-difficulty"
+                  style={{colorScheme:"dark"}}
+                  className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1">
+            {TRIVIA_DIFFICULTIES.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Tag</span>
+          <select value={tag} onChange={e=>setTag(e.target.value)}
+                  data-testid="trivia-q-tag"
+                  style={{colorScheme:"dark"}}
+                  className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1">
+            {TRIVIA_TAGS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="flex items-end gap-2 pb-2">
+          <input type="checkbox" checked={active} onChange={e=>setActive(e.target.checked)}
+                 data-testid="trivia-q-active"
+                 className="w-4 h-4 accent-shGreen"/>
+          <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">Active</span>
+        </label>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} data-testid="trivia-q-cancel"
+                className="bg-bgPanel border border-bgHover px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest text-gray-300 hover:border-red-400">
+          Cancel
+        </button>
+        <button onClick={save} disabled={saving} data-testid="trivia-q-save"
+                className="bg-shGreen text-bgHeader px-4 py-1.5 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+          {saving ? "Saving…" : isEdit ? "Save changes" : "Create question"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -2722,3 +2853,4 @@ function DogFactsPanel() {
     </div>
   );
 }
+
