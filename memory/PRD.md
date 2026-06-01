@@ -29,6 +29,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bq — Business mileage log + quarterly-tax integration (2026-06-01)
+- ✅ **`mileage_log` collection** + full CRUD (`GET/POST/PUT/DELETE /admin/mileage`) with date validation (YYYY-MM-DD), miles range (0 < m ≤ 2000), purpose + destination free-text.
+- ✅ **`GET /admin/mileage/summary`** — Dashboard quick-tiles: today_miles + today_deduction, mtd_miles + mtd_deduction, ytd_miles + ytd_deduction, current rate_per_mile, entry_count_ytd.
+- ✅ **Quarterly tax math now subtracts YTD mileage deduction**: `mileage_deduction_ytd = ytd_miles × mileage_rate_per_mile` rolls into `total_expenses` which feeds `net_profit` → reduces SE tax + federal/state/local tax. The endpoint payload exposes `expenses.mileage_miles / mileage_deduction / mileage_rate` for the UI.
+- ✅ **`mileage_rate_per_mile`** added to `QUARTERLY_TAX_DEFAULTS` (0.70 = 2026 IRS standard rate). Editable in Settings → Quarterly Tax → Rates via the existing PUT endpoint.
+- ✅ **`mileage_log` added to `BACKUP_COLLECTIONS`** so daily mileage survives backup/restore.
+- ✅ **`MileageDashTile.jsx`** — new admin Dashboard widget under TodayPnlTile: 3-up stats row (Today / Month / YTD with miles + $ deduction) + inline form (Date / Miles / Purpose / Log button) + sonner toast on submit + "→ Quarterly Tax" deep-link button.
+- ✅ **Quarterly Tax tab** — the Income/Expense breakdown shows a new conditional row `Business mileage (N mi @ $0.70/mi)` between labor burden and total expenses (only displayed when there's a non-zero deduction).
+- ✅ **Tests** `test_mileage_log.py` — 7/7 passing (CRUD round-trip, validation, summary buckets, update, quarterly-tax math integration, rate setting persists, admin-required).
+
+
 ## Sprint 110bp — Bulk CSV import for trivia + dog facts (2026-06-01)
 - ✅ **Backend `/admin/trivia/import-csv` + `/admin/dog-facts/import-csv`** — multipart UploadFile endpoints that parse a CSV, validate every row, and upsert by `uuid5(content)` so re-uploading the same file updates instead of duplicating. Bad rows are skipped with a `{line, reason}` report instead of failing the whole import.
 - ✅ **Trivia CSV headers**: `question, choice_a, choice_b, choice_c, choice_d, correct_letter (A/B/C/D), difficulty (easy/medium/hard), tag` (8 of TRIVIA_TAGS). Skip reasons: empty question, missing choice, invalid letter, non-unique choices.

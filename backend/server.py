@@ -7568,7 +7568,7 @@ BACKUP_COLLECTIONS = [
     # Staff scheduling + actual clocked hours (drives payroll)
     "shifts", "time_clock_entries", "time_off_requests",
     # Tax tracker
-    "tax_payments",
+    "tax_payments", "mileage_log",
 ]
 # Bumped to v2 with the expanded collection list. Restore accepts v1 backups
 # too (older snapshots simply won't include the new collections — restore
@@ -11409,6 +11409,7 @@ QUARTERLY_TAX_DEFAULTS = {
     "state_income_pct": 2.75,       # Ohio top effective
     "local_income_pct": 2.5,        # Warren city
     "estimated_payments_made": 0.0, # YTD federal quarterly payments already mailed in
+    "mileage_rate_per_mile": 0.70,  # 2026 IRS standard mileage rate for business use
     "filing_status": "single",      # informational only
 }
 
@@ -11480,6 +11481,14 @@ async def admin_quarterly_tax(
     ).to_list(20000)
     recorded_expenses = sum(float(e.get("amount") or 0) for e in expense_rows)
 
+    # ---- Mileage deduction (IRS standard rate × YTD business miles) ----------
+    mileage_rate = float(settings.get("mileage_rate_per_mile") or 0)
+    mileage_rows = await db.mileage_log.find(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
+    ).to_list(20000)
+    mileage_ytd_miles = sum(float(m.get("miles") or 0) for m in mileage_rows)
+    mileage_deduction_ytd = round(mileage_ytd_miles * mileage_rate, 2)
+
     # Labor: total YTD gross + employer burden (mirrors summary_range pattern)
     payroll_tax = await _get_payroll_tax_settings()
     tc_entries = await db.time_clock_entries.find(
@@ -11513,7 +11522,7 @@ async def admin_quarterly_tax(
         labor_gross += c["gross"]
         labor_burden += c["employer_burden"]
     labor_total = labor_gross + labor_burden
-    total_expenses = recorded_expenses + labor_total
+    total_expenses = recorded_expenses + labor_total + mileage_deduction_ytd
 
     net_profit = gross_income - total_expenses
 
@@ -11585,6 +11594,9 @@ async def admin_quarterly_tax(
             "labor_gross": round(labor_gross, 2),
             "labor_burden": round(labor_burden, 2),
             "labor_total": round(labor_total, 2),
+            "mileage_miles": round(mileage_ytd_miles, 1),
+            "mileage_deduction": mileage_deduction_ytd,
+            "mileage_rate": round(mileage_rate, 3),
             "total": round(total_expenses, 2),
         },
         "net_profit": round(net_profit, 2),
@@ -11709,6 +11721,132 @@ async def delete_tax_payment(pid: str, _: dict = Depends(require_admin)):
     res = await db.tax_payments.delete_one({"id": pid})
     if not res.deleted_count:
         raise HTTPException(404, "Payment not found")
+    return {"ok": True}
+
+
+# ─── Sprint 110bq · Business mileage log (IRS Schedule C deduction) ──────────
+# Tracks daily business miles. Sum × `mileage_rate_per_mile` becomes a deduction
+# inside admin_quarterly_tax. Quick-log widget on Dashboard.
+
+class MileageIn(BaseModel):
+    miles: float = Field(gt=0, le=2000)
+    date: Optional[str] = None       # ISO YYYY-MM-DD, defaults to today_local
+    purpose: Optional[str] = ""      # "client pickup", "supply run", etc.
+    destination: Optional[str] = ""  # free-text
+
+
+@api.get("/admin/mileage")
+async def list_mileage(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Return mileage rows in the window. Defaults to current calendar year."""
+    today = business_today()
+    sd = start_date or f"{today.year}-01-01"
+    ed = end_date or today.isoformat()
+    q = {"date": {"$gte": sd, "$lte": ed}}
+    rows = await db.mileage_log.find(q, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(2000)
+    return {"rows": rows, "range": {"start": sd, "end": ed}}
+
+
+@api.get("/admin/mileage/summary")
+async def mileage_summary(
+    year: Optional[int] = None,
+    _: dict = Depends(require_admin),
+):
+    """Quick tiles for the Dashboard: today / month-to-date / YTD totals."""
+    today = business_today()
+    yr = int(year or today.year)
+    settings = await _get_quarterly_tax_settings()
+    rate = float(settings.get("mileage_rate_per_mile") or 0)
+
+    today_iso = today.isoformat()
+    month_start = f"{today.year}-{today.month:02d}-01"
+    year_start = f"{yr}-01-01"
+    year_end = f"{yr}-12-31"
+
+    # Pull every row in the relevant year — small enough to aggregate in Python
+    rows = await db.mileage_log.find(
+        {"date": {"$gte": year_start, "$lte": year_end}}, {"_id": 0}
+    ).to_list(20000)
+    today_miles = sum(float(r.get("miles") or 0) for r in rows if r.get("date") == today_iso)
+    mtd_miles = sum(float(r.get("miles") or 0) for r in rows if r.get("date", "") >= month_start)
+    ytd_miles = sum(float(r.get("miles") or 0) for r in rows)
+    return {
+        "today_miles": round(today_miles, 1),
+        "today_deduction": round(today_miles * rate, 2),
+        "mtd_miles": round(mtd_miles, 1),
+        "mtd_deduction": round(mtd_miles * rate, 2),
+        "ytd_miles": round(ytd_miles, 1),
+        "ytd_deduction": round(ytd_miles * rate, 2),
+        "rate_per_mile": round(rate, 3),
+        "entry_count_ytd": len(rows),
+        "year": yr,
+    }
+
+
+@api.post("/admin/mileage")
+async def create_mileage(body: MileageIn, user: dict = Depends(require_admin)):
+    today_iso = business_today().isoformat()
+    date_str = (body.date or today_iso).strip()
+    # Sanity: only accept YYYY-MM-DD
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(400, "Date must be YYYY-MM-DD")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": date_str,
+        "miles": round(float(body.miles), 2),
+        "purpose": (body.purpose or "").strip()[:200],
+        "destination": (body.destination or "").strip()[:200],
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+    }
+    await db.mileage_log.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class MileagePatch(BaseModel):
+    miles: Optional[float] = None
+    date: Optional[str] = None
+    purpose: Optional[str] = None
+    destination: Optional[str] = None
+
+
+@api.put("/admin/mileage/{mid}")
+async def update_mileage(mid: str, body: MileagePatch, _: dict = Depends(require_admin)):
+    existing = await db.mileage_log.find_one({"id": mid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Mileage entry not found")
+    update: Dict[str, Any] = {}
+    if body.miles is not None:
+        if body.miles <= 0 or body.miles > 2000:
+            raise HTTPException(400, "Miles must be > 0 and ≤ 2000")
+        update["miles"] = round(float(body.miles), 2)
+    if body.date is not None:
+        try:
+            datetime.strptime(body.date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "Date must be YYYY-MM-DD")
+        update["date"] = body.date
+    if body.purpose is not None:
+        update["purpose"] = body.purpose.strip()[:200]
+    if body.destination is not None:
+        update["destination"] = body.destination.strip()[:200]
+    if update:
+        await db.mileage_log.update_one({"id": mid}, {"$set": update})
+        existing.update(update)
+    return existing
+
+
+@api.delete("/admin/mileage/{mid}")
+async def delete_mileage(mid: str, _: dict = Depends(require_admin)):
+    res = await db.mileage_log.delete_one({"id": mid})
+    if not res.deleted_count:
+        raise HTTPException(404, "Mileage entry not found")
     return {"ok": True}
 
 

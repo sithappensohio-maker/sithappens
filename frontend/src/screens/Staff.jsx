@@ -1235,6 +1235,13 @@ function QuarterlyTaxTab() {
             <Row label="Recorded expenses" value={data.expenses.recorded} neg/>
             <Row label="Labor (gross wages)" value={data.expenses.labor_gross} neg/>
             <Row label="Labor (employer burden)" value={data.expenses.labor_burden} neg/>
+            {data.expenses.mileage_deduction > 0 && (
+              <Row
+                label={`Business mileage (${data.expenses.mileage_miles} mi @ $${data.expenses.mileage_rate}/mi)`}
+                value={data.expenses.mileage_deduction}
+                neg
+              />
+            )}
             <Row label="TOTAL EXPENSES" value={data.expenses.total} neg bold/>
             <div className="border-t border-bgHover my-2"/>
             <Row label="NET PROFIT" value={data.net_profit} bold color="shGreen"/>

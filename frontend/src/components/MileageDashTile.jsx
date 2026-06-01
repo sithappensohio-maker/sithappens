@@ -1,0 +1,128 @@
+// Sprint 110bq — Quick-log mileage tile for the admin Dashboard.
+//
+// Solo-operator workflow: end of every day, glance at the dashboard, type in
+// the miles you drove for the business, hit "Log". Today + Month + YTD tiles
+// update instantly and the YTD deduction flows into the Quarterly Tax tab.
+
+import { useEffect, useState } from "react";
+import { api } from "../lib/api";
+import { toast } from "sonner";
+import { todayISO } from "../lib/date";
+
+export function MileageDashTile({ onNavTax }) {
+  const [data, setData] = useState(null);
+  const [date, setDate] = useState(todayISO());
+  const [miles, setMiles] = useState("");
+  const [purpose, setPurpose] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    try {
+      const r = await api.get("/admin/mileage/summary");
+      setData(r.data);
+    } catch (e) {
+      setError(e.response?.data?.detail || "Could not load mileage");
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const log = async (e) => {
+    e?.preventDefault?.();
+    const m = parseFloat(miles);
+    if (!Number.isFinite(m) || m <= 0) {
+      setError("Enter miles greater than 0");
+      return;
+    }
+    setBusy(true); setError("");
+    try {
+      const r = await api.post("/admin/mileage", {
+        miles: m,
+        date,
+        purpose: purpose.trim(),
+      });
+      toast.success(`Logged ${r.data.miles} mi · +$${(r.data.miles * (data?.rate_per_mile || 0.7)).toFixed(2)} deduction`);
+      setMiles(""); setPurpose("");
+      setDate(todayISO());
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.detail || "Could not log mileage");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden card-pop" data-testid="mileage-dash-tile">
+      <div className="px-4 pt-3 pb-2 flex items-center justify-between flex-wrap gap-2">
+        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen">
+          <i className="fas fa-car-side mr-2"/>Business Mileage
+        </p>
+        {data && (
+          <button onClick={onNavTax}
+                  data-testid="mileage-dash-nav"
+                  className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
+            <i className="fas fa-arrow-right ml-1"/>Quarterly Tax
+          </button>
+        )}
+      </div>
+
+      {/* Stats row */}
+      <div className="grid grid-cols-3 gap-2 px-4 pb-3" data-testid="mileage-stats">
+        <Stat label="Today" miles={data?.today_miles} dollars={data?.today_deduction} accent="text-shGreen"/>
+        <Stat label="This month" miles={data?.mtd_miles} dollars={data?.mtd_deduction} accent="text-white"/>
+        <Stat label="YTD" miles={data?.ytd_miles} dollars={data?.ytd_deduction} accent="text-shBlue"/>
+      </div>
+
+      {/* Quick-log form */}
+      <form onSubmit={log}
+            className="border-t border-bgHover bg-bgBase/30 px-4 py-3 flex flex-wrap items-end gap-2"
+            data-testid="mileage-log-form">
+        <label className="block">
+          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Date</span>
+          <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
+                 data-testid="mileage-input-date"
+                 className="mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+        </label>
+        <label className="block">
+          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Miles</span>
+          <input type="number" min="0" step="0.1" value={miles} onChange={(e)=>setMiles(e.target.value)}
+                 placeholder="e.g. 12.5"
+                 data-testid="mileage-input-miles"
+                 className="mt-1 w-24 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+        </label>
+        <label className="block flex-1 min-w-[180px]">
+          <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Purpose</span>
+          <input type="text" value={purpose} onChange={(e)=>setPurpose(e.target.value)}
+                 placeholder='e.g. "Supply run" or "Client pickup"'
+                 data-testid="mileage-input-purpose"
+                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+        </label>
+        <button type="submit" disabled={busy}
+                data-testid="mileage-log-submit"
+                className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+          {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Logging…</> : <><i className="fas fa-plus mr-1"/>Log miles</>}
+        </button>
+        {data?.rate_per_mile && (
+          <span className="text-[11px] text-gray-500 italic">Rate ${data.rate_per_mile}/mi</span>
+        )}
+      </form>
+
+      {error && (
+        <p className="px-4 pb-2 text-red-400 text-[12px]" data-testid="mileage-error">
+          <i className="fas fa-circle-exclamation mr-1"/>{error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, miles, dollars, accent }) {
+  const m = miles ?? 0;
+  const d = dollars ?? 0;
+  return (
+    <div className="bg-bgBase rounded-lg border border-bgHover p-2 text-center">
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+      <p className={`text-lg font-black ${accent}`}>{m} mi</p>
+      <p className="text-[11px] text-gray-400">${d.toFixed ? d.toFixed(2) : d}</p>
+    </div>
+  );
+}

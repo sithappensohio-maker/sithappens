@@ -7,6 +7,7 @@ import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
 import { DogFactCard } from "../components/DogFactCard";
+import { MileageDashTile } from "../components/MileageDashTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -353,6 +354,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       </div>
 
       {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
+
+      {/* Sprint 110bq — Daily mileage quick-log */}
+      <MileageDashTile onNavTax={()=>onNavigate("staff")} />
 
       {/* Sprint 110bk — Trivia leaderboard at-a-glance */}
       <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />
