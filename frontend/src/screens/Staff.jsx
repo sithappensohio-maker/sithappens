@@ -277,6 +277,11 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
     phone: emp?.phone || "",
     notes: emp?.notes || "",
     is_owner: emp?.is_owner ?? false,
+    tax_status: emp?.tax_status || "1099",
+    address_street: emp?.address_street || "",
+    address_city: emp?.address_city || "",
+    address_state: emp?.address_state || "",
+    address_zip: emp?.address_zip || "",
   });
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -331,6 +336,51 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
                 <p className="text-[11px] text-gray-400 mt-0.5">Excluded from payroll tax math, 1099/W2 exports, and quarterly tax labor expense. Pay tracked as owner's draw. Single owner only.</p>
               </div>
             </label>
+
+            {/* Sprint 110bu — W-2 / 1099 prep */}
+            {!form.is_owner && (<>
+              <label className="block" data-testid="emp-tax-status-row">
+                <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+                  <i className="fas fa-file-invoice-dollar mr-1 text-shGreen"/>Tax classification
+                </span>
+                <select value={form.tax_status}
+                        onChange={(e)=>setForm({...form, tax_status: e.target.value})}
+                        data-testid="emp-tax-status"
+                        className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  <option value="w2">W-2 employee (you withhold taxes)</option>
+                  <option value="1099">1099-NEC contractor (paid gross)</option>
+                  <option value="other">Other / not classified yet</option>
+                </select>
+                <p className="text-[11px] text-gray-500 mt-1 italic">
+                  Used to group the year-end payroll CSV your CPA needs.
+                </p>
+              </label>
+              <details className="bg-bgBase/40 border border-bgHover rounded p-2" data-testid="emp-address-row">
+                <summary className="cursor-pointer text-[12px] font-black uppercase tracking-widest text-gray-400">
+                  <i className="fas fa-house mr-1 text-shBlue"/>Mailing address
+                  {(form.address_street || form.address_city) && <span className="ml-2 text-shGreen normal-case">· On file</span>}
+                </summary>
+                <div className="mt-2 space-y-2">
+                  <Field label="Street" value={form.address_street}
+                         onChange={v=>setForm({...form, address_street: v})}
+                         testid="emp-addr-street"/>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Field label="City" value={form.address_city}
+                           onChange={v=>setForm({...form, address_city: v})}
+                           testid="emp-addr-city"/>
+                    <Field label="State" value={form.address_state}
+                           onChange={v=>setForm({...form, address_state: v})}
+                           testid="emp-addr-state"/>
+                    <Field label="ZIP" value={form.address_zip}
+                           onChange={v=>setForm({...form, address_zip: v})}
+                           testid="emp-addr-zip"/>
+                  </div>
+                  <p className="text-[11px] text-gray-500 italic">
+                    Used on the year-end W-2 / 1099-NEC. SSN/EIN is intentionally NOT stored here — your CPA collects that directly.
+                  </p>
+                </div>
+              </details>
+            </>)}
             <label className="block">
               <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Notes</span>
               <textarea value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})} rows={2}

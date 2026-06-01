@@ -9217,7 +9217,12 @@ async def payroll_year_end_csv(
     uids = list({e["user_id"] for e in entries if e.get("user_id")})
     users = await db.users.find(
         {"id": {"$in": uids}},
-        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "phone": 1, "hourly_rate": 1, "active": 1, "is_owner": 1},
+        {
+            "_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1,
+            "phone": 1, "hourly_rate": 1, "active": 1, "is_owner": 1,
+            "tax_status": 1, "address_street": 1, "address_city": 1,
+            "address_state": 1, "address_zip": 1,
+        },
     ).to_list(500) if uids else []
     # Sprint 110bf — sole-prop owner does NOT get a 1099/W2; their pay is a draw
     user_by_id = {u["id"]: u for u in users if not u.get("is_owner")}
@@ -9244,31 +9249,77 @@ async def payroll_year_end_csv(
         row["gross"] += hrs * rate
         row["entries"] += 1
 
+    # Sprint 110bu — group by tax_status so the CPA sees W-2 / 1099 / other
+    # separately, each with its own sub-total.
+    GROUP_ORDER = [
+        ("w2",    "W-2 EMPLOYEES",         "Issue W-2 by Jan 31"),
+        ("1099",  "1099-NEC CONTRACTORS",  "Issue 1099-NEC if total ≥ $600"),
+        ("other", "OTHER / UNCLASSIFIED",  "Set tax_status in Staff → Edit before filing"),
+    ]
+    grouped: Dict[str, List[str]] = {k: [] for k, _, _ in GROUP_ORDER}
+    for uid in per_user.keys():
+        u = user_by_id.get(uid, {})
+        status = (u.get("tax_status") or "1099").lower()
+        if status not in grouped:
+            status = "other"
+        grouped[status].append(uid)
+
     # Build the CSV
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([f"Year-end payroll summary — {y}"])
-    w.writerow([
-        "Employee", "Email", "Phone", "Hourly rate", "Active",
-        "Total hours", "Gross wages (USD)", "Clocked entries",
-    ])
-    for uid, agg in sorted(per_user.items(),
-                          key=lambda kv: (user_by_id.get(kv[0], {}).get("name") or "").lower()):
-        u = user_by_id.get(uid, {})
-        w.writerow([
-            u.get("display_name") or u.get("name") or "(unknown)",
-            u.get("email", ""),
-            u.get("phone", ""),
-            f"{float(u.get('hourly_rate') or 0):.2f}",
-            "Yes" if u.get("active", True) else "No",
-            f"{agg['hours']:.2f}",
-            f"{agg['gross']:.2f}",
-            agg["entries"],
-        ])
     w.writerow([])
-    total_hours = sum(r["hours"] for r in per_user.values())
-    total_gross = sum(r["gross"] for r in per_user.values())
-    w.writerow(["TOTAL", "", "", "", "", f"{total_hours:.2f}", f"{total_gross:.2f}", sum(r["entries"] for r in per_user.values())])
+
+    grand_hours = 0.0
+    grand_gross = 0.0
+    grand_entries = 0
+    for status_code, label, hint in GROUP_ORDER:
+        uids_in_group = grouped[status_code]
+        if not uids_in_group:
+            continue
+        w.writerow([label, hint])
+        w.writerow([
+            "Employee", "Email", "Phone", "Street", "City", "State", "Zip",
+            "Hourly rate", "Active", "Total hours", "Gross wages (USD)",
+            "Clocked entries",
+        ])
+        sub_hours = 0.0
+        sub_gross = 0.0
+        sub_entries = 0
+        for uid in sorted(uids_in_group,
+                          key=lambda i: (user_by_id.get(i, {}).get("name") or "").lower()):
+            u = user_by_id.get(uid, {})
+            agg = per_user[uid]
+            w.writerow([
+                u.get("display_name") or u.get("name") or "(unknown)",
+                u.get("email", ""),
+                u.get("phone", ""),
+                u.get("address_street", ""),
+                u.get("address_city", ""),
+                u.get("address_state", ""),
+                u.get("address_zip", ""),
+                f"{float(u.get('hourly_rate') or 0):.2f}",
+                "Yes" if u.get("active", True) else "No",
+                f"{agg['hours']:.2f}",
+                f"{agg['gross']:.2f}",
+                agg["entries"],
+            ])
+            sub_hours += agg["hours"]
+            sub_gross += agg["gross"]
+            sub_entries += agg["entries"]
+        w.writerow([
+            f"  Subtotal — {label}", "", "", "", "", "", "", "", "",
+            f"{sub_hours:.2f}", f"{sub_gross:.2f}", sub_entries,
+        ])
+        w.writerow([])
+        grand_hours += sub_hours
+        grand_gross += sub_gross
+        grand_entries += sub_entries
+
+    w.writerow([
+        "GRAND TOTAL", "", "", "", "", "", "", "", "",
+        f"{grand_hours:.2f}", f"{grand_gross:.2f}", grand_entries,
+    ])
 
     if detail and entries:
         w.writerow([])
@@ -10959,6 +11010,12 @@ class EmployeeIn(BaseModel):
     phone: Optional[str] = ""
     notes: Optional[str] = ""
     is_owner: bool = False  # Sprint 110bf — exclude from payroll tax math (owner's draw)
+    # Sprint 110bu — W-2 prep: tax classification + mailing address
+    tax_status: Literal["w2", "1099", "other"] = "1099"
+    address_street: Optional[str] = ""
+    address_city: Optional[str] = ""
+    address_state: Optional[str] = ""
+    address_zip: Optional[str] = ""
 
 
 class EmployeeCreateIn(EmployeeIn):
@@ -10984,6 +11041,11 @@ def _employee_doc_to_out(u: dict) -> dict:
         "phone": u.get("phone", ""),
         "notes": u.get("notes", ""),
         "is_owner": bool(u.get("is_owner", False)),
+        "tax_status": u.get("tax_status") or "1099",
+        "address_street": u.get("address_street", ""),
+        "address_city": u.get("address_city", ""),
+        "address_state": u.get("address_state", ""),
+        "address_zip": u.get("address_zip", ""),
         "role": "employee",
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
@@ -11033,6 +11095,11 @@ async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admi
         "phone": body.phone or "",
         "notes": body.notes or "",
         "is_owner": bool(body.is_owner),
+        "tax_status": body.tax_status,
+        "address_street": body.address_street or "",
+        "address_city": body.address_city or "",
+        "address_state": body.address_state or "",
+        "address_zip": body.address_zip or "",
         "role": "employee",
         "password_hash": hash_password(body.password),
         "created_at": now_iso(),
@@ -11058,6 +11125,11 @@ async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(requ
         "phone": body.phone or "",
         "notes": body.notes or "",
         "is_owner": bool(body.is_owner),
+        "tax_status": body.tax_status,
+        "address_street": body.address_street or "",
+        "address_city": body.address_city or "",
+        "address_state": body.address_state or "",
+        "address_zip": body.address_zip or "",
     }
     await db.users.update_one({"id": user_id}, {"$set": update})
     if update["is_owner"]:

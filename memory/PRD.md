@@ -29,6 +29,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bu — Staff W-2 / 1099 prep + grouped year-end CSV (2026-06-01)
+- ✅ **Two new fields on the staff profile**: `tax_status` (`w2` | `1099` | `other`, defaults to `1099` for backward compat) + `address_street` / `address_city` / `address_state` / `address_zip`. Lives on the user record so it survives backups (`users` is intentionally NOT in the backup, but tax_status is captured via the year-end CSV export).
+- ✅ **EmployeeIn/Out + create + update endpoints** all updated in lock-step. Pydantic `Literal["w2", "1099", "other"]` rejects invalid values with 422.
+- ✅ **Staff edit modal redesigned**:
+  - New **Tax classification** dropdown (`<select>` with helpful labels — "W-2 employee (you withhold taxes)" / "1099-NEC contractor (paid gross)" / "Other / not classified yet"). Hidden when Owner is checked since owner doesn't get a 1099/W-2.
+  - New **Mailing address** collapsible disclosure (street + city/state/zip grid). Header gets a green "· On file" indicator once any address fields are populated.
+  - Privacy note: "SSN/EIN is intentionally NOT stored here — your CPA collects that directly".
+- ✅ **Year-end CSV `/admin/payroll/year-end.csv` rewritten** to group by `tax_status`:
+  - Three sections (W-2 EMPLOYEES / 1099-NEC CONTRACTORS / OTHER) each with a filing-deadline hint and per-group **subtotal** row.
+  - Header now includes **Street, City, State, Zip** columns so the CPA has everything for W-2 / 1099 filings.
+  - **GRAND TOTAL** at the bottom across all groups.
+  - Owner still excluded (Sprint 110bf logic preserved).
+- ✅ **Tests** `test_w2_payroll_prep.py` (5/5 passing): create with new fields, update flips W-2 ↔ 1099, default → 1099, invalid value rejected, CSV smoke (Street/City/State/Zip headers + GRAND TOTAL present).
+
+
 ## Sprint 110bt — Backup/restore now covers everything in this session (2026-06-01)
 - ✅ **BACKUP_VERSION bumped 2 → 3.** Restore still accepts v1/v2 payloads (older snapshots simply contain fewer collections — never wipes the new ones).
 - ✅ **9 new collections added to `BACKUP_COLLECTIONS`** that were previously missing:
