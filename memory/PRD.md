@@ -29,6 +29,16 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bi — Dog Trivia mini-game (Wordle-style daily + adaptive quiz) (2026-02)
+- ✅ **Wordle-style daily question** — every client sees the same multi-choice question per Eastern day. Deterministic SHA-256 hash of date picks from least-used pool, cached in `trivia_daily` collection for idempotency.
+- ✅ **Streak tracking** — `_compute_streak` walks consecutive days; missing today doesn't break streak, breaks only on wrong answer or skipped day. Milestone messages emit at 7/14/30 days (free puzzle toy / $5 retail credit / free service upgrade) — stamped onto `clients.trivia_milestones`. Operator manually applies the perk at next checkout.
+- ✅ **Family leaderboard** — top-10 by `current_streak → best_streak → total_correct`, shows first-name + dog names, YOU highlight when current user is in the top-10.
+- ✅ **Adaptive quiz mode** — 5-question ramp (easy → medium → hard) via `/portal/trivia/quiz`. Quiz answers do NOT affect daily streak; pure-fun mode. `correct_index` never leaks to the client (sanitized via `_strip_correct`).
+- ✅ **AI question generation** — Claude Sonnet 4.6 via `emergentintegrations` LlmChat with EMERGENT_LLM_KEY. Auto-seeds on first run when pool < 30 active questions. Admin "Generate with AI" button on Settings → Trivia panel for on-demand batches.
+- ✅ **Admin management** — Settings → Dog Trivia panel: list questions (tag/difficulty/correct/usage), generate N more via AI, toggle active/inactive, delete. New `trivia_questions`, `trivia_daily`, `trivia_attempts` collections.
+- ✅ **Tests** `test_dog_trivia.py` — 9/9 passing (admin CRUD, daily shape, Wordle determinism, quiz adaptive, leaderboard shape, quiz doesn't affect streak, auth requirements). Testing agent verified zero UI bugs.
+
+
 ## Sprint 110bh — Whole-app US Eastern timezone (2026-06-01)
 - **User request:** "im in the u.s. eastern time zone the whole app should respect this time zone"
 - **Root cause:** Backend was using `date.today()` (system TZ = UTC in container) for every "today / month / week" boundary. Background loops (auto-backup) used `datetime.now()` naive local which = UTC. Daily jobs (vaccine nudges, birthday emails) used `datetime.now(timezone.utc).date()`. All combined to misalign with the operator's wall clock.
