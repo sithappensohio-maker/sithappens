@@ -15,6 +15,7 @@ from collections import deque
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
+from zoneinfo import ZoneInfo
 from typing import List, Optional, Literal, Dict, Any
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body
@@ -136,6 +137,24 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# Sprint 110bg — Business timezone. The whole app's "today" / "this month" /
+# "this week" boundaries are anchored on US Eastern (operator is in Warren OH).
+# Storage timestamps remain in UTC (now_iso) so backups & cross-tz queries stay
+# consistent — only DAY-LEVEL operator-facing math uses this.
+BUSINESS_TZ = ZoneInfo("America/New_York")
+
+
+def business_today() -> date:
+    """Return today's date in the business timezone (US Eastern)."""
+    return datetime.now(BUSINESS_TZ).date()
+
+
+def now_local() -> datetime:
+    """Naive local datetime (no tzinfo) — handy for hour/minute comparisons in
+    the auto-backup loop where we want wall-clock semantics."""
+    return datetime.now(BUSINESS_TZ).replace(tzinfo=None)
 
 
 # Context-var flag used by bulk-booking endpoints (recurring, multi-dates) to
@@ -883,7 +902,7 @@ async def archive_now(_: dict = Depends(require_admin)):
 # Once-per-UTC-day guard so we don't re-archive on every dashboard load.
 async def _maybe_archive_today():
     try:
-        today = date.today().isoformat()
+        today = business_today().isoformat()
         marker = await db.system_runs.find_one({"_id": "archive_bookings"})
         if marker and marker.get("date") == today:
             return
@@ -1334,9 +1353,9 @@ async def list_bookings(
         q["client_id"] = user.get("client_id")
     if not include_all:
         if not start_date:
-            start_date = (date.today() - timedelta(days=90)).isoformat()
+            start_date = (business_today() - timedelta(days=90)).isoformat()
         if not end_date:
-            end_date = (date.today() + timedelta(days=90)).isoformat()
+            end_date = (business_today() + timedelta(days=90)).isoformat()
         q["date"] = {"$gte": start_date, "$lte": end_date}
     items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(3000)
     return items
@@ -1349,7 +1368,7 @@ def _service_cost(rules: dict, service_type: str, days: int) -> int:
 
 
 async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     vaccines = dog.get("vaccines") or {}
     for v in required:
         d = vaccines.get(v, "")
@@ -1420,7 +1439,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if user.get("role") != "admin" and body.service_type != "daycare":
         max_adv = int(rules.get("max_advance_days", 60))
         if max_adv > 0:
-            limit_date = (date.today() + timedelta(days=max_adv)).isoformat()
+            limit_date = (business_today() + timedelta(days=max_adv)).isoformat()
             if body.date > limit_date:
                 raise HTTPException(status_code=400, detail=f"Bookings allowed up to {max_adv} days in advance")
 
@@ -1538,7 +1557,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
                 if not existing_active:
                     program = await db.programs.find_one({"id": prog_id}, {"_id": 0})
                     if program:
-                        started = doc.get("date") or date.today().isoformat()
+                        started = doc.get("date") or business_today().isoformat()
                         target = _suggest_target_date(started, program.get("format") or {})
                         enrollment = {
                             "id": _gid(),
@@ -1881,7 +1900,7 @@ async def extend_recurring_template(
         raise HTTPException(status_code=400, detail="Template is inactive")
     weeks = int(body.weeks or t.get("default_horizon_weeks") or 12)
     weeks = max(1, min(weeks, 52))
-    today = date.today()
+    today = business_today()
     last = t.get("last_booked_through")
     start_candidate = today
     # First extend: honor the template's preferred start_date (if any future date)
@@ -2075,7 +2094,7 @@ async def availability(date_str: str, dog_id: str, user: dict = Depends(get_curr
         raise HTTPException(status_code=404, detail="Dog not found")
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     vac_ok = True
     missing = []
     for v in required:
@@ -3200,8 +3219,8 @@ async def vaccine_alerts(_: dict = Depends(require_admin)):
     settings = await get_settings()
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
-    today = date.today().isoformat()
-    in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
+    today = business_today().isoformat()
+    in_warn = (business_today() + timedelta(days=warn_days)).isoformat()
     now_dt = datetime.now(timezone.utc)
     dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
     dismiss_map = {}
@@ -3684,7 +3703,7 @@ async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
     boarding_nights = 0
     training_sessions = 0
     last_visit = None
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     for b in bookings:
         if b["status"] in ("cancelled", "rejected"):
             continue
@@ -3963,7 +3982,7 @@ async def create_homework_from_template(body: HomeworkFromTemplateIn, user: dict
     # Compute due_date from default_duration_days if none provided.
     due = body.due_date or ""
     if not due and tpl.get("default_duration_days"):
-        due = (date.today() + timedelta(days=int(tpl["default_duration_days"]))).isoformat()
+        due = (business_today() + timedelta(days=int(tpl["default_duration_days"]))).isoformat()
 
     snapshot = {
         "template_id": tpl["id"],
@@ -4035,7 +4054,7 @@ async def log_section(homework_id: str, body: SectionLogIn, user: dict = Depends
     entry = {
         "id": str(uuid.uuid4()),
         "section_id": body.section_id,
-        "date": body.date or date.today().isoformat(),
+        "date": body.date or business_today().isoformat(),
         "field_values": body.field_values or {},
         "note": body.note or "",
         "logged_by": user.get("name", ""),
@@ -4383,7 +4402,7 @@ async def create_daily_tracker(body: DailyTrackerCreateIn, user: dict = Depends(
             "resources": _normalize_resources(d.resources or []),
         })
 
-    due = (date.today() + timedelta(days=len(sections))).isoformat()
+    due = (business_today() + timedelta(days=len(sections))).isoformat()
     snapshot = {
         "kind": "daily_tracker",
         "name": body.title,
@@ -4486,7 +4505,7 @@ async def submit_day(
         "id": str(uuid.uuid4()),
         "section_id": section_id,
         "day_number": int(day_number),
-        "date": date.today().isoformat(),
+        "date": business_today().isoformat(),
         "field_values": field_values,
         "note": (body.note or "").strip(),
         "submission_status": "submitted",
@@ -4627,7 +4646,7 @@ async def mark_rest_day(
         "id": str(uuid.uuid4()),
         "section_id": f"day-{day_number}",
         "day_number": int(day_number),
-        "date": date.today().isoformat(),
+        "date": business_today().isoformat(),
         "field_values": {},
         "note": (body.note or "").strip(),
         "submission_status": "rest",   # special status → auto-passes
@@ -4697,7 +4716,7 @@ async def ask_question(
             "id": str(uuid.uuid4()),
             "section_id": f"day-{day_number}",
             "day_number": int(day_number),
-            "date": date.today().isoformat(),
+            "date": business_today().isoformat(),
             "field_values": {},
             "note": "",
             "submission_status": "draft",
@@ -5057,7 +5076,7 @@ async def dog_behavior_trend(dog_id: str, days: int = 60, user: dict = Depends(g
     if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
 
-    cutoff = (date.today() - timedelta(days=int(days))).isoformat()
+    cutoff = (business_today() - timedelta(days=int(days))).isoformat()
     points: List[dict] = []
     async for hw in db.homework.find({"dog_id": dog_id, "daily_tracker": True}, {"_id": 0, "section_logs": 1, "title": 1}):
         for log in hw.get("section_logs") or []:
@@ -5181,7 +5200,7 @@ async def toggle_day_step(homework_id: str, day_number: int, body: StepToggleIn,
             "id": str(uuid.uuid4()),
             "section_id": f"day-{day_number}",
             "day_number": int(day_number),
-            "date": date.today().isoformat(),
+            "date": business_today().isoformat(),
             "field_values": {},
             "step_states": {},
             "note": "",
@@ -5302,7 +5321,7 @@ async def homework_catch_up(homework_id: str, body: CatchUpIn, user: dict = Depe
             "id": str(uuid.uuid4()),
             "section_id": f"day-{body.missed_day_number}",
             "day_number": int(body.missed_day_number),
-            "date": date.today().isoformat(),
+            "date": business_today().isoformat(),
             "field_values": {},
             "step_states": {},
             "note": "Skipped via catch-up",
@@ -5323,9 +5342,9 @@ async def homework_catch_up(homework_id: str, body: CatchUpIn, user: dict = Depe
 
     elif body.strategy == "shift_forward":
         try:
-            cur_due = datetime.fromisoformat(hw.get("due_date") or date.today().isoformat()).date()
+            cur_due = datetime.fromisoformat(hw.get("due_date") or business_today().isoformat()).date()
         except Exception:
-            cur_due = date.today()
+            cur_due = business_today()
         new_due = (cur_due + timedelta(days=1)).isoformat()
         await db.homework.update_one({"id": homework_id}, {"$set": {"due_date": new_due}})
 
@@ -5335,7 +5354,7 @@ async def homework_catch_up(homework_id: str, body: CatchUpIn, user: dict = Depe
             "id": str(uuid.uuid4()),
             "section_id": f"day-{body.missed_day_number}",
             "day_number": int(body.missed_day_number),
-            "date": date.today().isoformat(),
+            "date": business_today().isoformat(),
             "field_values": {},
             "step_states": {},
             "note": "Carried forward via catch-up",
@@ -5400,8 +5419,8 @@ async def portal_today_plan(user: dict = Depends(get_current_user)):
     if not cid:
         raise HTTPException(status_code=400, detail="No client linked")
 
-    today = date.today().isoformat()
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    today = business_today().isoformat()
+    yesterday = (business_today() - timedelta(days=1)).isoformat()
     plan: List[dict] = []
 
     async for hw in db.homework.find(
@@ -6451,7 +6470,7 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
     program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
     if not program:
         raise HTTPException(status_code=404, detail="Program not found")
-    started = body.started_at or date.today().isoformat()
+    started = body.started_at or business_today().isoformat()
     target = body.target_completion_date or _suggest_target_date(started, program.get("format") or {})
     enrollment = {
         "id": _gid(),
@@ -6664,7 +6683,7 @@ async def programs_pipeline(
     client_map = {c["id"]: c for c in clients_list}
 
     out = []
-    today = date.today()
+    today = business_today()
     for r in rows:
         dog = dog_map.get(r["dog_id"])
         if not dog:
@@ -6735,7 +6754,7 @@ async def all_dog_tags(_: dict = Depends(require_admin)):
 # -------- Run Sheet --------
 @api.get("/run-sheet")
 async def run_sheet(_: dict = Depends(require_admin), date_str: Optional[str] = None):
-    target = date_str or date.today().isoformat()
+    target = date_str or business_today().isoformat()
     bookings = await db.bookings.find(
         {"status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
     ).to_list(2000)
@@ -6799,8 +6818,8 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     required = settings.get("required_vaccines", ["rabies"])
     warn_days = int(settings.get("vaccine_warning_days", 30))
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
-    today = date.today().isoformat()
-    in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
+    today = business_today().isoformat()
+    in_warn = (business_today() + timedelta(days=warn_days)).isoformat()
     # Projection skips heavy base64 photo fields — dashboard roster needs
     # feeding/medications/training_skills for the care-icon badges, but the
     # photo arrays + raw training_logs are the bandwidth hogs.
@@ -6835,9 +6854,9 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
 
     # Only need bookings whose date range overlaps today — pull a tight
     # window instead of every booking in the DB.
-    today_dt = date.today()
-    win_start = (today_dt - timedelta(days=60)).isoformat()  # boarding stays might span back
-    win_end = (today_dt + timedelta(days=1)).isoformat()
+    business_todayt = business_today()
+    win_start = (business_todayt - timedelta(days=60)).isoformat()  # boarding stays might span back
+    win_end = (business_todayt + timedelta(days=1)).isoformat()
     today_bookings = await db.bookings.find(
         {
             "status": {"$in": ["approved", "pending", "completed"]},
@@ -6905,7 +6924,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
 async def _first_time_bookings_today(today: str, dog_map: dict) -> list:
     """Celebratory banner: bookings created today by clients who had no prior bookings.
     Used to surface 'first booking from {Name}!' on the admin dashboard."""
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    tomorrow = (business_today() + timedelta(days=1)).isoformat()
     today_prefix_lo = f"{today}T"
     today_prefix_hi = f"{tomorrow}T"
     # Pull just the bookings created in today's window (indexed on created_at).
@@ -6951,7 +6970,7 @@ async def _first_time_bookings_today(today: str, dog_map: dict) -> list:
 
 
 def _upcoming_birthdays(dogs: list, days_ahead: int = 14) -> list:
-    today = date.today()
+    today = business_today()
     out = []
     for d in dogs:
         bd = d.get("birthday") or ""
@@ -6993,7 +7012,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         warn    → orange (expiring vaccines, unanswered hw questions, low credits, pending bookings)
         info    → green  (pipeline ready for cert, new signups, monday digest preview)
     """
-    today_iso = date.today().isoformat()
+    today_iso = business_today().isoformat()
     now_dt = datetime.now(timezone.utc)
     items: List[dict] = []
 
@@ -7020,7 +7039,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         settings = await get_settings()
         required = settings.get("required_vaccines", ["rabies"])
         warn_days = int(settings.get("vaccine_warning_days", 30))
-        in_warn = (date.today() + timedelta(days=warn_days)).isoformat()
+        in_warn = (business_today() + timedelta(days=warn_days)).isoformat()
         dismissals = await db.vaccine_dismissals.find({}, {"_id": 0}).to_list(2000)
         dismissed = set()
         for d in dismissals:
@@ -7117,7 +7136,7 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
         # Only flag clients with at least one daycare/training/boarding booking in last 60d
         # so we don't spam alerts for inactive prospects.
         if low_clients:
-            cutoff = (date.today() - timedelta(days=60)).isoformat()
+            cutoff = (business_today() - timedelta(days=60)).isoformat()
             active_ids = set()
             async for b in db.bookings.find(
                 {"date": {"$gte": cutoff}, "status": {"$in": ["approved", "completed"]}},
@@ -7350,7 +7369,7 @@ def _today_brain_signature(item: dict) -> str:
         return f"pipeline:{item.get('id','').split(':')[-1]}:{pct_bucket}"
     if kind in ("monday_digest", "no_checkin", "steps_incomplete"):
         # Date-scoped — these auto-roll over at midnight UTC anyway.
-        return f"{kind}:{date.today().isoformat()}"
+        return f"{kind}:{business_today().isoformat()}"
     if kind == "new_signup":
         # One-time dismiss tied to the client id — no state to track.
         return "once"
@@ -7843,8 +7862,8 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
 
 
 def _seconds_until_next_run(hour: int, minute: int) -> float:
-    """Compute seconds until the next HH:MM (local-tz wall clock)."""
-    now = datetime.now()
+    """Compute seconds until the next HH:MM (US Eastern wall clock)."""
+    now = now_local()
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if target <= now:
         target = target + timedelta(days=1)
@@ -7961,7 +7980,7 @@ async def _todays_fact() -> Optional[Dict[str, Any]]:
     ).sort("sort_order", 1).to_list(2000)
     if not facts:
         return None
-    today = date.today()
+    today = business_today()
     # day-of-year + year offset for slow drift between years
     idx = (today.toordinal()) % len(facts)
     return facts[idx]
@@ -7972,8 +7991,8 @@ async def dog_fact_today(user: dict = Depends(get_current_user)):
     """Public-ish endpoint (any authenticated user). Returns today's fact."""
     fact = await _todays_fact()
     if not fact:
-        return {"fact": None, "date": date.today().isoformat()}
-    return {"fact": fact, "date": date.today().isoformat()}
+        return {"fact": None, "date": business_today().isoformat()}
+    return {"fact": fact, "date": business_today().isoformat()}
 
 
 @api.get("/dog-facts")
@@ -8129,7 +8148,7 @@ async def sales_tax_summary(
 ):
     """Return tax collected in the window. Defaults to current calendar year.
     Splits booking-tax vs retail-tax + breakdown by month."""
-    today = date.today()
+    today = business_today()
     sd = start_date or f"{today.year}-01-01"
     ed = end_date or today.isoformat()
     # Booking-level tax
@@ -8193,7 +8212,7 @@ async def payroll_year_end_csv(
 ):
     """Year-end gross-wages CSV. Pass `?detail=true` to also dump every
     clocked-in/out entry for the year (handy for 1099/W2 reconciliation)."""
-    y = int(year or date.today().year)
+    y = int(year or business_today().year)
     start_iso = f"{y}-01-01T00:00:00"
     end_iso = f"{y + 1}-01-01T00:00:00"
     # All clocked-in entries with a clock-out in the year
@@ -8414,7 +8433,7 @@ async def admin_income_csv(
     payment method, payment status. Designed to open clean in Excel/Sheets.
     """
     from fastapi.responses import Response
-    yr = year or date.today().year
+    yr = year or business_today().year
     start = f"{yr}-01-01"
     end = f"{yr}-12-31"
     # Paid / completed bookings within the year
@@ -9561,7 +9580,7 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
         "dog_name": dog["name"],
         "client_id": dog["owner_id"],
         "client_name": (client or {}).get("name", ""),
-        "date": body.date or date.today().isoformat(),
+        "date": body.date or business_today().isoformat(),
         "end_date": None,
         "service_type": svc.get("service_type") or "other",
         "status": body.status,
@@ -9629,7 +9648,7 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
 
 def _week_bounds(ref: Optional[date] = None) -> tuple:
     """Returns (monday_iso, sunday_iso) for the week containing `ref` (default today)."""
-    ref = ref or date.today()
+    ref = ref or business_today()
     monday = ref - timedelta(days=ref.weekday())
     sunday = monday + timedelta(days=6)
     return monday.isoformat(), sunday.isoformat()
@@ -9695,7 +9714,7 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     to inspect any other week. Returns cash + credits split so you can read
     real-money revenue separately from credit redemptions."""
     try:
-        ref = date.fromisoformat(ref_date) if ref_date else date.today()
+        ref = date.fromisoformat(ref_date) if ref_date else business_today()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid ref_date")
     monday_iso, sunday_iso = _week_bounds(ref)
@@ -9827,7 +9846,7 @@ async def summary_range(
     try:
         ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
     except Exception:
-        ytd_start = f"{date.today().year}-01-01"
+        ytd_start = f"{business_today().year}-01-01"
     pre = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lt": f"{start_date}T00:00:00"},
          "clock_out_at": {"$ne": None, "$exists": True}},
@@ -10095,7 +10114,7 @@ async def owner_draw_summary(_: dict = Depends(require_admin)):
     )
     if not row:
         return {"owner": None}
-    today = date.today()
+    today = business_today()
     rate = float(row.get("hourly_rate") or 0)
     spans = {
         "today":     (f"{today.isoformat()}T00:00:00", f"{today.isoformat()}T23:59:59.999Z"),
@@ -10259,8 +10278,8 @@ async def time_clock_me(
     total_gross = round(total_hours * rate, 2)
 
     # Week boundary helper (Sunday start, Saturday end — U.S. payroll standard)
-    today_local = date.today()
-    sunday = today_local - timedelta(days=(today_local.weekday() + 1) % 7)
+    today = business_today()
+    sunday = today - timedelta(days=(today.weekday() + 1) % 7)
     last_sunday = sunday - timedelta(days=7)
     last_saturday = sunday - timedelta(days=1)
 
@@ -10271,14 +10290,14 @@ async def time_clock_me(
             return False
         return start_d <= d <= end_d
 
-    this_week_entries = [e for e in closed if _in_range(e, sunday, today_local)]
+    this_week_entries = [e for e in closed if _in_range(e, sunday, today)]
     last_week_entries = [e for e in closed if _in_range(e, last_sunday, last_saturday)]
     this_week_hours = round(sum(float(e["hours"]) for e in this_week_entries), 2)
     last_week_hours = round(sum(float(e["hours"]) for e in last_week_entries), 2)
 
     # YTD — query independently of the `days` window so it's accurate even
     # for short windows
-    ytd_start = f"{today_local.year}-01-01T00:00:00"
+    ytd_start = f"{today.year}-01-01T00:00:00"
     ytd = await db.time_clock_entries.find(
         {"user_id": user["id"], "clock_in_at": {"$gte": ytd_start},
          "clock_out_at": {"$ne": None, "$exists": True}, "hours": {"$ne": None}},
@@ -10296,11 +10315,12 @@ async def time_clock_me(
             elapsed_hrs = max(0.0, (datetime.now(timezone.utc) - t_in).total_seconds() / 3600.0)
             br = float(open_entry.get("break_minutes") or 0) / 60.0
             elapsed_hrs = max(0.0, elapsed_hrs - br)
+            hours_rounded = round(elapsed_hrs, 2)
             live = {
                 "entry_id": open_entry["id"],
                 "clock_in_at": open_entry["clock_in_at"],
-                "hours_so_far": round(elapsed_hrs, 2),
-                "gross_so_far": round(elapsed_hrs * rate, 2),
+                "hours_so_far": hours_rounded,
+                "gross_so_far": round(hours_rounded * rate, 2),
             }
         except Exception:
             pass
@@ -10313,7 +10333,7 @@ async def time_clock_me(
         "days": days,
         "this_week": {
             "start": sunday.isoformat(),
-            "end": today_local.isoformat(),
+            "end": today.isoformat(),
             "hours": this_week_hours,
             "gross": _gross(this_week_hours),
         },
@@ -10323,7 +10343,7 @@ async def time_clock_me(
             "hours": last_week_hours,
             "gross": _gross(last_week_hours),
         },
-        "ytd": {"year": today_local.year, "hours": ytd_hours, "gross": ytd_gross},
+        "ytd": {"year": today.year, "hours": ytd_hours, "gross": ytd_gross},
         "live": live,
     }
 
@@ -10339,11 +10359,11 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
     ).to_list(500)
     if not employees:
         return {"snapshot": [], "totals": {"this_week_hours": 0, "this_week_gross": 0, "ytd_gross": 0}}
-    today_local = date.today()
-    sunday = today_local - timedelta(days=(today_local.weekday() + 1) % 7)
+    today = business_today()
+    sunday = today - timedelta(days=(today.weekday() + 1) % 7)
     last_sunday = sunday - timedelta(days=7)
     last_saturday = sunday - timedelta(days=1)
-    ytd_start = f"{today_local.year}-01-01T00:00:00"
+    ytd_start = f"{today.year}-01-01T00:00:00"
     uids = [u["id"] for u in employees]
     # YTD entries — one query for all employees
     rows = await db.time_clock_entries.find(
@@ -10377,7 +10397,7 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
             except Exception:
                 continue
             slot["ytd_hours"] += hrs
-            if sunday <= d <= today_local:
+            if sunday <= d <= today:
                 slot["this_week_hours"] += hrs
             elif last_sunday <= d <= last_saturday:
                 slot["last_week_hours"] += hrs
@@ -10412,7 +10432,7 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
         "ytd_gross": round(sum(s["ytd_gross"] for s in snapshot), 2),
         "currently_clocked_in": sum(1 for s in snapshot if s["live"]),
         "week_start": sunday.isoformat(),
-        "week_end": today_local.isoformat(),
+        "week_end": today.isoformat(),
     }
     return {"snapshot": snapshot, "totals": totals}
 
@@ -10477,7 +10497,7 @@ async def admin_quarterly_tax(
     SE Tax  = (Net × 92.35%) × (SS rate up to wage base + Medicare rate)
     Income  = (Net - 50% of SE) × (federal + state + local)
     """
-    today = date.today()
+    today = business_today()
     yr = int(year or today.year)
     start = f"{yr}-01-01"
     end = f"{yr}-12-31" if yr < today.year else today.isoformat()
@@ -10718,7 +10738,7 @@ async def add_tax_payment(
         "year": int(body.year),
         "quarter": int(body.quarter),
         "amount": round(float(body.amount), 2),
-        "payment_date": body.payment_date or date.today().isoformat(),
+        "payment_date": body.payment_date or business_today().isoformat(),
         "payment_method": (body.payment_method or "EFTPS").strip(),
         "memo": (body.memo or "").strip(),
         "created_at": now_iso(),
@@ -10912,7 +10932,7 @@ async def employee_pay_history(
         {"id": user["id"]}, {"_id": 0, "hourly_rate": 1}
     ) or {}
     rate = float(me.get("hourly_rate") or 0)
-    today = date.today()
+    today = business_today()
     # Anchor on Sunday (weekday() returns Mon=0..Sun=6 ⇒ Sunday = (wd+1) % 7 days back)
     days_back_to_sunday = (today.weekday() + 1) % 7
     current_sunday = today - timedelta(days=days_back_to_sunday)
@@ -11011,7 +11031,7 @@ async def time_clock_me_csv(
     w.writerow([])
     w.writerow(["TOTAL", "", "", "", f"{grand_h:.2f}", f"{grand_h * rate:.2f}"])
     buf.seek(0)
-    fname = f"timecard-{name.replace(' ', '_')}-{date.today().isoformat()}.csv"
+    fname = f"timecard-{name.replace(' ', '_')}-{business_today().isoformat()}.csv"
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
@@ -11126,7 +11146,7 @@ async def employee_me(user: dict = Depends(require_employee_or_admin)):
     open_entry = await db.time_clock_entries.find_one(
         {"user_id": user["id"], "clock_out_at": None}, {"_id": 0}
     )
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     today_entries = await db.time_clock_entries.find(
         {"user_id": user["id"], "clock_in_at": {"$gte": f"{today}T00:00:00"}},
         {"_id": 0},
@@ -11510,7 +11530,7 @@ async def payroll_estimate(
     try:
         ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
     except Exception:
-        ytd_start = f"{date.today().year}-01-01"
+        ytd_start = f"{business_today().year}-01-01"
     ytd_entries = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
          "clock_out_at": {"$ne": None, "$exists": True}},
@@ -11632,7 +11652,7 @@ async def payroll_csv(
     try:
         ytd_start = f"{datetime.strptime(end_date, '%Y-%m-%d').year}-01-01"
     except Exception:
-        ytd_start = f"{date.today().year}-01-01"
+        ytd_start = f"{business_today().year}-01-01"
     ytd_pre = await db.time_clock_entries.find(
         {"clock_in_at": {"$gte": f"{ytd_start}T00:00:00", "$lte": f"{start_date}T00:00:00"},
          "clock_out_at": {"$ne": None, "$exists": True}},
@@ -11785,7 +11805,7 @@ async def employee_my_tasks(user: dict = Depends(require_employee_or_admin)):
         - bookings on the run-sheet assigned to them
         - vaccine reviews assigned to them
         - plus a list of unassigned/open tasks they can claim"""
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     mine_tasks = await db.tasks.find(
         {"assigned_to": user["id"], "status": {"$in": ["open", "in_progress"]}},
         {"_id": 0},
@@ -11831,8 +11851,8 @@ async def employee_my_shifts(
     user: dict = Depends(require_employee_or_admin),
 ):
     """Upcoming + recent shifts for the calling user. Defaults to next 14 days."""
-    s = start_date or date.today().isoformat()
-    e = end_date or (date.today() + timedelta(days=14)).isoformat()
+    s = start_date or business_today().isoformat()
+    e = end_date or (business_today() + timedelta(days=14)).isoformat()
     rows = await db.shifts.find(
         {"user_id": user["id"], "date": {"$gte": s, "$lte": e}},
         {"_id": 0},
@@ -11847,7 +11867,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
     for today. Bookings count if approved or completed; price falls back to the
     service catalog `base_price` when actual_price isn't set yet. Labor uses
     real clocked hours; any currently-open shift is projected to "now"."""
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     now_dt = datetime.now(timezone.utc)
     # ── Expected revenue today (includes "no-show" / late-cancel charges
     # — see DELETE /bookings/{id}?forfeit=true)
@@ -11884,7 +11904,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
             default_svc_id_by_type[st] = s.get("id")
     # Sprint 110ay — Bulk-load active legacy pricing for today's clients so the
     # forecast revenue reflects each client's grandfathered rate (not catalog).
-    today_d = date.today()
+    today_date = business_today()
     client_ids = list({b.get("client_id") for b in bookings if b.get("client_id")})
     overrides_by_pair: Dict[tuple, float] = {}
     if client_ids:
@@ -11893,7 +11913,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
             {"_id": 0, "client_id": 1, "target_code": 1, "override_price": 1, "expires_on": 1},
         ).to_list(2000)
         for row in ovr_rows:
-            if _override_is_active(row, today_d):
+            if _override_is_active(row, today_date):
                 overrides_by_pair[(row["client_id"], row["target_code"])] = float(row.get("override_price") or 0)
     revenue = 0.0
     booked_count = 0
@@ -12084,7 +12104,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
 async def employee_roster_today(user: dict = Depends(require_employee_or_admin)):
     """Today's run-sheet roster — dogs on-site + emergency contact phone for each.
     Strips financial/credit/owner-PII fields the employee doesn't need."""
-    today = date.today().isoformat()
+    today = business_today().isoformat()
     bookings = await db.bookings.find(
         {"date": today, "status": {"$in": ["approved", "completed"]}},
         {"_id": 0},
@@ -12393,7 +12413,7 @@ def _override_is_active(row: dict, today: Optional[date] = None) -> bool:
     exp = (row or {}).get("expires_on")
     if not exp:
         return True
-    today = today or date.today()
+    today = today or business_today()
     try:
         return date.fromisoformat(exp) >= today
     except Exception:

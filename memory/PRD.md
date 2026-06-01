@@ -29,6 +29,19 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bh — Whole-app US Eastern timezone (2026-06-01)
+- **User request:** "im in the u.s. eastern time zone the whole app should respect this time zone"
+- **Root cause:** Backend was using `date.today()` (system TZ = UTC in container) for every "today / month / week" boundary. Background loops (auto-backup) used `datetime.now()` naive local which = UTC. Daily jobs (vaccine nudges, birthday emails) used `datetime.now(timezone.utc).date()`. All combined to misalign with the operator's wall clock.
+- **Fix:**
+  - Added `BUSINESS_TZ = ZoneInfo("America/New_York")` constant + `business_today()` + `now_local()` helpers in `server.py`.
+  - **64 occurrences** of `date.today()` replaced with `business_today()` (bulk replace_all + targeted fixes for 3 variable-name collisions).
+  - `_seconds_until_next_run` (auto-backup loop) now uses Eastern wall clock instead of UTC naive.
+  - `daily_jobs.py` got matching `_today_local()` helper; all `datetime.now(timezone.utc).date()` patterns replaced with Eastern equivalents.
+  - Storage timestamps (`now_iso()`, `created_at`, etc.) intentionally REMAIN in UTC — only day-level operator-facing math moved to Eastern. This keeps DB records, backups, and cross-tz queries consistent.
+  - Bonus fix: `live` block in `/time-clock/me` now uses the rounded `hours_so_far` for `gross_so_far` (removes a sub-second rounding flake that masked as a TZ issue).
+- **Verified:** `/admin/today-pnl` returns `date: 2026-06-01` matching the operator's local date. 39/39 high-priority pytests pass. Backend serves 200.
+
+
 ## Sprint 110bg — BUG FIX: Income page shows wrong month on the 1st of new month (2026-06-01)
 - **User report:** "income and expenses are not showing now that its a new month its showing year to date and last month but today is the first of the new month and its not displaying what i have added today"
 - **Root cause:** Two timezone bugs in frontend date helpers. (1) `new Date("2026-06-01")` parses the string as **UTC midnight**, which in any negative-offset timezone (US Eastern = UTC-4/-5) becomes the previous day's evening local time. So `d.getMonth()` returned May instead of June, and the month preset built a May 1–May 31 range. (2) `new Date().toISOString().split("T")[0]` returns the **UTC** date, which is "tomorrow" any evening past UTC midnight (after 8pm EDT). Both bugs were duplicated across 13 files.

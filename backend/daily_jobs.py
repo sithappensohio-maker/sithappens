@@ -16,17 +16,28 @@ import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict
+from zoneinfo import ZoneInfo
 
 import email_service
 
 logger = logging.getLogger(__name__)
+
+# Sprint 110bg — Business timezone (US Eastern). Used for "today" semantics
+# so daily emails / birthday job / archive cutover all happen relative to the
+# operator's wall clock, not UTC.
+BUSINESS_TZ = ZoneInfo("America/New_York")
+
+
+def _today_local() -> date:
+    return datetime.now(BUSINESS_TZ).date()
+
 
 VACCINE_NUDGE_DAYS = 30
 VACCINE_FIELDS = (("rabies", "Rabies"), ("bordetella", "Bordetella"), ("dhpp", "DHPP"))
 
 
 def _today_iso() -> str:
-    return datetime.now(timezone.utc).date().isoformat()
+    return _today_local().isoformat()
 
 
 async def _already_notified(db, key: str) -> bool:
@@ -57,7 +68,7 @@ async def run_birthday_job(db) -> dict:
     settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
     if not (settings.get("birthday_email") or {"enabled": True}).get("enabled", True):
         return {"sent": 0, "skipped": 0, "disabled": True}
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(BUSINESS_TZ).date()
     mm_dd = today.strftime("%m-%d")
     sent = 0
     skipped = 0
@@ -89,7 +100,7 @@ async def run_vaccine_expiry_job(db) -> dict:
     """Email owners whose dog has any vaccine expiring exactly `VACCINE_NUDGE_DAYS`
     days from today. One email per dog, listing all expiring vaccines.
     De-duped per (dog, target-date)."""
-    target = datetime.now(timezone.utc).date() + timedelta(days=VACCINE_NUDGE_DAYS)
+    target = datetime.now(BUSINESS_TZ).date() + timedelta(days=VACCINE_NUDGE_DAYS)
     target_iso = target.isoformat()
     sent = 0
     skipped = 0
@@ -130,7 +141,7 @@ async def run_pl_monthly_job(db) -> Dict[str, Any]:
     """Generate the previous month's P&L PDF and email it to the admin.
     Idempotent — keyed by `pl:YYYY-MM` in `notification_log` so re-runs are no-ops."""
     import pl_report
-    today = date.today()
+    today = _today_local()
     # Last full month: if today is Jan 1, the previous month is December of last year.
     if today.month == 1:
         year, month = today.year - 1, 12
@@ -174,7 +185,7 @@ async def run_homework_weekly_digest_job(db) -> dict:
     De-duped per (client, week_start_iso) so it can't double-send if the dashboard
     is hit twice on a Sunday.
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(BUSINESS_TZ).date()
     # week_start = the Monday on or before today (always returns a Mon→Sun window)
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
@@ -392,7 +403,7 @@ async def run_homework_step_rollup_job(db) -> dict:
     if not ADMIN_NOTIFICATION_EMAIL:
         return {"sent": 0, "reason": "no admin email"}
 
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(BUSINESS_TZ).date()
     today_iso = today.isoformat()
     dedup_key = f"hw_step_rollup:{today_iso}"
     existing = await db.system_runs.find_one({"id": dedup_key}, {"_id": 0})
@@ -459,7 +470,7 @@ async def run_trainer_monday_digest_job(db) -> dict:
 
     Sent to ADMIN_NOTIFICATION_EMAIL (a single recipient — the operator).
     """
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now(BUSINESS_TZ).date()
     week_start = today.isoformat()
     week_end = (today + timedelta(days=6)).isoformat()
     key = f"trainer_monday_digest:{week_start}"
@@ -598,10 +609,10 @@ async def maybe_run_daily(db) -> dict | None:
         results["hw_reminder"] = await run_homework_practice_reminder_job(db)
         results["hw_step_rollup"] = await run_homework_step_rollup_job(db)
         # Monday-only: trainer's weekly digest (weekday() returns 0 for Monday).
-        if datetime.now(timezone.utc).date().weekday() == 0:
+        if datetime.now(BUSINESS_TZ).date().weekday() == 0:
             results["trainer_monday_digest"] = await run_trainer_monday_digest_job(db)
         # Sunday-only: homework weekly digest (weekday() returns 6 for Sunday).
-        if datetime.now(timezone.utc).date().weekday() == 6:
+        if datetime.now(BUSINESS_TZ).date().weekday() == 6:
             results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)
         # Monthly P&L only fires on the 1st of the month
         if date.today().day == 1:
