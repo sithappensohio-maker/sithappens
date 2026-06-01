@@ -50,7 +50,13 @@ async def _client_for_dog(db, dog: dict) -> dict | None:
 
 async def run_birthday_job(db) -> dict:
     """Email every owner whose dog's birthday matches today (MM-DD).
-    De-duped by `notification_log` key `birthday:{dog_id}:{YYYY-MM-DD}`."""
+    De-duped by `notification_log` key `birthday:{dog_id}:{YYYY-MM-DD}`.
+    Skipped entirely when Settings → Email Automation → Birthday is OFF."""
+    # Sprint 110aw — honour the per-install enable toggle. Default = ON
+    # (preserves the behavior since Sprint 38).
+    settings = await db.settings.find_one({"id": "global"}, {"_id": 0}) or {}
+    if not (settings.get("birthday_email") or {"enabled": True}).get("enabled", True):
+        return {"sent": 0, "skipped": 0, "disabled": True}
     today = datetime.now(timezone.utc).date()
     mm_dd = today.strftime("%m-%d")
     sent = 0

@@ -223,6 +223,13 @@ class ClientIn(BaseModel):
     photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
     photo_gallery_pin: Optional[str] = ""  # per-client PIN required to download photos from the gallery
     photo_gallery_has_new: bool = False  # admin-set nudge: pulses a "NEW" badge on the portal gallery CTA
+    # Sprint 110aw — Meet-n-Greet / Temperament-eval lifecycle. Default `active`
+    # so existing clients aren't affected. When `Settings → evaluation
+    # → require_evaluation_first` is on, *new* clients are created as
+    # `prospect` and can only book the evaluation service until staff mark them
+    # `active` (or `rejected`).
+    client_status: Optional[Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected"]] = "active"
+    evaluation_notes: Optional[str] = ""  # admin notes from the meet-n-greet
 
 class ClientOut(ClientIn):
     id: str
@@ -326,6 +333,11 @@ class BookingIn(BaseModel):
     # `booking.add_ons` so the rate is locked in even if the catalog
     # changes later.
     addon_service_ids: List[str] = []
+    # Sprint 110aw — optional service pre-selection at booking time. Lets the
+    # admin link a booking to a specific service row up-front (e.g. a
+    # Board-and-Train package). When set, the booking auto-enrolls the dog in
+    # any linked training program after insert.
+    service_id: Optional[str] = None
 
 class RecurringBookingIn(BaseModel):
     dog_id: str
@@ -408,6 +420,15 @@ class BookingOut(BaseModel):
     cancelled_at: Optional[str] = None
     cancellation_charged: Optional[bool] = None
     cancellation_fee: Optional[float] = None
+    # Sprint 110aw — Sales tax snapshot. When `sales_tax.enabled` and the
+    # service type is in `applies_to`, `actual_price` includes tax and these
+    # fields carry the breakdown so year-end filing / reports stay honest.
+    tax_amount: Optional[float] = None
+    tax_rate_pct: Optional[float] = None
+    # Sprint 110aw — Board-and-Train. If the chosen service had a
+    # `package_program_id`, this is the id of the auto-created program
+    # enrollment for the dog. Helps the UI surface "Training included" badges.
+    package_enrolled_program_id: Optional[str] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -599,10 +620,48 @@ async def create_client(body: ClientIn, _: dict = Depends(require_admin)):
         doc["referred_by_code"] = code if ref else None
     else:
         doc["referred_by_code"] = None
+    # Sprint 110aw — Meet-n-Greet gate. When the setting is ON and the admin
+    # didn't explicitly set a status, default new clients to `prospect`.
+    if doc.get("client_status") in (None, "active"):
+        settings_x = await get_settings()
+        if (settings_x.get("evaluation") or {}).get("require_evaluation_first"):
+            doc["client_status"] = "prospect"
     await db.clients.insert_one(doc)
     doc.pop("_id", None)
     doc["portal_email"] = None
     return doc
+
+
+# Sprint 110aw — Dedicated endpoint to advance a client through the
+# evaluation pipeline (`prospect` → `evaluation_scheduled` → `evaluated`
+# → `active` / `rejected`). Cleaner than dumping into PUT /clients since
+# it tracks an audit timestamp + accepts an optional admin note.
+class ClientStatusIn(BaseModel):
+    status: Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected"]
+    note: Optional[str] = ""
+
+
+@api.post("/clients/{client_id}/status", response_model=ClientOut)
+async def set_client_status(client_id: str, body: ClientStatusIn, user: dict = Depends(require_admin)):
+    existing = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Client not found")
+    update = {
+        "client_status": body.status,
+        "client_status_set_at": now_iso(),
+        "client_status_set_by": user.get("id"),
+    }
+    if body.note:
+        # Append to evaluation_notes, preserving prior notes
+        prior = (existing.get("evaluation_notes") or "").strip()
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        new_note = f"[{stamp} · {body.status}] {body.note.strip()}"
+        update["evaluation_notes"] = f"{prior}\n{new_note}".strip() if prior else new_note
+    await db.clients.update_one({"id": client_id}, {"$set": update})
+    existing.update(update)
+    u = await db.users.find_one({"client_id": client_id}, {"_id": 0, "email": 1})
+    existing["portal_email"] = u["email"] if u else None
+    return existing
 
 @api.put("/clients/{client_id}", response_model=ClientOut)
 async def update_client(client_id: str, body: ClientIn, _: dict = Depends(require_admin)):
@@ -1315,6 +1374,24 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     boarding_cap = int(settings.get("boarding_capacity", 10))
 
+    # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
+    # book regular services; admin can override by passing the booking through
+    # manually with `override_capacity=True` (treated as a force-flag).
+    cstat = client.get("client_status") or "active"
+    if cstat in ("prospect", "evaluation_scheduled", "rejected"):
+        # Admin override path: respect explicit override_capacity intent so
+        # admin can still schedule the evaluation booking itself.
+        if user.get("role") != "admin" or not body.override_capacity:
+            if cstat == "rejected":
+                raise HTTPException(
+                    status_code=400,
+                    detail="This client has been marked rejected — bookings are disabled.",
+                )
+            raise HTTPException(
+                status_code=400,
+                detail="This client needs to complete a Meet-n-Greet evaluation before booking. Please schedule one first.",
+            )
+
     # Waiver check for clients
     if user.get("role") != "admin" and bool(settings.get("waiver_required_for_booking", True)):
         sig = await db.waiver_signatures.find_one({"client_id": client["id"]}, sort=[("signed_at", -1)])
@@ -1430,8 +1507,77 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             body.addon_service_ids,
             body.service_type,
         )
+    # Sprint 110aw — Optional service pre-selection. When the caller picks a
+    # specific service row (e.g. a Board-and-Train package), snapshot it onto
+    # the booking so check-out / auto-enroll can use it.
+    if body.service_id:
+        svc_row = await db.services.find_one(
+            {"id": body.service_id},
+            {"_id": 0, "id": 1, "name": 1, "base_price": 1},
+        )
+        if svc_row:
+            doc["service_id"] = svc_row["id"]
+            doc["service_name"] = svc_row.get("name")
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
+    # Sprint 110aw — Board-and-Train: if the chosen service is wired to a
+    # training program, auto-enroll the dog. Idempotent — skips if the dog
+    # is already actively enrolled in that program.
+    try:
+        if doc.get("service_id"):
+            svc_row = await db.services.find_one(
+                {"id": doc["service_id"]},
+                {"_id": 0, "package_program_id": 1, "name": 1},
+            )
+            prog_id = (svc_row or {}).get("package_program_id")
+            if prog_id:
+                existing_active = await db.dog_programs.find_one(
+                    {"dog_id": doc["dog_id"], "program_id": prog_id, "status": "active"},
+                    {"_id": 0, "id": 1},
+                )
+                if not existing_active:
+                    program = await db.programs.find_one({"id": prog_id}, {"_id": 0})
+                    if program:
+                        started = doc.get("date") or date.today().isoformat()
+                        target = _suggest_target_date(started, program.get("format") or {})
+                        enrollment = {
+                            "id": _gid(),
+                            "dog_id": doc["dog_id"],
+                            "program_id": prog_id,
+                            "program_snapshot": {
+                                "name": program["name"],
+                                "type": program.get("type"),
+                                "slug": program.get("slug"),
+                                "description": program.get("description", ""),
+                                "focus": program.get("focus", ""),
+                                "format": program.get("format"),
+                                "modules": program.get("modules") or [],
+                                "completion_rule": program.get("completion_rule") or _default_completion_rule(),
+                            },
+                            "status": "active",
+                            "started_at": started,
+                            "target_completion_date": target,
+                            "completed_at": None,
+                            "on_hold_at": None,
+                            "goal_progress": _empty_progress(program.get("modules") or []),
+                            "sessions_count": 0,
+                            "trainer_notes": f"Auto-enrolled from Board-and-Train package · booking {doc['id']}",
+                            "created_at": now_iso(),
+                            "source_booking_id": doc["id"],
+                        }
+                        await db.dog_programs.insert_one(enrollment)
+                        if not (await db.dogs.find_one({"id": doc["dog_id"]}, {"_id": 0, "active_program_id": 1}) or {}).get("active_program_id"):
+                            await db.dogs.update_one(
+                                {"id": doc["dog_id"]},
+                                {"$set": {"active_program_id": enrollment["id"]}},
+                            )
+                        doc["package_enrolled_program_id"] = enrollment["id"]
+                        await db.bookings.update_one(
+                            {"id": doc["id"]},
+                            {"$set": {"package_enrolled_program_id": enrollment["id"]}},
+                        )
+    except Exception as exc:
+        logger.warning("board-and-train auto-enroll failed for booking %s: %s", doc.get("id"), exc)
     # Best-effort notification: tell admin when a client books from the portal.
     # Admin-created bookings (via Quick Check-in etc.) don't trigger an alert to themselves.
     # In bulk-create flows (recurring / multi-dates), this is suppressed and the
@@ -2921,6 +3067,30 @@ async def check_out(
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
+    # Sprint 110aw — Sales tax. Tax is calculated on the PRE-TAX total
+    # (base + add-ons + extra-night charges, minus discounts already applied
+    # via update["actual_price"]) only when the service type is in the
+    # configured `applies_to` list and the booking is being PAID in cash/card
+    # (not via credits redemption — credits already include tax in the lot).
+    # We add tax to `actual_price` so existing P&L code keeps working; the
+    # tax slice is also captured in `tax_amount` for accurate filing.
+    if not is_paid_today and (update.get("actual_price") or 0) > 0:
+        try:
+            settings_tx = await get_settings()
+            tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+            if tx_cfg.get("enabled"):
+                applies = (tx_cfg.get("applies_to") or {})
+                svc = booking.get("service_type") or ""
+                if applies.get(svc):
+                    rate_pct = float(tx_cfg.get("rate_pct") or 0)
+                    if rate_pct > 0:
+                        pre_tax = float(update["actual_price"])
+                        tax_amount = round(pre_tax * (rate_pct / 100.0), 2)
+                        update["tax_amount"] = tax_amount
+                        update["tax_rate_pct"] = rate_pct
+                        update["actual_price"] = round(pre_tax + tax_amount, 2)
+        except Exception as exc:
+            logger.warning("sales tax calc failed for %s: %s", booking_id, exc)
     if not is_paid_today and (update.get("actual_price") or 0) > 0:
         if body.payment_method:
             update["payment_method"] = body.payment_method
@@ -3155,6 +3325,32 @@ def _default_settings() -> dict:
         "client_portal_links": {
             "website_url": "",
             "photo_gallery_url": "",
+        },
+        # Sprint 110aw — Sales tax (single flat rate, configurable scope).
+        "sales_tax": {
+            "enabled": False,
+            "rate_pct": 0.0,           # e.g. 8.875 for NY
+            "label": "Sales Tax",
+            "applies_to": {            # which revenue lines are taxable
+                "daycare": False,
+                "boarding": False,
+                "training": False,
+                "grooming": True,      # commonly taxable in many states
+                "photography": True,
+                "retail": True,
+                "credit_packs": False,
+            },
+        },
+        # Sprint 110aw — Birthday auto-email toggle. Default ON to preserve
+        # existing behavior (the email job has been firing since Sprint 38).
+        "birthday_email": {
+            "enabled": True,
+        },
+        # Sprint 110aw — Meet-n-Greet / Temperament Evaluation requirement.
+        # When `require_evaluation_first=True`, new prospect clients can only
+        # book the evaluation service until they're marked `client_status=active`.
+        "evaluation": {
+            "require_evaluation_first": False,
         },
     }
 
@@ -7726,6 +7922,176 @@ async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin
     return rows
 
 
+# ─────────────── Sprint 110aw · Sales tax collected report ───────────────
+# Year-to-date / arbitrary-window tax tally for sales-tax filing. Combines
+# booking-level `tax_amount` and retail-level `tax_amount`.
+
+@api.get("/admin/sales-tax/summary")
+async def sales_tax_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Return tax collected in the window. Defaults to current calendar year.
+    Splits booking-tax vs retail-tax + breakdown by month."""
+    today = date.today()
+    sd = start_date or f"{today.year}-01-01"
+    ed = end_date or today.isoformat()
+    # Booking-level tax
+    bk_rows = await db.bookings.find(
+        {
+            "date": {"$gte": sd, "$lte": ed},
+            "tax_amount": {"$exists": True, "$gt": 0},
+            "status": {"$in": ["completed", "approved"]},
+        },
+        {"_id": 0, "id": 1, "date": 1, "service_type": 1, "actual_price": 1, "tax_amount": 1, "tax_rate_pct": 1, "client_name": 1, "dog_name": 1},
+    ).to_list(10000)
+    rt_rows = await db.retail_sales.find(
+        {"date": {"$gte": sd, "$lte": ed}, "tax_amount": {"$exists": True, "$gt": 0}},
+        {"_id": 0, "id": 1, "date": 1, "description": 1, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "client_name": 1},
+    ).to_list(10000)
+    bk_total = round(sum(float(r.get("tax_amount") or 0) for r in bk_rows), 2)
+    rt_total = round(sum(float(r.get("tax_amount") or 0) for r in rt_rows), 2)
+    # Month breakdown
+    by_month: Dict[str, Dict[str, float]] = {}
+    for r in bk_rows:
+        ym = (r.get("date") or "")[:7]
+        slot = by_month.setdefault(ym, {"bookings": 0.0, "retail": 0.0})
+        slot["bookings"] += float(r.get("tax_amount") or 0)
+    for r in rt_rows:
+        ym = (r.get("date") or "")[:7]
+        slot = by_month.setdefault(ym, {"bookings": 0.0, "retail": 0.0})
+        slot["retail"] += float(r.get("tax_amount") or 0)
+    months = [
+        {"month": k, "bookings_tax": round(v["bookings"], 2),
+         "retail_tax": round(v["retail"], 2),
+         "total_tax": round(v["bookings"] + v["retail"], 2)}
+        for k, v in sorted(by_month.items())
+    ]
+    return {
+        "start_date": sd,
+        "end_date": ed,
+        "bookings_tax_total": bk_total,
+        "retail_tax_total": rt_total,
+        "total_tax_collected": round(bk_total + rt_total, 2),
+        "booking_count": len(bk_rows),
+        "retail_count": len(rt_rows),
+        "by_month": months,
+    }
+
+
+# ─────────────── Sprint 110aw · Year-end payroll export (1099/W2 prep) ───────────────
+# Single endpoint returning a CSV that an accountant / QuickBooks / Gusto can
+# ingest. Per-employee: name, email, total hours, gross wages (rate × hours)
+# for the requested calendar year. Optionally includes a per-employee detail
+# section breaking out each clocked entry.
+from fastapi.responses import StreamingResponse
+import io
+import csv
+
+
+@api.get("/admin/payroll/year-end.csv")
+async def payroll_year_end_csv(
+    year: Optional[int] = None,
+    detail: bool = False,
+    _: dict = Depends(require_admin),
+):
+    """Year-end gross-wages CSV. Pass `?detail=true` to also dump every
+    clocked-in/out entry for the year (handy for 1099/W2 reconciliation)."""
+    y = int(year or date.today().year)
+    start_iso = f"{y}-01-01T00:00:00"
+    end_iso = f"{y + 1}-01-01T00:00:00"
+    # All clocked-in entries with a clock-out in the year
+    entries = await db.time_clock_entries.find(
+        {
+            "clock_in_at": {"$gte": start_iso, "$lt": end_iso},
+            "clock_out_at": {"$ne": None, "$exists": True},
+        },
+        {"_id": 0},
+    ).to_list(10000)
+    uids = list({e["user_id"] for e in entries if e.get("user_id")})
+    users = await db.users.find(
+        {"id": {"$in": uids}},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "phone": 1, "hourly_rate": 1, "active": 1},
+    ).to_list(500) if uids else []
+    user_by_id = {u["id"]: u for u in users}
+
+    # Aggregate per-employee
+    per_user: Dict[str, Dict[str, Any]] = {}
+    for e in entries:
+        uid = e.get("user_id")
+        if not uid:
+            continue
+        try:
+            t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
+            t_out = datetime.fromisoformat((e["clock_out_at"] or "").replace("Z", "+00:00"))
+            hrs = max(0.0, (t_out - t_in).total_seconds() / 3600.0)
+        except Exception:
+            hrs = 0.0
+        row = per_user.setdefault(uid, {"hours": 0.0, "gross": 0.0, "entries": 0})
+        u = user_by_id.get(uid, {})
+        rate = float(u.get("hourly_rate") or 0)
+        row["hours"] += hrs
+        row["gross"] += hrs * rate
+        row["entries"] += 1
+
+    # Build the CSV
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([f"Year-end payroll summary — {y}"])
+    w.writerow([
+        "Employee", "Email", "Phone", "Hourly rate", "Active",
+        "Total hours", "Gross wages (USD)", "Clocked entries",
+    ])
+    for uid, agg in sorted(per_user.items(),
+                          key=lambda kv: (user_by_id.get(kv[0], {}).get("name") or "").lower()):
+        u = user_by_id.get(uid, {})
+        w.writerow([
+            u.get("display_name") or u.get("name") or "(unknown)",
+            u.get("email", ""),
+            u.get("phone", ""),
+            f"{float(u.get('hourly_rate') or 0):.2f}",
+            "Yes" if u.get("active", True) else "No",
+            f"{agg['hours']:.2f}",
+            f"{agg['gross']:.2f}",
+            agg["entries"],
+        ])
+    w.writerow([])
+    total_hours = sum(r["hours"] for r in per_user.values())
+    total_gross = sum(r["gross"] for r in per_user.values())
+    w.writerow(["TOTAL", "", "", "", "", f"{total_hours:.2f}", f"{total_gross:.2f}", sum(r["entries"] for r in per_user.values())])
+
+    if detail and entries:
+        w.writerow([])
+        w.writerow(["DETAIL — every clocked entry"])
+        w.writerow(["Employee", "Clock-in", "Clock-out", "Hours", "Rate", "Gross"])
+        for e in sorted(entries, key=lambda r: (r.get("user_id"), r.get("clock_in_at") or "")):
+            u = user_by_id.get(e.get("user_id"), {})
+            try:
+                t_in = datetime.fromisoformat((e["clock_in_at"] or "").replace("Z", "+00:00"))
+                t_out = datetime.fromisoformat((e["clock_out_at"] or "").replace("Z", "+00:00"))
+                hrs = max(0.0, (t_out - t_in).total_seconds() / 3600.0)
+            except Exception:
+                hrs = 0.0
+            rate = float(u.get("hourly_rate") or 0)
+            w.writerow([
+                u.get("display_name") or u.get("name") or "(unknown)",
+                e.get("clock_in_at", ""),
+                e.get("clock_out_at", ""),
+                f"{hrs:.2f}",
+                f"{rate:.2f}",
+                f"{hrs * rate:.2f}",
+            ])
+
+    buf.seek(0)
+    fname = f"sit-happens-payroll-{y}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 # Sprint 110o — Auto-backup feature removed (never worked reliably across the
 # unprivileged Docker container ↔ Bazzite host boundary). Admin uses manual
 # Download Backup / Restore and the host-side rclone systemd timer instead.
@@ -8839,6 +9205,11 @@ class ServiceIn(BaseModel):
     # array on bookings.
     is_addon: bool = False
     addon_for: List[Literal["daycare", "boarding", "training", "grooming", "photography", "other"]] = []
+    # Sprint 110aw — Board-and-Train package. When this service is booked,
+    # the system auto-enrolls the dog in `package_program_id` so the trainer
+    # has a curriculum + homework ready before drop-off. Best paired with a
+    # boarding-type service (the multi-night stay carries the training inside).
+    package_program_id: Optional[str] = None
 
 
 class LogServiceIn(BaseModel):
@@ -10715,6 +11086,10 @@ class RetailSaleIn(BaseModel):
     notes: Optional[str] = ""
     payment_method: Optional[Literal["cash", "card", "transfer", "check", "credits", "other"]] = "card"
     client_id: Optional[str] = None  # optional — link a sale to a specific client
+    # Sprint 110aw — Sales tax. If true, `amount` is the TOTAL the customer
+    # paid (incl. tax) and the backend back-calculates the tax slice. If false
+    # or absent, the line is tax-exempt (e.g. a wholesale item).
+    apply_tax: Optional[bool] = None
 
 
 @api.get("/retail-sales")
@@ -10757,6 +11132,24 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
         "created_at": now_iso(),
         "created_by": user.get("id"),
     }
+    # Sprint 110aw — Tax breakout. When sales_tax is enabled, retail is tax-
+    # applicable by default (unless the row explicitly says otherwise).
+    try:
+        settings_tx = await get_settings()
+        tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
+            applies = (tx_cfg.get("applies_to") or {})
+            should_tax = body.apply_tax if body.apply_tax is not None else applies.get("retail", True)
+            if should_tax:
+                rate_pct = float(tx_cfg["rate_pct"])
+                # Treat `amount` as TOTAL incl. tax (matches a typical POS receipt).
+                total = doc["amount"]
+                pre_tax = round(total / (1 + rate_pct / 100.0), 2)
+                doc["tax_amount"] = round(total - pre_tax, 2)
+                doc["tax_rate_pct"] = rate_pct
+                doc["pre_tax_amount"] = pre_tax
+    except Exception as exc:
+        logger.warning("retail tax calc failed: %s", exc)
     await db.retail_sales.insert_one(doc)
     doc.pop("_id", None)
     return doc

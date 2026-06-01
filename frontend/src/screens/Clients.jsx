@@ -224,7 +224,12 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             </div>
             <div className="flex items-center gap-3 pr-16">
               <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shBlue/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
-              <h4 className="text-lg font-black text-white uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+              <div className="min-w-0 flex-1">
+                <h4 className="text-lg font-black text-white uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+                {c.client_status && c.client_status !== "active" && (
+                  <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
+                )}
+              </div>
             </div>
             <div className="mt-2 space-y-1 text-xs text-gray-400">
               {c.phone && <p><i className="fas fa-phone w-4 text-shBlue" /> {c.phone}</p>}
@@ -1070,4 +1075,66 @@ function lastLoginColor(iso) {
   if (days < 90) return "text-gray-400";
   return "text-red-400";
 }
+
+// Sprint 110aw — Meet-n-Greet client status pill. Click to advance the
+// client through prospect → evaluation_scheduled → evaluated → active /
+// rejected. Hidden when the client is already `active`.
+function ClientStatusPill({ status, clientId, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const labels = {
+    prospect: { text: "Prospect", color: "bg-shOrange/20 text-shOrange border-shOrange/40" },
+    evaluation_scheduled: { text: "Eval Scheduled", color: "bg-shBlue/20 text-shBlue border-shBlue/40" },
+    evaluated: { text: "Evaluated", color: "bg-purple-500/20 text-purple-400 border-purple-500/40" },
+    rejected: { text: "Rejected", color: "bg-red-500/20 text-red-400 border-red-500/40" },
+    active: { text: "Active", color: "bg-shGreen/20 text-shGreen border-shGreen/40" },
+  };
+  const meta = labels[status] || labels.prospect;
+  const setStatus = async (newStatus) => {
+    setBusy(true);
+    try {
+      await api.post(`/clients/${clientId}/status`, { status: newStatus, note });
+      setOpen(false); setNote(""); onChange?.();
+    } catch (e) {
+      alert(e.response?.data?.detail || "Failed to update status");
+    } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <button onClick={(e)=>{ e.stopPropagation(); setOpen(true); }}
+              data-testid={`client-status-pill-${clientId}`}
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border mt-1 ${meta.color} hover:opacity-80`}>
+        <i className="fas fa-handshake text-[10px]"/>{meta.text}
+      </button>
+      {open && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={()=>setOpen(false)}>
+          <div className="bg-bgPanel border border-bgHover rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e)=>e.stopPropagation()}
+               data-testid="client-status-modal">
+            <h4 className="text-lg font-black text-white uppercase italic mb-2">Update client status</h4>
+            <p className="text-[13px] text-gray-400 mb-3">Current: <strong className="text-white">{meta.text}</strong></p>
+            <textarea value={note} onChange={(e)=>setNote(e.target.value)}
+                      placeholder="Optional note (e.g. 'Passed eval — friendly with all sizes')"
+                      data-testid="client-status-note"
+                      className="block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mb-3" rows={2}/>
+            <div className="grid grid-cols-1 gap-2">
+              {["evaluation_scheduled", "evaluated", "active", "rejected"].filter(s => s !== status).map(s => (
+                <button key={s} onClick={()=>setStatus(s)} disabled={busy}
+                        data-testid={`client-status-set-${s}`}
+                        className={`px-3 py-2 rounded font-black text-[12px] uppercase tracking-widest border text-left ${labels[s].color} hover:opacity-80 disabled:opacity-50`}>
+                  <i className="fas fa-chevron-right mr-2 text-[10px]"/>{labels[s].text}
+                </button>
+              ))}
+              <button onClick={()=>setOpen(false)} disabled={busy}
+                      className="text-gray-400 hover:text-white font-black text-[12px] uppercase tracking-widest mt-1 py-2">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 

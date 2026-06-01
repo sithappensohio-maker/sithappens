@@ -1681,6 +1681,43 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110aw — 5-feature batch: birthday toggle, 1099/W2, sales tax, meet-n-greet, board-and-train (2026-05-31)
+
+### #1 Birthday email toggle
+- ✅ Added `settings.birthday_email.enabled` (default `True` — preserves the live behaviour).
+- ✅ `daily_jobs.run_birthday_job` now early-exits with `{"disabled": true}` when the setting is off.
+- ✅ Settings → Email Automation: the "Dog Birthday Cards" card's static `On` badge replaced with a real green/dark toggle button (`data-testid="birthday-email-toggle"`).
+
+### #2 Year-end payroll CSV (1099 / W2 prep)
+- ✅ New `GET /api/admin/payroll/year-end.csv?year=2026&detail=true|false` — returns per-employee summary (hours × hourly_rate = gross), optional detail dump of every clocked entry. Uses existing `time_clock_entries`.
+- ✅ Settings → Backup & Restore → "Year-End Payroll" panel with year picker + Detail toggle + Download button.
+
+### #3 Sales tax
+- ✅ New `settings.sales_tax`: `{enabled, rate_pct, label, applies_to: {daycare, boarding, training, grooming, photography, retail, credit_packs}}`. All defaults OFF/0 — opt-in.
+- ✅ **Check-out flow** (`POST /bookings/{id}/check-out`): when the service type is in `applies_to`, the booking's `tax_amount` and `tax_rate_pct` are snapshotted and tax is added to `actual_price` so existing P&L code keeps working.
+- ✅ **Retail logging** (`POST /retail-sales`): treats `amount` as the total incl. tax (POS convention), back-calculates `pre_tax_amount` + `tax_amount` when applicable.
+- ✅ New `GET /api/admin/sales-tax/summary?start_date=&end_date=` — YTD total + bookings-vs-retail split + per-month breakdown. Defaults to current calendar year.
+- ✅ New BookingOut fields `tax_amount`, `tax_rate_pct` surface the breakdown to clients.
+- ✅ Settings UI: Rate input, label, applies_to chips, save button, and a live YTD summary tile.
+
+### #4 Meet-n-Greet / Temperament-eval workflow
+- ✅ New `Client.client_status: "prospect"|"evaluation_scheduled"|"evaluated"|"active"|"rejected"` (default `active` — existing clients are untouched).
+- ✅ New `settings.evaluation.require_evaluation_first` (default OFF). When ON, *new* clients are created as `prospect`.
+- ✅ Booking guard: prospect / evaluation_scheduled / rejected clients get a 400 unless an admin passes `override_capacity=true` (admin override path for scheduling the eval itself).
+- ✅ New `POST /api/clients/{client_id}/status` — atomic state advance with optional note appended to `evaluation_notes`.
+- ✅ Clients screen: non-active clients show a clickable pill (Prospect / Eval Scheduled / Evaluated / Rejected) that opens a state-change modal with optional note. Active clients show nothing (zero noise).
+- ✅ Settings → Backup & Restore → "Meet-n-Greet Required" toggle.
+
+### #5 Board-and-Train auto-enrollment
+- ✅ New `Service.package_program_id` — wires a service to a training program.
+- ✅ Added `BookingIn.service_id` so the operator can pre-select a specific service at booking time.
+- ✅ `POST /bookings`: when the chosen service has `package_program_id` and the dog isn't already actively enrolled, the system auto-creates a dog_programs enrollment (with snapshot of curriculum + completion rule + suggested target date) and stores the enrollment id back on the booking.
+- ✅ Services editor: new "Board-and-Train · auto-enroll program" picker on non-addon services.
+
+### Testing
+- ✅ Pytest `test_five_feature_batch.py` — **8/8 pass**: birthday toggle default ON; toggle OFF blocks job; payroll CSV format; sales-tax checkout snapshot; sales-tax summary endpoint; retail tax back-calc; client status round-trip with note; board-and-train auto-enrolls and persists `package_enrolled_program_id` on the booking.
+- ✅ Full regression run: 370 pass, 5 pre-existing failures (homework template seed drift + 4 ancient credit-deduction tests from before the sprint that moved credit deduction to checkout) — all confirmed unaffected by my changes via pre-edit baseline.
+
 ## Sprint 110av — Disk usage monitor + nightly auto-backup (2026-05-31)
 - ✅ **`GET /api/admin/disk-usage`** — returns every mountpoint visible from inside the container, using `shutil.disk_usage()` + `/proc/mounts` to detect fs_type. Each row carries `pct_used`, `verdict` (ok/warn/danger), `likely_ephemeral` (true for overlay/tmpfs), `free_bytes`, `total_bytes`, etc.
 - ✅ **Auto-backup loop** (in-process asyncio task): nightly at configurable HH:MM, writes a gzipped JSON of all 32 collections to a configurable folder, prunes anything older than retain-days. Honors the `enabled` flag on every iteration so toggling is instant.

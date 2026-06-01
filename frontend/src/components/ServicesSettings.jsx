@@ -18,7 +18,7 @@ const SERVICE_TYPES = [
   { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
-const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true, is_addon: false, addon_for: [] };
+const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true, is_addon: false, addon_for: [], package_program_id: "" };
 
 // Sprint 110an — add-ons can be eligible for multiple base service types
 // (e.g. nail trim makes sense as a daycare + grooming + boarding add-on).
@@ -275,6 +275,13 @@ export default function ServicesSettings() {
                     )}
                   </div>
                 )}
+                {/* Sprint 110aw — Board-and-Train: wire a service to a
+                    training program so booking this service auto-enrolls the
+                    dog. Hidden when this row is an add-on. */}
+                {!form.is_addon && (
+                  <BoardAndTrainPicker value={form.package_program_id || ""}
+                                        onChange={(v)=>setForm({...form, package_program_id: v})}/>
+                )}
               </div>
               {/* Live preview — exactly how this row will render in the catalog. */}
               <div className="mt-4">
@@ -322,3 +329,35 @@ export default function ServicesSettings() {
     </div>
   );
 }
+
+// Sprint 110aw — Board-and-Train picker. Lists active programs so the admin
+// can wire any non-addon service to one. When the dog is booked under this
+// service, the system auto-enrolls them in the picked program.
+function BoardAndTrainPicker({ value, onChange }) {
+  const [programs, setPrograms] = useState(null);
+  useEffect(() => {
+    api.get("/programs").then(r => {
+      const items = Array.isArray(r.data) ? r.data : (r.data?.items || []);
+      setPrograms(items.filter(p => p.active !== false));
+    }).catch(() => setPrograms([]));
+  }, []);
+  return (
+    <div className="md:col-span-2" data-testid="board-and-train-picker">
+      <label className="text-[14px] font-black text-purple-400 uppercase tracking-widest">
+        <i className="fas fa-graduation-cap mr-1"/>Board-and-Train · auto-enroll program
+      </label>
+      <p className="text-[13px] text-gray-500 mt-0.5 normal-case mb-2">
+        Booking this service auto-enrolls the dog in the chosen training program (with curriculum + homework ready by drop-off). Leave blank for a normal service.
+      </p>
+      <select value={value || ""} onChange={(e)=>onChange(e.target.value)}
+              data-testid="board-and-train-program-select"
+              className="bg-bgBase border border-bgHover rounded p-2 text-white text-sm w-full">
+        <option value="">— none (regular service) —</option>
+        {(programs || []).map(p => (
+          <option key={p.id} value={p.id}>{p.name}{p.type ? ` · ${p.type}` : ""}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+

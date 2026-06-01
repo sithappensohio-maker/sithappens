@@ -1296,6 +1296,208 @@ function BackupPanel() {
       <BulkClaimEmailsSection />
 
       <PhotoCompressionPanel />
+      <SalesTaxPanel />
+      <YearEndPayrollPanel />
+      <MeetNGreetPanel />
+    </div>
+  );
+}
+
+// ─────── Sprint 110aw · Sales tax panel ───────
+function SalesTaxPanel() {
+  const [cfg, setCfg] = useState(null);
+  const [draft, setDraft] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get("/settings").then(r => {
+      const tx = r.data?.sales_tax || { enabled: false, rate_pct: 0, label: "Sales Tax",
+        applies_to: { daycare: false, boarding: false, training: false,
+                       grooming: true, photography: true, retail: true, credit_packs: false } };
+      setCfg(tx); setDraft(tx);
+    }).catch(() => {});
+    api.get("/admin/sales-tax/summary").then(r => setSummary(r.data)).catch(() => {});
+  }, []);
+  const save = async () => {
+    setBusy(true); setMsg("");
+    try {
+      await api.put("/settings", { sales_tax: {
+        enabled: !!draft.enabled,
+        rate_pct: Number(draft.rate_pct) || 0,
+        label: draft.label || "Sales Tax",
+        applies_to: draft.applies_to || {},
+      }});
+      setCfg(draft); setMsg("Saved ✓");
+      setTimeout(() => setMsg(""), 2500);
+      const fresh = await api.get("/admin/sales-tax/summary");
+      setSummary(fresh.data);
+    } catch (e) {
+      setMsg(e.response?.data?.detail || "Save failed");
+    } finally { setBusy(false); }
+  };
+  if (!draft) return null;
+  const toggleAt = (k) => setDraft({ ...draft, applies_to: { ...(draft.applies_to||{}), [k]: !draft.applies_to?.[k] } });
+  const services = [
+    ["daycare", "Daycare"], ["boarding", "Boarding"], ["training", "Training"],
+    ["grooming", "Grooming"], ["photography", "Photography"],
+    ["retail", "Retail"], ["credit_packs", "Credit packs"],
+  ];
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="sales-tax-panel">
+      <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-percent mr-2"/>Sales Tax</h4>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        Single flat rate. When enabled, tax is added to checkouts of the selected service types and back-calculated from retail amounts (POS convention: customer pays the total, tax is the slice). Year-to-date totals power the summary card below.
+      </p>
+      <div className="space-y-3">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={!!draft.enabled}
+                 onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
+                 data-testid="sales-tax-enabled"
+                 className="w-5 h-5 accent-shGreen"/>
+          <span className="text-[14px] font-black text-white uppercase tracking-widest">Enable sales tax</span>
+        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Rate (%)</span>
+            <input type="number" min={0} max={50} step="0.001"
+                   value={draft.rate_pct ?? 0}
+                   onChange={(e) => setDraft({ ...draft, rate_pct: e.target.value })}
+                   data-testid="sales-tax-rate"
+                   className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+          </label>
+          <label className="block">
+            <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Label on receipts</span>
+            <input type="text" value={draft.label || ""}
+                   onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+                   placeholder="Sales Tax"
+                   data-testid="sales-tax-label"
+                   className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+          </label>
+        </div>
+        <div>
+          <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-2">Applies to</p>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+            {services.map(([k, label]) => (
+              <label key={k} className={`cursor-pointer rounded px-3 py-2 border text-[13px] font-black uppercase tracking-widest ${
+                  draft.applies_to?.[k] ? "bg-shGreen/15 border-shGreen/40 text-shGreen" : "bg-bgBase border-bgHover text-gray-400"
+                }`}>
+                <input type="checkbox" checked={!!draft.applies_to?.[k]} onChange={() => toggleAt(k)}
+                       data-testid={`sales-tax-applies-${k}`}
+                       className="mr-2 accent-shGreen"/>{label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={save} disabled={busy} data-testid="sales-tax-save"
+                  className="bg-shGreen text-bgHeader px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50">
+            <i className="fas fa-save mr-1"/>Save
+          </button>
+          {msg && <span className={`text-[13px] font-black uppercase tracking-widest ${msg.startsWith("Saved") ? "text-shGreen" : "text-red-400"}`}>{msg}</span>}
+        </div>
+      </div>
+      {summary && (
+        <div className="mt-4 bg-bgBase border border-bgHover rounded p-3" data-testid="sales-tax-summary">
+          <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">YTD Tax Collected · {summary.start_date} → {summary.end_date}</p>
+          <p className="text-2xl font-black text-shGreen">${Number(summary.total_tax_collected || 0).toFixed(2)}</p>
+          <div className="grid grid-cols-2 gap-2 mt-2 text-[12px] text-gray-300">
+            <div className="bg-bgPanel rounded px-2 py-1 flex justify-between">
+              <span className="font-black uppercase tracking-widest text-gray-500">Bookings</span>
+              <span className="font-black">${Number(summary.bookings_tax_total || 0).toFixed(2)}</span>
+            </div>
+            <div className="bg-bgPanel rounded px-2 py-1 flex justify-between">
+              <span className="font-black uppercase tracking-widest text-gray-500">Retail</span>
+              <span className="font-black">${Number(summary.retail_tax_total || 0).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────── Sprint 110aw · 1099/W2 export panel ───────
+function YearEndPayrollPanel() {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [detail, setDetail] = useState(false);
+  const download = () => {
+    const url = `${process.env.REACT_APP_BACKEND_URL}/api/admin/payroll/year-end.csv?year=${year}&detail=${detail}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    const token = localStorage.getItem("auth_token") || "";
+    // The api interceptor adds the Authorization header to axios calls — for
+    // direct anchor downloads we use a temporary fetch to attach the token.
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(b => {
+        const objUrl = URL.createObjectURL(b);
+        a.href = objUrl;
+        a.download = `sit-happens-payroll-${year}.csv`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+      })
+      .catch(() => {});
+  };
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="payroll-yearend-panel">
+      <h4 className="text-sm font-black text-shBlue uppercase tracking-widest mb-2"><i className="fas fa-file-invoice-dollar mr-2"/>Year-End Payroll · 1099 / W2 Prep</h4>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        CSV of every employee's gross wages for the year (hours × hourly rate). Hand to your accountant or import into QuickBooks / Gusto for 1099-NEC or W-2 filing.
+      </p>
+      <div className="flex items-end gap-3 flex-wrap">
+        <label className="block">
+          <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Year</span>
+          <input type="number" min={2020} max={2099} value={year}
+                 onChange={(e) => setYear(e.target.value)}
+                 data-testid="payroll-year"
+                 className="mt-1 block w-32 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer pb-2">
+          <input type="checkbox" checked={detail} onChange={(e) => setDetail(e.target.checked)}
+                 data-testid="payroll-detail"
+                 className="w-4 h-4 accent-shBlue"/>
+          <span className="text-[13px] text-gray-300 font-black uppercase tracking-widest">Include per-entry detail</span>
+        </label>
+        <button onClick={download} data-testid="payroll-download"
+                className="bg-shBlue text-bgHeader px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow">
+          <i className="fas fa-download mr-1"/>Download CSV
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─────── Sprint 110aw · Meet-n-Greet toggle ───────
+function MeetNGreetPanel() {
+  const [on, setOn] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api.get("/settings").then(r => setOn(!!r.data?.evaluation?.require_evaluation_first)).catch(() => setOn(false));
+  }, []);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const next = !on;
+      await api.put("/settings", { evaluation: { require_evaluation_first: next } });
+      setOn(next);
+    } catch {} finally { setBusy(false); }
+  };
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="meet-n-greet-panel">
+      <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-2"><i className="fas fa-handshake mr-2"/>Meet-n-Greet Required</h4>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        When ON, brand-new clients are flagged as <strong>prospects</strong> and can't book regular services until staff complete a temperament evaluation and mark them active. Existing clients are unaffected. You can override on a case-by-case basis from the Clients list.
+      </p>
+      <button onClick={toggle} disabled={busy || on === null}
+              data-testid="meet-n-greet-toggle"
+              className={`px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest transition ${
+                on ? "bg-shOrange text-bgHeader hover:bg-shOrange/90" : "bg-bgPanel text-gray-400 hover:bg-bgHover border border-bgHover"
+              } disabled:opacity-50`}>
+        {on === null ? "…" : on ? "Required" : "Disabled"}
+      </button>
     </div>
   );
 }
@@ -1905,8 +2107,15 @@ function AutomationPanel() {
   const [err, setErr] = useState("");
   const [emailPerStep, setEmailPerStep] = useState(null); // null = loading
   const [stepBusy, setStepBusy] = useState(false);
+  // Sprint 110aw — Birthday email toggle (default ON). Setting key:
+  //   settings.birthday_email.enabled
+  const [bdayOn, setBdayOn] = useState(null);
+  const [bdayBusy, setBdayBusy] = useState(false);
   useEffect(() => {
-    api.get("/settings").then(r => setEmailPerStep(!!r.data?.email_per_step)).catch(() => setEmailPerStep(false));
+    api.get("/settings").then(r => {
+      setEmailPerStep(!!r.data?.email_per_step);
+      setBdayOn((r.data?.birthday_email?.enabled ?? true) === true);
+    }).catch(() => { setEmailPerStep(false); setBdayOn(true); });
   }, []);
   const toggleEmailPerStep = async () => {
     setStepBusy(true);
@@ -1915,6 +2124,14 @@ function AutomationPanel() {
       await api.put("/settings", { email_per_step: next });
       setEmailPerStep(next);
     } catch {} finally { setStepBusy(false); }
+  };
+  const toggleBday = async () => {
+    setBdayBusy(true);
+    try {
+      const next = !bdayOn;
+      await api.put("/settings", { birthday_email: { enabled: next } });
+      setBdayOn(next);
+    } catch {} finally { setBdayBusy(false); }
   };
   const run = async () => {
     setBusy(true); setErr(""); setLast(null);
@@ -1960,7 +2177,14 @@ function AutomationPanel() {
             <p className="text-white font-black text-[14px] uppercase tracking-widest">Dog Birthday Cards</p>
             <p className="text-[14px] text-gray-500 normal-case mt-1">Emails the owner a celebratory card with their dog's photo on the dog's birthday. De-duped per dog per year.</p>
           </div>
-          <span className="bg-shGreen/15 text-shGreen text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded">On</span>
+          <button onClick={toggleBday} disabled={bdayBusy || bdayOn === null}
+                  data-testid="birthday-email-toggle"
+                  className={`shrink-0 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest transition ${
+                    bdayOn ? "bg-shGreen text-bgHeader hover:bg-shGreen/90"
+                            : "bg-bgPanel text-gray-400 hover:bg-bgHover border border-bgHover"
+                  } disabled:opacity-50`}>
+            {bdayOn === null ? "…" : bdayOn ? "On" : "Off"}
+          </button>
         </div>
         <div className="bg-bgBase border border-bgHover rounded-lg p-4 flex items-start gap-3">
           <i className="fas fa-syringe text-shOrange text-xl mt-1 w-7 text-center"/>
