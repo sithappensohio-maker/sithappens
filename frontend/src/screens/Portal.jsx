@@ -24,8 +24,7 @@ import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
-
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+import { todayISO } from "../lib/date";
 
 const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const _emptyRecurring = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };

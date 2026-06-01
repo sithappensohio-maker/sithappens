@@ -7,8 +7,7 @@ import DailyTrackerBuilder from "../components/DailyTrackerBuilder";
 import DailyReviewQueue from "../components/DailyReviewQueue";
 import HomeworkAnalytics from "../components/HomeworkAnalytics";
 import PageHero from "../components/PageHero";
-
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+import { todayISO } from "../lib/date";
 
 export default function Homework() {
   const [list, setList] = useState([]);

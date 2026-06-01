@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
 import BookingDetailModal from "../components/BookingDetailModal";
+import { todayISO } from "../lib/date";
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmtTime(t) { return t || "—"; }
 function fmtTs(iso) { if (!iso) return "—"; try { return new Date(iso).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' }); } catch { return iso; } }
 

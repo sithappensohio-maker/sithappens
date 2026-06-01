@@ -14,6 +14,7 @@ import { useAuth } from "../lib/auth";
 import BrandFooter from "../components/BrandFooter";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
+import { todayISO } from "../lib/date";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -803,7 +804,7 @@ function TimeOffTab() {
 }
 
 function TimeOffFormModal({ onClose, onSaved }) {
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayISO();
   const [startDate, setStartDate] = useState(today);
   const [endDate, setEndDate] = useState(today);
   const [type, setType] = useState("vacation");

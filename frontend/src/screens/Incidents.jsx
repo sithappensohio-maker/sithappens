@@ -19,7 +19,10 @@ const SEVERITIES = [
   { key: "severe", label: "Severe", color: "bg-red-500/15 text-red-400" },
 ];
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 function nowHHMM() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 
 const emptyForm = {

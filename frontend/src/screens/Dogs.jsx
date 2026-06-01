@@ -28,13 +28,17 @@ const LEVELS = [
   { key: "proofed", label: "Proofed", color: "bg-shGreen/20 text-shGreen" },
 ];
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 function vaccineStatus(d) {
   if (!d) return { label: "Missing", color: "text-red-400", bg: "bg-red-500/15" };
   const t = todayISO();
   if (d < t) return { label: "Expired", color: "text-red-400", bg: "bg-red-500/15" };
   const in30 = new Date(); in30.setDate(in30.getDate()+30);
-  if (d < in30.toISOString().split("T")[0]) return { label: "Expiring soon", color: "text-shOrange", bg: "bg-shOrange/15" };
+  const in30Iso = `${in30.getFullYear()}-${String(in30.getMonth()+1).padStart(2,"0")}-${String(in30.getDate()).padStart(2,"0")}`;
+  if (d < in30Iso) return { label: "Expiring soon", color: "text-shOrange", bg: "bg-shOrange/15" };
   return { label: "Valid", color: "text-shGreen", bg: "bg-shGreen/15" };
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }

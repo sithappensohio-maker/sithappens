@@ -29,6 +29,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bg — BUG FIX: Income page shows wrong month on the 1st of new month (2026-06-01)
+- **User report:** "income and expenses are not showing now that its a new month its showing year to date and last month but today is the first of the new month and its not displaying what i have added today"
+- **Root cause:** Two timezone bugs in frontend date helpers. (1) `new Date("2026-06-01")` parses the string as **UTC midnight**, which in any negative-offset timezone (US Eastern = UTC-4/-5) becomes the previous day's evening local time. So `d.getMonth()` returned May instead of June, and the month preset built a May 1–May 31 range. (2) `new Date().toISOString().split("T")[0]` returns the **UTC** date, which is "tomorrow" any evening past UTC midnight (after 8pm EDT). Both bugs were duplicated across 13 files.
+- **Fix:** Created `/app/frontend/src/lib/date.js` with timezone-correct helpers: `todayISO()` (local calendar today), `parseLocalISO(s)` (parses YYYY-MM-DD as local midnight, not UTC), `localISOFromDate(d)` (formats Date back to local YYYY-MM-DD), `daysAgoISO`, `daysFromTodayISO`.
+- **Files fixed:** Income.jsx (the user-reported screen), Staff.jsx, RunSheet.jsx, Homework.jsx, Dogs.jsx, Portal.jsx, Incidents.jsx, EmployeePortal.jsx, AdminBookingModal.jsx, PortalBookWizard.jsx, TrainingProgram.jsx, HomeworkSectionLogger.jsx, PortalDogModal.jsx.
+- **Verification:** Direct Node test confirms with `TZ=America/New_York` on `refDate="2026-06-01"`: old code returned May 1 → May 31 (wrong); new code returns June 1 → June 30 (correct).
+
+
 ## Sprint 110bf — Owner / self-pay flag (sole-prop owner's draw tracking) (2026-02)
 - ✅ **`is_owner` flag on Employee record** with singleton enforcement (toggling on auto-clears any prior owner) via `_enforce_single_owner` helper.
 - ✅ Backend tax/payroll endpoints now treat owner correctly:

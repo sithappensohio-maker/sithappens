@@ -11,7 +11,10 @@ const ENVIRONMENTS = [
   { k: "other", label: "Other" },
 ];
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+function todayISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
 
 /** Admin-side training curriculum panel. Lives inside the Dog edit modal. */
 export default function TrainingProgram({ dogId, dogName }) {

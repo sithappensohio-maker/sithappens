@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
+import { todayISO } from "../lib/date";
 
 /**
  * Client-portal Book Service wizard.
@@ -17,7 +18,6 @@ import { useEditLock } from "../lib/useLiveRefresh";
  *
  * Calls onBooked() after success so the parent can refresh.
  */
-function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(d) { return d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : ""; }
 
 const SERVICE_OPTIONS = [

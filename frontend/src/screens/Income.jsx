@@ -5,8 +5,8 @@ import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import PageHero from "../components/PageHero";
 import { compressImage } from "../lib/imageCompress";
 import Lightbox from "../components/Lightbox";
+import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
 
 const PAYMENT_STATUSES = [
@@ -136,7 +136,7 @@ export default function Income() {
   // Compute preset range start/end (Month / Quarter / YTD anchored to refDate)
   useEffect(() => {
     if (rangePreset === "custom") return;
-    const d = new Date(refDate);
+    const d = parseLocalISO(refDate);
     let s, e;
     if (rangePreset === "month") {
       s = new Date(d.getFullYear(), d.getMonth(), 1);
@@ -149,8 +149,8 @@ export default function Income() {
       s = new Date(d.getFullYear(), 0, 1);
       e = d;
     }
-    setRangeStart(s.toISOString().split("T")[0]);
-    setRangeEnd(e.toISOString().split("T")[0]);
+    setRangeStart(localISOFromDate(s));
+    setRangeEnd(localISOFromDate(e));
   }, [rangePreset, refDate]);
 
   // Load range summary whenever range changes
@@ -307,13 +307,13 @@ export default function Income() {
               <p className="text-white font-black uppercase italic tracking-tight">{summary.week_start} → {summary.week_end}</p>
             </div>
             <div className="flex gap-2 items-center flex-wrap">
-              <button onClick={()=>setRefDate(new Date(new Date(refDate).getTime() - 7*86400000).toISOString().split("T")[0])}
+              <button onClick={()=>setRefDate(localISOFromDate(new Date(parseLocalISO(refDate).getTime() - 7*86400000)))}
                       className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
                 <i className="fas fa-chevron-left"/>
               </button>
               <input type="date" value={refDate} onChange={(e)=>setRefDate(e.target.value)} style={{colorScheme:"dark"}}
                      className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" data-testid="weekly-ref-date" />
-              <button onClick={()=>setRefDate(new Date(new Date(refDate).getTime() + 7*86400000).toISOString().split("T")[0])}
+              <button onClick={()=>setRefDate(localISOFromDate(new Date(parseLocalISO(refDate).getTime() + 7*86400000)))}
                       className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
                 <i className="fas fa-chevron-right"/>
               </button>

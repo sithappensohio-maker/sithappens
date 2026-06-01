@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { api } from "../lib/api";
-
-function todayISO() { return new Date().toISOString().split("T")[0]; }
+import { todayISO } from "../lib/date";
 
 const KIND_META = {
   reps:         { unit: "reps",   step: 1,    type: "number" },

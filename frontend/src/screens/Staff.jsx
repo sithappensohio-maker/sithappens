@@ -4,9 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
+import { todayISO, daysAgoISO } from "../lib/date";
 
-function todayISO() { return new Date().toISOString().split("T")[0]; }
-function daysAgoISO(n) { return new Date(Date.now() - n*86400000).toISOString().split("T")[0]; }
 function fmtTime(iso) {
   if (!iso) return "—";
   try { return new Date(iso).toLocaleString([], { dateStyle: "short", timeStyle: "short" }); }
