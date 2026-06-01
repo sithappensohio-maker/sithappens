@@ -8149,7 +8149,21 @@ async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_
 # ─────────────────────────────────────────────────────────────────────────────
 TRIVIA_DIFFICULTIES = ("easy", "medium", "hard")
 TRIVIA_TAGS = ("breeds", "behavior", "health", "history", "training", "anatomy", "fun", "myth")
-TRIVIA_MILESTONE_DAYS = (7, 14, 30)
+
+# Default streak milestones — the operator can fully replace these via
+# /admin/trivia/rewards. Each entry: {days, label, perk_type (informational)}.
+DEFAULT_TRIVIA_MILESTONES = [
+    {"days": 7,  "label": "🐾 One-week streak — free puzzle toy at pickup!", "perk_type": "puzzle_toy"},
+    {"days": 14, "label": "🦴 Two-week streak — $5 retail credit on next checkout.", "perk_type": "retail_credit"},
+    {"days": 30, "label": "🏆 30-day master — free upgrade to deluxe service on your next booking.", "perk_type": "service_upgrade"},
+]
+
+
+async def _get_trivia_rewards() -> List[dict]:
+    row = await db.app_settings.find_one({"_id": "trivia_rewards"}, {"_id": 0})
+    if row and isinstance(row.get("milestones"), list) and row["milestones"]:
+        return row["milestones"]
+    return list(DEFAULT_TRIVIA_MILESTONES)
 
 
 class TriviaGenerateIn(BaseModel):
@@ -8414,22 +8428,25 @@ async def portal_trivia_daily_answer(
     })
     stats = await _compute_streak(cid, today_d)
     milestone = None
-    if correct and stats["current_streak"] in TRIVIA_MILESTONE_DAYS:
-        milestone = {
-            "days": stats["current_streak"],
-            "label": {
-                7: "🐾 One-week trivia streak — pick up a free puzzle toy on your next visit!",
-                14: "🦴 Two-week streak — $5 retail credit added to your account on next checkout.",
-                30: "🏆 30-day master! Free upgrade to deluxe service on your next booking.",
-            }.get(stats["current_streak"]),
-        }
-        # Stamp the milestone so the admin can spot it in the client record
-        await db.clients.update_one(
-            {"id": cid},
-            {"$push": {"trivia_milestones": {
-                "days": stats["current_streak"], "earned_on": date_str,
-            }}},
-        )
+    if correct:
+        rewards = await _get_trivia_rewards()
+        match = next((r for r in rewards if int(r.get("days") or 0) == stats["current_streak"]), None)
+        if match:
+            milestone = {
+                "days": stats["current_streak"],
+                "label": match.get("label") or f"🎉 {stats['current_streak']}-day streak!",
+                "perk_type": match.get("perk_type") or "",
+            }
+            # Stamp the milestone so admin can spot it in client record
+            await db.clients.update_one(
+                {"id": cid},
+                {"$push": {"trivia_milestones": {
+                    "days": stats["current_streak"],
+                    "earned_on": date_str,
+                    "label": milestone["label"],
+                    "perk_type": milestone["perk_type"],
+                }}},
+            )
     return {
         "correct": correct,
         "correct_index": q["correct_index"],
@@ -8572,6 +8589,50 @@ async def portal_trivia_quiz_answer(
 
 
 # ── Admin trivia management ──
+@api.get("/admin/trivia/rewards")
+async def admin_trivia_rewards_get(_: dict = Depends(require_admin)):
+    return {
+        "milestones": await _get_trivia_rewards(),
+        "defaults": list(DEFAULT_TRIVIA_MILESTONES),
+    }
+
+
+class TriviaRewardsIn(BaseModel):
+    milestones: List[Dict[str, Any]]
+
+
+@api.put("/admin/trivia/rewards")
+async def admin_trivia_rewards_put(
+    body: TriviaRewardsIn, _: dict = Depends(require_admin),
+):
+    # Validate + normalize. Each milestone needs days (int) + label (str).
+    cleaned: List[dict] = []
+    seen_days: set = set()
+    for m in body.milestones:
+        try:
+            days = int(m.get("days") or 0)
+        except Exception:
+            continue
+        label = (m.get("label") or "").strip()
+        if days <= 0 or days > 3650 or not label:
+            continue
+        if days in seen_days:
+            continue  # de-dupe
+        seen_days.add(days)
+        cleaned.append({
+            "days": days,
+            "label": label[:200],
+            "perk_type": (m.get("perk_type") or "").strip()[:50],
+        })
+    cleaned.sort(key=lambda x: x["days"])
+    await db.app_settings.update_one(
+        {"_id": "trivia_rewards"},
+        {"$set": {"milestones": cleaned}},
+        upsert=True,
+    )
+    return {"milestones": cleaned}
+
+
 @api.get("/admin/trivia/leaderboard")
 async def admin_trivia_leaderboard(_: dict = Depends(require_admin)):
     """Full leaderboard for admin — same math as the client-facing one, but

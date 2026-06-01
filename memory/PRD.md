@@ -29,6 +29,14 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bk — Dashboard trivia widget + configurable goals/perks (2026-06-01)
+- ✅ **Dashboard tile (`data-testid="trivia-dash-tile"`)** under Today's P&L — top 5 players (rank/name/dogs/streak/accuracy), amber **"N perks to award"** badge in the header when there are pending milestones, taps through to Settings → Trivia.
+- ✅ **`GET/PUT /api/admin/trivia/rewards`** — new endpoints persisting `app_settings._id="trivia_rewards"` with custom milestone list `[{days, label, perk_type}]`. PUT validates (drops empty labels, zero/negative days, dedupes per-day), sorts ascending. Falls back to defaults (7/14/30) when none configured.
+- ✅ **Daily-answer endpoint** now reads configured rewards instead of hardcoded `TRIVIA_MILESTONE_DAYS`. Each earned milestone also stamps the **label** + **perk_type** onto `clients.trivia_milestones` so the admin perks-to-award list shows the right copy at checkout.
+- ✅ **Settings → Trivia → "Goals" tab** — full editor: each row has Day # + Perk message + Tag, Add goal / Remove / Reset-to-defaults / Save buttons. Helper banner explains the streak-match semantics.
+- ✅ **Tests** `test_dog_trivia.py` extended to 14/14 passing (rewards GET defaults, PUT validation+dedupe+sort, auth requirement).
+
+
 ## Sprint 110bj — Admin view of trivia players + leaderboard + perk redemption (2026-06-01)
 - ✅ **`GET /api/admin/trivia/leaderboard`** — full unredacted leaderboard: rank, full client name, email, phone, dog names, current/best streak, total correct, total attempts, accuracy %, last_played date, all earned milestones with redeemed_at status.
 - ✅ **`POST /api/admin/trivia/milestones/redeem`** — operator marks a streak perk (7/14/30 days) as redeemed at checkout. Stamps `redeemed_at` + `redeemed_by` on the matching item in `clients.trivia_milestones`.

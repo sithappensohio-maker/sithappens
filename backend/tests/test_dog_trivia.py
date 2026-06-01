@@ -158,3 +158,48 @@ def test_admin_redeem_404_when_no_milestone():
                       json={"client_id": "does-not-exist", "days": 7,
                             "earned_on": "2024-01-01"}, timeout=15)
     assert r.status_code == 404
+
+
+def test_trivia_rewards_get_returns_defaults_on_first_call():
+    h = _admin()
+    r = requests.get(f"{BASE}/api/admin/trivia/rewards", headers=h, timeout=15)
+    assert r.status_code == 200
+    body = r.json()
+    assert "milestones" in body
+    assert "defaults" in body
+    assert len(body["defaults"]) >= 1
+    for m in body["milestones"]:
+        for k in ("days", "label"):
+            assert k in m
+
+
+def test_trivia_rewards_put_validates_and_dedupes():
+    h = _admin()
+    custom = [
+        {"days": 5, "label": "🐾 5-day streak — free nail trim!", "perk_type": "nail_trim"},
+        {"days": 0, "label": "Bad — should be dropped", "perk_type": ""},
+        {"days": 10, "label": "", "perk_type": "no_label"},  # bad — should be dropped
+        {"days": 5, "label": "Duplicate day — should be dropped", "perk_type": ""},
+        {"days": 21, "label": "🏅 3 weeks — bandana", "perk_type": "bandana"},
+    ]
+    r = requests.put(f"{BASE}/api/admin/trivia/rewards", headers=h,
+                     json={"milestones": custom}, timeout=15)
+    assert r.status_code == 200
+    saved = r.json()["milestones"]
+    # Only 2 valid (5 & 21), sorted by days ascending
+    assert [m["days"] for m in saved] == [5, 21]
+    # Read back
+    body = requests.get(f"{BASE}/api/admin/trivia/rewards", headers=h, timeout=15).json()
+    assert body["milestones"] == saved
+    # Restore by sending an empty patch to fall back to defaults
+    # (empty list will fall back to defaults on next _get)
+    requests.put(f"{BASE}/api/admin/trivia/rewards", headers=h,
+                 json={"milestones": []}, timeout=15)
+
+
+def test_trivia_rewards_requires_admin():
+    r = requests.get(f"{BASE}/api/admin/trivia/rewards", timeout=15)
+    assert r.status_code in (401, 403)
+    r = requests.put(f"{BASE}/api/admin/trivia/rewards",
+                     json={"milestones": []}, timeout=15)
+    assert r.status_code in (401, 403)

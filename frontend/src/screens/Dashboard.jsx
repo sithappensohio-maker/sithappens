@@ -354,6 +354,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
 
+      {/* Sprint 110bk — Trivia leaderboard at-a-glance */}
+      <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />
+
 
       {programs && programs.total > 0 && (
         <div className="bg-bgPanel rounded-xl border border-bgHover p-4" data-testid="programs-tile">
@@ -713,3 +716,62 @@ function DashHeroTile({ icon, color, label, value }) {
 
 
 
+
+
+// ─── Sprint 110bk — Trivia at-a-glance ──────────────────────────────────────
+function TriviaDashboardTile({ onNavSettings }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try { const r = await api.get("/admin/trivia/leaderboard"); setData(r.data); } catch {}
+    })();
+  }, []);
+  if (!data || data.total_players === 0) return null;
+  const top = (data.players || []).slice(0, 5);
+  const pending = data.pending_milestones?.length || 0;
+  return (
+    <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden card-pop" data-testid="trivia-dash-tile">
+      <button onClick={onNavSettings}
+              data-testid="trivia-dash-header"
+              className="w-full p-3 flex justify-between items-center hover:bg-bgPanel/70 text-left">
+        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
+          <i className="fas fa-puzzle-piece mr-2"/>Trivia leaderboard
+          {pending > 0 && (
+            <span className="ml-2 bg-shOrange/15 text-shOrange border border-shOrange/30 px-2 py-0.5 rounded text-[10px]" data-testid="trivia-dash-pending">
+              <i className="fas fa-gift mr-1"/>{pending} perk{pending===1?"":"s"} to award
+            </span>
+          )}
+        </p>
+        <span className="text-[11px] text-gray-500"><i className="fas fa-arrow-right ml-1"/></span>
+      </button>
+      <div className="px-3 pb-3">
+        {top.length === 0 ? (
+          <p className="text-gray-500 text-sm">No one playing yet.</p>
+        ) : (
+          <table className="w-full text-[13px]">
+            <tbody>
+              {top.map(p => (
+                <tr key={p.client_id} className="border-t border-bgHover/40" data-testid={`trivia-dash-row-${p.client_id}`}>
+                  <td className="py-1.5 pr-2 text-gray-400 font-black w-8">#{p.rank}</td>
+                  <td className="py-1.5 pr-2">
+                    <p className="text-white font-bold truncate">{p.name}</p>
+                    {p.dogs.length > 0 && <p className="text-[11px] text-gray-500 truncate">{p.dogs.join(", ")}</p>}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right whitespace-nowrap">
+                    <span className={`font-black ${p.current_streak >= 7 ? "text-shGreen" : p.current_streak >= 3 ? "text-shOrange" : "text-white"}`}>
+                      <i className="fas fa-fire mr-1"/>{p.current_streak}d
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right text-gray-500 text-[11px] whitespace-nowrap hidden sm:table-cell">
+                    {p.total_correct}/{p.total_attempts} · {p.accuracy_pct}%
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="text-[10px] text-gray-500 italic mt-2 text-right">{data.total_players} player{data.total_players===1?"":"s"} · tap card to manage</p>
+      </div>
+    </div>
+  );
+}

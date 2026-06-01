@@ -2236,13 +2236,16 @@ function AutomationPanel() {
 
 // ─────── Sprint 110bi · Dog Trivia question pool management ───────
 function TriviaPanel() {
-  const [view, setView] = useState("leaderboard"); // leaderboard | questions
+  const [view, setView] = useState("leaderboard"); // leaderboard | rewards | questions
   const [rows, setRows] = useState([]);
   const [active, setActive] = useState(0);
   const [count, setCount] = useState(15);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [lb, setLb] = useState(null);
+  const [rewards, setRewards] = useState(null);
+  const [rewardsDefaults, setRewardsDefaults] = useState([]);
+  const [savingRewards, setSavingRewards] = useState(false);
 
   const loadQuestions = async () => {
     try {
@@ -2254,7 +2257,27 @@ function TriviaPanel() {
     try { const r = await api.get("/admin/trivia/leaderboard"); setLb(r.data); }
     catch (e) { setErr(e.response?.data?.detail || "Could not load leaderboard"); }
   };
-  useEffect(() => { loadQuestions(); loadLeaderboard(); }, []);
+  const loadRewards = async () => {
+    try {
+      const r = await api.get("/admin/trivia/rewards");
+      setRewards(r.data.milestones || []);
+      setRewardsDefaults(r.data.defaults || []);
+    } catch (e) { setErr(e.response?.data?.detail || "Could not load rewards"); }
+  };
+  useEffect(() => { loadQuestions(); loadLeaderboard(); loadRewards(); }, []);
+
+  const saveRewards = async () => {
+    setSavingRewards(true); setErr("");
+    try {
+      const r = await api.put("/admin/trivia/rewards", { milestones: rewards });
+      setRewards(r.data.milestones);
+    } catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+    finally { setSavingRewards(false); }
+  };
+  const addReward = () => setRewards(rs => [...(rs || []), { days: 60, label: "", perk_type: "" }]);
+  const updateReward = (i, patch) => setRewards(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const removeReward = (i) => setRewards(rs => rs.filter((_, idx) => idx !== i));
+  const resetRewards = () => setRewards(rewardsDefaults.map(d => ({ ...d })));
 
   const generate = async () => {
     setBusy(true); setErr("");
@@ -2295,7 +2318,7 @@ function TriviaPanel() {
           <p className="text-[12px] text-gray-500">{active} active question{active === 1 ? "" : "s"} · {rows.length} total · Wordle-style daily card on client portal</p>
         </div>
         <div className="flex gap-1 bg-bgBase rounded p-1 border border-bgHover">
-          {[["leaderboard","Leaderboard","fa-trophy"],["questions","Questions","fa-list"]].map(([k,l,i])=>(
+          {[["leaderboard","Leaderboard","fa-trophy"],["rewards","Goals","fa-bullseye"],["questions","Questions","fa-list"]].map(([k,l,i])=>(
             <button key={k} onClick={()=>setView(k)} data-testid={`trivia-view-${k}`}
                     className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${view===k ? "bg-shBlue text-bgHeader" : "text-gray-400 hover:text-white"}`}>
               <i className={`fas ${i} mr-1`}/>{l}
@@ -2397,6 +2420,77 @@ function TriviaPanel() {
                   </table>
                 </div>
               )}
+            </>
+          )}
+        </div>
+      )}
+
+      {view === "rewards" && (
+        <div className="space-y-3" data-testid="trivia-rewards-view">
+          <div className="bg-shGreen/5 border border-shGreen/30 rounded-xl p-3 text-[13px] text-gray-300">
+            <i className="fas fa-circle-info text-shGreen mr-2"/>
+            Pick your own streak goals + perks. Each entry is matched when a client's
+            <strong className="text-shGreen"> current daily-trivia streak </strong> hits exactly the day count.
+            The label is what the client sees on their portal and what shows in your "Perks to award at next checkout" list.
+          </div>
+          {!rewards ? <p className="text-gray-500 text-sm">Loading…</p> : (
+            <>
+              <div className="space-y-2">
+                {rewards.length === 0 && (
+                  <p className="text-gray-500 italic text-sm" data-testid="trivia-rewards-empty">No goals set — clients won't earn perks. Tap "Add goal" below.</p>
+                )}
+                {rewards.map((r, i) => (
+                  <div key={i} className="bg-bgBase rounded-lg border border-bgHover p-3 grid grid-cols-12 gap-2 items-start" data-testid={`trivia-reward-${i}`}>
+                    <label className="col-span-3 sm:col-span-2 block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Day #</span>
+                      <input type="number" min={1} max={3650} value={r.days}
+                             onChange={e => updateReward(i, { days: Number(e.target.value) || 0 })}
+                             data-testid={`trivia-reward-days-${i}`}
+                             className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                    </label>
+                    <label className="col-span-9 sm:col-span-7 block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Perk message (clients see this)</span>
+                      <input type="text" value={r.label} maxLength={200}
+                             placeholder="🐾 7-day streak — free puzzle toy at pickup!"
+                             onChange={e => updateReward(i, { label: e.target.value })}
+                             data-testid={`trivia-reward-label-${i}`}
+                             className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                    </label>
+                    <label className="col-span-9 sm:col-span-2 block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Tag (internal)</span>
+                      <input type="text" value={r.perk_type || ""} maxLength={50}
+                             placeholder="puzzle_toy"
+                             onChange={e => updateReward(i, { perk_type: e.target.value })}
+                             data-testid={`trivia-reward-tag-${i}`}
+                             className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                    </label>
+                    <div className="col-span-3 sm:col-span-1 flex justify-end items-center pt-5">
+                      <button onClick={() => removeReward(i)}
+                              data-testid={`trivia-reward-delete-${i}`}
+                              className="text-gray-500 hover:text-red-400 p-2">
+                        <i className="fas fa-trash"/>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex justify-between flex-wrap gap-2">
+                <div className="flex gap-2">
+                  <button onClick={addReward} data-testid="trivia-reward-add"
+                          className="bg-bgBase border border-bgHover text-gray-200 hover:border-shBlue px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                    <i className="fas fa-plus mr-1"/>Add goal
+                  </button>
+                  <button onClick={resetRewards} data-testid="trivia-reward-reset"
+                          className="text-gray-400 hover:text-shOrange px-2 py-1.5 text-[12px] font-black uppercase tracking-widest">
+                    <i className="fas fa-rotate-left mr-1"/>Reset to defaults
+                  </button>
+                </div>
+                <button onClick={saveRewards} disabled={savingRewards}
+                        data-testid="trivia-reward-save"
+                        className="bg-shGreen text-bgHeader px-4 py-1.5 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  {savingRewards ? "Saving…" : <><i className="fas fa-floppy-disk mr-1"/>Save goals</>}
+                </button>
+              </div>
             </>
           )}
         </div>
