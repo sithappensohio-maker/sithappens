@@ -29,6 +29,13 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bo — Operator-curated trivia seed (21 questions) (2026-06-01)
+- ✅ **`/app/backend/seed_curated_trivia.py`** — idempotent seeder for 21 hand-written questions covering all 7 categories × 3 difficulty levels (Breeds / Behavior / Health / History / Anatomy / Training / Fun & Myth). Uses `uuid5` from question text so re-running upserts instead of duplicating.
+- ✅ Each curated question gets `source="manual"` + `curated=True` flag for differentiation in the question library, plus the same shape as AI-generated ones (question/choices/correct_index/difficulty/tag/active).
+- ✅ Ran once: 21 curated rows inserted; total trivia_questions = 38 (21 curated + 17 AI). Tags spread across all 7 categories.
+- ✅ Curated questions immediately participate in the Wordle-style daily question pool and the adaptive quiz.
+
+
 ## Sprint 110bn — Glossy 3D category badges in Dog Trivia (2026-06-01)
 - ✅ **6 badge PNG assets** cropped from the operator-provided reference sheet and saved to `/app/frontend/public/trivia-icons/` (breeds, training, nutrition, health, score, timer). Each ~360–380 KB, 512×512 RGBA.
 - ✅ **`CategoryBadge` component** in `DailyTriviaCard.jsx` — maps every trivia `tag` (breeds/history/training/behavior/health/anatomy/fun/myth) to one of the 6 badges with a sensible fallback chain. Falls back to the "score" ribbon for unknown/fun tags.
