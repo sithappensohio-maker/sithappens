@@ -2227,6 +2227,184 @@ function AutomationPanel() {
           </div>
         )}
       </div>
+
+      <DogFactsPanel/>
+    </div>
+  );
+}
+
+// ─────── Sprint 110ax · Dog Facts management ───────
+function DogFactsPanel() {
+  const [rows, setRows] = useState([]);
+  const [today, setToday] = useState(null);
+  const [filter, setFilter] = useState("all"); // all | active | inactive | ai
+  const [editing, setEditing] = useState(null);
+  const [draft, setDraft] = useState({ text: "", tag: "fun", emoji: "🐶" });
+  const [genBusy, setGenBusy] = useState(false);
+  const [genCount, setGenCount] = useState(3);
+  const [err, setErr] = useState("");
+  const load = async () => {
+    setErr("");
+    try {
+      const [r, t] = await Promise.all([
+        api.get("/dog-facts"),
+        api.get("/dog-facts/today"),
+      ]);
+      setRows(r.data || []);
+      setToday(t.data?.fact || null);
+    } catch (e) { setErr(e.response?.data?.detail || "Load failed"); }
+  };
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    if (!draft.text.trim()) return;
+    try {
+      await api.post("/dog-facts", draft);
+      setDraft({ text: "", tag: "fun", emoji: "🐶" });
+      load();
+    } catch (e) { setErr(e.response?.data?.detail || "Add failed"); }
+  };
+  const toggle = async (f) => {
+    try { await api.patch(`/dog-facts/${f.id}`, { active: !f.active }); load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Toggle failed"); }
+  };
+  const remove = async (f) => {
+    if (!window.confirm(`Delete this fact?\n\n"${f.text}"`)) return;
+    try { await api.delete(`/dog-facts/${f.id}`); load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
+  };
+  const saveEdit = async () => {
+    try { await api.patch(`/dog-facts/${editing.id}`, editing); setEditing(null); load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Save failed"); }
+  };
+  const generate = async () => {
+    setGenBusy(true); setErr("");
+    try {
+      const { data } = await api.post("/dog-facts/generate", { count: Number(genCount) || 3 });
+      load();
+      alert(`Generated ${data.created} new facts. They're staged as INACTIVE — review them below and toggle on to add to rotation.`);
+    } catch (e) { setErr(e.response?.data?.detail || "Generation failed"); }
+    finally { setGenBusy(false); }
+  };
+  const visible = rows.filter(r =>
+    filter === "all" ? true :
+    filter === "active" ? r.active :
+    filter === "inactive" ? !r.active :
+    filter === "ai" ? r.ai_generated : true
+  );
+  const activeCount = rows.filter(r => r.active).length;
+  return (
+    <div className="border-t border-bgHover pt-6" data-testid="dog-facts-panel">
+      <h4 className="text-sm font-black text-shGreen uppercase tracking-widest mb-2"><i className="fas fa-paw mr-2"/>Dog Fact of the Day</h4>
+      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+        One fact rotates daily on the client portal and your dashboard. <strong className="text-white">{activeCount}</strong> facts in active rotation — roughly <strong>{Math.round(activeCount / 30 * 10) / 10} months</strong> of unique content before anything repeats.
+      </p>
+
+      {today && (
+        <div className="bg-bgBase border border-shGreen/30 rounded-lg p-3 mb-4" data-testid="dog-fact-today-preview">
+          <p className="text-[10px] font-black uppercase tracking-[0.22em] text-shGreen mb-1">Today's pick</p>
+          <p className="text-white text-[14px]"><span className="text-xl mr-2">{today.emoji}</span>{today.text}</p>
+        </div>
+      )}
+
+      {err && <p className="text-red-400 text-[14px] mb-2">{err}</p>}
+
+      {/* AI generate */}
+      <div className="bg-bgBase border border-purple-500/30 rounded-lg p-3 mb-4">
+        <p className="text-[12px] font-black uppercase tracking-widest text-purple-300 mb-2"><i className="fas fa-wand-magic-sparkles mr-1"/>Generate new facts (AI)</p>
+        <div className="flex items-end gap-2">
+          <label className="block">
+            <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Count</span>
+            <input type="number" min={1} max={10} value={genCount} onChange={(e)=>setGenCount(e.target.value)}
+                   data-testid="dog-facts-gen-count"
+                   className="mt-1 block w-20 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+          </label>
+          <button onClick={generate} disabled={genBusy} data-testid="dog-facts-generate"
+                  className="bg-purple-500 text-white px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow disabled:opacity-50">
+            {genBusy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Generating…</> : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate</>}
+          </button>
+          <p className="text-[11px] text-gray-500 italic">Staged inactive — you review before they go live.</p>
+        </div>
+      </div>
+
+      {/* Add new */}
+      <div className="bg-bgBase border border-bgHover rounded-lg p-3 mb-4">
+        <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-2"><i className="fas fa-plus mr-1"/>Add your own fact</p>
+        <div className="flex gap-2 items-end flex-wrap">
+          <input type="text" value={draft.emoji} onChange={(e)=>setDraft({...draft, emoji: e.target.value})}
+                 placeholder="🐶" data-testid="dog-facts-new-emoji"
+                 className="w-16 bg-bgPanel border border-bgHover rounded p-2 text-white text-lg text-center"/>
+          <select value={draft.tag} onChange={(e)=>setDraft({...draft, tag: e.target.value})}
+                  data-testid="dog-facts-new-tag"
+                  className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+            {["fun","anatomy","behavior","breed","health","training","myth-buster"].map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input type="text" value={draft.text} onChange={(e)=>setDraft({...draft, text: e.target.value})}
+                 placeholder="Type a fun, accurate dog fact (1 sentence)…"
+                 data-testid="dog-facts-new-text" maxLength={500}
+                 className="flex-1 min-w-[260px] bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+          <button onClick={add} disabled={!draft.text.trim()} data-testid="dog-facts-add"
+                  className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow disabled:opacity-50">
+            Add
+          </button>
+        </div>
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-2 mb-2 text-[12px] font-black uppercase tracking-widest">
+        {[["all","All"],["active","Active"],["inactive","Inactive"],["ai","AI"]].map(([k, label]) => (
+          <button key={k} onClick={()=>setFilter(k)} data-testid={`dog-facts-filter-${k}`}
+                  className={`px-3 py-1 rounded ${filter === k ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400 hover:text-white border border-bgHover"}`}>
+            {label} {k === "active" ? `(${activeCount})` : k === "ai" ? `(${rows.filter(r => r.ai_generated).length})` : k === "all" ? `(${rows.length})` : `(${rows.length - activeCount})`}
+          </button>
+        ))}
+      </div>
+
+      {/* List */}
+      <div className="max-h-[420px] overflow-y-auto space-y-1 bg-bgBase border border-bgHover rounded-lg p-2">
+        {visible.length === 0 && <p className="text-[13px] text-gray-500 italic p-2">No facts match this filter.</p>}
+        {visible.map(f => (
+          <div key={f.id} className={`flex items-start gap-2 p-2 rounded ${f.active ? "" : "opacity-50"} hover:bg-bgPanel/60`}
+               data-testid={`dog-fact-row-${f.id}`}>
+            <span className="text-lg shrink-0">{f.emoji}</span>
+            <div className="min-w-0 flex-1">
+              {editing?.id === f.id ? (
+                <div className="space-y-2">
+                  <input value={editing.text} onChange={(e)=>setEditing({...editing, text: e.target.value})}
+                         className="block w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"
+                         data-testid={`dog-fact-edit-text-${f.id}`}/>
+                  <div className="flex gap-2">
+                    <button onClick={saveEdit} className="text-[11px] font-black uppercase tracking-widest bg-shGreen text-bgHeader px-3 py-1 rounded"
+                            data-testid={`dog-fact-save-${f.id}`}>Save</button>
+                    <button onClick={()=>setEditing(null)} className="text-[11px] font-black uppercase tracking-widest text-gray-400 px-3 py-1 rounded">Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="text-[13px] text-white leading-snug">{f.text}</p>
+                  <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mt-0.5">
+                    {f.tag}{f.ai_generated ? " · AI" : f.seeded ? " · seed" : " · custom"}
+                  </p>
+                </>
+              )}
+            </div>
+            {editing?.id !== f.id && (
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={()=>toggle(f)} title={f.active ? "Disable" : "Activate"}
+                        data-testid={`dog-fact-toggle-${f.id}`}
+                        className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded ${f.active ? "bg-shGreen/15 text-shGreen" : "bg-bgPanel text-gray-400"}`}>
+                  {f.active ? "On" : "Off"}
+                </button>
+                <button onClick={()=>setEditing(f)} title="Edit"
+                        data-testid={`dog-fact-edit-${f.id}`}
+                        className="text-gray-400 hover:text-white p-1"><i className="fas fa-pencil text-[12px]"/></button>
+                <button onClick={()=>remove(f)} title="Delete"
+                        data-testid={`dog-fact-delete-${f.id}`}
+                        className="text-gray-400 hover:text-red-400 p-1"><i className="fas fa-trash text-[12px]"/></button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

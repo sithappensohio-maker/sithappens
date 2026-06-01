@@ -6,6 +6,7 @@ import BookingDetailModal from "../components/BookingDetailModal";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
+import { DogFactCard } from "../components/DogFactCard";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -341,6 +342,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             .catch((e) => alert("Failed to send: " + (e.response?.data?.detail || e.message)));
         }
       }} />
+
+      {/* Sprint 110ax — Daily dog fact (matches what clients see in their portal) */}
+      <DogFactCard variant="chip" />
 
       <div className="grid grid-cols-3 gap-3 md:gap-6">
         <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-info"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />

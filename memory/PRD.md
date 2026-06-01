@@ -1681,6 +1681,15 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110ax — Dog Fact of the Day (2026-06-01)
+- ✅ **199 curated facts** seeded across anatomy / behavior / breed / health / training / myth-buster / fun. Idempotent seed runs on startup.
+- ✅ **Deterministic daily rotation**: `GET /api/dog-facts/today` picks via `date.toordinal() % len(active_facts)` — same fact for every user same day, ~6.5 months before any repeat.
+- ✅ **Admin CRUD endpoints** + **AI generation** via Claude Haiku (Emergent LLM key) — generated facts staged inactive for admin review. EMERGENT_LLM_KEY added to backend/.env.
+- ✅ **`DogFactCard`** component (`big` for portal, `chip` for admin dashboard) with localStorage day-cache so the card stays stable across mounts.
+- ✅ **Wired into Client Portal** (big hero card above main grid) and **Admin Dashboard** (compact chip under Today's Brain). Same fact in both places.
+- ✅ **Settings → Email Automation** gets a full "Dog Fact of the Day" management panel: today's preview, AI generate, add-your-own composer, filters (All/Active/Inactive/AI), per-row On/Off + edit + delete.
+- ✅ Pytest `test_dog_facts.py` 5/5: today shape, day-stability, admin CRUD round-trip, client-read+admin-guard, ≥100 seed.
+
 ## Sprint 110aw — 5-feature batch: birthday toggle, 1099/W2, sales tax, meet-n-greet, board-and-train (2026-05-31)
 
 ### #1 Birthday email toggle

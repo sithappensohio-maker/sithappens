@@ -7922,6 +7922,199 @@ async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin
     return rows
 
 
+# ─────────────── Sprint 110ax · Dog Fact of the Day ───────────────
+# Daily sticky engagement: a single curated "fun fact" appears on both the
+# client portal and the admin dashboard. Same fact for everyone same day —
+# deterministic rotation by day-of-year over active facts, so two users
+# comparing notes both see the same one.
+from dog_facts_seed import DOG_FACTS_SEED
+
+
+async def _seed_dog_facts_if_empty():
+    """Idempotent. Seeds the curated library on first boot."""
+    n = await db.dog_facts.count_documents({})
+    if n > 0:
+        return
+    rows = []
+    for i, item in enumerate(DOG_FACTS_SEED):
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "text": item["text"],
+            "tag": item.get("tag") or "fun",
+            "emoji": item.get("emoji") or "🐶",
+            "active": True,
+            "seeded": True,
+            "created_at": now_iso(),
+            "sort_order": i,
+        })
+    if rows:
+        await db.dog_facts.insert_many(rows)
+        logger.info("Seeded %d dog facts", len(rows))
+
+
+async def _todays_fact() -> Optional[Dict[str, Any]]:
+    """Pick today's fact deterministically. Stable for the calendar day."""
+    facts = await db.dog_facts.find(
+        {"active": True}, {"_id": 0}
+    ).sort("sort_order", 1).to_list(2000)
+    if not facts:
+        return None
+    today = date.today()
+    # day-of-year + year offset for slow drift between years
+    idx = (today.toordinal()) % len(facts)
+    return facts[idx]
+
+
+@api.get("/dog-facts/today")
+async def dog_fact_today(user: dict = Depends(get_current_user)):
+    """Public-ish endpoint (any authenticated user). Returns today's fact."""
+    fact = await _todays_fact()
+    if not fact:
+        return {"fact": None, "date": date.today().isoformat()}
+    return {"fact": fact, "date": date.today().isoformat()}
+
+
+@api.get("/dog-facts")
+async def list_dog_facts(active_only: bool = False, _: dict = Depends(require_admin)):
+    q = {"active": True} if active_only else {}
+    rows = await db.dog_facts.find(q, {"_id": 0}).sort("sort_order", 1).to_list(2000)
+    return rows
+
+
+class DogFactIn(BaseModel):
+    text: str = Field(min_length=3, max_length=500)
+    tag: Optional[str] = "fun"
+    emoji: Optional[str] = "🐶"
+    active: Optional[bool] = True
+
+
+@api.post("/dog-facts")
+async def create_dog_fact(body: DogFactIn, user: dict = Depends(require_admin)):
+    # Push new ones to the end of the rotation so they get their turn
+    max_sort = await db.dog_facts.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
+    next_sort = (max_sort[0]["sort_order"] + 1) if max_sort else 0
+    doc = {
+        "id": str(uuid.uuid4()),
+        "text": body.text.strip(),
+        "tag": (body.tag or "fun").strip(),
+        "emoji": (body.emoji or "🐶")[:4],
+        "active": True if body.active is None else bool(body.active),
+        "seeded": False,
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "sort_order": next_sort,
+    }
+    await db.dog_facts.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class DogFactPatch(BaseModel):
+    text: Optional[str] = None
+    tag: Optional[str] = None
+    emoji: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@api.patch("/dog-facts/{fact_id}")
+async def update_dog_fact(fact_id: str, body: DogFactPatch, _: dict = Depends(require_admin)):
+    existing = await db.dog_facts.find_one({"id": fact_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Fact not found")
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "text" in update:
+        update["text"] = update["text"].strip()[:500]
+    if "emoji" in update:
+        update["emoji"] = (update["emoji"] or "🐶")[:4]
+    if "tag" in update:
+        update["tag"] = (update["tag"] or "fun").strip()[:40]
+    await db.dog_facts.update_one({"id": fact_id}, {"$set": update})
+    existing.update(update)
+    return existing
+
+
+@api.delete("/dog-facts/{fact_id}")
+async def delete_dog_fact(fact_id: str, _: dict = Depends(require_admin)):
+    res = await db.dog_facts.delete_one({"id": fact_id})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Fact not found")
+    return {"ok": True}
+
+
+class DogFactGenerateIn(BaseModel):
+    count: int = Field(default=3, ge=1, le=10)
+    style_hint: Optional[str] = ""
+
+
+@api.post("/dog-facts/generate")
+async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_admin)):
+    """Ask the Emergent LLM to generate fresh facts and stage them as inactive
+    so the admin can review before publishing. Uses Claude Haiku — cheap +
+    fast for this kind of bite-size text."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="EMERGENT_LLM_KEY not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"emergentintegrations not available: {e}")
+    existing = await db.dog_facts.find({}, {"_id": 0, "text": 1}).limit(200).to_list(200)
+    recent_sample = " ".join(r["text"][:60] for r in existing[-30:])
+    prompt = (
+        f"Generate {body.count} short, warm, accurate, family-friendly fun facts about dogs. "
+        f"Each one should be ONE sentence, under 200 characters, and DELIGHTFUL to read. "
+        f"Avoid duplicating these recent ones: {recent_sample}\n\n"
+        f"{('Voice hint: ' + body.style_hint) if body.style_hint else ''}\n"
+        f"Output strict JSON: {{\"facts\": [{{\"text\": \"...\", \"tag\": \"anatomy|behavior|breed|health|fun|training|myth-buster\", \"emoji\": \"single emoji\"}}]}}"
+    )
+    try:
+        chat = (
+            LlmChat(api_key=api_key, session_id=f"dog-facts-{uuid.uuid4().hex[:8]}",
+                    system_message="You are a warm, knowledgeable dog enthusiast. Always return strict JSON.")
+            .with_model("anthropic", "claude-haiku-4-5-20251001")
+        )
+        resp = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
+    import json as _json
+    import re as _re
+    raw = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
+    m = _re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        raise HTTPException(status_code=502, detail="LLM did not return JSON")
+    try:
+        parsed = _json.loads(m.group(0))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM JSON parse failed: {e}")
+    items = parsed.get("facts") or []
+    if not isinstance(items, list):
+        raise HTTPException(status_code=502, detail="LLM returned no fact list")
+    # Stage as inactive so admin reviews before they go live in rotation
+    max_sort = await db.dog_facts.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
+    base = (max_sort[0]["sort_order"] + 1) if max_sort else 0
+    docs = []
+    for i, it in enumerate(items):
+        text = (it.get("text") or "").strip()
+        if len(text) < 5:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "text": text[:500],
+            "tag": (it.get("tag") or "fun").strip()[:40],
+            "emoji": (it.get("emoji") or "✨")[:4],
+            "active": False,  # staged — admin must approve
+            "seeded": False,
+            "ai_generated": True,
+            "created_at": now_iso(),
+            "sort_order": base + i,
+        })
+    if docs:
+        await db.dog_facts.insert_many(docs)
+        for d in docs:
+            d.pop("_id", None)
+    return {"created": len(docs), "facts": docs}
+
+
 # ─────────────── Sprint 110aw · Sales tax collected report ───────────────
 # Year-to-date / arbitrary-window tax tally for sales-tax filing. Combines
 # booking-level `tax_amount` and retail-level `tax_amount`.
@@ -9161,6 +9354,11 @@ async def startup():
     global _auto_backup_task
     if _auto_backup_task is None or _auto_backup_task.done():
         _auto_backup_task = asyncio.create_task(_auto_backup_loop())
+    # Sprint 110ax — seed the dog-facts library on first boot
+    try:
+        await _seed_dog_facts_if_empty()
+    except Exception as exc:
+        logger.warning("Dog facts seeding failed: %s", exc)
 
 
 @app.on_event("shutdown")

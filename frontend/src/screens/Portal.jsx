@@ -19,6 +19,7 @@ import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
 import ServicesByCategory from "../components/ServicesByCategory";
+import { DogFactCard } from "../components/DogFactCard";
 import Tutorials from "./Tutorials";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
@@ -873,6 +874,9 @@ export default function Portal() {
             </div>
           </div>
         )}
+
+        {/* Sprint 110ax — Daily dog fact, pinned above the main content */}
+        <div className="mb-6"><DogFactCard variant="big" /></div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
