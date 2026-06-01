@@ -10103,13 +10103,29 @@ async def owner_draw_summary(_: dict = Depends(require_admin)):
         "year":      (f"{today.year}-01-01T00:00:00", f"{today.isoformat()}T23:59:59.999Z"),
     }
     out = {}
+    now_dt = datetime.now(timezone.utc)
     for label, (s, e) in spans.items():
+        # Settled hours: closed clock entries
         entries = await db.time_clock_entries.find(
             {"user_id": row["id"], "clock_in_at": {"$gte": s, "$lte": e},
              "clock_out_at": {"$ne": None, "$exists": True}},
             {"_id": 0, "hours": 1},
         ).to_list(10000)
-        hrs = round(sum(float(x.get("hours") or 0) for x in entries), 2)
+        hrs = sum(float(x.get("hours") or 0) for x in entries)
+        # Plus any currently-open shift projected to "now" (matches today-pnl)
+        open_rows = await db.time_clock_entries.find(
+            {"user_id": row["id"], "clock_in_at": {"$gte": s, "$lte": e},
+             "$or": [{"clock_out_at": None}, {"clock_out_at": {"$exists": False}}]},
+            {"_id": 0, "clock_in_at": 1, "break_minutes": 1},
+        ).to_list(50)
+        for r in open_rows:
+            try:
+                ci = datetime.fromisoformat((r.get("clock_in_at") or "").replace("Z", "+00:00"))
+                br = float(r.get("break_minutes") or 0) / 60.0
+                hrs += max(0.0, (now_dt - ci).total_seconds() / 3600.0 - br)
+            except Exception:
+                pass
+        hrs = round(hrs, 2)
         out[label] = {"hours": hrs, "draw": round(hrs * rate, 2)}
     return {
         "owner": {

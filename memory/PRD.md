@@ -29,6 +29,24 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bf — Owner / self-pay flag (sole-prop owner's draw tracking) (2026-02)
+- ✅ **`is_owner` flag on Employee record** with singleton enforcement (toggling on auto-clears any prior owner) via `_enforce_single_owner` helper.
+- ✅ Backend tax/payroll endpoints now treat owner correctly:
+  - `/admin/payroll/estimate` — EXCLUDES owner entirely from per-employee math and totals
+  - `/admin/quarterly-tax` — subtracts owner hours from `labor_gross`/`labor_burden` and surfaces new `owner_draw_ytd` + `owner_draw_hours`
+  - `/admin/today-pnl` — KEEPS owner in `labor_cost` (per user choice b) but adds `owner_draw_today`/`owner_hours_today` for visibility, plus `is_owner` on each per-employee row
+  - `/admin/payroll/year-end.csv` (1099/W2 prep) and `/admin/payroll/csv` — owner filtered out completely
+- ✅ **New endpoints**: `GET /admin/owner` (returns the single owner or null), `GET /admin/owner/draw-summary` (today/MTD/YTD hours+draw with live projection of open shifts).
+- ✅ **Frontend**:
+  - Employee Edit modal: blue "Owner / self-pay" checkbox with helper text (`data-testid="emp-is-owner"`)
+  - OWNER crown badge on Staff list row (`staff-owner-{id}`)
+  - **OwnerDrawCard** drill-down at top of Staff → Employees with Today/Month/YTD tiles
+  - **Owner's Draw YTD chip** on Quarterly Tax tab (`qt-owner-draw`) with helper text "excluded from labor expense — owner's draw comes out of net profit"
+  - **Owner's draw today chip** on Dashboard Today's P&L tile (`pnl-owner-draw`) + OWNER badge on per-employee labor breakdown row
+- ✅ **Tests** `test_owner_self_pay.py` — 8/8 pytests passing. 39/39 combined backend regression. Frontend testing agent verified zero UI bugs.
+- ✅ Live-projection fix: draw-summary now projects still-open shifts to "now" so today's draw is consistent with today-pnl.
+
+
 ## Sprint 110be — CPA hand-off PDF on Quarterly Tax tab (2026-02)
 - ✅ **`GET /api/admin/quarterly-tax/cpa.pdf`** — one-page Schedule C summary PDF: header w/ tax year + period, 4 top KPIs (Gross / Expenses / Net / Balance), Income detail, Expenses-by-Category table (auto-grouped from `db.expenses`), Net Profit highlight box, Tax breakdown table (SS / Medicare / Federal / OH state / Warren local with rates and bases), Quarterly payments table (all `tax_payments` for the year w/ totals), bottom-line Balance Still Owed box.
 - ✅ New `backend/cpa_report.py` mirroring the `pl_report.py` ReportLab pattern (LETTER page, brand color tiles, BG/LINE/INK palette).
