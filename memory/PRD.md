@@ -1681,6 +1681,13 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Curl-verified in Emergent preview**: `/mnt/ext/...` → `verdict=warn`, `fs_type=overlay`, mountpoint=`/`; `/app/...` → `verdict=ok`, `fs_type=ext4`, `fs_source=/dev/nvme0n16` — confirming the heuristic correctly distinguishes ephemeral from real-disk paths.
 
 
+## Sprint 110bb — Admin Staff list pay snapshot (2026-06-01)
+- ✅ New `/api/admin/staff/pay-snapshot` — single round-trip returning each active employee's `this_week_hours/gross`, `last_week_hours/gross`, `ytd_hours/gross`, and a `live` block when currently clocked in. Plus totals at the top so the admin can see weekly labor pacing at a glance.
+- ✅ Staff page header chip: `"This week so far · $XXX.XX · XX.Xh · N on the clock now"` (only renders when there's actual activity).
+- ✅ Per-row pay mini-line beneath each employee: `"This wk · X.Xh · $X.XX · Last wk … · YTD … · Now …"` (only renders for active employees with any activity).
+- ✅ "On the clock" pulse pill next to name while a shift is open.
+- ✅ Pytest `test_staff_pay_snapshot.py` (3/3): payload shape, active-only filter, live block structure. All 6 staff-related tests still pass.
+
 ## Sprint 110ba — Staff timecard now shows PAY (2026-06-01)
 - ✅ `/api/time-clock/me` enriched: per-entry `gross`, `total_gross`, `hourly_rate`, `this_week` / `last_week` (Sun → Sat U.S. weekly period), `ytd` (calendar year), and a `live` block with `hours_so_far` + `gross_so_far` while currently clocked in.
 - ✅ New `/api/time-clock/me.csv?days=N` — staff can download their own timecard for personal records.

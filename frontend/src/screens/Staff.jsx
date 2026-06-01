@@ -24,10 +24,15 @@ export default function Staff() {
   const [tcData, setTcData] = useState(null);
   const [editingEntry, setEditingEntry] = useState(null);
   const [subtab, setSubtab] = useState("employees");
+  const [paySnap, setPaySnap] = useState(null);
 
   const loadEmployees = async () => {
     try { const r = await api.get("/admin/employees"); setEmployees(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
+  const loadPaySnap = async () => {
+    try { const r = await api.get("/admin/staff/pay-snapshot"); setPaySnap(r.data); }
+    catch {}
   };
   const loadTimecards = async () => {
     try {
@@ -37,7 +42,7 @@ export default function Staff() {
       setTcData(r.data);
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
-  useEffect(() => { loadEmployees(); }, []);
+  useEffect(() => { loadEmployees(); loadPaySnap(); }, []);
   useEffect(() => { loadTimecards(); /* eslint-disable-next-line */ }, [start, end, userFilter]);
 
   const deactivate = async (emp) => {
@@ -84,19 +89,46 @@ export default function Staff() {
 
       {/* Employee list */}
       <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="staff-list">
+        {paySnap && paySnap.totals.this_week_gross > 0 && (
+          <div className="bg-bgBase/40 border-b border-bgHover px-4 py-2 flex flex-wrap items-baseline gap-x-4 gap-y-1" data-testid="staff-pay-totals">
+            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-hand-holding-dollar mr-1 text-shGreen"/>This week so far</p>
+            <p className="text-[14px] font-black text-shGreen">${paySnap.totals.this_week_gross.toFixed(2)}</p>
+            <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest">{paySnap.totals.this_week_hours.toFixed(1)}h · {paySnap.totals.currently_clocked_in} on the clock now</p>
+            <p className="text-[11px] text-gray-500 ml-auto">Week of {paySnap.totals.week_start}</p>
+          </div>
+        )}
         {employees.length === 0 && (
           <div className="p-10 text-center text-gray-500 text-sm font-black uppercase tracking-widest">No employees yet. Click "Add Employee" to get started.</div>
         )}
         <div className="divide-y divide-bgHover/40">
-          {employees.map(e => (
+          {employees.map(e => {
+            const snap = paySnap?.snapshot?.find(s => s.user_id === e.id);
+            return (
             <div key={e.id} className="p-4 flex items-center justify-between gap-3 flex-wrap" data-testid={`staff-row-${e.id}`}>
               <div className="min-w-0 flex-1">
                 <p className="text-base font-black text-white">
                   {e.name}
                   {!e.active && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-red-500/15 text-red-300 px-2 py-0.5 rounded">Inactive</span>}
+                  {snap?.live && <span className="ml-2 text-[11px] font-black uppercase tracking-widest bg-shGreen/20 text-shGreen px-2 py-0.5 rounded animate-pulse" data-testid={`staff-live-${e.id}`}><i className="fas fa-bolt mr-1"/>On the clock</span>}
                 </p>
                 <p className="text-[13px] text-gray-400">{e.email}{e.phone ? ` · ${e.phone}` : ""}</p>
                 <p className="text-[12px] text-gray-500 mt-1">${e.hourly_rate.toFixed(2)}/hr{e.last_login_at ? ` · last login ${fmtTime(e.last_login_at)}` : " · never logged in"}</p>
+                {/* Sprint 110bb — pay snapshot mini-row */}
+                {snap && e.active && (snap.this_week_hours > 0 || snap.last_week_hours > 0 || snap.live) && (
+                  <p className="text-[12px] mt-1.5 font-black uppercase tracking-widest" data-testid={`staff-pay-${e.id}`}>
+                    <span className="text-shGreen">This wk · {snap.this_week_hours.toFixed(1)}h · ${snap.this_week_gross.toFixed(2)}</span>
+                    <span className="text-gray-500 normal-case mx-2">·</span>
+                    <span className="text-gray-400">Last wk · {snap.last_week_hours.toFixed(1)}h · ${snap.last_week_gross.toFixed(2)}</span>
+                    <span className="text-gray-500 normal-case mx-2">·</span>
+                    <span className="text-gray-400">YTD · ${snap.ytd_gross.toFixed(2)}</span>
+                    {snap.live && (
+                      <>
+                        <span className="text-gray-500 normal-case mx-2">·</span>
+                        <span className="text-shGreen">Now · ${snap.live.gross_so_far.toFixed(2)}</span>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2 flex-wrap">
                 <button onClick={()=>setModal({ mode: "edit", emp: e })} data-testid={`staff-edit-${e.id}`}
@@ -107,7 +139,7 @@ export default function Staff() {
                                     className="text-[13px] font-black uppercase text-red-400 hover:underline">Deactivate</button>}
               </div>
             </div>
-          ))}
+          );})}
         </div>
       </div>
       </>)}

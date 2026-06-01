@@ -10230,6 +10230,96 @@ async def time_clock_me(
     }
 
 
+# Sprint 110bb — Bulk pay snapshot of every employee for the admin's Staff
+# list. Same math as /time-clock/me but loops across all active employees in
+# a single round-trip so the admin can see labor pacing mid-week.
+@api.get("/admin/staff/pay-snapshot")
+async def staff_pay_snapshot(_: dict = Depends(require_admin)):
+    employees = await db.users.find(
+        {"role": "employee", "active": True},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1},
+    ).to_list(500)
+    if not employees:
+        return {"snapshot": [], "totals": {"this_week_hours": 0, "this_week_gross": 0, "ytd_gross": 0}}
+    today_local = date.today()
+    sunday = today_local - timedelta(days=(today_local.weekday() + 1) % 7)
+    last_sunday = sunday - timedelta(days=7)
+    last_saturday = sunday - timedelta(days=1)
+    ytd_start = f"{today_local.year}-01-01T00:00:00"
+    uids = [u["id"] for u in employees]
+    # YTD entries — one query for all employees
+    rows = await db.time_clock_entries.find(
+        {"user_id": {"$in": uids}, "clock_in_at": {"$gte": ytd_start}},
+        {"_id": 0, "user_id": 1, "clock_in_at": 1, "clock_out_at": 1, "hours": 1, "break_minutes": 1},
+    ).to_list(20000)
+    by_user: Dict[str, Dict[str, Any]] = {}
+    for u in employees:
+        by_user[u["id"]] = {
+            "user_id": u["id"],
+            "name": u.get("display_name") or u.get("name") or u.get("email"),
+            "email": u.get("email"),
+            "hourly_rate": float(u.get("hourly_rate") or 0),
+            "this_week_hours": 0.0,
+            "last_week_hours": 0.0,
+            "ytd_hours": 0.0,
+            "live": None,
+        }
+    for r in rows:
+        slot = by_user.get(r.get("user_id"))
+        if not slot:
+            continue
+        ci = r.get("clock_in_at") or ""
+        co = r.get("clock_out_at")
+        hrs = float(r.get("hours") or 0)
+        # Closed entry: count it
+        if co and hrs:
+            try:
+                d = datetime.fromisoformat(ci.replace("Z", "+00:00")).date()
+            except Exception:
+                continue
+            slot["ytd_hours"] += hrs
+            if sunday <= d <= today_local:
+                slot["this_week_hours"] += hrs
+            elif last_sunday <= d <= last_saturday:
+                slot["last_week_hours"] += hrs
+        elif not co:
+            # Currently clocked in — build a live block
+            try:
+                t_in = datetime.fromisoformat(ci.replace("Z", "+00:00"))
+                elapsed = max(0.0, (datetime.now(timezone.utc) - t_in).total_seconds() / 3600.0)
+                br = float(r.get("break_minutes") or 0) / 60.0
+                elapsed = max(0.0, elapsed - br)
+                slot["live"] = {
+                    "hours_so_far": round(elapsed, 2),
+                    "gross_so_far": round(elapsed * slot["hourly_rate"], 2),
+                    "clock_in_at": ci,
+                }
+            except Exception:
+                pass
+    snapshot = []
+    for s in by_user.values():
+        s["this_week_hours"] = round(s["this_week_hours"], 2)
+        s["last_week_hours"] = round(s["last_week_hours"], 2)
+        s["ytd_hours"] = round(s["ytd_hours"], 2)
+        rate = s["hourly_rate"]
+        s["this_week_gross"] = round(s["this_week_hours"] * rate, 2)
+        s["last_week_gross"] = round(s["last_week_hours"] * rate, 2)
+        s["ytd_gross"] = round(s["ytd_hours"] * rate, 2)
+        snapshot.append(s)
+    snapshot.sort(key=lambda x: -x["this_week_gross"])
+    totals = {
+        "this_week_hours": round(sum(s["this_week_hours"] for s in snapshot), 2),
+        "this_week_gross": round(sum(s["this_week_gross"] for s in snapshot), 2),
+        "ytd_gross": round(sum(s["ytd_gross"] for s in snapshot), 2),
+        "currently_clocked_in": sum(1 for s in snapshot if s["live"]),
+        "week_start": sunday.isoformat(),
+        "week_end": today_local.isoformat(),
+    }
+    return {"snapshot": snapshot, "totals": totals}
+
+
+
+
 @api.get("/time-clock/me.csv")
 async def time_clock_me_csv(
     days: int = 90,
