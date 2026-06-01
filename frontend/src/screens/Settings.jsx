@@ -2229,6 +2229,94 @@ function AutomationPanel() {
       </div>
 
       <DogFactsPanel/>
+      <TriviaPanel/>
+    </div>
+  );
+}
+
+// ─────── Sprint 110bi · Dog Trivia question pool management ───────
+function TriviaPanel() {
+  const [rows, setRows] = useState([]);
+  const [active, setActive] = useState(0);
+  const [count, setCount] = useState(15);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = async () => {
+    try {
+      const r = await api.get("/admin/trivia/questions");
+      setRows(r.data.questions || []); setActive(r.data.active || 0);
+    } catch (e) { setErr(e.response?.data?.detail || "Could not load"); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const generate = async () => {
+    setBusy(true); setErr("");
+    try { await api.post("/admin/trivia/generate", { count: Number(count) || 10 }); await load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Generation failed"); }
+    finally { setBusy(false); }
+  };
+  const toggle = async (q) => {
+    try { await api.put(`/admin/trivia/questions/${q.id}/active`, { active: !q.active }); load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Toggle failed"); }
+  };
+  const del = async (q) => {
+    if (!window.confirm("Delete this question? This cannot be undone.")) return;
+    try { await api.delete(`/admin/trivia/questions/${q.id}`); load(); }
+    catch (e) { setErr(e.response?.data?.detail || "Delete failed"); }
+  };
+
+  const tagColor = {
+    breeds: "text-amber-300", behavior: "text-purple-300", health: "text-emerald-300",
+    history: "text-blue-300", training: "text-shOrange", anatomy: "text-pink-300",
+    fun: "text-shGreen", myth: "text-red-300",
+  };
+
+  return (
+    <div className="border-t border-bgHover pt-6 mt-6" data-testid="trivia-panel">
+      <div className="flex justify-between items-center flex-wrap gap-2 mb-3">
+        <div>
+          <h3 className="text-white font-black uppercase italic"><i className="fas fa-puzzle-piece text-shBlue mr-2"/>Dog Trivia</h3>
+          <p className="text-[12px] text-gray-500">{active} active question{active === 1 ? "" : "s"} · {rows.length} total · Wordle-style daily card on client portal</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="number" min={1} max={50} value={count} onChange={(e)=>setCount(e.target.value)}
+                 data-testid="trivia-gen-count"
+                 className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm w-20"/>
+          <button onClick={generate} disabled={busy} data-testid="trivia-gen-btn"
+                  className="bg-shBlue text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+            {busy ? "Generating…" : <><i className="fas fa-wand-magic-sparkles mr-1"/>Generate with AI</>}
+          </button>
+        </div>
+      </div>
+      {err && <div className="bg-red-500/10 border border-red-400 text-red-300 rounded p-2 text-[13px] mb-3">{err}</div>}
+      <div className="space-y-1 max-h-96 overflow-y-auto pr-1">
+        {rows.length === 0 ? (
+          <p className="text-gray-500 text-sm italic">No questions yet. Tap "Generate with AI" to seed the pool.</p>
+        ) : rows.map(q => (
+          <div key={q.id} className={`flex items-start gap-2 p-2 rounded border ${q.active ? "border-bgHover bg-bgBase/50" : "border-bgHover/40 bg-bgBase/20 opacity-50"}`} data-testid={`trivia-row-${q.id}`}>
+            <div className="flex-1 min-w-0">
+              <p className="text-[13px] text-gray-200 truncate">{q.question}</p>
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                <span className={`font-black uppercase ${tagColor[q.tag] || "text-gray-400"}`}>{q.tag}</span>
+                <span className="mx-1 text-gray-600">·</span>
+                <span className="text-gray-400">{q.difficulty}</span>
+                <span className="mx-1 text-gray-600">·</span>
+                <span className="text-gray-500">A: {q.choices[q.correct_index]}</span>
+                {q.times_used > 0 && <><span className="mx-1 text-gray-600">·</span><span className="text-gray-500">used {q.times_used}x</span></>}
+              </p>
+            </div>
+            <button onClick={()=>toggle(q)} data-testid={`trivia-toggle-${q.id}`}
+                    className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded ${q.active ? "text-shGreen hover:bg-shGreen/15" : "text-gray-500 hover:bg-gray-500/15"}`}>
+              {q.active ? "active" : "off"}
+            </button>
+            <button onClick={()=>del(q)} data-testid={`trivia-delete-${q.id}`}
+                    className="text-gray-500 hover:text-red-400 text-[12px] px-1">
+              <i className="fas fa-trash"/>
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

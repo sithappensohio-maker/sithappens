@@ -8136,6 +8136,478 @@ async def generate_dog_facts(body: DogFactGenerateIn, _: dict = Depends(require_
     return {"created": len(docs), "facts": docs}
 
 
+    return {"created": len(docs), "facts": docs}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 110bi · Dog Trivia Game (Wordle-style daily question + adaptive quiz)
+# Collections:
+#   trivia_questions   {id, question, choices[4], correct_index, difficulty, tag, active}
+#   trivia_daily       {date, question_id}   one doc per ISO Eastern date
+#   trivia_attempts    {client_id, date, question_id, chosen_index, correct, …}
+#   trivia_quiz_attempts {client_id, played_at, score, total, ...}
+# ─────────────────────────────────────────────────────────────────────────────
+TRIVIA_DIFFICULTIES = ("easy", "medium", "hard")
+TRIVIA_TAGS = ("breeds", "behavior", "health", "history", "training", "anatomy", "fun", "myth")
+TRIVIA_MILESTONE_DAYS = (7, 14, 30)
+
+
+class TriviaGenerateIn(BaseModel):
+    count: int = Field(default=25, ge=1, le=50)
+    difficulty_mix: Optional[str] = None  # "easy,medium,hard" weights, defaults to balanced
+
+
+async def _ensure_trivia_seeded(min_count: int = 30) -> int:
+    """If the question pool is empty (or below `min_count`), kick off an AI
+    generation pass so the daily question always has something to pick. Returns
+    the current pool size."""
+    count = await db.trivia_questions.count_documents({"active": True})
+    if count >= min_count:
+        return count
+    try:
+        await _trivia_ai_generate(min_count - count)
+    except Exception as e:
+        logger.warning("trivia seed failed: %s", e)
+    return await db.trivia_questions.count_documents({"active": True})
+
+
+async def _trivia_ai_generate(count: int, difficulty_mix: Optional[str] = None) -> List[dict]:
+    """Call the Emergent LLM key (Claude Sonnet) to generate `count` trivia
+    questions and insert them as active. Returns the inserted docs."""
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="EMERGENT_LLM_KEY not configured")
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"emergentintegrations not available: {e}")
+    # Recent questions to avoid duplicates
+    existing = await db.trivia_questions.find(
+        {}, {"_id": 0, "question": 1}
+    ).sort("created_at", -1).limit(80).to_list(80)
+    recent_sample = " | ".join(r["question"][:70] for r in existing[-40:]) or "(none yet)"
+    mix = difficulty_mix or "balanced — roughly 40% easy, 40% medium, 20% hard"
+    prompt = (
+        f"Generate {count} fun, accurate, family-friendly DOG trivia questions for a dog "
+        f"daycare's client portal. Each question must be ONE multiple-choice question with "
+        f"EXACTLY 4 answer choices. Topics: {', '.join(TRIVIA_TAGS)}. Difficulty mix: {mix}. "
+        f"AVOID duplicating these recent questions: {recent_sample}\n\n"
+        f"Constraints:\n"
+        f"- question ≤ 130 chars\n"
+        f"- each choice ≤ 60 chars, plausible distractors (no obvious throwaway)\n"
+        f"- correct_index is 0-3\n"
+        f"- difficulty: \"easy\" | \"medium\" | \"hard\"\n"
+        f"- tag: one of {list(TRIVIA_TAGS)}\n"
+        f"- no breed bias, no medical-advice questions that could be misread\n\n"
+        f"Return strict JSON: {{\"questions\":[{{\"question\":\"...\",\"choices\":[\"a\",\"b\",\"c\",\"d\"],"
+        f"\"correct_index\":0,\"difficulty\":\"easy\",\"tag\":\"breeds\"}}]}}"
+    )
+    try:
+        chat = (
+            LlmChat(api_key=api_key, session_id=f"trivia-{uuid.uuid4().hex[:8]}",
+                    system_message=(
+                        "You are a warm, knowledgeable canine educator writing kid-safe "
+                        "trivia for a dog daycare's family portal. Always return STRICT JSON only."
+                    ))
+            .with_model("anthropic", "claude-sonnet-4-6")
+        )
+        resp = await chat.send_message(UserMessage(text=prompt))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
+    import json as _json
+    import re as _re
+    raw = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
+    m = _re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        raise HTTPException(status_code=502, detail="LLM did not return JSON")
+    try:
+        parsed = _json.loads(m.group(0))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"LLM JSON parse failed: {e}")
+    items = parsed.get("questions") or []
+    if not isinstance(items, list):
+        raise HTTPException(status_code=502, detail="LLM returned no question list")
+    docs: List[dict] = []
+    for it in items:
+        q = (it.get("question") or "").strip()
+        choices = it.get("choices") or []
+        ci = it.get("correct_index")
+        diff = (it.get("difficulty") or "medium").strip().lower()
+        tag = (it.get("tag") or "fun").strip().lower()
+        if not q or not isinstance(choices, list) or len(choices) != 4:
+            continue
+        if not isinstance(ci, int) or ci < 0 or ci > 3:
+            continue
+        if diff not in TRIVIA_DIFFICULTIES:
+            diff = "medium"
+        if tag not in TRIVIA_TAGS:
+            tag = "fun"
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "question": q[:200],
+            "choices": [str(c)[:80] for c in choices],
+            "correct_index": ci,
+            "difficulty": diff,
+            "tag": tag,
+            "source": "ai",
+            "active": True,
+            "created_at": now_iso(),
+            "times_used": 0,
+        })
+    if docs:
+        await db.trivia_questions.insert_many(docs)
+        for d in docs:
+            d.pop("_id", None)
+    return docs
+
+
+async def _get_or_create_today_question(date_str: str) -> Optional[dict]:
+    """Idempotently pick today's daily question. Same question for every client
+    on the same date (Wordle-style)."""
+    row = await db.trivia_daily.find_one({"date": date_str}, {"_id": 0})
+    qid = row["question_id"] if row else None
+    if qid:
+        q = await db.trivia_questions.find_one({"id": qid, "active": True}, {"_id": 0})
+        if q:
+            return q
+        # Active flag flipped — pick a new one
+    # Make sure we have questions to choose from
+    await _ensure_trivia_seeded(min_count=30)
+    # Prefer least-recently-used question to spread variety
+    candidates = await db.trivia_questions.find(
+        {"active": True}, {"_id": 0}
+    ).sort([("times_used", 1), ("created_at", 1)]).limit(20).to_list(20)
+    if not candidates:
+        return None
+    # Pick deterministically by hashing date — so the same date always picks
+    # the same question if the candidate pool order changes.
+    import hashlib
+    idx = int(hashlib.sha256(date_str.encode("utf-8")).hexdigest(), 16) % len(candidates)
+    pick = candidates[idx]
+    await db.trivia_daily.update_one(
+        {"date": date_str}, {"$set": {"date": date_str, "question_id": pick["id"]}},
+        upsert=True,
+    )
+    await db.trivia_questions.update_one(
+        {"id": pick["id"]}, {"$inc": {"times_used": 1}}
+    )
+    return pick
+
+
+async def _compute_streak(client_id: str, today_d: date) -> Dict[str, int]:
+    """Return current_streak / best_streak / total_correct for a client.
+    Streak counts consecutive prior days the client answered correctly,
+    INCLUDING today if answered correctly. Missing today (not yet played)
+    does NOT break the streak — it just hasn't been extended yet."""
+    rows = await db.trivia_attempts.find(
+        {"client_id": client_id}, {"_id": 0, "date": 1, "correct": 1}
+    ).sort("date", -1).to_list(2000)
+    total_correct = sum(1 for r in rows if r.get("correct"))
+    # Current streak: walk backwards from today/yesterday
+    by_date = {r["date"]: bool(r.get("correct")) for r in rows}
+    current = 0
+    d = today_d
+    # If today not yet played, start checking from yesterday so absence today
+    # doesn't kill the streak
+    if d.isoformat() not in by_date:
+        d = d - timedelta(days=1)
+    while d.isoformat() in by_date:
+        if not by_date[d.isoformat()]:
+            break
+        current += 1
+        d = d - timedelta(days=1)
+    # Best streak: scan all attempts in date order
+    sorted_dates = sorted(by_date.keys())
+    best = 0
+    run = 0
+    prev_d = None
+    for ds in sorted_dates:
+        if not by_date[ds]:
+            run = 0
+            prev_d = None
+            continue
+        if prev_d is None:
+            run = 1
+        else:
+            try:
+                gap = (date.fromisoformat(ds) - prev_d).days
+                run = run + 1 if gap == 1 else 1
+            except Exception:
+                run = 1
+        best = max(best, run)
+        try:
+            prev_d = date.fromisoformat(ds)
+        except Exception:
+            prev_d = None
+    return {
+        "current_streak": current,
+        "best_streak": max(best, current),
+        "total_correct": total_correct,
+    }
+
+
+def _strip_correct(q: dict) -> dict:
+    """Sanitize a question for portal clients — never leak correct_index."""
+    return {
+        "id": q["id"],
+        "question": q["question"],
+        "choices": q["choices"],
+        "difficulty": q.get("difficulty"),
+        "tag": q.get("tag"),
+    }
+
+
+@api.get("/portal/trivia/daily")
+async def portal_trivia_daily(user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    today_d = business_today()
+    date_str = today_d.isoformat()
+    q = await _get_or_create_today_question(date_str)
+    if not q:
+        raise HTTPException(status_code=503, detail="No trivia questions available yet")
+    prior = await db.trivia_attempts.find_one(
+        {"client_id": cid, "date": date_str}, {"_id": 0}
+    )
+    stats = await _compute_streak(cid, today_d)
+    out = {
+        "date": date_str,
+        "question": _strip_correct(q),
+        "already_answered": bool(prior),
+        **stats,
+    }
+    if prior:
+        # Reveal result + correct answer once they've answered
+        out["was_correct"] = bool(prior.get("correct"))
+        out["chosen_index"] = prior.get("chosen_index")
+        out["correct_index"] = q["correct_index"]
+    return out
+
+
+class TriviaAnswerIn(BaseModel):
+    question_id: str
+    chosen_index: int = Field(ge=0, le=3)
+
+
+@api.post("/portal/trivia/daily/answer")
+async def portal_trivia_daily_answer(
+    body: TriviaAnswerIn,
+    user: dict = Depends(get_current_user),
+):
+    cid = await _require_client_with_record(user)
+    today_d = business_today()
+    date_str = today_d.isoformat()
+    q = await _get_or_create_today_question(date_str)
+    if not q or q["id"] != body.question_id:
+        raise HTTPException(status_code=400, detail="Wrong question for today")
+    prior = await db.trivia_attempts.find_one({"client_id": cid, "date": date_str}, {"_id": 0})
+    if prior:
+        raise HTTPException(status_code=409, detail="Already answered today")
+    correct = (body.chosen_index == q["correct_index"])
+    await db.trivia_attempts.insert_one({
+        "id": str(uuid.uuid4()),
+        "client_id": cid,
+        "date": date_str,
+        "question_id": q["id"],
+        "chosen_index": body.chosen_index,
+        "correct": correct,
+        "answered_at": now_iso(),
+    })
+    stats = await _compute_streak(cid, today_d)
+    milestone = None
+    if correct and stats["current_streak"] in TRIVIA_MILESTONE_DAYS:
+        milestone = {
+            "days": stats["current_streak"],
+            "label": {
+                7: "🐾 One-week trivia streak — pick up a free puzzle toy on your next visit!",
+                14: "🦴 Two-week streak — $5 retail credit added to your account on next checkout.",
+                30: "🏆 30-day master! Free upgrade to deluxe service on your next booking.",
+            }.get(stats["current_streak"]),
+        }
+        # Stamp the milestone so the admin can spot it in the client record
+        await db.clients.update_one(
+            {"id": cid},
+            {"$push": {"trivia_milestones": {
+                "days": stats["current_streak"], "earned_on": date_str,
+            }}},
+        )
+    return {
+        "correct": correct,
+        "correct_index": q["correct_index"],
+        "current_streak": stats["current_streak"],
+        "best_streak": stats["best_streak"],
+        "total_correct": stats["total_correct"],
+        "milestone": milestone,
+    }
+
+
+@api.get("/portal/trivia/leaderboard")
+async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    today_d = business_today()
+    # Compute streak/total for every client who has answered at least once.
+    attempts = await db.trivia_attempts.find(
+        {}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
+    ).to_list(50000)
+    by_client: Dict[str, List[dict]] = {}
+    for a in attempts:
+        by_client.setdefault(a["client_id"], []).append(a)
+    rows = []
+    for cli, atts in by_client.items():
+        # Build {date: correct?} for this client
+        by_date = {a["date"]: bool(a.get("correct")) for a in atts}
+        total = sum(1 for v in by_date.values() if v)
+        # Current streak
+        d = today_d
+        if d.isoformat() not in by_date:
+            d = d - timedelta(days=1)
+        cur = 0
+        while d.isoformat() in by_date and by_date[d.isoformat()]:
+            cur += 1
+            d = d - timedelta(days=1)
+        # Best streak
+        srt = sorted(by_date.keys())
+        best = 0; run = 0; prev = None
+        for ds in srt:
+            if not by_date[ds]:
+                run = 0; prev = None; continue
+            if prev is None: run = 1
+            else:
+                try: run = run + 1 if (date.fromisoformat(ds) - prev).days == 1 else 1
+                except Exception: run = 1
+            best = max(best, run)
+            try: prev = date.fromisoformat(ds)
+            except Exception: prev = None
+        rows.append({
+            "client_id": cli,
+            "current_streak": cur,
+            "best_streak": max(best, cur),
+            "total_correct": total,
+        })
+    # Attach dog name(s) (anonymized — first names only)
+    if rows:
+        cids = [r["client_id"] for r in rows]
+        clients = await db.clients.find(
+            {"id": {"$in": cids}}, {"_id": 0, "id": 1, "name": 1}
+        ).to_list(len(cids))
+        cmap = {c["id"]: (c.get("name") or "Anonymous").split(" ")[0] for c in clients}
+        dogs = await db.dogs.find(
+            {"client_id": {"$in": cids}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+            {"_id": 0, "client_id": 1, "name": 1},
+        ).to_list(2000)
+        dmap: Dict[str, List[str]] = {}
+        for d_ in dogs:
+            dmap.setdefault(d_["client_id"], []).append(d_.get("name") or "")
+        for r in rows:
+            r["display_name"] = cmap.get(r["client_id"], "Player")
+            r["dogs"] = [n for n in dmap.get(r["client_id"], []) if n][:3]
+            r["is_me"] = (r["client_id"] == cid)
+    # Rank by current_streak, then best_streak, then total_correct
+    rows.sort(key=lambda r: (-r["current_streak"], -r["best_streak"], -r["total_correct"]))
+    for i, r in enumerate(rows):
+        r["rank"] = i + 1
+    top10 = rows[:10]
+    me = next((r for r in rows if r.get("is_me")), None)
+    return {"top": top10, "me": me, "total_players": len(rows)}
+
+
+@api.get("/portal/trivia/quiz")
+async def portal_trivia_quiz(
+    count: int = 5,
+    user: dict = Depends(get_current_user),
+):
+    """Adaptive quiz: starts easy and ramps to hard. Excludes today's daily
+    question. Returns choices stripped of correct_index."""
+    await _require_client_with_record(user)
+    count = max(1, min(int(count), 10))
+    today_d = business_today()
+    daily = await db.trivia_daily.find_one({"date": today_d.isoformat()}, {"_id": 0})
+    exclude_id = daily.get("question_id") if daily else None
+    # Adaptive ladder: easy → medium → hard
+    ladder: List[str] = []
+    for i in range(count):
+        pct = i / max(1, count - 1)
+        if pct < 0.4:
+            ladder.append("easy")
+        elif pct < 0.75:
+            ladder.append("medium")
+        else:
+            ladder.append("hard")
+    out: List[dict] = []
+    used_ids: set = set()
+    if exclude_id:
+        used_ids.add(exclude_id)
+    for diff in ladder:
+        # Try the requested difficulty first, fall back to any
+        for filt in (
+            {"active": True, "difficulty": diff, "id": {"$nin": list(used_ids)}},
+            {"active": True, "id": {"$nin": list(used_ids)}},
+        ):
+            pool = await db.trivia_questions.find(filt, {"_id": 0}).limit(50).to_list(50)
+            if pool:
+                import random as _r
+                q = _r.choice(pool)
+                out.append(_strip_correct(q))
+                used_ids.add(q["id"])
+                break
+    return {"questions": out}
+
+
+@api.post("/portal/trivia/quiz/answer")
+async def portal_trivia_quiz_answer(
+    body: TriviaAnswerIn,
+    user: dict = Depends(get_current_user),
+):
+    """Reveals the correct answer without writing to attempts (quiz-mode is
+    just for fun — only the daily question affects the streak)."""
+    await _require_client_with_record(user)
+    q = await db.trivia_questions.find_one(
+        {"id": body.question_id, "active": True}, {"_id": 0, "correct_index": 1},
+    )
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {
+        "correct": body.chosen_index == q["correct_index"],
+        "correct_index": q["correct_index"],
+    }
+
+
+# ── Admin trivia management ──
+@api.get("/admin/trivia/questions")
+async def admin_trivia_list(_: dict = Depends(require_admin)):
+    rows = await db.trivia_questions.find({}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    active = sum(1 for r in rows if r.get("active", True))
+    return {"questions": rows, "active": active, "total": len(rows)}
+
+
+@api.post("/admin/trivia/generate")
+async def admin_trivia_generate(
+    body: TriviaGenerateIn,
+    _: dict = Depends(require_admin),
+):
+    docs = await _trivia_ai_generate(body.count, body.difficulty_mix)
+    return {"created": len(docs), "questions": docs}
+
+
+@api.delete("/admin/trivia/questions/{qid}")
+async def admin_trivia_delete(qid: str, _: dict = Depends(require_admin)):
+    res = await db.trivia_questions.delete_one({"id": qid})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"ok": True}
+
+
+@api.put("/admin/trivia/questions/{qid}/active")
+async def admin_trivia_toggle_active(
+    qid: str, body: Dict[str, bool] = Body(...),
+    _: dict = Depends(require_admin),
+):
+    active = bool(body.get("active", True))
+    res = await db.trivia_questions.update_one({"id": qid}, {"$set": {"active": active}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {"ok": True, "active": active}
+
+
 # ─────────────── Sprint 110aw · Sales tax collected report ───────────────
 # Year-to-date / arbitrary-window tax tally for sales-tax filing. Combines
 # booking-level `tax_amount` and retail-level `tax_amount`.
