@@ -9777,9 +9777,18 @@ async def admin_income_csv(
         },
         {"_id": 0},
     ).to_list(50000)
-    # Credit-pack sales (revenue is recognized at sell-time on these lots)
+    # Sprint 110cj — skip training-program credit redemptions; the program
+    # revenue is recorded once in `retail_sales` at sale-time, so listing the
+    # per-session checkouts again would double-count.
+    program_lot_ids = await _get_training_program_lot_ids()
+    paid_bookings = [b for b in paid_bookings if not _is_program_credit_redemption(b, program_lot_ids)]
+    # Credit-pack sales (revenue is recognized at sell-time on these lots).
+    # Sprint 110cj — exclude `pack_kind=training_program` lots here; their
+    # sale is already recorded in `retail_sales` (source_kind=
+    # training_program_sale) and shows up below as a "Training Revenue" row.
     sold_packs = await db.credit_lots.find(
-        {"sold_at": {"$gte": f"{yr}-01-01T00:00:00", "$lte": f"{yr}-12-31T23:59:59"}},
+        {"sold_at": {"$gte": f"{yr}-01-01T00:00:00", "$lte": f"{yr}-12-31T23:59:59"},
+         "pack_kind": {"$ne": "training_program"}},
         {"_id": 0},
     ).to_list(50000)
     # Expenses in the same year
@@ -11059,6 +11068,38 @@ async def list_transactions(
     return enriched
 
 
+async def _get_training_program_lot_ids() -> set:
+    """Sprint 110cj — Returns the set of credit_lot IDs whose `pack_kind` is
+    `training_program`. Bookings that consume credits from these lots must NOT
+    be counted as completed/paid revenue on the Income screens, because the
+    program's revenue was already recognized up-front at the point of sale
+    (recorded in `retail_sales` with `source_kind=training_program_sale`).
+    Counting them again at checkout-time would double-count the same dollar.
+    Daycare/boarding credit packs are unaffected — their revenue is only
+    recognized at checkout, so credit-paid bookings DO count there.
+    """
+    cursor = db.credit_lots.find(
+        {"pack_kind": "training_program"},
+        {"_id": 0, "id": 1},
+    )
+    return {lot["id"] async for lot in cursor}
+
+
+def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
+    """Return True if this booking is paid from a training-program credit lot.
+    Identified by the `is_prepaid_program_session` flag (set at sell-time) OR
+    by any of its `credit_lot_ids` belonging to a training-program lot (set
+    at checkout-time when credits are consumed)."""
+    if booking.get("is_prepaid_program_session"):
+        return True
+    if booking.get("payment_method") != "credits":
+        return False
+    for lid in (booking.get("credit_lot_ids") or []):
+        if lid in program_lot_ids:
+            return True
+    return False
+
+
 @api.get("/transactions/weekly-summary")
 async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[str] = None):
     """Mon-Sun income tally. Default = current week. Pass ?ref_date=YYYY-MM-DD
@@ -11075,6 +11116,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         {"_id": 0},
     ).to_list(2000)
 
+    # Sprint 110cj — exclude training-program credit redemptions from income
+    # totals; their revenue was already counted at sell-time.
+    program_lot_ids = await _get_training_program_lot_ids()
+
     completed_total = 0.0
     booked_total = 0.0
     paid_total = 0.0
@@ -11087,7 +11132,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
-        price = float(r.get("actual_price") or 0)
+        # Skip price contribution for training-program credit redemptions to
+        # avoid double-counting (program revenue is in retail_sales).
+        is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
+        price = 0.0 if is_program_credit else float(r.get("actual_price") or 0)
         if r.get("status") == "completed":
             completed_total += price
             completed_count += 1
@@ -11100,6 +11148,9 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
             unpaid_total += price
         credits_redeemed += int(r.get("credits_deducted") or 0)
 
+        # Don't pollute by_service with $0 program-redemption rows.
+        if is_program_credit:
+            continue
         svc_key = r.get("service_name") or r.get("service_type") or "Other"
         b = by_service.setdefault(svc_key, {"name": svc_key, "count": 0, "total": 0.0})
         b["count"] += 1
@@ -11151,13 +11202,16 @@ async def summary_range(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
     ).to_list(5000)
+    # Sprint 110cj — exclude training-program credit redemptions (already
+    # counted as Training Revenue at sale-time).
+    program_lot_ids = await _get_training_program_lot_ids()
     completed_total = 0.0
     paid_total = 0.0
     by_day: Dict[str, float] = {}
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
-        price = float(r.get("actual_price") or 0)
+        price = 0.0 if _is_program_credit_redemption(r, program_lot_ids) else float(r.get("actual_price") or 0)
         if r.get("status") == "completed":
             completed_total += price
             by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
@@ -13460,8 +13514,12 @@ async def today_pnl(_: dict = Depends(require_admin)):
                 {"status": "cancelled", "cancellation_charged": True},
             ],
         },
-        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1},
+        {"_id": 0, "actual_price": 1, "credit_value": 1, "service_id": 1, "service_type": 1, "service_name": 1, "status": 1, "payment_status": 1, "dog_id": 1, "client_id": 1, "dog_name": 1, "end_date": 1, "date": 1, "grooming_type": 1, "cancellation_charged": 1, "cancellation_fee": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
     ).to_list(2000)
+    # Sprint 110cj — drop training-program credit redemptions (already counted
+    # as Training Revenue at sell-time) so the gauge doesn't double-count.
+    program_lot_ids = await _get_training_program_lot_ids()
+    bookings = [b for b in bookings if not _is_program_credit_redemption(b, program_lot_ids)]
     # Build a service-id → base_price lookup
     svc_ids = list({b.get("service_id") for b in bookings if b.get("service_id")})
     svcs_by_id = await db.services.find(

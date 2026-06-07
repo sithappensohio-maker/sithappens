@@ -30,6 +30,24 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110ck — Training Program Revenue Double-Count Bug (2026-06-08)
+**User-reported bug**: "It's adding the training revenue I sold PLUS the amount of the credit. That's not supposed to do that for training plans — just the total when paid, not when they get checked out." Screenshot showed `Completed $992.60 (39 sessions)` + `Training Revenue $450` + `Gross $1442.60`, with `training · $90.00 (1)` polluting the breakdown.
+
+**Root cause**: When a training program is sold, the full sale ($450) is logged to `retail_sales` with `source_kind=training_program_sale` (recognized at sell-time). When the dog is later checked out on one of the prepaid sessions, the booking's `actual_price` was being set to the per-session value (e.g. $90) and that amount was being **added again** to `completed_total` / `by_service` in the income endpoints. Same $90 counted twice.
+
+- ✅ Added two helpers in `server.py`: `_get_training_program_lot_ids()` (fetches all `credit_lots` with `pack_kind=training_program`) and `_is_program_credit_redemption(booking, lot_ids)` (detects via `is_prepaid_program_session` flag OR `payment_method=credits` + lot intersection).
+- ✅ Patched four income endpoints to exclude program-credit redemptions from completed/paid totals and from `by_service`:
+  - `/transactions/weekly-summary`
+  - `/transactions/summary-range`
+  - `/admin/today-pnl`
+  - `/admin/income/export.csv` (also dedups `pack_kind=training_program` lots out of the "Credit Pack" section because the same sale is already in `retail_sales` as Training Revenue)
+- ✅ Patched `pl_report.build_pl_data` (used by P&L PDF + `/reports/pl`) to filter the booking pool before any aggregation, so by_service, by_client, by_day, top_dogs, YTD totals all naturally exclude the leak.
+- ✅ Pytest `tests/test_program_revenue_no_double_count.py` — sells a $400 program, completes one prepaid session via the real check-in/check-out flow, then asserts the weekly summary's `completed_total` does NOT grow by the per-session $100. Passes.
+- ✅ Regression: all 46 income/transaction/PNL tests passing.
+- 🎯 **User impact**: A $450 training program sale shows as $450 of Training Revenue once. The checked-out sessions stay in `is_prepaid_program_session=True` state but contribute $0 to completed_total. Gross numbers finally tell the truth.
+
+
+
 ## Sprint 110cj — Invisible-text bug + variable confusion (2026-06-08)
 **User-reported bugs**:
 1. "I have these weird text fields that don't show what's typed" (white text on white background).

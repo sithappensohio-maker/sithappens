@@ -173,6 +173,30 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         {"_id": 0},
     ).to_list(20000)
 
+    # Sprint 110cj — bookings whose payment came from a training-program
+    # credit lot must be excluded from completed/paid revenue (the program
+    # was already counted as Training Revenue at sale-time in `retail_sales`).
+    program_lots = await db.credit_lots.find(
+        {"pack_kind": "training_program"},
+        {"_id": 0, "id": 1},
+    ).to_list(20000)
+    program_lot_ids = {lot["id"] for lot in program_lots}
+
+    def _is_program_redemption(b: dict) -> bool:
+        if b.get("is_prepaid_program_session"):
+            return True
+        if b.get("payment_method") != "credits":
+            return False
+        for lid in (b.get("credit_lot_ids") or []):
+            if lid in program_lot_ids:
+                return True
+        return False
+
+    # Filter program redemptions out of the booking pool BEFORE aggregations
+    # so every downstream tally (totals, by_service, by_client, by_day, top_dogs)
+    # naturally excludes the double-count.
+    bookings = [b for b in bookings if not _is_program_redemption(b)]
+
     # ── Income totals
     completed = [b for b in bookings if b.get("status") == "completed"]
     paid = [b for b in bookings if b.get("payment_status") == "paid"]
@@ -316,8 +340,10 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_start = f"{end_year}-01-01"
         ytd_bookings = await db.bookings.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}, "status": "completed"},
-            {"_id": 0, "actual_price": 1, "date": 1},
+            {"_id": 0, "actual_price": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
         ).to_list(50000)
+        # Sprint 110cj — drop training-program redemptions here too.
+        ytd_bookings = [b for b in ytd_bookings if not _is_program_redemption(b)]
         ytd_income = round(sum(float(b.get("actual_price") or 0) for b in ytd_bookings), 2)
         ytd_exp_rows = await db.expenses.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},
