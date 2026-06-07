@@ -6,6 +6,7 @@ import BookingDetailModal from "../components/BookingDetailModal";
 import CollapsibleDateGroups from "../components/CollapsibleDateGroups";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import PageHero from "../components/PageHero";
+import RescheduleRequestsInbox from "../components/RescheduleRequestsInbox";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { toast } from "sonner";
 
@@ -100,6 +101,8 @@ export default function Bookings() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="bookings-screen">
       <RefreshSpinner pulling={pulling} progress={progress} />
+      {/* Sprint 110cf — surface pending client reschedule requests at the top */}
+      <RescheduleRequestsInbox onChanged={load} />
       <PageHero
         eyebrow={{ icon: "fa-calendar-check", text: `${upcomingRows.length} upcoming · ${bookings.length} total`, color: "text-shOrange" }}
         title="Bookings."

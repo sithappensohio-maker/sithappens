@@ -30,6 +30,39 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cf — Client-Initiated Reschedule Requests (2026-06-08)
+
+**Goal**: Owners can request to move a prepaid program session by proposing 1–3 alternate slots. Operator gets an email + an inbox row to approve with one click — no more "what time works?" phone tag.
+
+- ✅ **Client portal**: each prepaid program session gets a **"Reschedule"** button (only when `is_prepaid_program_session=True` and session is upcoming + approved). Opens a modal that lets the owner pick up to 3 date+time options with an optional note.
+- ✅ **Admin inbox** (`RescheduleRequestsInbox`) on the Bookings screen header — only renders when there are pending requests. Each row shows the current date/time, client note, and **the proposed slots as one-click approve buttons**. A "Decline" inline form sends a polite "we'll follow up" email.
+- ✅ **Backend endpoints** (new):
+  - `POST /portal/bookings/{id}/request-reschedule` — client creates the request. Guarded so:
+    - Only the booking's own client (or admin) can submit.
+    - Only prepaid program sessions are eligible.
+    - Only one pending request per booking at a time.
+  - `GET /portal/reschedule-requests` — client's own requests history.
+  - `GET /admin/reschedule-requests` — admin inbox with optional status filter.
+  - `POST /admin/reschedule-requests/{id}/approve` — moves the booking to the chosen slot, **without touching credits**, records `rescheduled_from` + `rescheduled_via_request`.
+  - `POST /admin/reschedule-requests/{id}/decline` — closes the request + emails client.
+- ✅ **3 new email templates** in registry (admin notification + client approval + client decline) — fully customizable in the Email Designer.
+- ✅ **`BookingOut` model extended** to expose `is_prepaid_program_session`, `program_id`, `program_sale_session_index/total`, `credit_lot_id`, `rescheduled_from/at/via_request` so the portal can render the new button + the admin can see "Session X of Y · moved from MM-DD" on the schedule.
+- ✅ **Backup** (`reschedule_requests` added) — confirmed v4 backup round-trip preserves request history. 9/9 backup tests still green.
+- ✅ **Fixed payment_method bug** discovered along the way — sell-program weekly bookings were stamped `payment_method="training_credit_prepaid"` which broke the BookingOut Literal validation. Changed to `"credits"` (already in the enum); the prepaid-program distinction now lives on the dedicated `is_prepaid_program_session` flag.
+- ✅ **Tests** `test_reschedule_requests.py` 8/8 passing:
+  - Client can propose 1-3 slots → admin sees them in inbox.
+  - Duplicate pending request on same booking → 409.
+  - Reschedule on a non-prepaid booking → 404/400.
+  - Admin approves slot N → booking moves to that date/time, credits untouched.
+  - Admin declines → status flips, original booking unchanged.
+  - Can't double-approve/decline.
+  - Client sees their own request history.
+  - Admin endpoints require admin auth.
+- ✅ **All 51 sprint tests green** across reschedule + scheduling + sell-program + program-homework + backup + email + homework-streak. CRA frontend compiles cleanly.
+- 🎯 **User impact**: One-click reschedules. Owner picks 3 options from their phone → you tap one → booking moves and they get confirmation. No phone calls, no calendar Tetris, no lost credits.
+
+
+
 ## Sprint 110ce — Recurring Sessions on Program Sale (2026-06-08)
 **User ask**: "When I sell a training program I should be able to set a day of the week and a time slot that recurs every week for the amount of credits they get. This doesn't apply to board & train. I should be able to adjust this in the event of a cancellation."
 

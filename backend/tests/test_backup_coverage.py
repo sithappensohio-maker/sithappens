@@ -38,6 +38,8 @@ REQUIRED_COLLECTIONS = {
     "email_templates", "email_settings",
     # Sprint 110bx — homework auto-assign audit (per-enrollment notification trail)
     "notification_log",
+    # Sprint 110cf — client-initiated reschedule requests
+    "reschedule_requests",
     # Vaccine reminder dismissals (so restore doesn't re-fire stale alerts)
     "vaccine_dismissals",
 }

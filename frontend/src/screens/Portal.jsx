@@ -19,6 +19,7 @@ import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
 import HomeworkStreakTile from "../components/HomeworkStreakTile";
+import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -641,6 +642,8 @@ export default function Portal() {
   const [bookingsMonth, setBookingsMonth] = useState("");
   // New: wizard-based booking flow (replaces inline form).
   const [showBookWizard, setShowBookWizard] = useState(false);
+  // Sprint 110cf — Reschedule request modal for prepaid program sessions
+  const [rescheduleFor, setRescheduleFor] = useState(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -1512,6 +1515,14 @@ export default function Portal() {
                     <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
                       <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{b.status}</span>
                       {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-2 py-1 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
+                      {/* Sprint 110cf — prepaid program sessions get a Reschedule Request button */}
+                      {b.status==="approved" && b.is_prepaid_program_session && !isPast(b) && (
+                        <button onClick={()=>setRescheduleFor(b)}
+                                data-testid={`request-reschedule-${b.id}`}
+                                className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-white px-2 py-1 rounded border border-shBlue/40 hover:bg-shBlue/15 transition">
+                          <i className="fas fa-calendar-pen mr-1"/>Reschedule
+                        </button>
+                      )}
                       {["completed","cancelled","rejected"].includes(b.status) && (
                         <button onClick={()=>{
                                   setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type });
@@ -1597,6 +1608,19 @@ export default function Portal() {
           seed={rebookSeed}
           onClose={()=>{ setShowBookWizard(false); setRebookSeed(null); }}
           onBooked={()=>{ setShowBookWizard(false); setRebookSeed(null); loadAll(); setSuccess("Booking submitted!"); setTimeout(()=>setSuccess(""), 4000); }} />
+      )}
+
+      {rescheduleFor && (
+        <RescheduleRequestModal
+          booking={rescheduleFor}
+          onClose={()=>setRescheduleFor(null)}
+          onSubmitted={()=>{
+            setRescheduleFor(null);
+            loadAll();
+            setSuccess("Reschedule request sent — we'll confirm shortly!");
+            setTimeout(()=>setSuccess(""), 4500);
+          }}
+        />
       )}
 
       {hwModal && (

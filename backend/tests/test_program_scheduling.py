@@ -128,7 +128,7 @@ def test_sell_program_with_schedule_creates_n_weekly_bookings(admin_headers, fx)
         assert b["time"] == "10:00"
         assert b["actual_price"] == 0.0
         assert b["payment_status"] == "paid"
-        assert b["payment_method"] == "training_credit_prepaid"
+        assert b["payment_method"] == "credits"
         assert b["is_prepaid_program_session"] is True
         assert b["credit_lot_id"] == lot_id
         assert b["program_sale_session_total"] == fx["qty"]

@@ -452,6 +452,17 @@ class BookingOut(BaseModel):
     # `package_program_id`, this is the id of the auto-created program
     # enrollment for the dog. Helps the UI surface "Training included" badges.
     package_enrolled_program_id: Optional[str] = None
+    # Sprint 110ce/cf — prepaid training-program session metadata. Drives the
+    # "Reschedule" button on the client portal and the per-session "X of Y"
+    # label on the trainer's schedule.
+    is_prepaid_program_session: Optional[bool] = None
+    program_id: Optional[str] = None
+    program_sale_session_index: Optional[int] = None
+    program_sale_session_total: Optional[int] = None
+    credit_lot_id: Optional[str] = None
+    rescheduled_from: Optional[str] = None
+    rescheduled_at: Optional[str] = None
+    rescheduled_via_request: Optional[str] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -7846,6 +7857,8 @@ BACKUP_COLLECTIONS = [
     "email_templates", "email_settings",
     # Sprint 110bx — homework auto-assign audit trail (program-driven sends)
     "notification_log",
+    # Sprint 110cf — client-initiated reschedule requests (need history)
+    "reschedule_requests",
     # Vaccine reminder dismissals so restored state doesn't re-fire stale alerts
     "vaccine_dismissals",
 ]
@@ -14633,7 +14646,7 @@ async def sell_training_program(
                 "status": "approved",
                 "actual_price": 0.0,
                 "payment_status": "paid",
-                "payment_method": "training_credit_prepaid",
+                "payment_method": "credits",
                 "created_at": now_iso(),
                 "created_by": user.get("id"),
                 # Sprint 110ce back-links — these let cancel/reschedule restore
@@ -14695,6 +14708,245 @@ async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_
         updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
         return {"ok": True, "booking": updated, "from": bk["date"], "to": iso}
     raise HTTPException(409, "No open slot found in the next 12 weeks on that weekday")
+
+
+
+# ────────── Sprint 110cf · Client-initiated reschedule requests ──────────
+#
+# Flow: client taps "Reschedule" on a prepaid program session in the portal,
+# picks 1–3 alternate dates/times. We store a `reschedule_requests` row in
+# status="pending" + email the admin with one-click approve links. Admin
+# picks the slot that works → booking moves, credit is untouched, client
+# gets a confirmation email. If none of the slots work, admin declines and
+# the client gets a "we'll be in touch" email; the original booking stays.
+
+class RescheduleProposedSlot(BaseModel):
+    date: str  # YYYY-MM-DD
+    time: str  # HH:MM
+
+
+class RescheduleRequestIn(BaseModel):
+    proposed_slots: List[RescheduleProposedSlot] = Field(..., min_length=1, max_length=3)
+    client_note: Optional[str] = ""
+
+
+@api.post("/portal/bookings/{booking_id}/request-reschedule")
+async def request_reschedule(
+    booking_id: str,
+    body: RescheduleRequestIn,
+    current: dict = Depends(get_current_user),
+):
+    """Client portal — propose 1-3 alternate slots for a prepaid program session."""
+    bk = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not bk:
+        raise HTTPException(404, "Booking not found")
+    if not bk.get("is_prepaid_program_session"):
+        raise HTTPException(400, "Reschedule requests are only for prepaid program sessions")
+    if current.get("role") == "client" and bk.get("client_id") != current.get("client_id"):
+        raise HTTPException(403, "Not your booking")
+    if bk.get("status") == "cancelled":
+        raise HTTPException(400, "This booking is cancelled")
+
+    # Don't allow piling up duplicate pending requests on the same booking
+    existing = await db.reschedule_requests.find_one(
+        {"booking_id": booking_id, "status": "pending"},
+        {"_id": 0, "id": 1},
+    )
+    if existing:
+        raise HTTPException(409, "There's already a pending reschedule request for this session")
+
+    req_doc = {
+        "id": _gid(),
+        "booking_id": booking_id,
+        "client_id": bk.get("client_id"),
+        "client_name": bk.get("client_name"),
+        "dog_id": bk.get("dog_id"),
+        "dog_name": bk.get("dog_name"),
+        "current_date": bk.get("date"),
+        "current_time": bk.get("time"),
+        "proposed_slots": [s.model_dump() for s in body.proposed_slots],
+        "client_note": body.client_note or "",
+        "status": "pending",
+        "created_at": now_iso(),
+        "created_by": current.get("id"),
+    }
+    await db.reschedule_requests.insert_one(req_doc)
+    req_doc.pop("_id", None)
+
+    # Email admin (best-effort)
+    try:
+        proposed_list_html = "<br/>".join(
+            f"• {s.date} at {s.time}" for s in body.proposed_slots
+        )
+        await email_service._dispatch(
+            slug="admin_reschedule_request",
+            to_email=os.environ.get("ADMIN_NOTIFICATION_EMAIL", ""),
+            ctx={
+                "client_name": bk.get("client_name", ""),
+                "dog_name": bk.get("dog_name", ""),
+                "current_date": bk.get("date", ""),
+                "current_time": bk.get("time", ""),
+                "proposed_count": len(body.proposed_slots),
+                "proposed_plural": "" if len(body.proposed_slots) == 1 else "s",
+                "proposed_list": proposed_list_html,
+            },
+            rows=[
+                ("Currently", f"{bk.get('date','')} at {bk.get('time','')}"),
+                ("Client", bk.get("client_name", "")),
+                ("Dog", bk.get("dog_name", "")),
+            ] + ([("Client's note", body.client_note)] if body.client_note else []),
+            cta_url=f"{os.environ.get('APP_PUBLIC_URL', '')}/" if os.environ.get("APP_PUBLIC_URL") else None,
+            show_install=False,
+        )
+    except Exception as exc:
+        logger.warning("Reschedule request email failed: %s", exc)
+
+    return req_doc
+
+
+@api.get("/admin/reschedule-requests")
+async def list_reschedule_requests(
+    status: Optional[str] = "pending",
+    _: dict = Depends(require_admin),
+):
+    """Inbox of client-initiated reschedule requests."""
+    q: dict = {}
+    if status:
+        q["status"] = status
+    rows = await db.reschedule_requests.find(q, {"_id": 0}).sort([("created_at", -1)]).to_list(200)
+    return rows
+
+
+@api.get("/portal/reschedule-requests")
+async def list_my_reschedule_requests(current: dict = Depends(get_current_user)):
+    """Client portal — list pending/recent reschedule requests for this client."""
+    if not current.get("client_id"):
+        raise HTTPException(400, "No client linked to this account")
+    rows = await db.reschedule_requests.find(
+        {"client_id": current["client_id"]}, {"_id": 0},
+    ).sort([("created_at", -1)]).to_list(50)
+    return rows
+
+
+class RescheduleApproveIn(BaseModel):
+    slot_index: int = Field(..., ge=0, le=2)
+
+
+@api.post("/admin/reschedule-requests/{req_id}/approve")
+async def approve_reschedule_request(
+    req_id: str,
+    body: RescheduleApproveIn,
+    _: dict = Depends(require_admin),
+):
+    """Approve one of the proposed slots — moves the booking, leaves credits
+    alone, and emails the client a confirmation."""
+    req = await db.reschedule_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(400, f"Request is already {req.get('status')}")
+    slots = req.get("proposed_slots") or []
+    if body.slot_index >= len(slots):
+        raise HTTPException(400, "slot_index out of range")
+    chosen = slots[body.slot_index]
+
+    bk = await db.bookings.find_one({"id": req["booking_id"]}, {"_id": 0})
+    if not bk:
+        raise HTTPException(404, "Original booking is gone")
+    original_date = bk.get("date")
+    await db.bookings.update_one(
+        {"id": req["booking_id"]},
+        {"$set": {
+            "date": chosen["date"],
+            "time": chosen["time"],
+            "rescheduled_from": original_date,
+            "rescheduled_at": now_iso(),
+            "rescheduled_via_request": req_id,
+        }},
+    )
+    await db.reschedule_requests.update_one(
+        {"id": req_id},
+        {"$set": {
+            "status": "approved",
+            "approved_slot_index": body.slot_index,
+            "approved_at": now_iso(),
+        }},
+    )
+
+    # Email client
+    client = await db.clients.find_one({"id": req["client_id"]}, {"_id": 0}) or {}
+    if client.get("email"):
+        try:
+            await email_service._dispatch(
+                slug="client_reschedule_approved",
+                to_email=client["email"],
+                ctx={
+                    "first_name": (client.get("name") or "there").split(" ")[0],
+                    "client_name": client.get("name", ""),
+                    "dog_name": req.get("dog_name", ""),
+                    "new_date": chosen["date"],
+                    "new_time": chosen["time"],
+                    "original_date": original_date,
+                },
+                rows=[
+                    ("Dog", req.get("dog_name", "")),
+                    ("New date", chosen["date"]),
+                    ("New time", chosen["time"]),
+                ],
+                cta_url=f"{os.environ.get('APP_PUBLIC_URL', '')}/" if os.environ.get("APP_PUBLIC_URL") else None,
+            )
+        except Exception as exc:
+            logger.warning("Approval email failed: %s", exc)
+
+    updated = await db.reschedule_requests.find_one({"id": req_id}, {"_id": 0})
+    return updated
+
+
+class RescheduleDeclineIn(BaseModel):
+    reason: Optional[str] = ""
+
+
+@api.post("/admin/reschedule-requests/{req_id}/decline")
+async def decline_reschedule_request(
+    req_id: str,
+    body: RescheduleDeclineIn,
+    _: dict = Depends(require_admin),
+):
+    """Mark a reschedule request as declined and let the client know we'll
+    follow up. Original booking is untouched."""
+    req = await db.reschedule_requests.find_one({"id": req_id}, {"_id": 0})
+    if not req:
+        raise HTTPException(404, "Request not found")
+    if req.get("status") != "pending":
+        raise HTTPException(400, f"Request is already {req.get('status')}")
+    await db.reschedule_requests.update_one(
+        {"id": req_id},
+        {"$set": {
+            "status": "declined",
+            "decline_reason": body.reason or "",
+            "declined_at": now_iso(),
+        }},
+    )
+    client = await db.clients.find_one({"id": req["client_id"]}, {"_id": 0}) or {}
+    if client.get("email"):
+        try:
+            await email_service._dispatch(
+                slug="client_reschedule_declined",
+                to_email=client["email"],
+                ctx={
+                    "first_name": (client.get("name") or "there").split(" ")[0],
+                    "client_name": client.get("name", ""),
+                    "dog_name": req.get("dog_name", ""),
+                    "original_date": req.get("current_date", ""),
+                    "decline_reason": body.reason or "",
+                },
+                rows=[("Dog", req.get("dog_name", ""))],
+            )
+        except Exception as exc:
+            logger.warning("Decline email failed: %s", exc)
+    updated = await db.reschedule_requests.find_one({"id": req_id}, {"_id": 0})
+    return updated
+
 
 
 
