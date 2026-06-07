@@ -29,6 +29,22 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bw — Sell training programs as credit packs (2026-06-07)
+- ✅ **`POST /clients/{client_id}/sell-program`** — sells a training program: creates a `credit_lots` row tagged `pack_kind: "training_program"` + `program_id`, increments `clients.training_credits` by the program's session count, optionally enrols a specific dog into the program (`dog_id` field) so the trainer can start logging sessions immediately. Supports override_price (manual admin discount) + payment_method (cash/card/venmo/check/other/complimentary).
+- ✅ **Double-enrol prevention** — selling the same program twice for the same dog issues fresh credits but returns the existing active `dog_programs` row instead of inserting a duplicate.
+- ✅ **`GET /admin/clients/{client_id}/training-credits`** — per-program breakdown (the "hybrid" Q1c model): aggregates outstanding lots by `program_id`, returns `{global_training_credits, by_program: [{program_id, program_name, qty_remaining, qty_total, lots: [...]}], lots_count}`. Used by the client profile to show "3 of 4 Puppy Preschool left".
+- ✅ **Frontend `SellProgramModal`** in Clients.jsx with `data-testid="sell-program-modal"` + full set of `sell-program-*` testids:
+  - Banner showing client's current training credits + per-program breakdown
+  - Program dropdown filtered to active programs with `format.count > 0`
+  - Optional "Assign to dog" dropdown (Q2c) — shows "Will auto-enroll" green hint when selected
+  - Override price input (placeholder = list price)
+  - Payment method dropdown
+  - Live "Summary" tile with total + per-session math
+- ✅ **`Sell Training Program` button** (purple, `fa-graduation-cap` icon) on the Clients page card, directly under the existing green "Sell Credit Pack" button (Q3a).
+- ✅ **Tests** `test_sell_program.py` — 7/7 passing: lot+credits creation, dog auto-enrol, double-enrol prevention, override_price math, wrong-dog rejection, per-program breakdown, admin-required.
+- ✅ Lint clean. CRA dev build healthy. Smoke screenshot confirms modal renders end-to-end.
+
+
 ## Sprint 110bv — Bug fix: legacy clients shown new catalog prices (2026-06-01)
 - 🔴 **Reported**: "We have legacy pricing but clients that have it are being shown the new prices." — UX/trust issue: portal showed catalog price even though `resolve_client_price` correctly charged the locked-in legacy rate at booking-create time.
 - ✅ **Root cause**: `GET /services`, `GET /services/addons`, and `GET /credit-packs` returned raw catalog rows. They never consulted `price_overrides` so the portal display didn't match the actual charge.

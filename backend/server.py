@@ -14097,6 +14097,193 @@ async def seed_credit_packs(_: dict = Depends(require_admin)):
     return {"seeded": seeded, "icon_backfilled": backfilled, "total_active": total}
 
 
+# ─────────────── Sprint 110bw · Sell training programs as credit packs ───────────────
+#
+# Mirrors the credit-pack sell flow but for `programs`. Selling a program:
+#   • Creates a `credit_lots` row tagged `pack_kind="training_program"` +
+#     `program_id` so the per-program breakdown can be assembled at any time
+#     (Q1c "hybrid" — global counter + per-program ledger).
+#   • Increments `clients.training_credits` by the program's session count.
+#   • Optionally enrols a specific dog (`dog_id` field — Q2c "optional dropdown").
+
+class SellProgramIn(BaseModel):
+    program_id: str
+    payment_method: Literal["cash", "card", "venmo", "check", "other", "complimentary"] = "cash"
+    override_price: Optional[float] = Field(default=None, ge=0)
+    dog_id: Optional[str] = None       # If set, auto-creates a dog_programs row
+    started_at: Optional[str] = None   # YYYY-MM-DD, defaults to today
+    note: Optional[str] = ""
+
+
+@api.post("/clients/{client_id}/sell-program")
+async def sell_training_program(
+    client_id: str,
+    body: SellProgramIn,
+    user: dict = Depends(require_admin),
+):
+    """Sell a training program — issues N training_credits where N = program
+    session count, creates a per-program credit_lot for ledger/audit, and
+    optionally enrols a specific dog so progress tracking starts immediately.
+
+    Pricing: defaults to program.price, overrideable via `override_price`
+    (admin discount). Does NOT trigger Stripe — same as sell-pack, this is
+    the manual-payment path."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    program = await db.programs.find_one({"id": body.program_id}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if not program.get("active", True):
+        raise HTTPException(status_code=400, detail="Program is inactive")
+
+    fmt = program.get("format") or {}
+    qty = int(fmt.get("count") or 0)
+    if qty <= 0:
+        raise HTTPException(status_code=400,
+                            detail="Program format.count must be > 0 to sell as credits")
+    unit = fmt.get("unit") or "sessions"
+
+    list_price = float(program.get("price") or 0)
+    effective_price = float(body.override_price) if body.override_price is not None else list_price
+    value_each = round(effective_price / max(qty, 1), 2)
+
+    # If a dog is specified, make sure it belongs to this client.
+    dog = None
+    if body.dog_id:
+        dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+        if not dog:
+            raise HTTPException(404, "Dog not found")
+        if dog.get("owner_id") != client_id:
+            raise HTTPException(400, "Dog does not belong to this client")
+
+    lot = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        # Re-uses the credit_lots schema. `pack_kind` distinguishes pack
+        # sales ("credit_pack") from program sales ("training_program").
+        "pack_kind": "training_program",
+        "pack_id": program["id"],
+        "pack_name": program["name"],
+        "program_id": program["id"],
+        "program_name": program["name"],
+        "service_type": "training",
+        "qty_total": qty,
+        "qty_remaining": qty,
+        "unit": unit,
+        "price_paid": round(effective_price, 2),
+        "list_price": round(list_price, 2),
+        "value_each": value_each,
+        "payment_method": body.payment_method,
+        "note": body.note or "",
+        "sold_by": user.get("name", "Admin"),
+        "purchased_at": now_iso(),
+    }
+    await db.credit_lots.insert_one(lot)
+    await db.clients.update_one({"id": client_id}, {"$inc": {"training_credits": qty}})
+
+    enrollment_summary = None
+    if dog:
+        # Don't double-enrol — return existing active enrollment if there is one.
+        existing = await db.dog_programs.find_one(
+            {"dog_id": dog["id"], "program_id": program["id"], "status": "active"},
+            {"_id": 0},
+        )
+        if existing:
+            enrollment_summary = _enrollment_summary(existing)
+        else:
+            started = body.started_at or business_today().isoformat()
+            target = _suggest_target_date(started, fmt)
+            enrollment = {
+                "id": _gid(),
+                "dog_id": dog["id"],
+                "program_id": program["id"],
+                "program_snapshot": {
+                    "name": program["name"],
+                    "type": program.get("type", "custom"),
+                    "slug": program.get("slug"),
+                    "description": program.get("description", ""),
+                    "focus": program.get("focus", ""),
+                    "format": fmt,
+                    "modules": program.get("modules") or [],
+                    "completion_rule": program.get("completion_rule") or _default_completion_rule(),
+                },
+                "status": "active",
+                "started_at": started,
+                "target_completion_date": target,
+                "completed_at": None,
+                "on_hold_at": None,
+                "goal_progress": _empty_progress(program.get("modules") or []),
+                "sessions_count": 0,
+                "trainer_notes": "",
+                "created_at": now_iso(),
+                "credit_lot_id": lot["id"],  # back-link for audit
+            }
+            await db.dog_programs.insert_one(enrollment)
+            if not dog.get("active_program_id"):
+                await db.dogs.update_one({"id": dog["id"]},
+                                         {"$set": {"active_program_id": enrollment["id"]}})
+            enrollment.pop("_id", None)
+            enrollment_summary = _enrollment_summary(enrollment)
+
+    lot.pop("_id", None)
+    return {
+        "lot": lot,
+        "enrollment": enrollment_summary,  # null when dog_id not provided
+        "client_balance": int((client.get("training_credits") or 0)) + qty,
+    }
+
+
+@api.get("/admin/clients/{client_id}/training-credits")
+async def client_training_credits_breakdown(
+    client_id: str,
+    _: dict = Depends(require_admin),
+):
+    """Per-program breakdown of a client's outstanding training credits.
+
+    Aggregates `credit_lots` rows where pack_kind=training_program and
+    qty_remaining > 0, grouped by program. Used by the client profile to
+    show "3 of 4 Puppy Preschool left" alongside the global total.
+    """
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0, "training_credits": 1})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    lots = await db.credit_lots.find(
+        {"client_id": client_id, "pack_kind": "training_program",
+         "qty_remaining": {"$gt": 0}},
+        {"_id": 0},
+    ).sort([("purchased_at", 1)]).to_list(500)
+
+    by_program: Dict[str, Dict[str, Any]] = {}
+    for lot in lots:
+        pid = lot.get("program_id") or lot.get("pack_id") or "unknown"
+        bucket = by_program.setdefault(pid, {
+            "program_id": pid,
+            "program_name": lot.get("program_name") or lot.get("pack_name") or "Training",
+            "unit": lot.get("unit") or "sessions",
+            "qty_remaining": 0,
+            "qty_total": 0,
+            "lots": [],
+        })
+        bucket["qty_remaining"] += int(lot.get("qty_remaining") or 0)
+        bucket["qty_total"] += int(lot.get("qty_total") or 0)
+        bucket["lots"].append({
+            "lot_id": lot.get("id"),
+            "purchased_at": lot.get("purchased_at"),
+            "qty_remaining": int(lot.get("qty_remaining") or 0),
+            "qty_total": int(lot.get("qty_total") or 0),
+            "price_paid": float(lot.get("price_paid") or 0),
+            "value_each": float(lot.get("value_each") or 0),
+        })
+
+    return {
+        "global_training_credits": int(client.get("training_credits") or 0),
+        "by_program": list(by_program.values()),
+        "lots_count": len(lots),
+    }
+
+
+
 @api.post("/clients/{client_id}/sell-pack")
 async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = Depends(require_admin)):
     """Sell a pack to a client — increments their credit balance AND creates a

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import { toast } from "sonner";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeMonths } from "../lib/dogAge";
 import ClientPortalPreview from "../components/ClientPortalPreview";
@@ -28,6 +29,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   const [portalOpen, setPortalOpen] = useState(null); // client id
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
   const [sellOpen, setSellOpen] = useState(null); // client object
+  const [sellProgramOpen, setSellProgramOpen] = useState(null); // client object — Sprint 110bw
   const [adjustOpen, setAdjustOpen] = useState(null); // client object
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [filesOpen, setFilesOpen] = useState(null); // client object — shows files/homework manager
@@ -61,16 +63,20 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm(empty); setDog(emptyDog); setAddDog(true); setOpen(true); setErr(""); };
-  const openEdit = (c) => { setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr(""); };
+  const openNewClient = () => {
+    setEditing(null); setForm(empty); setDog(emptyDog); setAddDog(true); setOpen(true); setErr("");
+  };
+  const openEditClient = (c) => {
+    setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr("");
+  };
 
   useEffect(() => {
     if (!focusId || clients.length === 0) return;
     const c = clients.find(x => x.id === focusId);
-    if (c) { openEdit(c); onConsumed(); }
+    if (c) { openEditClient(c); onConsumed(); }
   }, [focusId, clients]);
 
-  const save = async () => {
+  const submitClient = async () => {
     setErr("");
     try {
       if (editing) {
@@ -206,7 +212,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         highlight="Where humans live."
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
         right={(
-          <button onClick={openNew} data-testid="add-client-button"
+          <button onClick={openNewClient} data-testid="add-client-button"
                   className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
             <i className="fas fa-plus mr-2"/>Add Client
           </button>
@@ -219,7 +225,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         {clients.map(c => (
           <div key={c.id} className="bg-bgPanel p-5 sm:p-6 rounded-xl border-l-4 border-shBlue group relative shadow-lg" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
-              <button onClick={()=>openEdit(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
+              <button onClick={()=>openEditClient(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
               <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
             </div>
             <div className="flex items-center gap-3 pr-16">
@@ -315,6 +321,10 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                     className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
               <i className="fas fa-coins mr-1"/>Sell Credit Pack
             </button>
+            <button onClick={()=>setSellProgramOpen(c)} data-testid={`sell-program-${c.id}`}
+                    className="mt-2 w-full bg-purple-500/10 text-purple-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/20">
+              <i className="fas fa-graduation-cap mr-1"/>Sell Training Program
+            </button>
             <button onClick={()=>setAdjustOpen(c)} data-testid={`adjust-credits-${c.id}`}
                     className="mt-2 w-full bg-shOrange/10 text-shOrange py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/20">
               <i className="fas fa-plus-minus mr-1"/>Adjust Credits
@@ -394,14 +404,14 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
                      value={form.photo_gallery_url || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_url: v.trim()})}
                      testId="client-photo-gallery-input" />
-              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as "See your pup in action — order prints". Leave blank if no gallery yet.</p>
+              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as &ldquo;See your pup in action — order prints&rdquo;. Leave blank if no gallery yet.</p>
             </div>
             <div>
               <Input label="Photo Gallery Download PIN" color="text-shOrange"
                      value={form.photo_gallery_pin || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_pin: v.trim()})}
                      testId="client-photo-gallery-pin-input" />
-              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under "See your pup in action" with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
+              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under &ldquo;See your pup in action&rdquo; with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
             </div>
             <div>
               <button type="button" onClick={()=>setForm(f => ({...f, photo_gallery_has_new: !f.photo_gallery_has_new}))}
@@ -490,7 +500,7 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
               <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-              <button onClick={save} data-testid="save-client-button" className="bg-shBlue text-white px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save</button>
+              <button onClick={submitClient} data-testid="save-client-button" className="bg-shBlue text-white px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save</button>
             </div>
           </div>
         </Modal>
@@ -515,6 +525,12 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
         <SellPackModal client={sellOpen} packs={packs}
                        onClose={()=>setSellOpen(null)}
                        onSold={(r)=>{ setSellOpen(null); load(); if (r?.receipt) setReceipt({ client: sellOpen, ...r.receipt }); }} />
+      )}
+
+      {sellProgramOpen && (
+        <SellProgramModal client={sellProgramOpen}
+                          onClose={()=>setSellProgramOpen(null)}
+                          onSold={()=>{ setSellProgramOpen(null); load(); }} />
       )}
 
       {receipt && (
@@ -578,7 +594,7 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
   return (
     <Modal title={`Adjust credits · ${client.name}`} onClose={onClose} maxWidth="max-w-md">
       <p className="text-[14px] text-gray-400 mb-4">
-        Use positive numbers to add, negative to remove. This is for fixing data-entry mistakes or comping a client — it doesn't create a receipt.
+        Use positive numbers to add, negative to remove. This is for fixing data-entry mistakes or comping a client — it doesn&rsquo;t create a receipt.
       </p>
       <div className="space-y-3" data-testid="adjust-credits-modal">
         {rows.map(r => (
@@ -779,6 +795,191 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   );
 }
 
+// ─── Sprint 110bw — Sell Training Program modal ─────────────────────────
+function SellProgramModal({ client, onClose, onSold }) {
+  const [programs, setPrograms] = useState([]);
+  const [dogs, setDogs] = useState([]);
+  const [breakdown, setBreakdown] = useState(null);
+  const [programId, setProgramId] = useState("");
+  const [dogId, setDogId] = useState("");
+  const [overridePrice, setOverridePrice] = useState("");
+  const [method, setMethod] = useState("cash");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      const [p, d, b] = await Promise.all([
+        api.get("/programs?include_custom=true").catch(()=>({data:[]})),
+        api.get(`/clients/${client.id}/dogs`).catch(()=>({data:[]})),
+        api.get(`/admin/clients/${client.id}/training-credits`).catch(()=>({data:null})),
+      ]);
+      const sellable = (p.data || []).filter(pr =>
+        (pr.format?.count || 0) > 0 && pr.active !== false
+      );
+      setPrograms(sellable);
+      setDogs(d.data || []);
+      setBreakdown(b.data);
+    })();
+  }, [client.id]);
+
+  const selectedProgram = programs.find(p => p.id === programId);
+  const qty = selectedProgram?.format?.count || 0;
+  const unit = selectedProgram?.format?.unit || "sessions";
+  const listPrice = Number(selectedProgram?.price || 0);
+  const effectivePrice = overridePrice !== "" ? Number(overridePrice) : listPrice;
+  const perEach = qty > 0 ? (effectivePrice / qty) : 0;
+
+  const sell = async () => {
+    if (!programId) { setError("Pick a program"); return; }
+    setBusy(true); setError("");
+    try {
+      const body = { program_id: programId, payment_method: method, note };
+      if (dogId) body.dog_id = dogId;
+      if (overridePrice !== "") body.override_price = Number(overridePrice);
+      const r = await api.post(`/clients/${client.id}/sell-program`, body);
+      toast.success(
+        r.data.enrollment
+          ? `Sold ${r.data.lot.pack_name} · +${qty} ${unit} · ${r.data.enrollment.dog_id ? "dog enrolled" : ""}`
+          : `Sold ${r.data.lot.pack_name} · +${qty} ${unit}`
+      );
+      onSold?.(r.data);
+    } catch (e) {
+      setError(e.response?.data?.detail || "Could not complete sale");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title={`Sell Training Program · ${client.name}`} onClose={onClose} maxWidth="max-w-lg">
+      <div className="space-y-3" data-testid="sell-program-modal">
+        {breakdown && breakdown.global_training_credits > 0 && (
+          <div className="bg-purple-500/5 border border-purple-500/30 rounded p-2 text-[12px]">
+            <p className="font-black uppercase tracking-widest text-purple-300 mb-1">
+              <i className="fas fa-graduation-cap mr-1"/>Current training credits: {breakdown.global_training_credits}
+            </p>
+            {breakdown.by_program.length > 0 && (
+              <ul className="text-gray-400 text-[11px] space-y-0.5">
+                {breakdown.by_program.map(p => (
+                  <li key={p.program_id}>
+                    • {p.program_name}: <span className="text-shGreen font-black">{p.qty_remaining}</span> of {p.qty_total} {p.unit} left
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+        <label className="block">
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Program *</span>
+          <select value={programId} onChange={(e)=>setProgramId(e.target.value)}
+                  data-testid="sell-program-select"
+                  className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+            <option value="">— pick a program —</option>
+            {programs.map(p => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.format?.count} {p.format?.unit || "sessions"} · ${Number(p.price || 0).toFixed(2)}
+              </option>
+            ))}
+          </select>
+          {programs.length === 0 && (
+            <p className="text-[11px] text-shOrange mt-1 italic">
+              No sellable programs found. Make sure programs have a session count + price set.
+            </p>
+          )}
+        </label>
+
+        <label className="block">
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+            Assign to dog <span className="text-gray-600 normal-case">(optional)</span>
+          </span>
+          <select value={dogId} onChange={(e)=>setDogId(e.target.value)}
+                  data-testid="sell-program-dog"
+                  className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+            <option value="">{`— don't assign now (credits only) —`}</option>
+            {dogs.map(d => <option key={d.id} value={d.id}>{d.name} · {d.breed || "—"}</option>)}
+          </select>
+          {dogId && (
+            <p className="text-[11px] text-shGreen mt-1 italic">
+              Will auto-enroll this dog so trainer can start logging sessions immediately.
+            </p>
+          )}
+        </label>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Price ($)</span>
+            <input type="number" min="0" step="0.01"
+                   value={overridePrice}
+                   placeholder={listPrice ? listPrice.toFixed(2) : "0.00"}
+                   onChange={(e)=>setOverridePrice(e.target.value)}
+                   data-testid="sell-program-price"
+                   className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            {overridePrice !== "" && Number(overridePrice) !== listPrice && (
+              <p className="text-[11px] text-shOrange mt-1 italic">
+                {Number(overridePrice) < listPrice ? "Discount" : "Surcharge"} applied
+              </p>
+            )}
+          </label>
+          <label className="block">
+            <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Payment</span>
+            <select value={method} onChange={(e)=>setMethod(e.target.value)}
+                    data-testid="sell-program-method"
+                    className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="venmo">Venmo</option>
+              <option value="check">Check</option>
+              <option value="other">Other</option>
+              <option value="complimentary">Complimentary</option>
+            </select>
+          </label>
+        </div>
+
+        <label className="block">
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Note <span className="text-gray-600 normal-case">(optional)</span></span>
+          <input type="text" value={note} onChange={(e)=>setNote(e.target.value)}
+                 data-testid="sell-program-note"
+                 className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        </label>
+
+        {selectedProgram && (
+          <div className="bg-bgBase/60 border border-bgHover rounded p-3 text-[13px]" data-testid="sell-program-summary">
+            <p className="font-black uppercase tracking-widest text-shGreen mb-2">
+              <i className="fas fa-receipt mr-1"/>Summary
+            </p>
+            <p className="text-gray-300">
+              {selectedProgram.name} · {qty} {unit}
+            </p>
+            <p className="text-gray-400 text-[12px] mt-1">
+              ${effectivePrice.toFixed(2)} total · ${perEach.toFixed(2)} per {unit.replace(/s$/, "")}
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <p className="text-red-400 text-[13px] font-black uppercase tracking-widest" data-testid="sell-program-error">
+            <i className="fas fa-circle-exclamation mr-1"/>{error}
+          </p>
+        )}
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[14px] font-black uppercase tracking-widest">
+            Cancel
+          </button>
+          <button onClick={sell} disabled={busy || !programId}
+                  data-testid="sell-program-confirm"
+                  className="flex-1 bg-purple-500 text-white py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
+            {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Selling…</> : <><i className="fas fa-check mr-1"/>Confirm sale</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+
+
 function Modal({ title, children, onClose, maxWidth = "max-w-md" }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
@@ -830,7 +1031,7 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
                     {dc > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-shGreen bg-shGreen/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
                     {tr > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-purple-400 bg-purple-400/10 px-2 py-0.5 rounded">+{tr} training</span>}
                   </div>
-                  {r.note && <p className="text-[14px] text-gray-400 italic mt-1.5 truncate">"{r.note}"</p>}
+                  {r.note && <p className="text-[14px] text-gray-400 italic mt-1.5 truncate">&ldquo;{r.note}&rdquo;</p>}
                 </div>
                 <div className="text-right shrink-0">
                   <p className="text-shGreen text-xl font-black">${r.total_price.toFixed(2)}</p>
