@@ -6617,18 +6617,23 @@ class GoalUpdate(BaseModel):
 
 
 
-# ─── Sprint 110bx · Auto-homework engine for training programs ────────────
+# ─── Sprint 110bx + 110bz · Auto-homework engine for training programs ────
 #
-# Two triggers (Q2c):
-#   1. On enrollment → assign `program.welcome_homework_template_id` (if set)
-#   2. On module mark-complete → assign `module.homework_template_id` (if set)
+# Triggers:
+#   1. On enrollment → assign BOTH:
+#        a. `program.welcome_homework_template_id` (if set)
+#        b. The first module's `homework_template_id` (if set) — module 1
+#           is "starting" the moment the dog enrols.
+#   2. On a module being fully mastered → assign the **NEXT** module's
+#      `homework_template_id`. Each per-module homework is the homework FOR
+#      that module, sent when the client begins it (not when they finish it).
 #
 # Each trigger creates a real `homework` row from the template snapshot AND
-# emails the client (Q3b — via existing notify_client_homework_assigned).
+# emails the client (via existing notify_client_homework_assigned).
 #
 # Idempotency: we don't auto-assign the same template to the same dog twice
-# from the same enrollment. Stored in dog_programs.auto_homework_log so the
-# state is per-enrollment (re-enrolling after completion can re-fire).
+# from the same enrollment + trigger. Stored in dog_programs.auto_homework_log
+# so the state is per-enrollment (re-enrolling after completion can re-fire).
 
 def _already_auto_assigned(enrollment: dict, template_id: str, trigger: str) -> bool:
     log = enrollment.get("auto_homework_log") or []
@@ -6710,45 +6715,74 @@ async def _create_homework_from_template_internal(
 
 
 async def _auto_assign_welcome_homework(enrollment: dict) -> Optional[dict]:
-    """Called immediately after a new dog_programs row is inserted."""
+    """Called immediately after a new dog_programs row is inserted.
+
+    Assigns BOTH:
+      1. The program's welcome homework (if set).
+      2. The first module's homework (if set) — Module 1 is "starting" so its
+         homework should land in the client's lap right away.
+    """
     snap = enrollment.get("program_snapshot") or {}
-    template_id = snap.get("welcome_homework_template_id")
-    if not template_id:
-        return None
-    if _already_auto_assigned(enrollment, template_id, "enrollment"):
-        return None
     dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
     if not dog:
         return None
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
-    hw = await _create_homework_from_template_internal(
-        dog, client, template_id,
-        assigned_by=f"Auto · {snap.get('name', 'Program')} welcome",
-    )
-    if hw:
-        await _record_auto_assign(enrollment["id"], template_id, "enrollment", hw["id"])
-    return hw
+
+    last_hw = None
+    # Welcome homework
+    welcome_id = snap.get("welcome_homework_template_id")
+    if welcome_id and not _already_auto_assigned(enrollment, welcome_id, "enrollment"):
+        hw = await _create_homework_from_template_internal(
+            dog, client, welcome_id,
+            assigned_by=f"Auto · {snap.get('name', 'Program')} welcome",
+        )
+        if hw:
+            await _record_auto_assign(enrollment["id"], welcome_id, "enrollment", hw["id"])
+            last_hw = hw
+
+    # First module's homework — "module 1 is starting now"
+    modules = snap.get("modules") or []
+    if modules:
+        first_module = modules[0]
+        first_module_hw = first_module.get("homework_template_id")
+        first_trigger = f"module_start:{first_module.get('id')}"
+        if first_module_hw and not _already_auto_assigned(enrollment, first_module_hw, first_trigger):
+            hw = await _create_homework_from_template_internal(
+                dog, client, first_module_hw,
+                assigned_by=f"Auto · {first_module.get('name', 'Module 1')} starting",
+            )
+            if hw:
+                await _record_auto_assign(enrollment["id"], first_module_hw, first_trigger, hw["id"])
+                last_hw = hw
+    return last_hw
 
 
 async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: str) -> Optional[dict]:
-    """Called when a goal flips to `mastered`. Finds the module that owns
-    this goal; if ALL goals in that module are now mastered, assigns the
-    module's homework template."""
+    """Called when a goal flips to `mastered`. If that goal completes its
+    parent module (all sibling goals mastered too), advance to the NEXT
+    module and assign THAT module's homework template — because the client
+    is now starting the next module.
+
+    Sprint 110bz — semantics fix: the per-module homework field means
+    "homework for THIS module, sent when the client begins it" (not "sent
+    when this module is mastered"). Module 1's homework goes out at enrol
+    (see _auto_assign_welcome_homework). Module 2..N's homework goes out
+    when the previous module is mastered.
+    """
     snap = enrollment.get("program_snapshot") or {}
     modules = snap.get("modules") or []
-    # Find the parent module of this goal
+    # Find the parent module (index) of this goal
     parent_module = None
-    for m in modules:
+    parent_idx = -1
+    for i, m in enumerate(modules):
         if any(g.get("id") == just_mastered_goal_id for g in m.get("goals", [])):
             parent_module = m
+            parent_idx = i
             break
     if not parent_module:
         return None
-    template_id = parent_module.get("homework_template_id")
-    if not template_id:
-        return None
 
-    # All goals in this module must now be mastered (look up current progress)
+    # All goals in the just-mastered module must now be mastered (look up current progress)
     fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
     progress = fresh.get("goal_progress") or {}
     module_goal_ids = [g["id"] for g in parent_module.get("goals", [])]
@@ -6759,7 +6793,19 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
     if not all_mastered:
         return None
 
-    trigger = f"module:{parent_module['id']}"
+    # We just finished `parent_module`. The NEXT module is starting — assign
+    # ITS homework_template_id.
+    next_idx = parent_idx + 1
+    if next_idx >= len(modules):
+        # Last module just got mastered — nothing more to assign here. Program
+        # completion will be handled by _auto_complete_if_satisfied.
+        return None
+    next_module = modules[next_idx]
+    template_id = next_module.get("homework_template_id")
+    if not template_id:
+        return None
+
+    trigger = f"module_start:{next_module['id']}"
     if _already_auto_assigned(fresh, template_id, trigger):
         return None
     dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
@@ -6768,7 +6814,7 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
     hw = await _create_homework_from_template_internal(
         dog, client, template_id,
-        assigned_by=f"Auto · {parent_module.get('name', 'Module')} complete",
+        assigned_by=f"Auto · {next_module.get('name', 'Next module')} starting",
     )
     if hw:
         await _record_auto_assign(enrollment["id"], template_id, trigger, hw["id"])

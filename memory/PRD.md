@@ -30,6 +30,28 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110bz — Per-module Homework Loop Fix (2026-06-08)
+**User-reported semantic bug**: The per-module "homework" picker said "when this module is completed" but the actual desired behavior is the opposite — each module's homework should fire when the client **starts** that module (i.e., at enrollment for module 1, and when the previous module is mastered for modules 2+).
+
+- ✅ **Backend semantics flip** (`_auto_assign_welcome_homework` + `_auto_assign_module_homework`):
+  - **On enrollment** → assigns BOTH the program welcome homework AND Module 1's homework (Module 1 is starting now).
+  - **On all goals in module N being mastered** → assigns Module N+1's homework (not N's).
+  - **On the final module being mastered** → no further auto-homework (program completion handles it).
+  - Trigger ID changed from `module:<id>` to `module_start:<id>` to reflect the new semantics; idempotency log re-keyed accordingly.
+- ✅ **Frontend label change** in `Programs.jsx`:
+  - Picker label now reads "Homework for this module" with a dynamic subtitle:
+    - Module 1: "sent at enrollment"
+    - Module N>1: "sent when module N-1 is mastered"
+  - Helper text under the dropdown explains the trigger precisely (references the previous module by name).
+- ✅ **Tests rewritten** (`test_program_homework_loop.py` 6/6):
+  - `test_enrollment_assigns_welcome_AND_module1_homework` — verifies both fire at enrollment + module 2's does NOT yet.
+  - `test_mastering_module1_assigns_module2_homework` — verifies module 2's homework fires + is idempotent.
+  - `test_mastering_last_module_does_not_assign_more_homework` — verifies the final module doesn't trigger anything.
+  - Existing welcome/FIFO regression tests still green.
+- 🎯 **User impact**: The "auto homework" loop now matches the operator's mental model — module homework is the homework FOR that module, sent when the client begins it.
+
+
+
 ## Sprint 110by — Email Designer + Homework Streak Tile (2026-06-08)
 - ✅ **Email template registry** (`email_templates_registry.py`) — 22 transactional emails declared with stable slugs, default subject/title/intro/CTA, and per-template variable lists. Single source of truth for everything Sit Happens sends.
 - ✅ **Customization layer in `email_service.py`**:
