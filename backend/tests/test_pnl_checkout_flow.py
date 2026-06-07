@@ -5,6 +5,10 @@
 4. Verify P&L uses the real actual_price, not the fallback estimate
 
 This is the user's actual concern: "make sure it's right once they get checked out".
+
+Runs as a script (`python tests/test_pnl_checkout_flow.py`) — NOT a pytest
+test. Env vars are read inside `main()` so `pytest` collection doesn't crash
+when MONGO_URL isn't set in the test runner's environment.
 """
 import asyncio, os, sys, uuid
 from datetime import date
@@ -12,32 +16,36 @@ import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 
 sys.path.insert(0, "/app/backend")
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
-API_URL = open("/app/frontend/.env").read().split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip()
 
 
-async def get_token():
+def get_api_url() -> str:
+    return open("/app/frontend/.env").read().split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip()
+
+
+async def get_token(api_url: str):
     async with httpx.AsyncClient() as c:
-        r = await c.post(f"{API_URL}/api/auth/login",
+        r = await c.post(f"{api_url}/api/auth/login",
                          json={"email": "admin@sithappens.com", "password": "admin123"})
         return r.json()["token"]
 
 
-async def get_pnl(token):
+async def get_pnl(api_url: str, token: str):
     async with httpx.AsyncClient() as c:
-        r = await c.get(f"{API_URL}/api/admin/today-pnl",
+        r = await c.get(f"{api_url}/api/admin/today-pnl",
                         headers={"Authorization": f"Bearer {token}"})
         return r.json()
 
 
 async def main():
-    client = AsyncIOMotorClient(MONGO_URL)
-    db = client[DB_NAME]
-    token = await get_token()
+    mongo_url = os.environ["MONGO_URL"]
+    db_name = os.environ["DB_NAME"]
+    api_url = get_api_url()
+    client = AsyncIOMotorClient(mongo_url)
+    db = client[db_name]
+    token = await get_token(api_url)
     today = date.today().isoformat()
 
-    baseline = await get_pnl(token)
+    baseline = await get_pnl(api_url, token)
     base_rev = baseline["revenue"]
     print(f"Baseline:         ${base_rev:.2f}")
 
@@ -48,7 +56,7 @@ async def main():
         "service_type": "daycare", "dog_name": "CheckoutBuddy",
         "client_name": "Test", "dog_id": "x", "client_id": "x",
     })
-    after_approve = await get_pnl(token)
+    after_approve = await get_pnl(api_url, token)
     contrib_estimate = after_approve["revenue"] - base_rev
     print(f"After approved (no price set):  ${after_approve['revenue']:.2f}  → contribution: ${contrib_estimate:.2f}  (fallback estimate)")
 
@@ -58,7 +66,7 @@ async def main():
         "status": "completed",
         "checked_out_at": "2026-05-22T17:00:00Z",
     }})
-    after_checkout = await get_pnl(token)
+    after_checkout = await get_pnl(api_url, token)
     contrib_real = after_checkout["revenue"] - base_rev
     print(f"After checkout (actual_price=$42.50, status=completed):  ${after_checkout['revenue']:.2f}  → contribution: ${contrib_real:.2f}")
     print(f"Completed count: {after_checkout['completed_count']} (should be ≥1)")

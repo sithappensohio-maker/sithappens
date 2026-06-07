@@ -2286,7 +2286,25 @@ async def list_time_slots(
 
 
 # Catch-all booking-by-id MUST come AFTER any literal /bookings/<thing> routes
-# (availability, time-slots) or it will shadow them. FastAPI matches in order.
+# (availability, time-slots, conflicts) or it will shadow them. FastAPI
+# matches in order.
+@api.get("/bookings/conflicts")
+async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_current_user)):
+    """Return any pending/approved/completed bookings for this dog on the given date."""
+    bookings = await db.bookings.find(
+        {"dog_id": dog_id, "status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
+    ).to_list(500)
+    conflicts = []
+    for b in bookings:
+        days = _dates_in_range(b["date"], b.get("end_date"))
+        if date_str in days:
+            conflicts.append({
+                "id": b["id"], "date": b["date"], "end_date": b.get("end_date"),
+                "service_type": b["service_type"], "status": b["status"],
+            })
+    return {"conflicts": conflicts}
+
+
 @api.get("/bookings/{booking_id}", response_model=BookingOut)
 async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     """Single-booking detail. Used by the admin Schedule's booking-detail
@@ -7714,23 +7732,6 @@ async def admin_today_brain_restore(body: TodayBrainDismissIn, _: dict = Depends
 
 
 
-@api.get("/bookings/conflicts")
-async def booking_conflicts(dog_id: str, date_str: str, _: dict = Depends(get_current_user)):
-    """Return any pending/approved/completed bookings for this dog on the given date."""
-    bookings = await db.bookings.find(
-        {"dog_id": dog_id, "status": {"$in": ["approved", "pending", "completed"]}}, {"_id": 0}
-    ).to_list(500)
-    conflicts = []
-    for b in bookings:
-        days = _dates_in_range(b["date"], b.get("end_date"))
-        if date_str in days:
-            conflicts.append({
-                "id": b["id"], "date": b["date"], "end_date": b.get("end_date"),
-                "service_type": b["service_type"], "status": b["status"],
-            })
-    return {"conflicts": conflicts}
-
-
 # -------- Calendar Events --------
 @api.get("/events")
 async def calendar_events(_: dict = Depends(require_admin)):
@@ -8122,21 +8123,50 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
         with gzip.open(full_path, "wb", compresslevel=6) as fh:
             fh.write(body)
         size = os.path.getsize(full_path)
-        # Prune older files past retention (only this app's files)
+        # Prune older files past retention. Sprint 110ck — also dedupe within
+        # retention: keep ALL files from the last 7 days (so you have hourly
+        # safety nets after a fresh backup) but only ONE file per calendar day
+        # for files older than that. Prevents the backup folder from ballooning
+        # to GBs when the operator triggers many manual backups in a row.
         retain = max(1, int(cfg.get("retain_days") or 30))
         cutoff = datetime.now(timezone.utc) - timedelta(days=retain)
+        recent_window = datetime.now(timezone.utc) - timedelta(days=7)
         pruned: List[str] = []
-        for old in sorted(os.listdir(target_dir)):
-            if not (old.startswith("sit-happens-") and old.endswith(".json.gz")):
-                continue
+        # Walk files newest-first so we keep the LATEST snapshot per day.
+        all_files = sorted(
+            (f for f in os.listdir(target_dir)
+             if f.startswith("sit-happens-") and f.endswith(".json.gz")),
+            reverse=True,
+        )
+        seen_days: set = set()
+        for old in all_files:
             try:
                 stamp = old.split("sit-happens-", 1)[1].split(".json.gz", 1)[0]
                 file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S").replace(tzinfo=timezone.utc)
-                if file_dt < cutoff:
+            except Exception:
+                continue
+            day_key = file_dt.date().isoformat()
+            # Past retention → always delete.
+            if file_dt < cutoff:
+                try:
                     os.remove(os.path.join(target_dir, old))
                     pruned.append(old)
-            except Exception:
-                pass
+                except Exception:
+                    pass
+                continue
+            # Within the last 7 days → keep all.
+            if file_dt >= recent_window:
+                seen_days.add(day_key)
+                continue
+            # Older than 7 days but within retain — dedupe to 1/day (newest wins).
+            if day_key in seen_days:
+                try:
+                    os.remove(os.path.join(target_dir, old))
+                    pruned.append(old)
+                except Exception:
+                    pass
+            else:
+                seen_days.add(day_key)
         # Record run history
         run_row = {
             "id": str(uuid.uuid4()),
@@ -10697,6 +10727,24 @@ async def startup():
         (db.awarded_trophies, "client_id", {}),
         (db.awarded_trophies, "dog_id", {}),
         (db.trophies, "code", {"unique": True}),
+        # Sprint 110ck — Income/P&L hot paths. Every income endpoint scans
+        # retail_sales + expenses + time_clock_entries by date; with no
+        # index that's a full collection scan per request.
+        (db.retail_sales, "date", {}),
+        (db.retail_sales, [("date", 1), ("source_kind", 1)], {}),
+        (db.expenses, "date", {}),
+        (db.time_clock_entries, "clock_in_at", {}),
+        (db.time_clock_entries, [("user_id", 1), ("clock_in_at", 1)], {}),
+        # `pack_kind=training_program` filter used by the double-count fix
+        # and by `/clients/{id}/training-program-summary`.
+        (db.credit_lots, [("pack_kind", 1)], {}),
+        (db.credit_lots, "id", {"unique": True}),
+        # New collections from recent sprints.
+        (db.payment_plans, "client_id", {}),
+        (db.payment_plans, [("client_id", 1), ("status", 1)], {}),
+        (db.reschedule_requests, [("status", 1), ("created_at", -1)], {}),
+        (db.reschedule_requests, "client_id", {}),
+        (db.reschedule_requests, "booking_id", {}),
     ]
     for coll, key, opts in perf_indexes:
         try:

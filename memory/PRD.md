@@ -30,6 +30,45 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cl — Performance + Operator-Safety cleanup (2026-06-08)
+**Why**: Audit surfaced 4 obvious wins — no feature changes, just stability.
+
+- ✅ **Mongo indexes for income hot paths.** 7 new compound indexes added to
+  startup so every income endpoint, P&L report, weekly summary, and
+  time-clock query is index-backed instead of a full collection scan:
+  `retail_sales.date`, `retail_sales(date, source_kind)`, `expenses.date`,
+  `time_clock_entries.clock_in_at`, `time_clock_entries(user_id, clock_in_at)`,
+  `credit_lots.pack_kind`, `credit_lots.id` (unique), `payment_plans.client_id`,
+  `payment_plans(client_id, status)`, `reschedule_requests(status, created_at)`,
+  `reschedule_requests.client_id`, `reschedule_requests.booking_id`.
+  Once data grows past ~10k bookings the difference will be 10–100x on the
+  Income screen. Verified all indexes registered on restart.
+- ✅ **Backup retention upgraded.** Old policy only deleted by age, so manual
+  test backups piled up forever inside the retention window (27 files in 1
+  week → 35MB). New policy in `_run_auto_backup_once`: keep every file from
+  the last 7 days (so hourly safety nets after a fresh backup), keep only the
+  latest 1-per-day for files older than 7 days but within retain_days, delete
+  anything past retain_days. No config change needed; takes effect on the
+  next backup run.
+- ✅ **Test suite collection fixed.** `test_pnl_checkout_flow.py` was reading
+  `os.environ["MONGO_URL"]` at module-level, which crashed pytest collection
+  with `KeyError` and aborted the entire run. Moved env reads into `main()`
+  so the script still works standalone (`python tests/test_pnl_checkout_flow.py`)
+  but pytest now collects all 555 tests cleanly. You can finally do
+  `pytest tests/` as a one-shot regression command.
+- ✅ **Route shadow bug fixed.** `GET /bookings/conflicts` was defined AFTER
+  the catch-all `/bookings/{booking_id}`, so FastAPI was routing
+  `/bookings/conflicts` → `get_booking(booking_id="conflicts")` which always
+  returned 404. Moved the literal route above the parameterized one. Verified
+  live: `/api/bookings/conflicts?dog_id=...` now returns `{"conflicts": [...]}`
+  instead of "Booking not found". Lint debt: `EB002` route-shadow warning
+  is gone (from 26 lint issues down to 24 pre-existing E701/E702/E741).
+- ✅ Regression: 72 tests across the touched areas (program scheduling, payment
+  plans, reschedule requests, retail sales, training PNL, sprint16 income,
+  booking detail) all passing.
+
+
+
 ## Sprint 110ck — Training Program Revenue Double-Count Bug (2026-06-08)
 **User-reported bug**: "It's adding the training revenue I sold PLUS the amount of the credit. That's not supposed to do that for training plans — just the total when paid, not when they get checked out." Screenshot showed `Completed $992.60 (39 sessions)` + `Training Revenue $450` + `Gross $1442.60`, with `training · $90.00 (1)` polluting the breakdown.
 
