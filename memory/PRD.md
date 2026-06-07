@@ -30,6 +30,37 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110ce — Recurring Sessions on Program Sale (2026-06-08)
+**User ask**: "When I sell a training program I should be able to set a day of the week and a time slot that recurs every week for the amount of credits they get. This doesn't apply to board & train. I should be able to adjust this in the event of a cancellation."
+
+- ✅ **Sell Program modal — new scheduler block** (`Clients.jsx`):
+  - Hidden when no dog is picked OR when the program type is `board_train` (dog already on-site).
+  - Day-of-week selector (Mon–Sun) + time picker (24h) + optional start date (blank = next occurrence of chosen weekday).
+  - **Live preview chips** show the exact dates that will be booked (e.g. "Tue Jun 9 · 10:00"), with a "+N more" overflow.
+  - "Book even on closed days" override checkbox for the edge case.
+- ✅ **Backend `POST /clients/{id}/sell-program`** now accepts `schedule_day_of_week`, `schedule_time`, `schedule_start_date`, `schedule_override_closures`. When set (and dog is provided and program ≠ board_train):
+  - Generates `qty` weekly dates from the anchor; **skips dates that match `settings.closed_dates`**, rolling forward +7 days each time (with a warning per skip).
+  - Creates `bookings` rows with `service_type=training`, `actual_price=$0`, `payment_status=paid`, `payment_method=training_credit_prepaid`, `status=approved`, plus back-links `credit_lot_id`, `program_id`, `program_sale_session_index`, `program_sale_session_total`, `is_prepaid_program_session=True`.
+  - Response includes `scheduled_bookings[]` + `schedule_warnings[]` so the modal can toast "4 weekly sessions booked · 1 closure skipped".
+- ✅ **Reschedule endpoint** `POST /bookings/{id}/reschedule-next-week` (admin):
+  - Walks forward week-by-week from the current date, skipping closures **and** any other booking the same dog already has on the candidate date.
+  - Records `rescheduled_from` + `rescheduled_at` for the audit trail.
+  - **Does NOT touch the credit lot or the client's training_credits balance** — the session is moving in time, not being burned.
+  - Returns 400 if called on a non-prepaid booking (the rule that protects regular bookings).
+- ✅ **No revenue double-counting** — every prepaid session lands at $0 on the books because the full sale price already hit the Training Revenue line on sale day (Sprint 110cb).
+- ✅ **Tests** `test_program_scheduling.py` (8/8 passing):
+  - Sell-without-schedule → zero bookings created.
+  - Sell-with-schedule → exactly `qty` bookings on the right weekday, 7 days apart, all $0 prepaid, all tagged to the lot.
+  - Board & Train silently ignores schedule fields.
+  - Closed-day skipping → warning fired, all `qty` bookings still created, closed date excluded.
+  - `schedule_override_closures=True` → closed date included, no warnings.
+  - Reschedule → next Tuesday, credits untouched, lot back-link preserved.
+  - Reschedule rejects non-program bookings → 400.
+- ✅ All 23 sell-program + scheduling + homework loop tests green together (43 across the wider sprint suite).
+- 🎯 **User impact**: Selling a 4-session program now locks in 4 calendar slots in one click. If the client (or operator) needs to move a session, hit Reschedule → it slides to the next open week without any credit math to think about.
+
+
+
 ## Sprint 110cb + 110cc — Training Revenue split + Pipeline progress tracker (2026-06-08)
 **Two user-requested follow-ups to the Sell Training Program work:**
 1. "Training programs are not retail items" — they were polluting the Retail bucket on the Income screen.

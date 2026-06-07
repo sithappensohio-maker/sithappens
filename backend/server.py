@@ -14402,6 +14402,14 @@ class SellProgramIn(BaseModel):
     dog_id: Optional[str] = None       # If set, auto-creates a dog_programs row
     started_at: Optional[str] = None   # YYYY-MM-DD, defaults to today
     note: Optional[str] = ""
+    # Sprint 110ce — recurring session scheduling. When set (and program type
+    # is NOT board_train), auto-creates N weekly bookings on the chosen
+    # day-of-week/time, prepaid via the credit lot. Board & Train programs
+    # don't need this — the dog is already on-site.
+    schedule_day_of_week: Optional[int] = Field(default=None, ge=0, le=6)  # 0=Mon ... 6=Sun
+    schedule_time: Optional[str] = None  # HH:MM (24h)
+    schedule_start_date: Optional[str] = None  # YYYY-MM-DD, defaults to next instance of weekday from today
+    schedule_override_closures: bool = False  # set to True to ignore closed-day warnings
 
 
 @api.post("/clients/{client_id}/sell-program")
@@ -14557,12 +14565,138 @@ async def sell_training_program(
                 logger.warning("Sell-program welcome homework failed: %s", exc)
             enrollment_summary = _enrollment_summary(enrollment)
 
+    # Sprint 110ce — recurring session scheduling. Skipped entirely for
+    # board_train (the dog is on-site so weekly bookings don't make sense)
+    # and for sales without a target dog (can't book a session for nobody).
+    scheduled_bookings: list = []
+    schedule_warnings: list = []
+    can_schedule = (
+        dog is not None
+        and body.schedule_day_of_week is not None
+        and body.schedule_time
+        and (program.get("type") or "custom") != "board_train"
+    )
+    if can_schedule:
+        # Pull closed dates so we can skip them (or warn the admin)
+        settings_doc = await db.settings.find_one({"_id": "main"}, {"_id": 0}) or {}
+        closed_dates = set(settings_doc.get("closed_dates") or [])
+
+        # Anchor date: schedule_start_date if provided, else next instance of
+        # the chosen weekday (including today if today matches)
+        from datetime import date as _date, timedelta as _td
+        if body.schedule_start_date:
+            anchor = _date.fromisoformat(body.schedule_start_date)
+        else:
+            anchor = _date.today()
+        # Roll forward to the desired weekday
+        wd_target = body.schedule_day_of_week
+        delta = (wd_target - anchor.weekday()) % 7
+        first_date = anchor + _td(days=delta)
+
+        # Generate `qty` weekly dates, skipping closed days (and adding extra
+        # weeks at the end if any get skipped) — UNLESS override_closures is
+        # set, in which case we include closed dates verbatim.
+        generated: list = []
+        cursor = first_date
+        attempts = 0
+        max_attempts = qty * 5  # safety net to avoid infinite loops
+        while len(generated) < qty and attempts < max_attempts:
+            iso = cursor.isoformat()
+            if iso in closed_dates and not body.schedule_override_closures:
+                schedule_warnings.append({
+                    "date": iso,
+                    "reason": "business_closed",
+                    "note": "Skipped — business closed; rolled forward 7 days.",
+                })
+                cursor += _td(days=7)
+                attempts += 1
+                continue
+            generated.append(iso)
+            cursor += _td(days=7)
+            attempts += 1
+
+        # Now create the bookings. Each is prepaid ($0 actual_price) and tied
+        # back to the credit lot so the books stay clean.
+        for iso_date in generated:
+            booking = {
+                "id": _gid(),
+                "dog_id": dog["id"],
+                "dog_name": dog.get("name", ""),
+                "client_id": client_id,
+                "client_name": client.get("name", ""),
+                "service_type": "training",
+                "date": iso_date,
+                "end_date": None,
+                "time": body.schedule_time,
+                "kennel": "",
+                "notes": f"Program · {program['name']} · session {generated.index(iso_date) + 1} of {qty}",
+                "status": "approved",
+                "actual_price": 0.0,
+                "payment_status": "paid",
+                "payment_method": "training_credit_prepaid",
+                "created_at": now_iso(),
+                "created_by": user.get("id"),
+                # Sprint 110ce back-links — these let cancel/reschedule restore
+                # the credit slot and let the trainer see "this is session X of Y"
+                "credit_lot_id": lot["id"],
+                "program_id": program["id"],
+                "program_sale_session_index": generated.index(iso_date) + 1,
+                "program_sale_session_total": qty,
+                "is_prepaid_program_session": True,
+            }
+            await db.bookings.insert_one(booking)
+            booking.pop("_id", None)
+            scheduled_bookings.append(booking)
+
     lot.pop("_id", None)
     return {
         "lot": lot,
         "enrollment": enrollment_summary,  # null when dog_id not provided
         "client_balance": int((client.get("training_credits") or 0)) + qty,
+        "scheduled_bookings": scheduled_bookings,
+        "schedule_warnings": schedule_warnings,
     }
+
+@api.post("/bookings/{booking_id}/reschedule-next-week")
+async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_admin)):
+    """Sprint 110ce — push a prepaid program session forward to the next
+    available same-weekday slot, skipping business-closure dates AND any other
+    bookings already scheduled for that dog on the candidate date. Doesn't
+    touch the credit lot (no re-credit because nothing was charged in the
+    first place; the session is just moving in time)."""
+    bk = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not bk:
+        raise HTTPException(404, "Booking not found")
+    if not bk.get("is_prepaid_program_session"):
+        raise HTTPException(400, "This endpoint is only for prepaid program sessions")
+    from datetime import date as _date, timedelta as _td
+    settings_doc = await db.settings.find_one({"_id": "main"}, {"_id": 0}) or {}
+    closed_dates = set(settings_doc.get("closed_dates") or [])
+    cur_date = _date.fromisoformat(bk["date"])
+    # Try the next 12 weeks; skip closures + dog-double-booked dates
+    for i in range(1, 13):
+        candidate = cur_date + _td(days=7 * i)
+        iso = candidate.isoformat()
+        if iso in closed_dates:
+            continue
+        conflict = await db.bookings.find_one(
+            {"dog_id": bk["dog_id"], "date": iso,
+             "id": {"$ne": booking_id},
+             "status": {"$ne": "cancelled"}},
+            {"_id": 0, "id": 1},
+        )
+        if conflict:
+            continue
+        await db.bookings.update_one({"id": booking_id}, {"$set": {
+            "date": iso,
+            "rescheduled_from": bk["date"],
+            "rescheduled_at": now_iso(),
+        }})
+        updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        return {"ok": True, "booking": updated, "from": bk["date"], "to": iso}
+    raise HTTPException(409, "No open slot found in the next 12 weeks on that weekday")
+
+
 
 
 @api.get("/admin/clients/{client_id}/training-credits")

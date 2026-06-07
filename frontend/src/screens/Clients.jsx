@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -807,6 +807,12 @@ function SellProgramModal({ client, onClose, onSold }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Sprint 110ce — recurring session scheduling state. Hidden for Board & Train.
+  const [scheduleEnabled, setScheduleEnabled] = useState(true);
+  const [dow, setDow] = useState(1);          // 0=Mon … 6=Sun, default Tuesday
+  const [scheduleTime, setScheduleTime] = useState("10:00");
+  const [scheduleStart, setScheduleStart] = useState("");
+  const [overrideClosures, setOverrideClosures] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -841,17 +847,44 @@ function SellProgramModal({ client, onClose, onSold }) {
       const body = { program_id: programId, payment_method: method, note };
       if (dogId) body.dog_id = dogId;
       if (overridePrice !== "") body.override_price = Number(overridePrice);
+      // Sprint 110ce — scheduling fields. Board & Train doesn't get bookings.
+      const programType = selectedProgram?.type;
+      if (dogId && scheduleEnabled && programType !== "board_train" && scheduleTime) {
+        body.schedule_day_of_week = Number(dow);
+        body.schedule_time = scheduleTime;
+        if (scheduleStart) body.schedule_start_date = scheduleStart;
+        if (overrideClosures) body.schedule_override_closures = true;
+      }
       const r = await api.post(`/clients/${client.id}/sell-program`, body);
-      toast.success(
-        r.data.enrollment
-          ? `Sold ${r.data.lot.pack_name} · +${qty} ${unit} · ${r.data.enrollment.dog_id ? "dog enrolled" : ""}`
-          : `Sold ${r.data.lot.pack_name} · +${qty} ${unit}`
-      );
+      const sb = r.data.scheduled_bookings || [];
+      const warns = r.data.schedule_warnings || [];
+      const parts = [`Sold ${r.data.lot.pack_name} · +${qty} ${unit}`];
+      if (sb.length) parts.push(`${sb.length} weekly session${sb.length === 1 ? "" : "s"} booked`);
+      if (warns.length) parts.push(`(${warns.length} closure${warns.length === 1 ? "" : "s"} skipped)`);
+      toast.success(parts.join(" · "));
       onSold?.(r.data);
     } catch (e) {
       setError(e.response?.data?.detail || "Could not complete sale");
     } finally { setBusy(false); }
   };
+
+  // Preview the dates that will be auto-booked so the operator can sanity-check
+  const schedulePreview = useMemo(() => {
+    if (!qty || !scheduleEnabled || selectedProgram?.type === "board_train") return [];
+    const anchor = scheduleStart ? new Date(scheduleStart + "T00:00:00") : new Date();
+    const wdTarget = Number(dow);
+    const anchorWd = (anchor.getDay() + 6) % 7;  // JS Sunday=0; convert to Mon=0
+    const delta = (wdTarget - anchorWd + 7) % 7;
+    const first = new Date(anchor);
+    first.setDate(anchor.getDate() + delta);
+    const out = [];
+    for (let i = 0; i < qty; i++) {
+      const d = new Date(first);
+      d.setDate(first.getDate() + i * 7);
+      out.push(d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }));
+    }
+    return out;
+  }, [qty, scheduleEnabled, selectedProgram, scheduleStart, dow]);
 
   return (
     <Modal title={`Sell Training Program · ${client.name}`} onClose={onClose} maxWidth="max-w-lg">
@@ -908,6 +941,87 @@ function SellProgramModal({ client, onClose, onSold }) {
             </p>
           )}
         </label>
+
+        {/* Sprint 110ce — recurring session scheduler. Hidden when no dog is
+            picked (need someone to book FOR) and when the program is Board &
+            Train (the dog will already be on-site). */}
+        {dogId && selectedProgram && selectedProgram.type !== "board_train" && (
+          <div className="bg-shBlue/5 border border-shBlue/30 rounded p-3 space-y-2"
+               data-testid="sell-program-schedule">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={scheduleEnabled}
+                onChange={(e) => setScheduleEnabled(e.target.checked)}
+                data-testid="sell-program-schedule-toggle"
+                className="w-4 h-4 accent-shBlue"
+              />
+              <span className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+                <i className="fas fa-calendar-check mr-1"/>Auto-book {qty || "N"} weekly sessions
+              </span>
+            </label>
+            {scheduleEnabled && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Day of week</span>
+                    <select value={dow} onChange={(e) => setDow(e.target.value)}
+                            data-testid="sell-program-schedule-dow"
+                            className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+                        .map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Time</span>
+                    <input type="time" value={scheduleTime}
+                           onChange={(e) => setScheduleTime(e.target.value)}
+                           data-testid="sell-program-schedule-time"
+                           className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                  </label>
+                </div>
+                <label className="block">
+                  <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">
+                    Start date <span className="text-gray-600 normal-case">(blank = next occurrence)</span>
+                  </span>
+                  <input type="date" value={scheduleStart}
+                         onChange={(e) => setScheduleStart(e.target.value)}
+                         data-testid="sell-program-schedule-start"
+                         className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                </label>
+                <label className="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={overrideClosures}
+                    onChange={(e) => setOverrideClosures(e.target.checked)}
+                    data-testid="sell-program-override-closures"
+                    className="w-3 h-3 accent-orange-500"
+                  />
+                  <span>Book even on closed days (skip the auto-skip)</span>
+                </label>
+                {schedulePreview.length > 0 && (
+                  <div className="bg-bgBase/60 border border-bgHover rounded p-2 mt-2"
+                       data-testid="sell-program-schedule-preview">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">
+                      <i className="fas fa-eye mr-1"/>Sessions preview · {schedulePreview.length} weekly
+                    </p>
+                    <div className="flex flex-wrap gap-1 text-[11px]">
+                      {schedulePreview.slice(0, 12).map((d, i) => (
+                        <span key={i} className="bg-bgHover text-gray-300 rounded px-1.5 py-0.5">{d} · {scheduleTime}</span>
+                      ))}
+                      {schedulePreview.length > 12 && (
+                        <span className="text-gray-500 text-[10px] self-center">… +{schedulePreview.length - 12} more</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1 italic">
+                      Closed-day dates will be skipped automatically (rolling forward 7 days each time).
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
