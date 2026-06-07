@@ -812,14 +812,17 @@ function SellProgramModal({ client, onClose, onSold }) {
     (async () => {
       const [p, d, b] = await Promise.all([
         api.get("/programs?include_custom=true").catch(()=>({data:[]})),
-        api.get(`/clients/${client.id}/dogs`).catch(()=>({data:[]})),
+        // Sprint 110ca — `/clients/{id}/dogs` doesn't exist; the `/dogs` endpoint
+        // returns all dogs for an admin caller, so we filter to this client.
+        api.get("/dogs").catch(()=>({data:[]})),
         api.get(`/admin/clients/${client.id}/training-credits`).catch(()=>({data:null})),
       ]);
       const sellable = (p.data || []).filter(pr =>
         (pr.format?.count || 0) > 0 && pr.active !== false
       );
       setPrograms(sellable);
-      setDogs(d.data || []);
+      const clientDogs = (d.data || []).filter(dog => dog.owner_id === client.id);
+      setDogs(clientDogs);
       setBreakdown(b.data);
     })();
   }, [client.id]);

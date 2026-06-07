@@ -14450,6 +14450,42 @@ async def sell_training_program(
     await db.credit_lots.insert_one(lot)
     await db.clients.update_one({"id": client_id}, {"$inc": {"training_credits": qty}})
 
+    # Sprint 110ca — record the sale as income immediately. Unlike credit packs
+    # (which use deferred revenue recognition because each credit can be used
+    # months later), training programs are a fixed commitment up-front, so the
+    # operator wants the full sale price on the books on sale day. We write to
+    # `retail_sales` because that's the collection the Income screen + monthly
+    # P&L PDF + year-end CSV already aggregate.
+    if effective_price > 0:
+        income_doc = {
+            "id": str(uuid.uuid4()),
+            "date": business_today().isoformat(),
+            "description": f"Training Program · {program['name']}",
+            "amount": round(effective_price, 2),
+            "category": "Training Program",
+            "notes": body.note or "",
+            "payment_method": body.payment_method or "card",
+            "client_id": client_id,
+            "client_name": client.get("name") or "",
+            "created_at": now_iso(),
+            "created_by": user.get("id"),
+            # Back-link so the audit trail joins program sale → income row → lot
+            "source_kind": "training_program_sale",
+            "source_id": lot["id"],
+            "program_id": program["id"],
+        }
+        # Training is a service, not retail — keep it out of the retail sales
+        # tax bucket (sales_tax.applies_to.retail) which is for tangible goods.
+        # Operator can still recognize service tax separately if they configure
+        # it on the program/service catalog.
+        await db.retail_sales.insert_one(income_doc)
+        income_doc.pop("_id", None)
+        lot["income_event_id"] = income_doc["id"]
+        await db.credit_lots.update_one(
+            {"id": lot["id"]},
+            {"$set": {"income_event_id": income_doc["id"]}},
+        )
+
     enrollment_summary = None
     if dog:
         # Don't double-enrol — return existing active enrollment if there is one.

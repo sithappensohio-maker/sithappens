@@ -82,6 +82,8 @@ def fx(admin_headers):
             await db.dogs.delete_many({"owner_id": cid})
             await db.credit_lots.delete_many({"client_id": cid})
             await db.dog_programs.delete_many({"dog_id": did})
+            # Sprint 110ca — clean up the income rows our test sales created
+            await db.retail_sales.delete_many({"client_id": cid, "source_kind": "training_program_sale"})
             mc.close()
         asyncio.run(_wipe())
     except Exception:
@@ -226,3 +228,82 @@ def test_admin_required():
     assert r.status_code in (401, 403)
     r = requests.get(f"{API}/admin/clients/x/training-credits", timeout=15)
     assert r.status_code in (401, 403)
+
+
+# ────────────────── Sprint 110ca · Immediate income recognition ──────────────────
+
+def test_sell_program_records_immediate_income(admin_headers, fx):
+    """Selling a training program writes a `retail_sales` row tagged with
+    source_kind='training_program_sale' so the Income screen + P&L PDF + CSV
+    export show the revenue on sale day (not deferred like credit packs)."""
+    today = __import__("datetime").date.today().isoformat()
+    # Override price so we can pin the income row precisely
+    custom_price = 333.00
+    r = requests.post(f"{API}/clients/{fx['client_id']}/sell-program",
+                      headers=admin_headers,
+                      json={"program_id": fx["program_id"], "override_price": custom_price,
+                            "payment_method": "card"},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    lot_id = r.json()["lot"]["id"]
+
+    # Pull today's retail_sales rows and find ours by source_id
+    sales = requests.get(f"{API}/retail-sales",
+                         headers=admin_headers,
+                         params={"start_date": today, "end_date": today},
+                         timeout=15).json()
+    ours = [s for s in sales if s.get("source_id") == lot_id]
+    assert len(ours) == 1, f"Expected exactly 1 income row tied to the lot, got {len(ours)}: {ours}"
+    row = ours[0]
+    assert row["amount"] == custom_price
+    assert row["category"] == "Training Program"
+    assert row["client_id"] == fx["client_id"]
+    assert row["payment_method"] == "card"
+    assert row["source_kind"] == "training_program_sale"
+    assert row["program_id"] == fx["program_id"]
+    assert "Training Program" in row["description"]
+
+
+def test_sell_program_income_appears_in_summary_range(admin_headers, fx):
+    """The newly-created income row should land in the /transactions/summary-range
+    `retail_total` so the Income dashboard reflects program sales immediately."""
+    today = __import__("datetime").date.today().isoformat()
+    custom_price = 222.00
+
+    before = requests.get(f"{API}/transactions/summary-range",
+                          headers=admin_headers,
+                          params={"start_date": today, "end_date": today},
+                          timeout=15).json()
+    retail_before = float(before.get("retail_total") or 0)
+
+    requests.post(f"{API}/clients/{fx['client_id']}/sell-program",
+                  headers=admin_headers,
+                  json={"program_id": fx["program_id"], "override_price": custom_price},
+                  timeout=15)
+
+    after = requests.get(f"{API}/transactions/summary-range",
+                         headers=admin_headers,
+                         params={"start_date": today, "end_date": today},
+                         timeout=15).json()
+    retail_after = float(after.get("retail_total") or 0)
+    assert round(retail_after - retail_before, 2) >= custom_price, \
+        f"Expected retail_total to rise by at least {custom_price}, got {retail_after - retail_before}"
+
+
+def test_sell_program_zero_price_does_not_create_income_row(admin_headers, fx):
+    """Comping a program (override_price=0) should NOT create a $0 noise row in income."""
+    today = __import__("datetime").date.today().isoformat()
+    r = requests.post(f"{API}/clients/{fx['client_id']}/sell-program",
+                      headers=admin_headers,
+                      json={"program_id": fx["program_id"], "override_price": 0,
+                            "payment_method": "other", "note": "comp"},
+                      timeout=15)
+    assert r.status_code == 200
+    lot_id = r.json()["lot"]["id"]
+
+    sales = requests.get(f"{API}/retail-sales",
+                         headers=admin_headers,
+                         params={"start_date": today, "end_date": today},
+                         timeout=15).json()
+    ours = [s for s in sales if s.get("source_id") == lot_id]
+    assert len(ours) == 0, "$0 comp should not generate an income row"

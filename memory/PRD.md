@@ -30,6 +30,29 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110ca — Sell Training Program: dog selector + immediate income (2026-06-08)
+**Two user-reported bugs in the Sell Training Program flow:**
+
+1. ❌ Dog selector only showed "credits only" — couldn't pick a dog to enrol.
+2. ❌ Training program sales weren't landing in the Income screen / P&L.
+
+- ✅ **Dog selector fix** (`Clients.jsx · SellProgramModal`):
+  - Was calling `/clients/{id}/dogs` which doesn't exist (404'd silently → empty list).
+  - Now fetches `/dogs` (admin scope returns all) and filters by `owner_id === client.id`. Confirmed via screenshot — dropdown correctly shows "Rex · Lab" for Alice Test.
+- ✅ **Immediate income recognition** (`POST /clients/{id}/sell-program`):
+  - Writes a `retail_sales` row tagged `source_kind="training_program_sale"` with `category="Training Program"` and `description="Training Program · {name}"` so the operator can spot program sales at a glance in the Income screen.
+  - Back-link `source_id` + `program_id` recorded so the audit trail joins program sale → income row → credit_lot.
+  - `$0` comps do NOT create a noise income row.
+  - Lot also stores `income_event_id` for traceability.
+  - Different from credit packs by design — packs continue to use deferred revenue recognition (recognized on redemption); training programs are recognized up-front since they're a fixed commitment.
+- ✅ **Tests** in `test_sell_program.py` (3 new + 7 existing = 10/10 passing):
+  - `test_sell_program_records_immediate_income` — verifies row written with all fields + back-link.
+  - `test_sell_program_income_appears_in_summary_range` — verifies it flows into `/transactions/summary-range` retail_total.
+  - `test_sell_program_zero_price_does_not_create_income_row` — comps don't generate noise.
+- 🎯 **User impact**: Operators can now enrol the dog at point-of-sale (single click), and program revenue is immediately visible in Income / P&L — no more "did I actually sell that?" reconciliation moments.
+
+
+
 ## Sprint 110bz — Per-module Homework Loop Fix (2026-06-08)
 **User-reported semantic bug**: The per-module "homework" picker said "when this module is completed" but the actual desired behavior is the opposite — each module's homework should fire when the client **starts** that module (i.e., at enrollment for module 1, and when the previous module is mastered for modules 2+).
 
