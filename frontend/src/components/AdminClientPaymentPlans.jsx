@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
+import RichTextEditor from "./RichTextEditor";
 
 const fmt = (n) => `$${(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const STATUS_META = {
@@ -143,6 +144,17 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
   const [start, setStart] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Sprint 110ck — pull settings + client info so we can render a LIVE
+  // agreement preview with this specific client's actual name + amounts.
+  const [settings, setSettings] = useState(null);
+  const [client, setClient] = useState(null);
+  const [customAgreement, setCustomAgreement] = useState("");
+  const [customizing, setCustomizing] = useState(false);
+
+  useEffect(() => {
+    api.get("/admin/payment-plans/settings").then(r => setSettings(r.data)).catch(() => {});
+    api.get(`/clients/${clientId}`).then(r => setClient(r.data)).catch(() => {});
+  }, [clientId]);
 
   const installments = (() => {
     const t = Number(total) || 0;
@@ -162,6 +174,24 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
     return rows;
   })();
 
+  // Live agreement preview — substitutes the form's actual values into the
+  // template so the operator sees exactly what THIS client will receive.
+  const fmt$ = (n) => `$${(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const scheduleList = installments
+    .map(i => `• <strong>${i.due_date}</strong> — ${fmt$(i.amount)}`)
+    .join("<br/>");
+  const tplToUse = customizing && customAgreement
+    ? customAgreement
+    : (settings?.agreement_html || "");
+  const renderedAgreement = tplToUse
+    .replaceAll("{{business_name}}", settings?.business_name || "Sit Happens")
+    .replaceAll("{{client_name}}", client?.name || "[client name]")
+    .replaceAll("{{program_name}}", programName || "[program name]")
+    .replaceAll("{{total_amount}}", total ? fmt$(total) : "[total amount]")
+    .replaceAll("{{installment_count}}", String(installments.length))
+    .replaceAll("{{installment_amount}}", installments[0] ? fmt$(installments[0].amount) : "[per-payment amount]")
+    .replaceAll("{{schedule_list}}", scheduleList || "[schedule]");
+
   const submit = async () => {
     if (!programName) { setError("Program name required"); return; }
     if (!total || Number(total) <= 0) { setError("Total must be > 0"); return; }
@@ -175,6 +205,10 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
         cadence,
         installments,
         source_kind: "training_program",
+        // Per-plan agreement override: when the operator customized this
+        // specific client's agreement, send the edited template (the backend
+        // already runs _render_agreement on it with the plan's values).
+        ...(customizing && customAgreement ? { custom_agreement_template: customAgreement } : {}),
       });
       toast.success("Payment plan created · client emailed for signature");
       onCreated?.();
@@ -244,7 +278,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
             <div className="bg-bgBase/60 border border-bgHover rounded p-2"
                  data-testid="plan-preview">
               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-1">
-                <i className="fas fa-eye mr-1"/>Preview · {installments.length} payments
+                <i className="fas fa-eye mr-1"/>Schedule · {installments.length} payments
               </p>
               <div className="space-y-0.5 text-[12px] text-gray-300">
                 {installments.map((i, idx) => (
@@ -253,6 +287,48 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
                     <span className="font-black">{fmt(i.amount)}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Sprint 110ck — live agreement preview with THIS client's real
+              values populated. Operator can also click "Customize" to edit
+              the agreement just for this client. */}
+          {client && settings && tplToUse && (
+            <div className="border border-shGreen/30 rounded">
+              <div className="px-3 py-2 bg-shGreen/10 border-b border-shGreen/30 flex items-baseline justify-between">
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shGreen">
+                  <i className="fas fa-file-signature mr-1"/>
+                  Agreement preview · <span className="text-white">{client.name}</span> will see this
+                </p>
+                <button type="button"
+                        onClick={() => {
+                          if (!customizing) setCustomAgreement(settings.agreement_html || "");
+                          setCustomizing(!customizing);
+                        }}
+                        data-testid="customize-agreement-toggle"
+                        className="text-[10px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                  {customizing ? "✓ Customizing" : <><i className="fas fa-pen mr-1"/>Customize for this client</>}
+                </button>
+              </div>
+              {customizing ? (
+                <div className="p-2">
+                  <p className="text-[11px] text-gray-400 mb-2">
+                    Edit the agreement text below. Use the toolbar buttons + auto-fill chips at the bottom — they&apos;ll be replaced with <strong className="text-white">{client.name}</strong>&apos;s real info when sent. The preview will update as you type.
+                  </p>
+                  <RichTextEditor
+                    value={customAgreement}
+                    onChange={setCustomAgreement}
+                    rows={10}
+                    testId="custom-agreement"
+                    variables={["business_name", "client_name", "program_name", "total_amount", "installment_count", "installment_amount", "schedule_list"]}
+                  />
+                </div>
+              ) : null}
+              <div className="bg-white p-4 max-h-[300px] overflow-y-auto"
+                   data-testid="agreement-live-preview">
+                <div className="prose prose-sm max-w-none text-gray-900"
+                     dangerouslySetInnerHTML={{ __html: renderedAgreement }}/>
               </div>
             </div>
           )}
