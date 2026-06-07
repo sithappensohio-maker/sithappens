@@ -1977,32 +1977,55 @@ def _credit_balance_field(service_type: str) -> Optional[str]:
 
 
 
-async def _consume_credit_lots(client_id: str, qty: int, service_type: str = "daycare") -> tuple:
+async def _consume_credit_lots(
+    client_id: str,
+    qty: int,
+    service_type: str = "daycare",
+    prefer_program_id: Optional[str] = None,
+) -> tuple:
     """FIFO consumption: oldest lot first, filtered by `service_type` so daycare
-    credits and training credits stay in their own pools. Returns
-    (total_value, [lot_ids_touched]). If lots don't cover qty, the remainder
-    is valued at $0 — preserves balance integrity without inventing revenue."""
+    credits and training credits stay in their own pools.
+
+    Sprint 110bx — when `prefer_program_id` is set (typically the dog's active
+    training program), lots tagged with that `program_id` are exhausted FIRST
+    (oldest-first within that program), then we fall back to other lots in the
+    same service pool. Lets "Buddy's Puppy Preschool session" pull from his
+    Puppy Preschool lot before generic training credits.
+
+    Returns (total_value, [lot_ids_touched]). If lots don't cover qty, the
+    remainder is valued at $0 — preserves balance integrity without inventing
+    revenue."""
     remaining = qty
     total_value = 0.0
     touched: List[str] = []
-    cursor = db.credit_lots.find(
-        {"client_id": client_id, "qty_remaining": {"$gt": 0}, "service_type": service_type},
-        {"_id": 0},
-    ).sort("purchased_at", 1)
-    async for lot in cursor:
+
+    async def _drain(filter_extra: dict):
+        nonlocal remaining, total_value
         if remaining <= 0:
-            break
-        take = min(remaining, int(lot.get("qty_remaining") or 0))
-        if take <= 0:
-            continue
-        value = float(lot.get("value_each") or 0) * take
-        await db.credit_lots.update_one(
-            {"id": lot["id"]},
-            {"$inc": {"qty_remaining": -take}, "$set": {"last_redeemed_at": now_iso()}},
-        )
-        total_value += value
-        touched.append(lot["id"])
-        remaining -= take
+            return
+        cursor = db.credit_lots.find(
+            {"client_id": client_id, "qty_remaining": {"$gt": 0},
+             "service_type": service_type, **filter_extra},
+            {"_id": 0},
+        ).sort("purchased_at", 1)
+        async for lot in cursor:
+            if remaining <= 0:
+                break
+            take = min(remaining, int(lot.get("qty_remaining") or 0))
+            if take <= 0:
+                continue
+            value = float(lot.get("value_each") or 0) * take
+            await db.credit_lots.update_one(
+                {"id": lot["id"]},
+                {"$inc": {"qty_remaining": -take}, "$set": {"last_redeemed_at": now_iso()}},
+            )
+            total_value += value
+            touched.append(lot["id"])
+            remaining -= take
+
+    if prefer_program_id:
+        await _drain({"program_id": prefer_program_id})
+    await _drain({})  # Fall back to any remaining lot in this service pool
     return round(total_value, 2), touched
 
 
@@ -2873,7 +2896,22 @@ async def check_out(
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = int((client_doc or {}).get(balance_field) or 0)
         if available >= nights and nights > 0:
-            credit_value, lot_ids = await _consume_credit_lots(booking["client_id"], nights, svc_type)
+            # Sprint 110bx — prefer the dog's active training program's lot
+            prefer_pid = None
+            if svc_type == "training" and booking.get("dog_id"):
+                dog_doc = await db.dogs.find_one({"id": booking["dog_id"]},
+                                                 {"_id": 0, "active_program_id": 1})
+                if dog_doc and dog_doc.get("active_program_id"):
+                    enrol = await db.dog_programs.find_one(
+                        {"id": dog_doc["active_program_id"]},
+                        {"_id": 0, "program_id": 1},
+                    )
+                    if enrol:
+                        prefer_pid = enrol.get("program_id")
+            credit_value, lot_ids = await _consume_credit_lots(
+                booking["client_id"], nights, svc_type,
+                prefer_program_id=prefer_pid,
+            )
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
             # Sprint 110g — fire low-credit email if this checkout dropped the
             # pool to ≤ 2. Idempotent per (client, pool, threshold) so we
@@ -6197,6 +6235,8 @@ class ModuleIn(BaseModel):
     description: Optional[str] = ""
     order: int = 0
     goals: List[GoalIn] = []
+    # Sprint 110bx — homework auto-assigned when this module flips to "mastered"
+    homework_template_id: Optional[str] = None
 
 
 class ProgramIn(BaseModel):
@@ -6212,6 +6252,8 @@ class ProgramIn(BaseModel):
     completion_rule: Dict = Field(default_factory=_default_completion_rule)
     price: float = 0  # client-facing price for this program (whole package)
     active: bool = True
+    # Sprint 110bx — auto-assigned on enrollment ("welcome homework")
+    welcome_homework_template_id: Optional[str] = None
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -6234,6 +6276,7 @@ def _stamp_ids(modules: List[dict]) -> List[dict]:
             "description": m.get("description", ""),
             "order": m.get("order", m_i),
             "goals": goals,
+            "homework_template_id": m.get("homework_template_id"),
         })
     return out
 
@@ -6485,6 +6528,7 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
             "format": program.get("format"),
             "modules": program.get("modules") or [],
             "completion_rule": program.get("completion_rule") or _default_completion_rule(),
+            "welcome_homework_template_id": program.get("welcome_homework_template_id"),
         },
         "status": "active",
         "started_at": started,
@@ -6501,6 +6545,11 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
     if not dog.get("active_program_id"):
         await db.dogs.update_one({"id": dog_id}, {"$set": {"active_program_id": enrollment["id"]}})
     enrollment.pop("_id", None)
+    # Sprint 110bx — fire welcome-homework auto-assign if the program defines one
+    try:
+        await _auto_assign_welcome_homework(enrollment)
+    except Exception as exc:
+        logger.warning("Welcome homework auto-assign failed: %s", exc)
     return _enrollment_summary(enrollment)
 
 
@@ -6563,6 +6612,166 @@ class GoalUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+
+# ─── Sprint 110bx · Auto-homework engine for training programs ────────────
+#
+# Two triggers (Q2c):
+#   1. On enrollment → assign `program.welcome_homework_template_id` (if set)
+#   2. On module mark-complete → assign `module.homework_template_id` (if set)
+#
+# Each trigger creates a real `homework` row from the template snapshot AND
+# emails the client (Q3b — via existing notify_client_homework_assigned).
+#
+# Idempotency: we don't auto-assign the same template to the same dog twice
+# from the same enrollment. Stored in dog_programs.auto_homework_log so the
+# state is per-enrollment (re-enrolling after completion can re-fire).
+
+def _already_auto_assigned(enrollment: dict, template_id: str, trigger: str) -> bool:
+    log = enrollment.get("auto_homework_log") or []
+    return any(e.get("template_id") == template_id and e.get("trigger") == trigger
+               for e in log)
+
+
+async def _record_auto_assign(enrollment_id: str, template_id: str, trigger: str,
+                              homework_id: str) -> None:
+    await db.dog_programs.update_one(
+        {"id": enrollment_id},
+        {"$push": {"auto_homework_log": {
+            "template_id": template_id,
+            "trigger": trigger,           # "enrollment" or "module:<goal_id>"
+            "homework_id": homework_id,
+            "assigned_at": now_iso(),
+        }}},
+    )
+
+
+async def _create_homework_from_template_internal(
+    dog: dict, client: Optional[dict], template_id: str,
+    assigned_by: str = "Auto-assigned",
+) -> Optional[dict]:
+    """Internal homework-from-template creator. Mirrors the body of
+    /homework/from-template but callable from auto-triggers. Returns the
+    new doc, or None if the template/dog is invalid."""
+    tpl = await db.homework_templates.find_one({"id": template_id}, {"_id": 0})
+    if not tpl:
+        return None
+    due = ""
+    if tpl.get("default_duration_days"):
+        due = (business_today() + timedelta(days=int(tpl["default_duration_days"]))).isoformat()
+    is_daily = bool(tpl.get("daily_tracker"))
+    total_days = 0
+    if is_daily:
+        secs = [s for s in tpl.get("sections", []) if s.get("day_number")]
+        total_days = len(secs) or int(tpl.get("default_duration_days") or 0)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog["id"],
+        "dog_name": dog.get("name", ""),
+        "client_id": dog.get("owner_id", ""),
+        "client_name": (client or {}).get("name", ""),
+        "title": tpl["name"],
+        "instructions": tpl.get("description", ""),
+        "video_url": "",
+        "due_date": due,
+        "status": "assigned",
+        "created_at": now_iso(),
+        "assigned_by": assigned_by,
+        "completed_at": None,
+        "completion_note": "",
+        "completion_photo": "",
+        "template_snapshot": {
+            "template_id": tpl["id"],
+            "slug": tpl.get("slug"),
+            "name": tpl.get("name"),
+            "tier": tpl.get("tier"),
+            "description": tpl.get("description"),
+            "cover_color": tpl.get("cover_color"),
+            "icon": tpl.get("icon"),
+            "global_rules_this_week": tpl.get("global_rules_this_week", []),
+            "sections": tpl.get("sections", []),
+        },
+        "section_logs": [],
+        "daily_tracker": is_daily,
+        "total_days": total_days,
+        "auto_assigned": True,  # marker so admin can spot trigger-driven rows
+    }
+    await db.homework.insert_one(doc)
+    doc.pop("_id", None)
+    if client:
+        try:
+            await notify_client_homework_assigned(doc, client)
+        except Exception as exc:
+            logger.warning("Auto-homework email failed for %s: %s", doc.get("id"), exc)
+    return doc
+
+
+async def _auto_assign_welcome_homework(enrollment: dict) -> Optional[dict]:
+    """Called immediately after a new dog_programs row is inserted."""
+    snap = enrollment.get("program_snapshot") or {}
+    template_id = snap.get("welcome_homework_template_id")
+    if not template_id:
+        return None
+    if _already_auto_assigned(enrollment, template_id, "enrollment"):
+        return None
+    dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
+    if not dog:
+        return None
+    client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
+    hw = await _create_homework_from_template_internal(
+        dog, client, template_id,
+        assigned_by=f"Auto · {snap.get('name', 'Program')} welcome",
+    )
+    if hw:
+        await _record_auto_assign(enrollment["id"], template_id, "enrollment", hw["id"])
+    return hw
+
+
+async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: str) -> Optional[dict]:
+    """Called when a goal flips to `mastered`. Finds the module that owns
+    this goal; if ALL goals in that module are now mastered, assigns the
+    module's homework template."""
+    snap = enrollment.get("program_snapshot") or {}
+    modules = snap.get("modules") or []
+    # Find the parent module of this goal
+    parent_module = None
+    for m in modules:
+        if any(g.get("id") == just_mastered_goal_id for g in m.get("goals", [])):
+            parent_module = m
+            break
+    if not parent_module:
+        return None
+    template_id = parent_module.get("homework_template_id")
+    if not template_id:
+        return None
+
+    # All goals in this module must now be mastered (look up current progress)
+    fresh = await db.dog_programs.find_one({"id": enrollment["id"]}, {"_id": 0}) or enrollment
+    progress = fresh.get("goal_progress") or {}
+    module_goal_ids = [g["id"] for g in parent_module.get("goals", [])]
+    all_mastered = all(
+        (progress.get(gid) or {}).get("status") == "mastered"
+        for gid in module_goal_ids
+    )
+    if not all_mastered:
+        return None
+
+    trigger = f"module:{parent_module['id']}"
+    if _already_auto_assigned(fresh, template_id, trigger):
+        return None
+    dog = await db.dogs.find_one({"id": enrollment["dog_id"]}, {"_id": 0})
+    if not dog:
+        return None
+    client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
+    hw = await _create_homework_from_template_internal(
+        dog, client, template_id,
+        assigned_by=f"Auto · {parent_module.get('name', 'Module')} complete",
+    )
+    if hw:
+        await _record_auto_assign(enrollment["id"], template_id, trigger, hw["id"])
+    return hw
+
+
+
 @api.put("/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}")
 async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin)):
     enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
@@ -6570,6 +6779,7 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
         raise HTTPException(status_code=404, detail="Enrollment not found")
     progress = enrollment.get("goal_progress") or {}
     cur = progress.get(goal_id) or {"status": "not_started", "score": 0, "notes": "", "last_session_at": None}
+    prior_status = cur.get("status")
     if body.status is not None:
         cur["status"] = body.status
     if body.score is not None:
@@ -6586,6 +6796,14 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
     progress[goal_id] = cur
     await db.dog_programs.update_one({"id": enrollment_id}, {"$set": {"goal_progress": progress}})
     enrollment["goal_progress"] = progress
+
+    # Sprint 110bx — auto-assign that module's homework when it flips to "mastered"
+    if cur.get("status") == "mastered" and prior_status != "mastered":
+        try:
+            await _auto_assign_module_homework(enrollment, goal_id)
+        except Exception as exc:
+            logger.warning("Auto-homework module trigger failed: %s", exc)
+
     # Auto-complete the enrollment if the configured completion_rule is now satisfied.
     enrollment = await _auto_complete_if_satisfied(enrollment)
     # 🏆 Re-evaluate trophy eligibility for this dog (skill mastery + program completion).
@@ -14207,6 +14425,7 @@ async def sell_training_program(
                     "format": fmt,
                     "modules": program.get("modules") or [],
                     "completion_rule": program.get("completion_rule") or _default_completion_rule(),
+                    "welcome_homework_template_id": program.get("welcome_homework_template_id"),
                 },
                 "status": "active",
                 "started_at": started,
@@ -14224,6 +14443,11 @@ async def sell_training_program(
                 await db.dogs.update_one({"id": dog["id"]},
                                          {"$set": {"active_program_id": enrollment["id"]}})
             enrollment.pop("_id", None)
+            # Sprint 110bx — fire welcome homework auto-assign
+            try:
+                await _auto_assign_welcome_homework(enrollment)
+            except Exception as exc:
+                logger.warning("Sell-program welcome homework failed: %s", exc)
             enrollment_summary = _enrollment_summary(enrollment)
 
     lot.pop("_id", None)

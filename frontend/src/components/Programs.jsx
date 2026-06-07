@@ -69,7 +69,7 @@ export function ProgramsPanel() {
       <div className="flex items-center justify-between">
         <div>
           <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Training Programs</h4>
-          <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website's standard lineup.</p>
+          <p className="text-[14px] text-gray-300 mt-1">Tiers and curricula you offer. Seeded from your website&rsquo;s standard lineup.</p>
         </div>
         <button onClick={()=>startNew()} data-testid="prog-new"
                 className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow"><i className="fas fa-plus mr-1"/>New Program</button>
@@ -108,6 +108,15 @@ export function ProgramsPanel() {
  *  Program editor modal — used for both standard and custom programs
  * ============================================================ */
 export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "" }) {
+  // Sprint 110bx — load homework templates so we can pick which one auto-sends
+  // on enrollment (welcome) and after a module is mastered.
+  const [hwTemplates, setHwTemplates] = useState([]);
+  useEffect(() => {
+    api.get("/homework-templates")
+      .then(r => setHwTemplates(r.data || []))
+      .catch(() => setHwTemplates([]));
+  }, []);
+
   const set = (patch) => setProgram(p => ({ ...p, ...patch }));
   const addModule = () => set({ modules: [...(program.modules||[]), { name: "New module", description: "", goals: [] }] });
   const removeModule = (i) => set({ modules: program.modules.filter((_, j) => j !== i) });
@@ -143,8 +152,12 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
           <Field label="Focus (short summary)"><input value={program.focus||""} onChange={(e)=>set({focus:e.target.value})} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Format count"><input type="number" min="1" value={program.format?.count||1} onChange={(e)=>set({format:{...program.format, count: parseInt(e.target.value)||1}})} className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/></Field>
-            <Field label="Format unit">
+            <Field label="Sessions / credits issued">
+              <input type="number" min="1" value={program.format?.count||1} onChange={(e)=>set({format:{...program.format, count: parseInt(e.target.value)||1}})} data-testid="prog-format-count"
+                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+              <p className="text-[12px] text-gray-500 mt-1 normal-case font-normal tracking-normal">When a client buys this program they get this many credits.</p>
+            </Field>
+            <Field label="Unit">
               <select value={program.format?.unit||"sessions"} onChange={(e)=>set({format:{...program.format, unit: e.target.value}})}
                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
                 <option value="sessions">Sessions</option><option value="weeks">Weeks</option><option value="days">Days</option><option value="months">Months</option>
@@ -159,6 +172,22 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                    placeholder="e.g. 450.00"
                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
             <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
+          </Field>
+
+          {/* Sprint 110bx — Welcome homework: auto-sent the moment the dog is enrolled */}
+          <Field label="Welcome homework (auto-sent on enrollment)">
+            <select value={program.welcome_homework_template_id||""}
+                    onChange={(e)=>set({welcome_homework_template_id: e.target.value || null})}
+                    data-testid="prog-welcome-hw"
+                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="">— None (no welcome homework) —</option>
+              {hwTemplates.map(t => (
+                <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
+              ))}
+            </select>
+            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
+              <i className="fas fa-envelope mr-1 text-shGreen"/>Auto-creates a homework row + emails the client the moment a dog is enrolled in this program.
+            </p>
           </Field>
 
           {allPrograms.length > 0 && !hideTypePicker && (
@@ -218,6 +247,23 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                   <input value={m.description||""} onChange={(e)=>updateModule(mi, {description:e.target.value})}
                          placeholder="Module description (optional)"
                          className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-gray-300 mb-2" />
+                  {/* Sprint 110bx — homework auto-assigned when this module's goals are all mastered */}
+                  <div className="mb-2 bg-shGreen/5 border border-shGreen/30 rounded p-2">
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-shGreen">
+                        <i className="fas fa-envelope-open-text mr-1"/>Homework when this module is completed
+                      </span>
+                      <select value={m.homework_template_id||""}
+                              onChange={(e)=>updateModule(mi, {homework_template_id: e.target.value || null})}
+                              data-testid={`prog-module-hw-${mi}`}
+                              className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-1.5 text-white text-[13px]">
+                        <option value="">— None (no auto-homework for this module) —</option>
+                        {hwTemplates.map(t => (
+                          <option key={t.id} value={t.id}>{t.name}{t.tier ? ` · ${t.tier}` : ""}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                   <div className="space-y-1">
                     {(m.goals||[]).map((g, gi) => (
                       <div key={gi} className="bg-bgPanel rounded px-2 py-1.5">

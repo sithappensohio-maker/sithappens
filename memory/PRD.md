@@ -29,6 +29,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+
+## Sprint 110bx — Training Program Automated Homework Loop (2026-06-08)
+- ✅ **Program-aware FIFO credit redemption** — `redeem_training_credit` now consumes `credit_lots` matched to the dog's enrolled `program_id` first, then falls back to generic training credits. Prevents accidentally burning Puppy Preschool credits on an Advanced Obedience session.
+- ✅ **Program Editor pickers** in `Programs.jsx`:
+  - "Welcome Homework Template" dropdown — auto-emails this homework when a dog is enrolled (sell-program or manual enroll).
+  - Per-module "Module Completion Homework Template" dropdown — auto-emails when that module is logged as complete in a training session.
+- ✅ **Backend wiring**:
+  - `programs.welcome_homework_template_id` + `programs.modules[*].homework_template_id` persisted.
+  - `_assign_program_homework(program, dog, client, template_id, label)` helper builds a `homework_assignments` row, sends via Resend, and writes an audit row to `notifications_log`.
+  - Hooks fire on (a) `sell-program` enrol path and (b) `POST /training/sessions` when `module_completed == True`.
+- ✅ **Tests** `test_program_homework_loop.py` — 5/5 passing: welcome-homework sends on enrol, module-completion sends once per module, no duplicate sends for re-logged modules, missing template is a no-op, FIFO credit redemption respects program_id.
+- ✅ Lint clean. CRA dev build healthy. Frontend screenshots confirm Program Editor + pickers render correctly.
+- 🎯 **User impact**: One-time program setup; every new dog enrolled gets their welcome homework + per-module follow-ups auto-emailed — zero manual trainer effort.
+
+
 ## Sprint 110bw — Sell training programs as credit packs (2026-06-07)
 - ✅ **`POST /clients/{client_id}/sell-program`** — sells a training program: creates a `credit_lots` row tagged `pack_kind: "training_program"` + `program_id`, increments `clients.training_credits` by the program's session count, optionally enrols a specific dog into the program (`dog_id` field) so the trainer can start logging sessions immediately. Supports override_price (manual admin discount) + payment_method (cash/card/venmo/check/other/complimentary).
 - ✅ **Double-enrol prevention** — selling the same program twice for the same dog issues fresh credits but returns the existing active `dog_programs` row instead of inserting a duplicate.
