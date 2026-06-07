@@ -30,6 +30,24 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110ci — Replaced HTML textareas with friendly WYSIWYG editors (2026-06-08)
+**User complaint**: "Why are things asking me for HTML code? I don't know how to do that."
+
+- ✅ **New reusable `RichTextEditor` component** (`/app/frontend/src/components/RichTextEditor.jsx`):
+  - `contentEditable` div with a friendly toolbar: **Bold · Italic · Underline · Bullet list · Numbered list · Link · Clear formatting**.
+  - Click-to-insert **variable chips** for `{{client_name}}`, `{{total_amount}}`, etc. — drops the placeholder at the caret position.
+  - Placeholder shows when empty.
+  - Outputs clean HTML compatible with every existing `dangerouslySetInnerHTML` renderer (emails, agreements, previews).
+- ✅ **Replaced raw HTML textareas in 3 places**:
+  - Email Designer → Branding → **Signature** + **Footer text** (was 2 monospace textareas with `<p>` tags).
+  - Email Designer → Template Editor → **Email body** + **Sign-off** (had a manual toolbar that inserted tags; now full WYSIWYG).
+  - Settings → Payment Plans → **Agreement text** (the big one — operator now types their whole legal agreement like a Word doc).
+- ✅ All labels rewritten — no more "(HTML)" suffixes anywhere. New helper text explains what each field is for in plain English.
+- ✅ Removed now-dead code: `ToolbarBtn` component + `applyFormatting` + `insertVar` + `introRef` + `useRef` import from EmailDesignerPanel. Lint clean on all 3 affected files.
+- 🎯 **User impact**: Zero HTML in the UI. Operator types like Microsoft Word, clicks Bold/Italic/Bullet, and the system writes the HTML behind the scenes. Variable chips remain for power moves.
+
+
+
 ## Sprint 110ch — Payment Plans for Big-Ticket Items (2026-06-08)
 **User ask**: "For my expensive offerings I want a payment agreement and ways for me and the client to see what's due, what's paid, upcoming. Settings to change the agreement at will. Agreement should be clear."
 

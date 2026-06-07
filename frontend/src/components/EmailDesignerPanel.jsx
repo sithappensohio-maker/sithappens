@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import RichTextEditor from "./RichTextEditor";
 
 /**
  * Sprint 110by — Email Designer.
@@ -102,28 +103,29 @@ function BrandingCard() {
 
       <div className="mt-4">
         <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
-          Signature (HTML, appears above the footer)
+          Signature
         </label>
-        <textarea
-          data-testid="signature-html"
-          rows={4}
+        <p className="text-[11px] text-gray-500 mb-2">Appears above the footer of every email. Type your name, contact info, anything you&apos;d normally write at the bottom of an email.</p>
+        <RichTextEditor
           value={draft.signature_html}
-          onChange={e => update("signature_html", e.target.value)}
-          placeholder={'<p>— Jamie</p><p>Sit Happens · (555) 555-5555</p>'}
-          className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white font-mono"
+          onChange={v => update("signature_html", v)}
+          testId="signature-html"
+          rows={4}
+          placeholder="— Jamie · Sit Happens · (555) 555-5555"
         />
       </div>
 
       <div className="mt-4">
         <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
-          Footer text (HTML)
+          Footer text
         </label>
-        <textarea
-          data-testid="footer-html"
-          rows={3}
+        <p className="text-[11px] text-gray-500 mb-2">Small fine-print text at the very bottom of every email.</p>
+        <RichTextEditor
           value={draft.footer_html}
-          onChange={e => update("footer_html", e.target.value)}
-          className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white font-mono"
+          onChange={v => update("footer_html", v)}
+          testId="footer-html"
+          rows={3}
+          placeholder="Sit Happens · Dog Training · Daycare · Boarding"
         />
       </div>
 
@@ -271,7 +273,6 @@ function TemplateEditorModal({ slug, onClose }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [testTo, setTestTo] = useState("");
-  const introRef = useRef(null);
 
   useEffect(() => {
     api.get(`/admin/email-templates/${slug}`)
@@ -295,41 +296,6 @@ function TemplateEditorModal({ slug, onClose }) {
       </div>
     );
   }
-
-  const insertVar = (v) => {
-    const placeholder = `{{${v}}}`;
-    const el = introRef.current;
-    if (!el) return;
-    const start = el.selectionStart ?? draft.intro_html.length;
-    const end = el.selectionEnd ?? draft.intro_html.length;
-    const next = draft.intro_html.slice(0, start) + placeholder + draft.intro_html.slice(end);
-    setDraft({ ...draft, intro_html: next });
-    // Re-focus and place caret after the inserted placeholder
-    setTimeout(() => {
-      el.focus();
-      el.setSelectionRange(start + placeholder.length, start + placeholder.length);
-    }, 0);
-  };
-
-  const applyFormatting = (wrap) => {
-    const el = introRef.current;
-    if (!el) return;
-    const start = el.selectionStart ?? 0;
-    const end = el.selectionEnd ?? 0;
-    const selected = draft.intro_html.slice(start, end);
-    if (!selected) return;
-    let wrapped;
-    if (wrap === "b") wrapped = `<strong>${selected}</strong>`;
-    else if (wrap === "i") wrapped = `<em>${selected}</em>`;
-    else if (wrap === "link") {
-      const url = prompt("Link URL?", "https://");
-      if (!url) return;
-      wrapped = `<a href="${url}">${selected}</a>`;
-    } else if (wrap === "br") wrapped = `${selected}<br/>`;
-    else return;
-    const next = draft.intro_html.slice(0, start) + wrapped + draft.intro_html.slice(end);
-    setDraft({ ...draft, intro_html: next });
-  };
 
   const save = async () => {
     setBusy(true);
@@ -430,38 +396,19 @@ function TemplateEditorModal({ slug, onClose }) {
 
           <div>
             <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
-              Body intro · HTML allowed
+              Email body
             </label>
-            <div className="bg-bgInput border border-bgHover rounded-t border-b-0 px-2 py-1.5 flex flex-wrap gap-1 text-xs">
-              <ToolbarBtn onClick={() => applyFormatting("b")} icon="fa-bold" label="Bold"/>
-              <ToolbarBtn onClick={() => applyFormatting("i")} icon="fa-italic" label="Italic"/>
-              <ToolbarBtn onClick={() => applyFormatting("link")} icon="fa-link" label="Link"/>
-              <ToolbarBtn onClick={() => applyFormatting("br")} icon="fa-paragraph" label="Line break"/>
-            </div>
-            <textarea
-              ref={introRef}
-              data-testid="tpl-intro"
-              rows={6}
+            <p className="text-[11px] text-gray-500 mb-2">
+              The main message. Use the toolbar to bold/italicize, add lists, or insert links. Click a variable chip to drop in the client&apos;s name, dog name, etc.
+            </p>
+            <RichTextEditor
               value={draft.intro_html}
-              onChange={e => setDraft({ ...draft, intro_html: e.target.value })}
-              placeholder={tpl.defaults.intro_html}
-              className="w-full bg-bgInput border border-bgHover rounded-b px-3 py-2 text-sm text-white font-mono"
+              onChange={v => setDraft({ ...draft, intro_html: v })}
+              testId="tpl-intro"
+              rows={6}
+              placeholder={tpl.defaults.intro_html || "Type your message…"}
+              variables={tpl.variables || []}
             />
-            {tpl.variables.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest mr-1">Insert:</span>
-                {tpl.variables.map(v => (
-                  <button
-                    key={v}
-                    onClick={() => insertVar(v)}
-                    data-testid={`var-chip-${v}`}
-                    className="bg-shBlue/15 hover:bg-shBlue/30 text-shBlue border border-shBlue/30 rounded px-2 py-0.5 text-[10px] font-black tracking-wider"
-                  >
-                    {`{{${v}}}`}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           <Field
@@ -474,15 +421,15 @@ function TemplateEditorModal({ slug, onClose }) {
 
           <div>
             <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
-              Optional sign-off block (HTML, appears below the data rows)
+              Sign-off (optional)
             </label>
-            <textarea
-              data-testid="tpl-signoff"
-              rows={3}
+            <p className="text-[11px] text-gray-500 mb-2">Extra text below the data rows — like &ldquo;Need help? Reply to this email anytime.&rdquo; Leave blank to skip.</p>
+            <RichTextEditor
               value={draft.signoff_html}
-              onChange={e => setDraft({ ...draft, signoff_html: e.target.value })}
-              placeholder="<p>Need help? Reply to this email anytime.</p>"
-              className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white font-mono"
+              onChange={v => setDraft({ ...draft, signoff_html: v })}
+              testId="tpl-signoff"
+              rows={3}
+              placeholder="Need help? Reply to this email anytime."
             />
           </div>
 
@@ -542,19 +489,6 @@ function TemplateEditorModal({ slug, onClose }) {
         </div>
       </div>
     </div>
-  );
-}
-
-function ToolbarBtn({ onClick, icon, label }) {
-  return (
-    <button
-      onClick={onClick}
-      title={label}
-      type="button"
-      className="text-gray-400 hover:text-white hover:bg-bgHover rounded px-2 py-1 text-xs"
-    >
-      <i className={`fas ${icon}`}/>
-    </button>
   );
 }
 

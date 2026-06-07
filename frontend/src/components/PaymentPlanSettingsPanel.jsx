@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import RichTextEditor from "./RichTextEditor";
 
 /**
  * Sprint 110ch — Payment plans admin settings.
@@ -86,20 +87,20 @@ export default function PaymentPlanSettingsPanel() {
         </div>
 
         <div className="mb-3">
-          <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">Agreement (HTML)</label>
-          <div className="flex flex-wrap items-center gap-1.5 mb-1 text-[10px]">
-            <span className="text-gray-500 font-black uppercase tracking-widest mr-1">Available variables:</span>
-            {["business_name", "client_name", "program_name", "total_amount", "installment_count", "installment_amount", "schedule_list"].map(v => (
-              <span key={v} className="bg-shBlue/15 text-shBlue border border-shBlue/30 rounded px-1.5 py-0.5 font-black">
-                {`{{${v}}}`}
-              </span>
-            ))}
-          </div>
-          <textarea rows={14} value={draft.agreement_html || ""}
-                    onChange={e => update("agreement_html", e.target.value)}
-                    data-testid="plan-agreement-html"
-                    placeholder="<p>By signing below the client agrees to…</p>"
-                    className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white font-mono leading-relaxed" />
+          <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+            Agreement text
+          </label>
+          <p className="text-[11px] text-gray-500 mb-2">
+            Type your agreement like a normal document. Use the toolbar to bold/italicize, add lists, or insert clickable links. Click a variable chip to drop in your client&apos;s name, the total amount, etc. — the system fills them in automatically.
+          </p>
+          <RichTextEditor
+            value={draft.agreement_html || ""}
+            onChange={v => update("agreement_html", v)}
+            testId="plan-agreement-html"
+            rows={14}
+            placeholder="By signing below, the client agrees to the schedule and terms above…"
+            variables={["business_name", "client_name", "program_name", "total_amount", "installment_count", "installment_amount", "schedule_list"]}
+          />
         </div>
 
         <div className="flex gap-2">
