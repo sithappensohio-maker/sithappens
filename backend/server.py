@@ -10745,6 +10745,9 @@ async def startup():
         (db.reschedule_requests, [("status", 1), ("created_at", -1)], {}),
         (db.reschedule_requests, "client_id", {}),
         (db.reschedule_requests, "booking_id", {}),
+        # Sprint 110cn — new staff-portal collections.
+        (db.punch_corrections, [("status", 1), ("created_at", -1)], {}),
+        (db.punch_corrections, "user_id", {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -13801,6 +13804,8 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
     client_ids = list({b["client_id"] for b in bookings if b.get("client_id")})
     dogs = await db.dogs.find(
         {"id": {"$in": dog_ids}},
+        # Sprint 110cn — surface `vaccines` so the roster card can flag
+        # missing/expiring rabies/dhpp/bordetella before staff lets the dog in.
         {"_id": 0, "photo": 0, "photos": 0, "training_logs": 0},
     ).to_list(1000) if dog_ids else []
     clients = await db.clients.find(
@@ -13833,8 +13838,277 @@ async def employee_roster_today(user: dict = Depends(require_employee_or_admin))
             "client_name": b.get("client_name") or c.get("name"),
             "client_phone": c.get("phone"),
             "client_emergency": c.get("emerg"),
+            # Sprint 110cn — vaccine expiry data + completion log so the
+            # roster card can render warning banners + confirmation checkboxes.
+            "vaccines": d.get("vaccines") or {},
+            "is_birthday": _is_dog_birthday_today(d.get("birthday") or d.get("date_of_birth"), today),
+            "feeding_log": b.get("feeding_log") or [],
+            "medication_log": b.get("medication_log") or [],
+            "bathroom_log": b.get("bathroom_log") or {"pee": 0, "poop": 0},
         })
     return {"date": today, "roster": roster}
+
+
+def _is_dog_birthday_today(dob: Optional[str], today: str) -> bool:
+    """Returns True if the dog's birthday is today (same month/day, any year)."""
+    if not dob or len(dob) < 10:
+        return False
+    return dob[5:10] == today[5:10]
+
+
+# ─────────────────────── Sprint 110cn — Floor logging ───────────────────────
+# Staff-facing endpoints for the run sheet's day-to-day micro-actions:
+# medication confirmation, feeding confirmation, bathroom counters, and
+# incident reporting straight from the floor. All append to JSON arrays on
+# the booking doc itself so they're naturally linked to the visit and roll
+# up nicely into the post-visit report card.
+
+class MedFeedLogIn(BaseModel):
+    index: int = Field(ge=0, lt=50)              # which scheduled med/feeding
+    note: Optional[str] = Field(default="", max_length=200)
+    photo: Optional[str] = ""                    # data:image/...;base64 (≤ ~800kB)
+
+
+@api.post("/employee/bookings/{booking_id}/log-feeding")
+async def employee_log_feeding(
+    booking_id: str, body: MedFeedLogIn, user: dict = Depends(require_employee_or_admin),
+):
+    """Append a 'fed' confirmation to the booking's feeding_log."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    entry = {
+        "index": body.index,
+        "note": (body.note or "").strip(),
+        "photo": body.photo or "",
+        "at": now_iso(),
+        "by_id": user.get("id"),
+        "by_name": user.get("name") or user.get("email"),
+    }
+    await db.bookings.update_one({"id": booking_id}, {"$push": {"feeding_log": entry}})
+    return {"ok": True, "entry": entry}
+
+
+@api.post("/employee/bookings/{booking_id}/log-medication")
+async def employee_log_medication(
+    booking_id: str, body: MedFeedLogIn, user: dict = Depends(require_employee_or_admin),
+):
+    """Append a 'given' confirmation to the booking's medication_log. Photo
+    proof is encouraged for liability."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    entry = {
+        "index": body.index,
+        "note": (body.note or "").strip(),
+        "photo": body.photo or "",
+        "at": now_iso(),
+        "by_id": user.get("id"),
+        "by_name": user.get("name") or user.get("email"),
+    }
+    await db.bookings.update_one({"id": booking_id}, {"$push": {"medication_log": entry}})
+    return {"ok": True, "entry": entry}
+
+
+class BathroomTickIn(BaseModel):
+    kind: Literal["pee", "poop"]
+    delta: int = Field(default=1, ge=-1, le=1)   # +1 or -1 (undo)
+
+
+@api.post("/employee/bookings/{booking_id}/bathroom")
+async def employee_bathroom_tick(
+    booking_id: str, body: BathroomTickIn, user: dict = Depends(require_employee_or_admin),
+):
+    """Bump the pee/poop counter on a booking. Crucial for boarding clients
+    who want a transparent record of their dog's bathroom habits."""
+    b = await db.bookings.find_one({"id": booking_id}, {"_id": 0, "id": 1, "bathroom_log": 1})
+    if not b:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    log = b.get("bathroom_log") or {"pee": 0, "poop": 0}
+    log[body.kind] = max(0, int(log.get(body.kind, 0)) + body.delta)
+    await db.bookings.update_one({"id": booking_id}, {"$set": {"bathroom_log": log}})
+    return {"ok": True, "bathroom_log": log}
+
+
+class EmployeeIncidentIn(BaseModel):
+    dog_id: str
+    type: Literal["bite", "injury", "escape", "illness", "property_damage", "behavior", "other"] = "other"
+    severity: Literal["minor", "moderate", "severe"] = "minor"
+    description: str = Field(min_length=3, max_length=1000)
+    action_taken: Optional[str] = Field(default="", max_length=500)
+    photo: Optional[str] = ""                    # single photo data URL
+    vet_required: bool = False
+
+
+@api.post("/employee/incidents")
+async def employee_create_incident(body: EmployeeIncidentIn, user: dict = Depends(require_employee_or_admin)):
+    """Staff-facing incident logger. Auto-stamps time, employee, and on-site
+    state so we have a defensible record without the operator typing it later."""
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    client = await db.clients.find_one({"id": dog["owner_id"]}, {"_id": 0, "name": 1, "id": 1})
+    now = datetime.now(timezone.utc)
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": body.dog_id,
+        "dog_name": dog["name"],
+        "client_id": dog["owner_id"],
+        "client_name": (client or {}).get("name", ""),
+        "date": business_today().isoformat(),
+        "time": now.strftime("%H:%M"),
+        "type": body.type,
+        "severity": body.severity,
+        "description": body.description.strip(),
+        "witnesses": "",
+        "action_taken": (body.action_taken or "").strip(),
+        "photos": [body.photo] if body.photo else [],
+        "vet_required": bool(body.vet_required),
+        "follow_up_required": body.severity in ("moderate", "severe"),
+        "reported_by": user.get("name") or user.get("email") or "Staff",
+        "created_at": now_iso(),
+    }
+    await db.incidents.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ──────────── Punch correction requests ────────────
+class PunchCorrectionIn(BaseModel):
+    target_entry_id: Optional[str] = ""          # which time_clock_entries row, optional
+    target_date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
+    requested_clock_in: Optional[str] = ""       # ISO datetime
+    requested_clock_out: Optional[str] = ""      # ISO datetime
+    reason: str = Field(min_length=3, max_length=500)
+
+
+@api.get("/employee/punch-corrections")
+async def employee_list_punch_corrections(user: dict = Depends(require_employee_or_admin)):
+    """Staff sees their own correction requests. Admin sees all."""
+    q: Dict[str, Any] = {} if user.get("role") == "admin" else {"user_id": user.get("id")}
+    items = await db.punch_corrections.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
+@api.post("/employee/punch-corrections")
+async def employee_create_punch_correction(body: PunchCorrectionIn, user: dict = Depends(require_employee_or_admin)):
+    """Submit a correction request — admin will approve/deny + apply."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user.get("id"),
+        "user_name": user.get("name") or user.get("email"),
+        "target_entry_id": body.target_entry_id or "",
+        "target_date": body.target_date,
+        "requested_clock_in": body.requested_clock_in or "",
+        "requested_clock_out": body.requested_clock_out or "",
+        "reason": body.reason.strip(),
+        "status": "pending",                     # pending | approved | denied
+        "decided_by_id": "",
+        "decided_by_name": "",
+        "decided_at": "",
+        "admin_note": "",
+        "created_at": now_iso(),
+    }
+    await db.punch_corrections.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class PunchCorrectionDecisionIn(BaseModel):
+    decision: Literal["approved", "denied"]
+    admin_note: Optional[str] = Field(default="", max_length=500)
+
+
+@api.post("/employee/punch-corrections/{cid}/decision")
+async def employee_decide_punch_correction(
+    cid: str, body: PunchCorrectionDecisionIn, user: dict = Depends(require_admin),
+):
+    """Admin approves/denies a correction. On approve, the requested
+    clock_in/clock_out get applied to the time_clock_entries row (or a new
+    row is created if target_entry_id is empty)."""
+    req = await db.punch_corrections.find_one({"id": cid}, {"_id": 0})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req["status"] != "pending":
+        raise HTTPException(status_code=409, detail="Already decided")
+    update = {
+        "status": body.decision,
+        "decided_by_id": user.get("id"),
+        "decided_by_name": user.get("name") or user.get("email"),
+        "decided_at": now_iso(),
+        "admin_note": (body.admin_note or "").strip(),
+    }
+    await db.punch_corrections.update_one({"id": cid}, {"$set": update})
+
+    if body.decision == "approved":
+        # Apply to a time_clock_entries row.
+        target_id = req.get("target_entry_id")
+        patch = {}
+        if req.get("requested_clock_in"):
+            patch["clock_in_at"] = req["requested_clock_in"]
+        if req.get("requested_clock_out"):
+            patch["clock_out_at"] = req["requested_clock_out"]
+        if target_id:
+            await db.time_clock_entries.update_one({"id": target_id}, {"$set": patch})
+        elif patch:
+            # Create a fresh entry — staff forgot to clock in/out entirely.
+            row = {
+                "id": str(uuid.uuid4()),
+                "user_id": req["user_id"],
+                "user_name": req["user_name"],
+                "clock_in_at": patch.get("clock_in_at", ""),
+                "clock_out_at": patch.get("clock_out_at", ""),
+                "created_at": now_iso(),
+                "corrected_via_request_id": cid,
+            }
+            await db.time_clock_entries.insert_one(row)
+
+    req.update(update)
+    return req
+
+
+# ──────────── Staff trivia (no scoring, just learning) ────────────
+@api.get("/employee/trivia/quiz")
+async def employee_trivia_quiz(count: int = 5, _: dict = Depends(require_employee_or_admin)):
+    """Adaptive practice quiz for staff. Same question pool as the client
+    portal, but answering doesn't touch streaks/leaderboards — it's pure
+    learning. Helps staff get smarter about breeds, behavior, training."""
+    count = max(1, min(int(count), 10))
+    ladder: List[str] = []
+    for i in range(count):
+        pct = i / max(1, count - 1)
+        ladder.append("easy" if pct < 0.4 else "medium" if pct < 0.75 else "hard")
+    out: List[dict] = []
+    used: set = set()
+    for diff in ladder:
+        for filt in (
+            {"active": True, "difficulty": diff, "id": {"$nin": list(used)}},
+            {"active": True, "id": {"$nin": list(used)}},
+        ):
+            pool = await db.trivia_questions.find(filt, {"_id": 0}).limit(50).to_list(50)
+            if pool:
+                import random as _r
+                q = _r.choice(pool)
+                out.append(_strip_correct(q))
+                used.add(q["id"])
+                break
+    return {"questions": out}
+
+
+@api.post("/employee/trivia/answer")
+async def employee_trivia_answer(body: TriviaAnswerIn, _: dict = Depends(require_employee_or_admin)):
+    """Reveal the correct answer + the educational explanation, no scoring."""
+    q = await db.trivia_questions.find_one({"id": body.question_id, "active": True}, {"_id": 0})
+    if not q:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return {
+        "correct": body.chosen_index == q["correct_index"],
+        "correct_index": q["correct_index"],
+        "explanation": q.get("explanation") or "",
+    }
+
+
+
 
 
 # ────────────────────────── Expenses ──────────────────────────

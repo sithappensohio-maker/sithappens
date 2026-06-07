@@ -30,6 +30,53 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cn — Staff Portal P0 + Shift Adjust + Trivia (2026-06-08)
+
+**User ask**: "P0 [incident, vaccine banner, med confirm, feeding confirm] + shift adjust (punch corrections) + let staff play trivia."
+
+### Backend (15,958 → 16,338 LOC; +12 routes)
+- ✅ **`/employee/incidents` (POST)** — staff log incidents from the floor. Auto-stamps reporter name, time, on-site state. Type/severity validated. Single photo data-URL accepted. Auto-flags `follow_up_required` for moderate/severe.
+- ✅ **`/employee/bookings/{id}/log-feeding` (POST)** — appends timestamped confirmation to `feeding_log` array on the booking. Each entry carries the schedule index, optional note, optional photo, who logged it.
+- ✅ **`/employee/bookings/{id}/log-medication` (POST)** — same but for `medication_log`. Liability gold — photo proof one tap away.
+- ✅ **`/employee/bookings/{id}/bathroom` (POST)** — increments pee/poop counter (delta ±1, clamped to 0). Solves "did he go?" boarding-client question with hard data.
+- ✅ **`/employee/punch-corrections` (POST + GET)** — staff submits shift correction request. GET returns staff's own (or all, if admin).
+- ✅ **`/employee/punch-corrections/{id}/decision` (POST, admin only)** — approve auto-applies the requested clock_in/clock_out times to the matching `time_clock_entries` row (or creates a fresh row if staff forgot to clock in/out entirely).
+- ✅ **`/employee/trivia/quiz` + `/employee/trivia/answer`** — same question pool as the client portal, no scoring/streaks. Learning tool for staff (breeds, behavior, training).
+- ✅ Roster (`/employee/roster-today`) now surfaces `vaccines`, `feeding_log`, `medication_log`, `bathroom_log`, `is_birthday` per row so the staff app can render banners + confirmation checkboxes + bathroom counters without extra round-trips.
+- ✅ New `db.punch_corrections` collection indexed on `(status, created_at)` + `user_id`.
+
+### Frontend
+- ✅ **Floating "Log Incident" FAB** — always-visible red button (`emp-incident-fab`). Modal pre-loads today's roster so dog-picker is instant. Camera capture for photo proof.
+- ✅ **VaccineGuard banner on every roster card** — red if rabies/dhpp/bordetella expired or missing, orange if expiring within 14 days. Check-in is **blocked** with a `confirm()` if rabies is expired or missing (other vaccines warn only — per most jurisdictions only rabies is legally required).
+- ✅ **CarePoint rows** — tap a circle to confirm a feeding or medication. Becomes solid green ✓ once logged. Medications also get a camera icon → photo proof.
+- ✅ **BathroomCounter** — 💧 Pee · N | 💩 Poop · N pills under each on-site dog. Right-click (long-press on mobile) to decrement.
+- ✅ **Birthday banner** — auto-renders 🎂 on roster cards when today is the dog's birthday.
+- ✅ **TimecardTab → "Request correction" button** — per-row pencil icon to fix a specific punch, plus a global "I forgot entirely" button. New `PunchCorrectionModal` + history viewer.
+- ✅ **Staff Trivia tab** — 5-question adaptive quiz (easy/medium/hard ladder). Tap a choice → instant reveal with educational explanation. Real-time right/wrong count. "Play again" CTA.
+- ✅ **Admin → Staff → Corrections tab** — `PunchCorrectionsAdminTab` lists pending/approved/denied requests with one-tap approve + optional admin note that's stored on the row.
+
+### Tests
+- ✅ `tests/test_staff_portal_p0.py` — 10 new tests, all passing:
+  1. Staff can log incident with auto-stamped reporter
+  2. Incident rejects unknown dog
+  3. Staff can log feeding + medication (entries appear on roster)
+  4. Bathroom counter increments + undoes (delta ±1)
+  5. Bathroom counter clamps at 0
+  6. Roster includes vaccines + birthday flag
+  7. Staff submits and admin approves punch correction
+  8. Admin can deny + can't re-decide already-decided requests
+  9. Staff cannot decide their own correction (403)
+  10. Staff can play trivia (correct_index hidden in quiz payload)
+- ✅ Regression: full employee/staff suite (16 passed) — no regression in clock, pay, snapshot.
+
+### Smoke test (UI)
+Logged in as a fresh staff account → Roster shows red vaccine banners on every card, red "LOG INCIDENT" FAB bottom-right, Trivia tab renders an adaptive multiple-choice quiz, Timecard shows the correction button.
+
+### Bug squashed mid-build
+- `find_one({"id": x}, {"_id": 0, "bathroom_log": 1})` projection without `id` returned an empty dict for bookings that had never been ticked, triggering false "Booking not found" 404s. Added `"id": 1` to projection.
+
+
+
 ## Sprint 110cm — Search-to-card scroll (instead of force-open) (2026-06-08)
 **User ask**: "When searching a dog or client and I click the name, instead of opening right away take me to their card location."
 

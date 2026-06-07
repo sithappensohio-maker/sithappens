@@ -78,6 +78,7 @@ export default function Staff() {
           ["taxes", "Payroll Tax", "fa-calculator"],
           ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
           ["timeoff", "Time Off", "fa-umbrella-beach"],
+          ["corrections", "Corrections", "fa-clock-rotate-left"],
         ].map(([k, label, icon]) => (
           <button key={k} onClick={()=>setSubtab(k)} data-testid={`staff-subtab-${k}`}
                   className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`}>
@@ -256,6 +257,7 @@ export default function Staff() {
       {subtab === "taxes" && <TaxEstimatorTab />}
       {subtab === "quarterly" && <QuarterlyTaxTab />}
       {subtab === "timeoff" && <TimeOffAdminTab />}
+      {subtab === "corrections" && <PunchCorrectionsAdminTab />}
 
       {modal && <EmployeeFormModal mode={modal.mode} emp={modal.emp}
                                   onClose={()=>setModal(null)}
@@ -1602,6 +1604,85 @@ function OwnerDrawCard() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+
+
+// ─────────────── Sprint 110cn — Punch Correction admin inbox ───────────────
+function PunchCorrectionsAdminTab() {
+  const [rows, setRows] = useState(null);
+  const [filter, setFilter] = useState("pending");
+  const [decidingId, setDecidingId] = useState(null);
+  const [note, setNote] = useState("");
+  const load = async () => {
+    try {
+      const r = await api.get("/employee/punch-corrections");
+      setRows(r.data || []);
+    } catch { setRows([]); }
+  };
+  useEffect(() => { load(); }, []);
+  const decide = async (id, decision) => {
+    try {
+      await api.post(`/employee/punch-corrections/${id}/decision`, { decision, admin_note: note });
+      setNote(""); setDecidingId(null); load();
+    } catch { /* toast already shown by axios interceptor */ }
+  };
+  const shown = (rows || []).filter(r => filter === "all" || r.status === filter);
+  return (
+    <div className="space-y-3" data-testid="corrections-admin-tab">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[11px] font-black uppercase tracking-widest text-gray-400">Punch correction requests</p>
+        <div className="flex gap-1 ml-auto">
+          {["pending", "approved", "denied", "all"].map(s => (
+            <button key={s} onClick={()=>setFilter(s)}
+                    data-testid={`corr-filter-${s}`}
+                    className={`px-2 py-1 rounded text-[11px] font-black uppercase tracking-widest border ${filter===s ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgBase text-gray-400 border-bgHover hover:text-white"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+      {rows === null && <p className="text-gray-500 text-sm">Loading…</p>}
+      {rows !== null && shown.length === 0 && <p className="text-gray-500 text-sm" data-testid="corr-empty">No {filter !== "all" ? filter : ""} requests.</p>}
+      {shown.map(r => (
+        <div key={r.id} className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-2" data-testid={`corr-row-${r.id}`}>
+          <div className="flex justify-between items-start gap-2 flex-wrap">
+            <div className="min-w-0">
+              <p className="text-white font-black uppercase tracking-widest text-[14px]">{r.user_name}</p>
+              <p className="text-[12px] text-gray-400">Target date: <span className="text-gray-200">{r.target_date}</span></p>
+              {r.requested_clock_in && <p className="text-[12px] text-gray-400">Clock in → <span className="text-gray-200">{fmtTime(r.requested_clock_in)}</span></p>}
+              {r.requested_clock_out && <p className="text-[12px] text-gray-400">Clock out → <span className="text-gray-200">{fmtTime(r.requested_clock_out)}</span></p>}
+              <p className="text-[12px] text-gray-400 italic mt-1">&ldquo;{r.reason}&rdquo;</p>
+            </div>
+            <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${r.status==="pending" ? "text-shOrange border-shOrange/40 bg-shOrange/15" : r.status==="approved" ? "text-shGreen border-shGreen/40 bg-shGreen/15" : "text-red-300 border-red-500/40 bg-red-600/15"}`}>
+              {r.status}
+            </span>
+          </div>
+          {r.admin_note && <p className="text-[12px] text-gray-500">Admin: {r.admin_note}</p>}
+          {r.status === "pending" && (
+            decidingId === r.id ? (
+              <div className="flex gap-2 pt-2 flex-wrap">
+                <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="Note (optional, sent to staff)"
+                       data-testid={`corr-note-${r.id}`}
+                       className="flex-1 min-w-[200px] bg-bgBase border border-bgHover rounded px-2 py-1 text-xs text-white"/>
+                <button onClick={()=>decide(r.id, "approved")} data-testid={`corr-approve-${r.id}`}
+                        className="bg-shGreen text-bgHeader px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest">Approve</button>
+                <button onClick={()=>decide(r.id, "denied")} data-testid={`corr-deny-${r.id}`}
+                        className="bg-red-600/20 border border-red-500 text-red-300 px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest">Deny</button>
+                <button onClick={()=>{setDecidingId(null); setNote("");}}
+                        className="text-gray-500 hover:text-white text-[11px] font-black uppercase tracking-widest">Cancel</button>
+              </div>
+            ) : (
+              <button onClick={()=>setDecidingId(r.id)} data-testid={`corr-review-${r.id}`}
+                      className="text-shBlue hover:text-white text-[11px] font-black uppercase tracking-widest">
+                <i className="fas fa-gavel mr-1"/>Review
+              </button>
+            )
+          )}
+        </div>
+      ))}
     </div>
   );
 }
