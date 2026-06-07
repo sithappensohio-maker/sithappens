@@ -30,6 +30,31 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cb + 110cc — Training Revenue split + Pipeline progress tracker (2026-06-08)
+**Two user-requested follow-ups to the Sell Training Program work:**
+1. "Training programs are not retail items" — they were polluting the Retail bucket on the Income screen.
+2. "I'd like an admin page to track all clients/dogs in training programs, progress, notes…"
+
+### 110cb · Income split (Retail vs Training Revenue)
+- ✅ **`/transactions/summary-range`** now returns `training_revenue_total` + `training_revenue_count` separately from `retail_total`. `completed_total` / `net_total` still include both (gross income unchanged).
+- ✅ **Income screen** stat tile now reads `Services $X · Training $Y · Retail $Z` so the operator can see merchandise vs services at a glance.
+- ✅ **Year-end CSV export** labels rows with `source_kind="training_program_sale"` as **"Training Revenue"** instead of "Retail" — clean separation for the CPA.
+- ✅ **P&L PDF (`pl_report.py`)** now includes a dedicated `training_revenue` block with `by_program` breakdown. Retail's `by_category` no longer mixes in program sales.
+- ✅ **Tests** (`test_sell_program.py` 10/10): updated `test_sell_program_income_appears_in_summary_range` to assert `training_revenue_total` rises AND `retail_total` stays unchanged.
+
+### 110cc · Pipeline progress tracker
+- ✅ **Expandable rows** in the existing Pipeline screen — click a row to reveal:
+  - **Trainer Notes** textarea with **auto-save** (800ms debounce, "Saving… / Saved Xs ago" status).
+  - **Quick status actions** — Put on Hold / Mark Complete / Resume (with confirmation).
+  - **Jump to dog profile** button (preserves the existing flow).
+  - **Goal grid** grouped by module (M1, M2, …) with `X/N mastered` headers; each goal exposes a 0–5 score selector that updates in place via `PUT /dogs/.../goals/{id}`. Manual-only goals get a "Mark Done" toggle.
+- ✅ **"Notes" badge** on the row header indicates which enrollments already have trainer notes (so you can spot the ones you've touched).
+- ✅ **Existing endpoints reused** — `PUT /dogs/{id}/programs/{enrollment_id}` (trainer_notes + status) and `PUT /dogs/{id}/programs/{enrollment_id}/goals/{goal_id}` (score/status). No new backend code needed.
+- ✅ Screenshot confirms the full expanded view renders cleanly: notes textarea, M1/M2 module blocks, per-goal score buttons (5 highlighted green = mastered).
+- 🎯 **User impact**: The operator can now sit in front of the Pipeline screen on a Monday morning, scroll all active dogs, jot trainer notes for each, and bump mastery scores — without ever opening an individual dog profile.
+
+
+
 ## Sprint 110ca — Sell Training Program: dog selector + immediate income (2026-06-08)
 **Two user-reported bugs in the Sell Training Program flow:**
 

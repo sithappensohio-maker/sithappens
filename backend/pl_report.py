@@ -285,15 +285,30 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         c["total"] = round(c["total"] + float(e.get("amount") or 0), 2)
     expenses_by_category = sorted(exp_by_cat_map.values(), key=lambda x: -x["total"])
 
-    # ── Retail sales aggregations
-    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_sales), 2)
+    # ── Retail sales aggregations.
+    # Sprint 110cb — split training-program sales out of "Retail" so the
+    # operator can see Training Revenue as its own line on the P&L (it's
+    # services revenue, not merchandise revenue).
+    retail_only = [r for r in retail_sales if r.get("source_kind") != "training_program_sale"]
+    training_rows = [r for r in retail_sales if r.get("source_kind") == "training_program_sale"]
+    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_only), 2)
+    training_revenue_total = round(sum(float(r.get("amount") or 0) for r in training_rows), 2)
     retail_by_cat_map: Dict[str, Dict[str, Any]] = {}
-    for r in retail_sales:
+    for r in retail_only:
         cat = (r.get("category") or "Retail").strip() or "Retail"
         c = retail_by_cat_map.setdefault(cat, {"name": cat, "count": 0, "total": 0.0})
         c["count"] += 1
         c["total"] = round(c["total"] + float(r.get("amount") or 0), 2)
     retail_by_category = sorted(retail_by_cat_map.values(), key=lambda x: -x["total"])
+    training_by_program_map: Dict[str, Dict[str, Any]] = {}
+    for r in training_rows:
+        # Strip the "Training Program · " prefix from description for a clean program name
+        desc = r.get("description") or ""
+        prog_name = desc.replace("Training Program · ", "").strip() or "Training Program"
+        b = training_by_program_map.setdefault(prog_name, {"name": prog_name, "count": 0, "total": 0.0})
+        b["count"] += 1
+        b["total"] = round(b["total"] + float(r.get("amount") or 0), 2)
+    training_by_program = sorted(training_by_program_map.values(), key=lambda x: -x["total"])
 
     # ── Year-to-date totals (Jan 1 of end_date's year through end_date)
     try:
@@ -317,7 +332,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     except Exception:
         ytd_start, ytd_income, ytd_expenses, ytd_retail = end_date, 0.0, 0.0, 0.0
 
-    gross_income = round(completed_total + retail_total, 2)
+    gross_income = round(completed_total + retail_total + training_revenue_total, 2)
     ytd_gross = round(ytd_income + ytd_retail, 2)
 
     # YTD payroll cost — uses calendar-year start through end_date so the
@@ -336,12 +351,18 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             "by_service": by_service,
             "by_day": by_day,
             "retail_total": retail_total,
+            "training_revenue_total": training_revenue_total,
             "gross_total": gross_income,
         },
         "retail": {
             "total": retail_total,
-            "count": len(retail_sales),
+            "count": len(retail_only),
             "by_category": retail_by_category,
+        },
+        "training_revenue": {
+            "total": training_revenue_total,
+            "count": len(training_rows),
+            "by_program": training_by_program,
         },
         "expenses": {
             "total": expenses_total,

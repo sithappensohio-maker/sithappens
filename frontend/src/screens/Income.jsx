@@ -384,7 +384,7 @@ export default function Income() {
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatTile label="Income (gross)" value={fmt(rangeSummary.completed_total)} sub={`Services ${fmt(rangeSummary.service_total ?? rangeSummary.completed_total)} · Retail ${fmt(rangeSummary.retail_total || 0)}`} color="text-shGreen" icon="fa-circle-check" big />
+            <StatTile label="Income (gross)" value={fmt(rangeSummary.completed_total)} sub={`Services ${fmt(rangeSummary.service_total ?? rangeSummary.completed_total)} · Training ${fmt(rangeSummary.training_revenue_total || 0)} · Retail ${fmt(rangeSummary.retail_total || 0)}`} color="text-shGreen" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
             <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shOrange" icon="fa-user-clock" />
             <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />

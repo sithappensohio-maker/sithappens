@@ -9764,7 +9764,8 @@ async def admin_income_csv(
         {"date": {"$gte": start, "$lte": end}},
         {"_id": 0},
     ).to_list(50000)
-    # Retail sales in the same year
+    # Retail sales in the same year (Sprint 110cb — training-program sales
+    # are pulled separately and labeled distinctly from retail merchandise)
     retail_sales = await db.retail_sales.find(
         {"date": {"$gte": start, "$lte": end}},
         {"_id": 0},
@@ -9800,13 +9801,16 @@ async def admin_income_csv(
             f"-{amt:.2f}",
             e.get("payment_method", "") or "", "paid", e.get("id", ""),
         ])
-    # Retail sales — positive revenue rows
+    # Retail sales — positive revenue rows. Training program sales are split
+    # into their own "Training Revenue" row type so the operator + accountant
+    # can tell merchandise apart from services.
     for s in retail_sales:
         amt = float(s.get("amount") or 0)
         if amt <= 0:
             continue
+        row_type = "Training Revenue" if s.get("source_kind") == "training_program_sale" else "Retail"
         out_rows.append([
-            s.get("date", ""), "Retail", s.get("client_name", "") or "", "",
+            s.get("date", ""), row_type, s.get("client_name", "") or "", "",
             s.get("description", "") + (f" ({s.get('category')})" if s.get("category") else ""),
             f"{amt:.2f}",
             s.get("payment_method", "") or "", "paid", s.get("id", ""),
@@ -11143,12 +11147,20 @@ async def summary_range(
 
     # Retail sales in the same window — folded into completed_total + by_day
     # so NET maths include external-POS retail revenue too.
-    retail_rows = await db.retail_sales.find(
+    # Sprint 110cb — split out training-program sales (source_kind=
+    # "training_program_sale") into their OWN bucket. They're a service, not
+    # retail merchandise, so the Income screen shows them as "Training Revenue"
+    # on a separate stat tile and they don't pollute the Retail total.
+    retail_rows_all = await db.retail_sales.find(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
     ).to_list(5000)
+    retail_rows = [r for r in retail_rows_all if r.get("source_kind") != "training_program_sale"]
+    training_rows = [r for r in retail_rows_all if r.get("source_kind") == "training_program_sale"]
     retail_total = round(sum(float(r.get("amount") or 0) for r in retail_rows), 2)
-    for r in retail_rows:
+    training_revenue_total = round(sum(float(r.get("amount") or 0) for r in training_rows), 2)
+    other_revenue_total = round(retail_total + training_revenue_total, 2)
+    for r in retail_rows_all:
         d = r.get("date")
         if d:
             by_day[d] = round(by_day.get(d, 0) + float(r.get("amount") or 0), 2)
@@ -11198,17 +11210,19 @@ async def summary_range(
     return {
         "start_date": start_date,
         "end_date": end_date,
-        "completed_total": round(completed_total + retail_total, 2),
+        "completed_total": round(completed_total + other_revenue_total, 2),
         "service_total": round(completed_total, 2),
         "retail_total": retail_total,
         "retail_count": len(retail_rows),
-        "paid_total": round(paid_total + retail_total, 2),
+        "training_revenue_total": training_revenue_total,
+        "training_revenue_count": len(training_rows),
+        "paid_total": round(paid_total + other_revenue_total, 2),
         "expenses_total": expenses_total,
         "labor_gross": labor_gross,
         "labor_burden": labor_burden,
         "labor_total": labor_total,
-        "net_total": round(completed_total + retail_total - expenses_total - labor_total, 2),
-        "net_before_labor": round(completed_total + retail_total - expenses_total, 2),
+        "net_total": round(completed_total + other_revenue_total - expenses_total - labor_total, 2),
+        "net_before_labor": round(completed_total + other_revenue_total - expenses_total, 2),
         "expenses_by_category": sorted(by_category.values(), key=lambda x: -x["total"]),
         "expense_count": len(exp_rows),
         "by_day": [{"date": d, "total": v} for d, v in sorted(by_day.items())],

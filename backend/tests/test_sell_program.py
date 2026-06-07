@@ -266,7 +266,8 @@ def test_sell_program_records_immediate_income(admin_headers, fx):
 
 def test_sell_program_income_appears_in_summary_range(admin_headers, fx):
     """The newly-created income row should land in the /transactions/summary-range
-    `retail_total` so the Income dashboard reflects program sales immediately."""
+    `training_revenue_total` (Sprint 110cb — split out from retail_total) so the
+    Income dashboard reflects program sales immediately AS TRAINING, not retail."""
     today = __import__("datetime").date.today().isoformat()
     custom_price = 222.00
 
@@ -274,6 +275,7 @@ def test_sell_program_income_appears_in_summary_range(admin_headers, fx):
                           headers=admin_headers,
                           params={"start_date": today, "end_date": today},
                           timeout=15).json()
+    training_before = float(before.get("training_revenue_total") or 0)
     retail_before = float(before.get("retail_total") or 0)
 
     requests.post(f"{API}/clients/{fx['client_id']}/sell-program",
@@ -285,9 +287,14 @@ def test_sell_program_income_appears_in_summary_range(admin_headers, fx):
                          headers=admin_headers,
                          params={"start_date": today, "end_date": today},
                          timeout=15).json()
+    training_after = float(after.get("training_revenue_total") or 0)
     retail_after = float(after.get("retail_total") or 0)
-    assert round(retail_after - retail_before, 2) >= custom_price, \
-        f"Expected retail_total to rise by at least {custom_price}, got {retail_after - retail_before}"
+    assert round(training_after - training_before, 2) >= custom_price, \
+        f"Expected training_revenue_total to rise by at least {custom_price}, got {training_after - training_before}"
+    assert round(retail_after - retail_before, 2) == 0, \
+        f"Retail total should NOT change — training program is not retail; delta was {retail_after - retail_before}"
+    # And gross income should still include it
+    assert float(after.get("completed_total") or 0) >= float(before.get("completed_total") or 0) + custom_price - 0.01
 
 
 def test_sell_program_zero_price_does_not_create_income_row(admin_headers, fx):
