@@ -30,6 +30,45 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110ch — Payment Plans for Big-Ticket Items (2026-06-08)
+**User ask**: "For my expensive offerings I want a payment agreement and ways for me and the client to see what's due, what's paid, upcoming. Settings to change the agreement at will. Agreement should be clear."
+
+User choices: Training programs only (no credit packs), preset cadences (weekly / bi-weekly / monthly / N installments), manual mark-paid, typed-name e-signature, with reminder emails.
+
+- ✅ **Settings → Payment Plans** (`PaymentPlanSettingsPanel`):
+  - Rich HTML agreement editor with variable chips: `{{business_name}}`, `{{client_name}}`, `{{program_name}}`, `{{total_amount}}`, `{{installment_count}}`, `{{installment_amount}}`, `{{schedule_list}}`.
+  - Reminder-days-before slider (default 3), default cadence dropdown, business name field.
+  - **Live preview pane** below renders the agreement with sample data so the operator can see exactly what clients will see.
+  - Singleton doc stored in `payment_plan_settings` (`_id="singleton"`).
+- ✅ **Admin client widget** (`AdminClientPaymentPlans` on Clients screen) — per-client view of every plan + a "New Plan" modal:
+  - Program name, total, cadence (weekly/bi-weekly/monthly), # of installments (1–24), first-payment date.
+  - **Live schedule preview** as the operator types, with rounding to ensure installments sum to total to the penny.
+  - One-click **mark-paid** per installment (cash / card / venmo / check chips) — auto-completes the plan when last installment is paid.
+  - Cancel plan with confirm; status badges (pending_signature / active / completed / cancelled) with overdue badge counts.
+- ✅ **Client portal** (`PortalPaymentPlans` shown on Portal home, only when client has ≥1 plan):
+  - Plan cards with progress bar (paid / total), full installment schedule, overdue highlighting.
+  - **"Review & Sign Agreement"** modal for `pending_signature` plans — renders the agreement HTML stored on the plan, checkbox confirmation, typed-name input (full legal name), submit → activates plan.
+  - E-signature captures `typed_name`, `signed_at`, `ip_address`, `user_agent` for audit.
+- ✅ **4 new email templates** in registry (all customizable in Email Designer):
+  - `client_payment_plan_created` — sent to client on plan creation with sign link.
+  - `client_payment_due_soon` — reminder template (scheduler hookup is next step).
+  - `client_payment_received` — confirmation when an installment is marked paid.
+  - `client_payment_overdue` — past-due notice (scheduler hookup next).
+- ✅ **Backend endpoints** (all 100% pytested):
+  - `GET / PUT /admin/payment-plans/settings`
+  - `POST /admin/payment-plans` (validates installments sum to total ± $0.01)
+  - `GET /admin/payment-plans?status&client_id` — decorated with `paid_total`, `remaining_total`, `overdue_count`
+  - `GET /admin/payment-plans/{id}`
+  - `POST /admin/payment-plans/{id}/installments/{inst_id}/mark-paid`
+  - `POST /admin/payment-plans/{id}/cancel`
+  - `GET /portal/payment-plans` (only client's own; same decoration)
+  - `POST /portal/payment-plans/{id}/sign` (typed_name + IP + UA captured)
+- ✅ **Backup** updated — `payment_plans` + `payment_plan_settings` (singleton string-id) added to `BACKUP_COLLECTIONS` + `STRING_ID_COLLECTIONS`. Backup version still v4 (additive).
+- ✅ **Tests** `test_payment_plans.py` 11/11 passing — settings round-trip, create (with agreement rendered), installments-must-sum-to-total guard, sign activates plan, no double-sign, mark-paid + auto-complete, no double mark-paid, list decorations w/ overdue, client-only sees own, cancel, admin-required.
+- 🎯 **User impact**: $2K Service Dog program → 4 bi-weekly payments of $500 in one click. Client gets a clean signed agreement, sees exactly what's paid and what's upcoming. You see overdue counts at a glance and can mark cash/card/venmo/check payments in two taps.
+
+
+
 ## Sprint 110cg — Income screen: Training Revenue actually splits from Retail (2026-06-08)
 **User-reported bug**: The Income screen *still* showed training program sales lumped under "RETAIL · $3750 · 17 sales" even after Sprint 110cb separated them server-side.
 

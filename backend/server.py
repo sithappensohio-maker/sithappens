@@ -7859,15 +7859,18 @@ BACKUP_COLLECTIONS = [
     "notification_log",
     # Sprint 110cf — client-initiated reschedule requests (need history)
     "reschedule_requests",
+    # Sprint 110ch — payment plans for big-ticket items + their settings
+    "payment_plans", "payment_plan_settings",
     # Vaccine reminder dismissals so restored state doesn't re-fire stale alerts
     "vaccine_dismissals",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
 # (we upsert by `_id` instead of `id`).
-#   • `app_settings`   — stores rows like {_id: "quarterly_tax", ...}
-#   • `email_settings` — singleton {_id: "singleton", brand_*, logo_url, ...}
-STRING_ID_COLLECTIONS = {"app_settings", "email_settings"}
+#   • `app_settings`           — stores rows like {_id: "quarterly_tax", ...}
+#   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
+#   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
+STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
 # Bumped to v4 with the email customization + notification log additions.
 # Restore accepts older v1/v2/v3 backups too (missing collections are left
 # untouched rather than wiped).
@@ -15593,6 +15596,355 @@ async def portal_homework_streak(current: dict = Depends(get_current_user)):
 @api.get("/")
 async def root():
     return {"service": "sit-happens", "status": "ok"}
+
+
+
+
+# ============================================================
+# Sprint 110ch · Payment Plans (big-ticket items)
+# ============================================================
+DEFAULT_PAYMENT_AGREEMENT_HTML = """
+<p><strong>Payment Agreement</strong></p>
+<p>This agreement is between {{business_name}} ("Provider") and {{client_name}} ("Client"). The Client is purchasing <strong>{{program_name}}</strong> for a total of <strong>{{total_amount}}</strong>, to be paid in <strong>{{installment_count}} installments</strong> as scheduled below.</p>
+<p><strong>Payment Schedule</strong></p>
+<p>{{schedule_list}}</p>
+<p><strong>Terms</strong></p>
+<ul>
+<li>Payments are due on the scheduled dates. Missed payments may suspend services.</li>
+<li>Credits / sessions purchased under this plan do not expire and roll over month to month.</li>
+<li>If a payment is missed, the Client agrees to contact {{business_name}} within 7 days to make alternate arrangements.</li>
+<li>This plan may be cancelled by either party with written notice; any unused, unpaid balance is forgiven, and any paid amount applies as credit toward future services.</li>
+<li>By signing below, the Client agrees to the schedule and terms above.</li>
+</ul>
+<p><em>Electronic signature has the same legal effect as a handwritten one under the U.S. E-SIGN Act.</em></p>
+"""
+
+DEFAULT_PAYMENT_PLAN_SETTINGS = {
+    "agreement_html": DEFAULT_PAYMENT_AGREEMENT_HTML.strip(),
+    "business_name": "Sit Happens",
+    "reminder_days_before": 3,
+    "default_cadence": "biweekly",  # weekly | biweekly | monthly | custom
+}
+
+
+class PaymentPlanSettingsUpdate(BaseModel):
+    agreement_html: Optional[str] = None
+    business_name: Optional[str] = None
+    reminder_days_before: Optional[int] = Field(default=None, ge=0, le=30)
+    default_cadence: Optional[Literal["weekly", "biweekly", "monthly", "custom"]] = None
+
+
+@api.get("/admin/payment-plans/settings")
+async def get_payment_plan_settings(_: dict = Depends(require_admin)):
+    doc = await db.payment_plan_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    return {**DEFAULT_PAYMENT_PLAN_SETTINGS, **doc}
+
+
+@api.put("/admin/payment-plans/settings")
+async def update_payment_plan_settings(
+    body: PaymentPlanSettingsUpdate,
+    _: dict = Depends(require_admin),
+):
+    update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_doc["updated_at"] = now_iso()
+    await db.payment_plan_settings.update_one(
+        {"_id": "singleton"}, {"$set": update_doc}, upsert=True,
+    )
+    doc = await db.payment_plan_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    return {**DEFAULT_PAYMENT_PLAN_SETTINGS, **doc}
+
+
+class PaymentInstallmentIn(BaseModel):
+    due_date: str  # YYYY-MM-DD
+    amount: float = Field(..., ge=0)
+
+
+class PaymentPlanCreate(BaseModel):
+    client_id: str
+    program_id: Optional[str] = None
+    source_kind: Literal["training_program", "manual"] = "training_program"
+    source_id: Optional[str] = None  # credit_lot id, if applicable
+    program_name: str
+    total_amount: float = Field(..., ge=0)
+    cadence: Literal["weekly", "biweekly", "monthly", "custom"] = "biweekly"
+    installments: List[PaymentInstallmentIn] = Field(..., min_length=1, max_length=24)
+    note: Optional[str] = ""
+
+
+def _fmt_money(n: float) -> str:
+    return f"${n:,.2f}"
+
+
+def _render_agreement(plan: dict, settings: dict) -> str:
+    """Render the agreement HTML for `plan` using current settings + variables."""
+    sched_lines = "<br/>".join(
+        f"• <strong>{i['due_date']}</strong> — {_fmt_money(i['amount'])}"
+        for i in plan["installments"]
+    )
+    ctx = {
+        "business_name": settings.get("business_name", "Sit Happens"),
+        "client_name": plan.get("client_name", ""),
+        "program_name": plan.get("program_name", ""),
+        "total_amount": _fmt_money(plan.get("total_amount", 0)),
+        "installment_count": len(plan["installments"]),
+        "installment_amount": _fmt_money(plan["installments"][0]["amount"]) if plan["installments"] else "$0.00",
+        "schedule_list": sched_lines,
+    }
+    template = settings.get("agreement_html") or DEFAULT_PAYMENT_AGREEMENT_HTML
+    return email_service._substitute(template, ctx)
+
+
+@api.post("/admin/payment-plans")
+async def create_payment_plan(body: PaymentPlanCreate, current: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": body.client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(404, "Client not found")
+    sum_installments = round(sum(i.amount for i in body.installments), 2)
+    if abs(sum_installments - body.total_amount) > 0.01:
+        raise HTTPException(400, f"Installments sum to {sum_installments} but total is {body.total_amount}")
+
+    settings_doc = await db.payment_plan_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    settings = {**DEFAULT_PAYMENT_PLAN_SETTINGS, **settings_doc}
+
+    plan = {
+        "id": _gid(),
+        "client_id": body.client_id,
+        "client_name": client.get("name") or "",
+        "program_id": body.program_id,
+        "program_name": body.program_name,
+        "source_kind": body.source_kind,
+        "source_id": body.source_id,
+        "total_amount": round(body.total_amount, 2),
+        "cadence": body.cadence,
+        "status": "pending_signature",
+        "installments": [
+            {
+                "id": _gid(),
+                "due_date": i.due_date,
+                "amount": round(i.amount, 2),
+                "status": "due",
+                "paid_at": None,
+                "paid_method": None,
+                "paid_by_admin_id": None,
+                "notes": "",
+            }
+            for i in body.installments
+        ],
+        "note": body.note or "",
+        "agreement_snapshot": "",  # filled at signature time
+        "signature": None,
+        "created_at": now_iso(),
+        "created_by": current.get("id"),
+        "reminder_days_before": settings.get("reminder_days_before", 3),
+    }
+    # Pre-render the agreement so the client sees what's been proposed
+    plan["agreement_snapshot"] = _render_agreement(plan, settings)
+    await db.payment_plans.insert_one(plan)
+    plan.pop("_id", None)
+
+    # Email the client with a link to review + sign
+    if client.get("email"):
+        try:
+            first_amount = body.installments[0].amount if body.installments else 0
+            await email_service._dispatch(
+                slug="client_payment_plan_created",
+                to_email=client["email"],
+                ctx={
+                    "first_name": (client.get("name") or "there").split(" ")[0],
+                    "client_name": client.get("name", ""),
+                    "program_name": body.program_name,
+                    "total_amount": _fmt_money(body.total_amount),
+                    "installment_count": len(body.installments),
+                    "installment_amount": _fmt_money(first_amount),
+                    "first_due_date": body.installments[0].due_date if body.installments else "",
+                },
+                rows=[
+                    ("Program", body.program_name),
+                    ("Total", _fmt_money(body.total_amount)),
+                    ("Installments", str(len(body.installments))),
+                    ("First due", body.installments[0].due_date if body.installments else ""),
+                ],
+                cta_url=f"{os.environ.get('APP_PUBLIC_URL', '')}/" if os.environ.get("APP_PUBLIC_URL") else None,
+            )
+        except Exception as e:
+            logger.warning("Plan-created email failed: %s", e)
+    return plan
+
+
+@api.get("/admin/payment-plans")
+async def list_payment_plans(
+    status: Optional[str] = None,
+    client_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: dict = {}
+    if status:
+        q["status"] = status
+    if client_id:
+        q["client_id"] = client_id
+    rows = await db.payment_plans.find(q, {"_id": 0}).sort([("created_at", -1)]).to_list(500)
+    # Decorate each row with computed totals
+    for p in rows:
+        paid = sum(i["amount"] for i in p["installments"] if i["status"] == "paid")
+        due = sum(i["amount"] for i in p["installments"] if i["status"] == "due")
+        p["paid_total"] = round(paid, 2)
+        p["remaining_total"] = round(due, 2)
+        today_iso = business_today().isoformat()
+        p["overdue_count"] = sum(
+            1 for i in p["installments"]
+            if i["status"] == "due" and i["due_date"] < today_iso
+        )
+    return rows
+
+
+@api.get("/admin/payment-plans/{plan_id}")
+async def get_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
+    p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    return p
+
+
+class MarkPaidIn(BaseModel):
+    method: Literal["cash", "card", "venmo", "check", "other"] = "card"
+    notes: Optional[str] = ""
+
+
+@api.post("/admin/payment-plans/{plan_id}/installments/{inst_id}/mark-paid")
+async def mark_installment_paid(
+    plan_id: str, inst_id: str, body: MarkPaidIn, current: dict = Depends(require_admin),
+):
+    p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    installments = p["installments"]
+    target = next((i for i in installments if i["id"] == inst_id), None)
+    if not target:
+        raise HTTPException(404, "Installment not found")
+    if target["status"] == "paid":
+        raise HTTPException(400, "Installment already paid")
+    target["status"] = "paid"
+    target["paid_at"] = now_iso()
+    target["paid_method"] = body.method
+    target["paid_by_admin_id"] = current.get("id")
+    if body.notes:
+        target["notes"] = body.notes
+
+    # Plan auto-completes when every installment is paid
+    new_status = p["status"]
+    if all(i["status"] in ("paid", "waived") for i in installments):
+        new_status = "completed"
+
+    await db.payment_plans.update_one(
+        {"id": plan_id},
+        {"$set": {"installments": installments, "status": new_status}},
+    )
+
+    # Confirm with the client
+    client = await db.clients.find_one({"id": p["client_id"]}, {"_id": 0}) or {}
+    if client.get("email"):
+        remaining = [i for i in installments if i["status"] == "due"]
+        rem_text = (
+            "🎉 That was your final payment — plan complete!"
+            if not remaining
+            else f"{len(remaining)} payment{'s' if len(remaining) != 1 else ''} remaining."
+        )
+        try:
+            await email_service._dispatch(
+                slug="client_payment_received",
+                to_email=client["email"],
+                ctx={
+                    "first_name": (client.get("name") or "there").split(" ")[0],
+                    "client_name": client.get("name", ""),
+                    "program_name": p.get("program_name", ""),
+                    "amount": _fmt_money(target["amount"]),
+                    "paid_method": body.method,
+                    "remaining_count": len(remaining),
+                    "remaining_text": rem_text,
+                },
+                rows=[
+                    ("Paid", _fmt_money(target["amount"])),
+                    ("Method", body.method.capitalize()),
+                    ("Plan", p.get("program_name", "")),
+                ],
+                cta_url=f"{os.environ.get('APP_PUBLIC_URL', '')}/" if os.environ.get("APP_PUBLIC_URL") else None,
+            )
+        except Exception as e:
+            logger.warning("Payment-received email failed: %s", e)
+    updated = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    return updated
+
+
+@api.post("/admin/payment-plans/{plan_id}/cancel")
+async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
+    p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    await db.payment_plans.update_one(
+        {"id": plan_id},
+        {"$set": {"status": "cancelled", "cancelled_at": now_iso()}},
+    )
+    return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+
+
+# ──────── Client portal endpoints ────────
+
+@api.get("/portal/payment-plans")
+async def portal_list_payment_plans(current: dict = Depends(get_current_user)):
+    if not current.get("client_id"):
+        raise HTTPException(400, "No client linked to this account")
+    rows = await db.payment_plans.find(
+        {"client_id": current["client_id"]},
+        {"_id": 0},
+    ).sort([("created_at", -1)]).to_list(50)
+    today_iso = business_today().isoformat()
+    for p in rows:
+        paid = sum(i["amount"] for i in p["installments"] if i["status"] == "paid")
+        due = sum(i["amount"] for i in p["installments"] if i["status"] == "due")
+        p["paid_total"] = round(paid, 2)
+        p["remaining_total"] = round(due, 2)
+        p["overdue_count"] = sum(
+            1 for i in p["installments"]
+            if i["status"] == "due" and i["due_date"] < today_iso
+        )
+    return rows
+
+
+class PaymentPlanSignIn(BaseModel):
+    typed_name: str = Field(..., min_length=2, max_length=120)
+
+
+@api.post("/portal/payment-plans/{plan_id}/sign")
+async def portal_sign_payment_plan(
+    plan_id: str, body: PaymentPlanSignIn, request: Request,
+    current: dict = Depends(get_current_user),
+):
+    """Typed-name e-signature flow. Stamps name + timestamp + IP for audit."""
+    p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    if current.get("role") == "client" and p.get("client_id") != current.get("client_id"):
+        raise HTTPException(403, "Not your plan")
+    if p.get("status") != "pending_signature":
+        raise HTTPException(400, f"Plan is already {p.get('status')}")
+
+    client_ip = (request.headers.get("x-forwarded-for") or request.client.host or "").split(",")[0].strip()
+    ua = request.headers.get("user-agent", "")
+    sig = {
+        "typed_name": body.typed_name.strip(),
+        "signed_at": now_iso(),
+        "ip_address": client_ip,
+        "user_agent": ua[:300],
+    }
+    await db.payment_plans.update_one(
+        {"id": plan_id},
+        {"$set": {
+            "signature": sig,
+            "status": "active",
+            "signed_at": sig["signed_at"],
+        }},
+    )
+    return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
 
 
 app.include_router(api)

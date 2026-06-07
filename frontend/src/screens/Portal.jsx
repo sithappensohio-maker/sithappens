@@ -20,6 +20,7 @@ import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
 import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import RescheduleRequestModal from "../components/RescheduleRequestModal";
+import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -1110,6 +1111,10 @@ export default function Portal() {
               the client has logged at least one completion). Sits above the
               homework list as a quick dopamine nudge. */}
           <HomeworkStreakTile />
+
+          {/* Sprint 110ch — Payment plans (renders only when there's at least
+              one plan tied to this client). Includes sign-agreement flow. */}
+          <PortalPaymentPlans />
 
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old

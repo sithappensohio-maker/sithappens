@@ -9,6 +9,7 @@ import { useTheme, FONT_OPTIONS } from "../lib/theme";
 import PageHero from "../components/PageHero";
 import CsvImportRow from "../components/CsvImportRow";
 import EmailDesignerPanel from "../components/EmailDesignerPanel";
+import PaymentPlanSettingsPanel from "../components/PaymentPlanSettingsPanel";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -74,6 +75,7 @@ export default function Settings() {
     { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation" },
     { id: "automation", label: "Email Automation", icon: "fa-paper-plane" },
     { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text" },
+    { id: "payment_plans", label: "Payment Plans", icon: "fa-file-signature" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
 
@@ -116,6 +118,7 @@ export default function Settings() {
           {tab === "errors" && <ErrorsPanel />}
           {tab === "automation" && <AutomationPanel />}
           {tab === "email_designer" && <EmailDesignerPanel />}
+          {tab === "payment_plans" && <PaymentPlanSettingsPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>
