@@ -30,6 +30,39 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110by — Email Designer + Homework Streak Tile (2026-06-08)
+- ✅ **Email template registry** (`email_templates_registry.py`) — 22 transactional emails declared with stable slugs, default subject/title/intro/CTA, and per-template variable lists. Single source of truth for everything Sit Happens sends.
+- ✅ **Customization layer in `email_service.py`**:
+  - New `_dispatch(slug, ctx, rows, …)` helper looks up admin overrides + branding, performs `{{var}}` substitution, then renders via `_wrap()` and sends.
+  - `_wrap()` now accepts a `settings` doc (logo URL, brand_green/blue/dark, signature_html, footer_html) — pre-existing senders unchanged when nothing is customized.
+  - Module-level `set_db()` (wired from server startup) + 30s in-process cache for both overrides and branding to keep email sends fast.
+  - Refactored 20+ `notify_*` functions to use `_dispatch` (admin new/bulk/first booking, new client, quote request, quote received, training log, homework section/completed, Monday digest, certificate, homework reminder, weekly digest, day reviewed, homework assigned, low credits, booking approved, dog birthday, vaccine expiring). `account_claim`, `pack_receipt`, and `pl_report` keep their bespoke layouts but honor custom subject overrides.
+- ✅ **Admin API endpoints** (all `require_admin`):
+  - `GET /api/admin/email-templates` — full list with defaults + overrides + variables + `is_customized` flag.
+  - `GET /api/admin/email-templates/{slug}` — single template detail.
+  - `PUT /api/admin/email-templates/{slug}` — upsert override (subject/title/intro_html/cta_text/signoff_html).
+  - `POST /api/admin/email-templates/{slug}/reset` — delete override row.
+  - `POST /api/admin/email-templates/{slug}/test` — render & send a preview email with sample data.
+  - `GET / PUT /api/admin/email-settings` — singleton branding doc (brand_name, logo_url, brand_green/blue/dark, signature_html, footer_html).
+- ✅ **Settings → Email Designer** (`/app/frontend/src/components/EmailDesignerPanel.jsx`):
+  - **Branding card** with logo URL, three color pickers (accent green, button blue, header dark), brand name, signature HTML, footer HTML, plus a **live HTML preview** of how branded emails will look.
+  - **Templates card** with filter chips (All / To Clients / To You), per-template rows showing customized state + audience badge, and a **full-screen editor modal** with:
+    - Subject + header title + body intro + button text + sign-off fields
+    - Mini formatting toolbar (Bold / Italic / Link / Line break)
+    - Variable chips that insert `{{var}}` at the caret position
+    - Live mini-preview of the rendered email
+    - "Send Test" button (sample data, custom recipient or admin default)
+    - "Reset to Default" (disabled if not customized) + Save Changes
+- ✅ **🔥 Homework Completion Streak tile** (`HomeworkStreakTile.jsx` on the client portal home):
+  - `GET /api/portal/homework-streak` returns `{current_streak, longest_streak, last_completed_date, next_milestone, days_to_next_milestone, completed_today}`. Calculated from `homework.status == "completed"` rows; consecutive-day windowed in local time.
+  - Tile shows flame escalation (🔥 / 🔥🔥 / 🔥🔥🔥), best-ever streak, days-to-next-milestone (3/7/14/30/60/100/200/365), and a "streak alive / log today" status pill.
+  - Renders only when the client has at least one completion — clean for brand-new clients.
+- ✅ **Tests**: `test_email_customization.py` (8/8) + `test_homework_streak_endpoint.py` (3/3) — 11/11 passing. Existing regression suite (`test_low_credit_email`, `test_program_homework_loop`, `test_sell_program`) still green: 26/26.
+- ✅ Lint clean on both new frontend files. CRA dev build healthy.
+- 🎯 **User impact**: Every email Sit Happens sends can be re-voiced from the operator's chair in <60 seconds — no code changes needed. Owners now get a daily 🔥 nudge that pairs with the existing Dog Trivia streak system.
+
+
+
 ## Sprint 110bx — Training Program Automated Homework Loop (2026-06-08)
 - ✅ **Program-aware FIFO credit redemption** — `redeem_training_credit` now consumes `credit_lots` matched to the dog's enrolled `program_id` first, then falls back to generic training credits. Prevents accidentally burning Puppy Preschool credits on an Advanced Obedience session.
 - ✅ **Program Editor pickers** in `Programs.jsx`:

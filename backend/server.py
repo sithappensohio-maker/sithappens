@@ -64,6 +64,10 @@ mongo_url = os.environ["MONGO_URL"]
 mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
 
+# Give email_service a handle to the DB so it can look up admin email
+# customizations and branding (one-time wire-up — avoids circular imports).
+email_service.set_db(db)
+
 app = FastAPI(title="Sit Happens API")
 api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
@@ -14816,6 +14820,277 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
         except Exception:
             pass
     return {"created": created, "skipped": skipped, "summary": f"{len(created)} booked, {len(skipped)} skipped"}
+
+
+# ============================================================
+# Email Customization (admin) + Homework Streak (portal)
+# ============================================================
+from email_templates_registry import EMAIL_TEMPLATES as _EMAIL_REGISTRY, get_template as _email_get_template  # noqa: E402
+
+
+def _email_settings_defaults() -> dict:
+    """Branding defaults — kept in sync with the constants in email_service."""
+    return {
+        "brand_name": "Sit Happens",
+        "brand_green": "#8cc63f",
+        "brand_blue": "#00a9e0",
+        "brand_dark": "#0f172a",
+        "logo_url": "",
+        "signature_html": "",
+        "footer_html": "Sit Happens Dog Training · Daycare · Boarding<br/>You're receiving this because of activity on your Sit Happens account.",
+    }
+
+
+class EmailTemplateUpdate(BaseModel):
+    subject: Optional[str] = None
+    title: Optional[str] = None
+    intro_html: Optional[str] = None
+    cta_text: Optional[str] = None
+    signoff_html: Optional[str] = None
+
+
+class EmailSettingsUpdate(BaseModel):
+    brand_name: Optional[str] = None
+    brand_green: Optional[str] = None
+    brand_blue: Optional[str] = None
+    brand_dark: Optional[str] = None
+    logo_url: Optional[str] = None
+    signature_html: Optional[str] = None
+    footer_html: Optional[str] = None
+
+
+@api.get("/admin/email-templates")
+async def list_email_templates(_: dict = Depends(require_admin)):
+    """List every email Sit Happens sends along with the operator's custom
+    overrides (if any). The Settings UI uses this to drive the template editor."""
+    overrides = {}
+    async for row in db.email_templates.find({}, {"_id": 0}):
+        overrides[row.get("slug")] = row
+    out = []
+    for tpl in _EMAIL_REGISTRY:
+        slug = tpl["slug"]
+        ov = overrides.get(slug, {}) or {}
+        out.append({
+            "slug": slug,
+            "name": tpl["name"],
+            "description": tpl["description"],
+            "category": tpl["category"],
+            "audience": tpl["audience"],
+            "variables": tpl.get("variables", []),
+            "defaults": {
+                "subject": tpl.get("default_subject", ""),
+                "title": tpl.get("default_title", ""),
+                "intro_html": tpl.get("default_intro_html", ""),
+                "cta_text": tpl.get("default_cta_text", ""),
+            },
+            "override": {
+                "subject": ov.get("subject", ""),
+                "title": ov.get("title", ""),
+                "intro_html": ov.get("intro_html", ""),
+                "cta_text": ov.get("cta_text", ""),
+                "signoff_html": ov.get("signoff_html", ""),
+                "updated_at": ov.get("updated_at", ""),
+            },
+            "is_customized": bool(ov),
+        })
+    return out
+
+
+@api.get("/admin/email-templates/{slug}")
+async def get_email_template(slug: str, _: dict = Depends(require_admin)):
+    tpl = _email_get_template(slug)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Unknown template")
+    ov = await db.email_templates.find_one({"slug": slug}, {"_id": 0}) or {}
+    return {
+        "slug": slug,
+        "name": tpl["name"],
+        "description": tpl["description"],
+        "category": tpl["category"],
+        "audience": tpl["audience"],
+        "variables": tpl.get("variables", []),
+        "defaults": {
+            "subject": tpl.get("default_subject", ""),
+            "title": tpl.get("default_title", ""),
+            "intro_html": tpl.get("default_intro_html", ""),
+            "cta_text": tpl.get("default_cta_text", ""),
+        },
+        "override": ov,
+        "is_customized": bool(ov),
+    }
+
+
+@api.put("/admin/email-templates/{slug}")
+async def update_email_template(slug: str, body: EmailTemplateUpdate, _: dict = Depends(require_admin)):
+    if not _email_get_template(slug):
+        raise HTTPException(status_code=404, detail="Unknown template")
+    update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_doc["slug"] = slug
+    update_doc["updated_at"] = now_iso()
+    await db.email_templates.update_one({"slug": slug}, {"$set": update_doc}, upsert=True)
+    email_service.invalidate_template_cache()
+    return {"ok": True, "slug": slug, "override": update_doc}
+
+
+@api.post("/admin/email-templates/{slug}/reset")
+async def reset_email_template(slug: str, _: dict = Depends(require_admin)):
+    if not _email_get_template(slug):
+        raise HTTPException(status_code=404, detail="Unknown template")
+    await db.email_templates.delete_one({"slug": slug})
+    email_service.invalidate_template_cache()
+    return {"ok": True, "slug": slug}
+
+
+class EmailTestRequest(BaseModel):
+    to_email: Optional[str] = None
+
+
+@api.post("/admin/email-templates/{slug}/test")
+async def test_email_template(slug: str, body: EmailTestRequest, current: dict = Depends(require_admin)):
+    """Send a test email using sample data so the operator can preview their
+    customizations. Falls back to the current admin's email if no target is given."""
+    tpl = _email_get_template(slug)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Unknown template")
+    to = (body.to_email or "").strip() or current.get("email") or os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+    if not to:
+        raise HTTPException(status_code=400, detail="No recipient email available")
+    # Build a sample ctx covering every declared variable.
+    sample_ctx = {
+        "first_name": "Alex",
+        "client_name": "Alex Rivera",
+        "dog_name": "Buddy",
+        "dog_name_or_dogs": "Buddy",
+        "homework_title": "Loose Leash Walking · Week 1",
+        "due_date": "2026-02-20",
+        "assigned_by": "Trainer Jamie",
+        "service_label": "Daycare",
+        "date_range": "2026-02-20 → 2026-02-22",
+        "kennel": "Kennel 4",
+        "remaining": 2,
+        "unit": "days",
+        "total_label": "$120.00",
+        "payment_method": "Card",
+        "sold_by": "Jamie",
+        "sold_at": "2026-02-15",
+        "item_name": "Puppy Preschool",
+        "message": "When can we start?",
+        "day_number": 3,
+        "action_label": "approved",
+        "action_emoji": "✅",
+        "review_note": "Nice work — keep it up!",
+        "phone": "(555) 123-4567",
+        "email": "alex@example.com",
+        "date": "2026-02-20",
+        "count": 3,
+        "kind": "recurring schedule",
+        "dates_preview": "Feb 20, Feb 27, Mar 5",
+        "week_label": "Feb 10 → Feb 16",
+        "sessions_count": 12,
+        "completions_count": 2,
+        "period_label": "Jan 2026",
+        "revenue": "$4,250.00",
+        "expenses": "$1,180.00",
+        "net": "$3,070.00",
+        "age": 5,
+    }
+    sample_rows = [
+        ("Dog", "Buddy"),
+        ("Client", "Alex Rivera"),
+        ("Note", "This is a preview — real emails will have live data."),
+    ]
+    ok = await email_service._dispatch(
+        slug=slug,
+        to_email=to,
+        ctx=sample_ctx,
+        rows=sample_rows,
+        cta_url=os.environ.get("APP_PUBLIC_URL", "") or None,
+        show_install=False,
+    )
+    return {"ok": bool(ok), "sent_to": to, "slug": slug}
+
+
+@api.get("/admin/email-settings")
+async def get_email_settings(_: dict = Depends(require_admin)):
+    """Singleton branding doc with sensible defaults filled in."""
+    doc = await db.email_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    merged = {**_email_settings_defaults(), **doc}
+    return merged
+
+
+@api.put("/admin/email-settings")
+async def update_email_settings(body: EmailSettingsUpdate, _: dict = Depends(require_admin)):
+    update_doc = {k: v for k, v in body.model_dump().items() if v is not None}
+    update_doc["updated_at"] = now_iso()
+    await db.email_settings.update_one(
+        {"_id": "singleton"}, {"$set": update_doc}, upsert=True,
+    )
+    email_service.invalidate_settings_cache()
+    doc = await db.email_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    return {**_email_settings_defaults(), **doc}
+
+
+# ------------- Homework Streak (client portal) -------------
+
+@api.get("/portal/homework-streak")
+async def portal_homework_streak(current: dict = Depends(get_current_user)):
+    """Current + longest consecutive-day homework completion streak for the
+    logged-in client. Drives the 🔥 streak tile on the portal home."""
+    client_id = current.get("client_id")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="No client linked to this account")
+
+    docs = await db.homework.find(
+        {"client_id": client_id, "status": "completed"},
+        {"_id": 0, "completed_at": 1},
+    ).to_list(5000)
+
+    from datetime import date as _date, timedelta as _td  # local import to avoid name clashes
+    days = set()
+    for d in docs:
+        ts = d.get("completed_at") or ""
+        try:
+            days.add(datetime.fromisoformat(ts).date())
+        except Exception:
+            continue
+
+    today = _date.today()
+    # Current streak: count back from today (or yesterday if no completion today)
+    current_streak = 0
+    if days:
+        anchor = today if today in days else today - _td(days=1)
+        cur = anchor
+        while cur in days:
+            current_streak += 1
+            cur -= _td(days=1)
+
+    # Longest streak: scan sorted days, count contiguous runs
+    longest_streak = 0
+    if days:
+        sorted_days = sorted(days)
+        run = 1
+        longest_streak = 1
+        for i in range(1, len(sorted_days)):
+            if (sorted_days[i] - sorted_days[i - 1]).days == 1:
+                run += 1
+                longest_streak = max(longest_streak, run)
+            else:
+                run = 1
+
+    last_completed = max(days).isoformat() if days else None
+    # Milestone hints: 3 → 7 → 14 → 30 → 60 → 100
+    milestones = [3, 7, 14, 30, 60, 100, 200, 365]
+    next_milestone = next((m for m in milestones if m > current_streak), None)
+
+    return {
+        "current_streak": current_streak,
+        "longest_streak": longest_streak,
+        "last_completed_date": last_completed,
+        "next_milestone": next_milestone,
+        "days_to_next_milestone": (next_milestone - current_streak) if next_milestone else None,
+        "completed_today": today in days,
+    }
+
 
 
 @api.get("/")

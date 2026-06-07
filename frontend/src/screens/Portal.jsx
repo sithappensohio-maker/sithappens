@@ -18,6 +18,7 @@ import InstallAppButton from "../components/InstallAppButton";
 import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
+import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -1102,6 +1103,11 @@ export default function Portal() {
         </div>
 
         <div className="col-span-2 space-y-6">
+          {/* Sprint 110by — Homework completion streak tile (renders only when
+              the client has logged at least one completion). Sits above the
+              homework list as a quick dopamine nudge. */}
+          <HomeworkStreakTile />
+
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old
               referral feed has been removed (client uses a separate system). */}

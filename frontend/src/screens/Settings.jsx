@@ -8,6 +8,7 @@ import IconPicker from "../components/IconPicker";
 import { useTheme, FONT_OPTIONS } from "../lib/theme";
 import PageHero from "../components/PageHero";
 import CsvImportRow from "../components/CsvImportRow";
+import EmailDesignerPanel from "../components/EmailDesignerPanel";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -72,6 +73,7 @@ export default function Settings() {
     { id: "backup", label: "Backup & Restore", icon: "fa-database" },
     { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation" },
     { id: "automation", label: "Email Automation", icon: "fa-paper-plane" },
+    { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text" },
     { id: "account", label: "Account", icon: "fa-user-shield" },
   ];
 
@@ -113,6 +115,7 @@ export default function Settings() {
           {tab === "backup" && <BackupPanel />}
           {tab === "errors" && <ErrorsPanel />}
           {tab === "automation" && <AutomationPanel />}
+          {tab === "email_designer" && <EmailDesignerPanel />}
           {tab === "account" && (
             <div className="space-y-5 max-w-md" data-testid="account-panel">
               <div>

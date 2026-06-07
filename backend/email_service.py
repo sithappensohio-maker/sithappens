@@ -6,9 +6,13 @@ import base64
 import io
 import logging
 import os
+import re
+import time
 
 import qrcode
 import resend
+
+from email_templates_registry import get_template as _registry_get_template
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,94 @@ if RESEND_API_KEY:
 BRAND_GREEN = "#8cc63f"
 BRAND_BLUE = "#00a9e0"
 BRAND_DARK = "#0f172a"
+
+# -------------------------------------------------------------------
+# Customization layer
+# -------------------------------------------------------------------
+# Server passes its motor `db` handle once on startup so this module can
+# look up `email_templates` overrides + `email_settings` branding without
+# importing server.py (which would create a circular import).
+_db = None
+
+# Short in-process cache so we don't hit Mongo on every send.
+# Cleared explicitly by the admin API when an override is saved.
+_TEMPLATE_CACHE: dict = {}
+_TEMPLATE_CACHE_TS: float = 0.0
+_SETTINGS_CACHE: dict | None = None
+_SETTINGS_CACHE_TS: float = 0.0
+_CACHE_TTL_SECONDS = 30.0
+
+
+def set_db(db_handle) -> None:
+    """Called once from server.py at startup."""
+    global _db
+    _db = db_handle
+
+
+def invalidate_template_cache() -> None:
+    global _TEMPLATE_CACHE, _TEMPLATE_CACHE_TS
+    _TEMPLATE_CACHE = {}
+    _TEMPLATE_CACHE_TS = 0.0
+
+
+def invalidate_settings_cache() -> None:
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_TS
+    _SETTINGS_CACHE = None
+    _SETTINGS_CACHE_TS = 0.0
+
+
+async def _get_template_override(slug: str) -> dict:
+    """Return the override row for `slug`, or {} if no customization exists."""
+    global _TEMPLATE_CACHE, _TEMPLATE_CACHE_TS
+    if _db is None:
+        return {}
+    now = time.monotonic()
+    if now - _TEMPLATE_CACHE_TS > _CACHE_TTL_SECONDS:
+        _TEMPLATE_CACHE = {}
+        _TEMPLATE_CACHE_TS = now
+    if slug in _TEMPLATE_CACHE:
+        return _TEMPLATE_CACHE[slug]
+    try:
+        doc = await _db.email_templates.find_one({"slug": slug}, {"_id": 0}) or {}
+    except Exception as e:
+        logger.warning("email_templates lookup failed for %s: %s", slug, e)
+        doc = {}
+    _TEMPLATE_CACHE[slug] = doc
+    return doc
+
+
+async def _get_email_settings() -> dict:
+    """Return the singleton branding doc, or {} if not customized."""
+    global _SETTINGS_CACHE, _SETTINGS_CACHE_TS
+    if _db is None:
+        return {}
+    now = time.monotonic()
+    if _SETTINGS_CACHE is not None and (now - _SETTINGS_CACHE_TS) < _CACHE_TTL_SECONDS:
+        return _SETTINGS_CACHE
+    try:
+        doc = await _db.email_settings.find_one({"_id": "singleton"}, {"_id": 0}) or {}
+    except Exception as e:
+        logger.warning("email_settings lookup failed: %s", e)
+        doc = {}
+    _SETTINGS_CACHE = doc
+    _SETTINGS_CACHE_TS = now
+    return doc
+
+
+_VAR_RE = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+
+
+def _substitute(text: str, ctx: dict) -> str:
+    """Replace `{{var}}` placeholders using `ctx`. Missing vars stay as-is so
+    the operator can spot typos in their template."""
+    if not text:
+        return text
+    def _r(m):
+        k = m.group(1)
+        if k in ctx and ctx[k] is not None:
+            return str(ctx[k])
+        return m.group(0)
+    return _VAR_RE.sub(_r, text)
 
 
 def _qr_data_url(url: str) -> str:
@@ -71,26 +163,48 @@ def _install_footer() -> str:
 </div>"""
 
 
-def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None, show_install: bool = True, body_html: str = "") -> str:
+def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_url: str | None = None, show_install: bool = True, body_html: str = "", settings: dict | None = None) -> str:
+    """Render the standard branded email HTML.
+
+    `settings` is the admin-customizable branding doc (logo, colors, signature,
+    footer text). When omitted, the original hardcoded Sit Happens look is used.
+    """
+    s = settings or {}
+    brand_green = s.get("brand_green") or BRAND_GREEN
+    brand_blue = s.get("brand_blue") or BRAND_BLUE
+    brand_dark = s.get("brand_dark") or BRAND_DARK
+    brand_name = s.get("brand_name") or "Sit Happens"
+    logo_url = s.get("logo_url") or ""
+    signature_html = s.get("signature_html") or ""
+    footer_html = s.get("footer_html") or "Sit Happens Dog Training · Daycare · Boarding<br/>You're receiving this because of activity on your Sit Happens account."
     rows_html = "".join(
         f'<tr><td style="padding:8px 0;color:#64748b;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;width:140px;">{k}</td>'
         f'<td style="padding:8px 0;color:#0f172a;font-size:15px;font-weight:600;">{v}</td></tr>'
         for k, v in rows
     )
     cta_html = (
-        f'<a href="{cta_url}" style="display:inline-block;background:{BRAND_BLUE};color:#fff;text-decoration:none;'
+        f'<a href="{cta_url}" style="display:inline-block;background:{brand_blue};color:#fff;text-decoration:none;'
         f'padding:14px 28px;border-radius:6px;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:13px;">{cta_text}</a>'
         if cta_text and cta_url else ""
     )
     install_html = _install_footer() if show_install else ""
     rows_block = f'<table cellpadding="0" cellspacing="0" style="width:100%;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin:8px 0 20px 0;">{rows_html}</table>' if rows_html else ""
+    logo_block = (
+        f'<img src="{logo_url}" alt="{brand_name}" style="max-height:48px;max-width:200px;display:block;margin-bottom:10px;" />'
+        if logo_url else ""
+    )
+    signature_block = (
+        f'<div style="margin-top:20px;color:#334155;font-size:14px;line-height:1.6;">{signature_html}</div>'
+        if signature_html else ""
+    )
     return f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
     <tr><td align="center">
       <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-        <tr><td style="background:{BRAND_DARK};padding:24px 32px;">
-          <p style="margin:0;color:{BRAND_GREEN};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">Sit Happens</p>
+        <tr><td style="background:{brand_dark};padding:24px 32px;">
+          {logo_block}
+          <p style="margin:0;color:{brand_green};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{brand_name}</p>
           <h1 style="margin:6px 0 0 0;color:#fff;font-size:22px;font-weight:900;letter-spacing:-0.01em;">{title}</h1>
         </td></tr>
         <tr><td style="padding:28px 32px;">
@@ -98,11 +212,11 @@ def _wrap(title: str, intro: str, rows: list, cta_text: str | None = None, cta_u
           {rows_block}
           {body_html}
           {cta_html}
+          {signature_block}
           {install_html}
         </td></tr>
         <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
-          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">Sit Happens Dog Training · Daycare · Boarding<br/>
-          You're receiving this because of activity on your Sit Happens account.</p>
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">{footer_html}</p>
         </td></tr>
       </table>
     </td></tr>
@@ -140,6 +254,67 @@ async def _send(to_email: str, subject: str, html: str) -> bool:
         return False
 
 
+async def _dispatch(
+    *,
+    slug: str,
+    to_email: str,
+    ctx: dict,
+    rows: list,
+    cta_url: str | None = None,
+    body_html: str = "",
+    show_install: bool = True,
+    fallback_subject: str | None = None,
+    fallback_title: str | None = None,
+    fallback_intro: str | None = None,
+    fallback_cta_text: str | None = None,
+) -> bool:
+    """Slug-aware send: looks up admin overrides + branding, applies `{{var}}`
+    substitution, renders branded HTML, then sends via Resend.
+
+    `fallback_*` args are used when both (a) no admin override exists and (b)
+    the registry has no default for that field. In practice the registry
+    always provides defaults — these fallbacks are belt-and-suspenders for
+    legacy callers that pre-date the registry.
+    """
+    if not to_email:
+        return False
+    reg = _registry_get_template(slug) or {}
+    override = await _get_template_override(slug)
+    subject = _substitute(
+        override.get("subject") or reg.get("default_subject") or fallback_subject or "",
+        ctx,
+    )
+    title = _substitute(
+        override.get("title") or reg.get("default_title") or fallback_title or "",
+        ctx,
+    )
+    intro = _substitute(
+        override.get("intro_html") or reg.get("default_intro_html") or fallback_intro or "",
+        ctx,
+    )
+    # cta_text may legitimately be "" to hide the button; respect explicit empty strings
+    if "cta_text" in override:
+        cta_text_raw = override.get("cta_text") or ""
+    elif "default_cta_text" in reg:
+        cta_text_raw = reg.get("default_cta_text") or ""
+    else:
+        cta_text_raw = fallback_cta_text or ""
+    cta_text = _substitute(cta_text_raw, ctx) if cta_text_raw else None
+    signoff_html = _substitute(override.get("signoff_html") or "", ctx) if override.get("signoff_html") else ""
+    settings = await _get_email_settings()
+    html = _wrap(
+        title=title,
+        intro=intro,
+        rows=rows,
+        cta_text=cta_text,
+        cta_url=cta_url,
+        show_install=show_install,
+        body_html=(body_html or "") + (signoff_html or ""),
+        settings=settings,
+    )
+    return await _send(to_email, subject, html)
+
+
 async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     """New booking arrived from the client portal — notify the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:
@@ -161,18 +336,20 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
     if booking.get("kennel"):
         rows.append(("Kennel", booking["kennel"]))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"🐾 New Booking · {booking.get('dog_name', '')}",
-        intro=f"<strong>{booking.get('client_name', 'A client')}</strong> just requested a booking through the portal. It's pending your approval.",
+    await _dispatch(
+        slug="admin_new_booking",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": booking.get("client_name", ""),
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+            "date": booking.get("date", ""),
+            "phone": client.get("phone", "") or "",
+            "email": client.get("email", "") or "",
+        },
         rows=rows,
-        cta_text="Open Bookings" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"New booking · {booking.get('dog_name','')} · {svc_label} · {booking.get('date','')}",
-        html,
     )
 
 
@@ -214,18 +391,20 @@ async def notify_admin_bulk_booking(
         rows.append(("Skipped", "<br/>".join(skipped_lines)))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     kind_label = "recurring schedule" if kind == "recurring" else "multi-date booking"
-    html = _wrap(
-        title=f"🐾 {len(bookings)} New Bookings · {dog_name}",
-        intro=f"<strong>{client.get('name') or 'A client'}</strong> just created a {kind_label} for <strong>{dog_name}</strong>. All bookings are pending your approval.",
+    await _dispatch(
+        slug="admin_bulk_booking",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client.get("name") or bookings[0].get("client_name", ""),
+            "dog_name": dog_name,
+            "service_label": svc_label,
+            "count": len(bookings),
+            "kind": kind_label,
+            "dates_preview": dates_preview or "—",
+        },
         rows=rows,
-        cta_text="Open Bookings" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"{len(bookings)} new bookings · {dog_name} · {svc_label}",
-        html,
     )
 
 
@@ -239,18 +418,17 @@ async def notify_admin_new_client(user: dict, client: dict) -> None:
         ("Phone", client.get("phone") or "—"),
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title="🎉 New client signup",
-        intro=f"<strong>{client.get('name') or user.get('name', 'A new client')}</strong> just created an account on the Sit Happens portal.",
+    await _dispatch(
+        slug="admin_new_client",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client.get("name") or user.get("name", ""),
+            "email": user.get("email", ""),
+            "phone": client.get("phone", "") or "",
+        },
         rows=rows,
-        cta_text="Open Admin" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"New client signup · {client.get('name') or user.get('name', '')}",
-        html,
     )
 
 
@@ -274,21 +452,18 @@ async def notify_admin_first_booking(booking: dict, client: dict) -> None:
         rows.append(("Email", client["email"]))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     name = client.get("name") or booking.get("client_name", "A new client")
-    html = _wrap(
-        title=f"🎉 First booking — {name}",
-        intro=(
-            f"<strong>{name}</strong> just made their first-ever booking on Sit Happens. "
-            f"That's a brand-new client across the threshold — nice work."
-        ),
+    await _dispatch(
+        slug="admin_first_booking",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": name,
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+            "date": booking.get("date", ""),
+        },
         rows=rows,
-        cta_text="Open Admin" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"🎉 First booking · {name} · {svc_label} · {booking.get('date','')}",
-        html,
     )
 
 
@@ -312,21 +487,19 @@ async def notify_admin_quote_request(client: dict, item: dict, message: str) -> 
     if message:
         rows.append(("Message", message))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"💬 Quote request — {item_label}",
-        intro=(
-            f"<strong>{name}</strong> is interested in <strong>{item_label}</strong> and would like a quote or more info. "
-            f"Reach out when you can."
-        ),
+    await _dispatch(
+        slug="admin_quote_request",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": name,
+            "item_name": item_label,
+            "message": message or "",
+            "phone": client.get("phone", "") or "",
+            "email": client.get("email", "") or "",
+        },
         rows=rows,
-        cta_text="Open Admin" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"💬 Quote request · {name} · {item_label}",
-        html,
     )
 
 
@@ -355,18 +528,24 @@ async def notify_client_quote_received(client: dict, item: dict, message: str) -
         f"In the meantime, feel free to browse the rest of our {kind}s in the portal — "
         f"or reply to this email directly with any other questions."
     )
-    html = _wrap(
-        title="We got it — talk soon!",
-        intro=intro,
+    await _dispatch(
+        slug="client_quote_received",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": name,
+            "item_name": item_label,
+            "message": message or "",
+        },
         rows=rows,
-        cta_text="Open Client Portal" if APP_PUBLIC_URL else None,
         cta_url=APP_PUBLIC_URL or None,
         show_install=False,
-    )
-    await _send(
-        to_email,
-        f"We got your request about {item_label} — Sit Happens",
-        html,
+        # Legacy fallback: pre-registry callers used a long literal intro.
+        # Registry default is shorter but functional.
+        fallback_intro=intro,
+        fallback_title="We got it — talk soon!",
+        fallback_subject=f"We got your request about {item_label} — Sit Happens",
+        fallback_cta_text="Open Client Portal" if APP_PUBLIC_URL else "",
     )
 
 
@@ -385,18 +564,17 @@ async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     if log.get("note"):
         rows.append(("Note", log["note"]))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"📝 New training note · {dog.get('name', '')}",
-        intro=f"<strong>{client.get('name', 'A client')}</strong> just added a training note for <strong>{dog.get('name','their dog')}</strong>.",
+    await _dispatch(
+        slug="admin_training_log",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client.get("name", ""),
+            "dog_name": dog.get("name", ""),
+            "date": log.get("date", ""),
+        },
         rows=rows,
-        cta_text="Open Pipeline" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"Training note · {dog.get('name','')} · {client.get('name','')}",
-        html,
     )
 
 
@@ -420,18 +598,17 @@ async def notify_admin_homework_section_log(hw: dict, entry: dict, client: dict,
     if entry.get("note"):
         rows.append(("Note", entry["note"]))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title="📋 Homework session logged",
-        intro=f"<strong>{client.get('name', 'A client')}</strong> just logged a training session for <strong>{hw.get('title','homework')}</strong>.",
+    await _dispatch(
+        slug="admin_homework_section_log",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client.get("name", ""),
+            "dog_name": (dog or {}).get("name", "") if dog else "",
+            "homework_title": hw.get("title", ""),
+        },
         rows=rows,
-        cta_text="Open Homework" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"Homework session · {hw.get('title','')} · {client.get('name','')}",
-        html,
     )
 
 
@@ -448,18 +625,17 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     if hw.get("completion_note"):
         rows.append(("Note", hw["completion_note"]))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"✅ Homework completed · {hw.get('title','')}",
-        intro=f"<strong>{client.get('name', 'A client')}</strong> just finished a homework assignment.",
+    await _dispatch(
+        slug="admin_homework_completed",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client.get("name", ""),
+            "dog_name": (dog or {}).get("name", "") if dog else "",
+            "homework_title": hw.get("title", ""),
+        },
         rows=rows,
-        cta_text="Open Homework" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
-    )
-    await _send(
-        ADMIN_NOTIFICATION_EMAIL,
-        f"Homework completed · {hw.get('title','')} · {client.get('name','')}",
-        html,
     )
 
 
@@ -543,16 +719,23 @@ async def notify_trainer_monday_digest(data: dict) -> bool:
     )
 
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"🐾 Your Monday brief · {week_start} → {week_end}",
-        intro="Here's your week ahead. Knock these out before the coffee gets cold.",
+    return bool(await _dispatch(
+        slug="trainer_monday_digest",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "week_label": f"{week_start} → {week_end}",
+            "sessions_count": data.get("week_bookings", 0),
+            "completions_count": len(data.get("just_completed", [])),
+        },
         rows=[],
-        cta_text="Open Dashboard" if cta_url else None,
         cta_url=cta_url,
         show_install=False,
         body_html=body_html,
-    )
-    return bool(await _send(ADMIN_NOTIFICATION_EMAIL, f"Monday brief · {week_start}", html))
+        fallback_title=f"🐾 Your Monday brief · {week_start} → {week_end}",
+        fallback_intro="Here's your week ahead. Knock these out before the coffee gets cold.",
+        fallback_subject=f"Monday brief · {week_start}",
+        fallback_cta_text="Open Dashboard" if cta_url else "",
+    ))
 
 
 async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
@@ -567,18 +750,18 @@ async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
         ("Plan", hw.get("title", "—")),
         ("Completed", hw.get("completed_at", "")[:10] if hw.get("completed_at") else "—"),
     ]
-    intro = (
-        f"🎓 Huge congrats, {first_name}! <strong>{hw.get('dog_name','')}</strong> just earned their "
-        f"<strong>{hw.get('title','')}</strong> certificate. Open the portal to download and share it."
-    )
-    html = _wrap(
-        title=f"🎓 Certificate ready · {hw.get('dog_name','')}",
-        intro=intro,
+    return bool(await _dispatch(
+        slug="client_certificate_issued",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": hw.get("dog_name", ""),
+            "homework_title": hw.get("title", ""),
+        },
         rows=rows,
-        cta_text="Download Certificate" if cta_url else None,
         cta_url=cta_url,
-    )
-    return bool(await _send(to_email, f"🎓 Certificate ready · {hw.get('dog_name','')}", html))
+    ))
 
 
 async def notify_client_homework_reminder(client: dict, plans: list) -> bool:
@@ -605,15 +788,22 @@ async def notify_client_homework_reminder(client: dict, plans: list) -> bool:
         f"Hi {first_name} — it's training time. Here's what's on the schedule today. "
         f"Even 5 minutes counts. 🐾"
     )
-    html = _wrap(
-        title="⏰ Time to practice",
-        intro=intro,
+    return bool(await _dispatch(
+        slug="client_homework_reminder",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": plans[0].get("dog_name", "") if plans else "",
+        },
         rows=[],
-        cta_text="Open Portal" if cta_url else None,
         cta_url=cta_url,
         body_html=body_rows,
-    )
-    return bool(await _send(to_email, f"Practice nudge · {plans[0].get('dog_name','')} 🐾", html))
+        fallback_title="⏰ Time to practice",
+        fallback_intro=intro,
+        fallback_subject=f"Practice nudge · {plans[0].get('dog_name','')} 🐾",
+        fallback_cta_text="Open Portal" if cta_url else "",
+    ))
 
 
 async def notify_client_weekly_homework_digest(client: dict, items: list, week_start: str, week_end: str) -> bool:
@@ -668,16 +858,23 @@ async def notify_client_weekly_homework_digest(client: dict, items: list, week_s
         f"Hi {first_name}, here's your weekly training round-up for "
         f"<strong>{week_start} → {week_end}</strong>. Keep stacking days — your dog notices."
     )
-    html = _wrap(
-        title=f"🐾 Weekly Training Recap · {len(items)} plan{'s' if len(items)!=1 else ''} in flight",
-        intro=intro,
-        rows=[],  # custom body below
-        cta_text="Open Portal" if cta_url else None,
+    subject = f"Weekly training recap · {len(items)} plan{'s' if len(items)!=1 else ''} 🐾"
+    return bool(await _dispatch(
+        slug="client_weekly_homework_digest",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "week_label": f"{week_start} → {week_end}",
+        },
+        rows=[],
         cta_url=cta_url,
         body_html="".join(rows),
-    )
-    subject = f"Weekly training recap · {len(items)} plan{'s' if len(items)!=1 else ''} 🐾"
-    return bool(await _send(to_email, subject, html))
+        fallback_title=f"🐾 Weekly Training Recap · {len(items)} plan{'s' if len(items)!=1 else ''} in flight",
+        fallback_intro=intro,
+        fallback_subject=subject,
+        fallback_cta_text="Open Portal" if cta_url else "",
+    ))
 
 
 async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, review_note: str, client: dict) -> None:
@@ -709,19 +906,33 @@ async def notify_client_day_reviewed(hw: dict, day_number: int, action: str, rev
         note = review_note if len(review_note) <= 400 else review_note[:400] + "…"
         rows.append(("Note from your trainer", note))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"{emoji} {verb.format(n=day_number)} · {hw.get('dog_name','')}",
-        intro=body_intro,
-        rows=rows,
-        cta_text="Open Portal" if cta_url else None,
-        cta_url=cta_url,
-    )
+    action_emoji = emoji
+    action_label = "approved" if action == "approved" else "needs a redo"
     subject = (
         f"Day {day_number} approved · {hw.get('dog_name','')}"
         if action == "approved"
         else f"Day {day_number} needs a redo · {hw.get('dog_name','')}"
     )
-    await _send(to_email, subject, html)
+    await _dispatch(
+        slug="client_day_reviewed",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": hw.get("dog_name", ""),
+            "homework_title": hw.get("title", ""),
+            "day_number": day_number,
+            "action_label": action_label,
+            "action_emoji": action_emoji,
+            "review_note": review_note or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        fallback_title=f"{emoji} {verb.format(n=day_number)} · {hw.get('dog_name','')}",
+        fallback_intro=body_intro,
+        fallback_subject=subject,
+        fallback_cta_text="Open Portal" if cta_url else "",
+    )
 
 
 async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
@@ -745,17 +956,19 @@ async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
         rows.append(("Notes", notes))
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     first_name = (client.get('name') or 'there').split(' ')[0]
-    html = _wrap(
-        title=f"📚 New homework · {hw.get('dog_name', '')}",
-        intro=f"Hi {first_name}, your trainer just assigned <strong>{hw.get('title','a new homework')}</strong> for <strong>{hw.get('dog_name','your pup')}</strong>. Log in to your portal to start tracking sessions.",
+    await _dispatch(
+        slug="client_homework_assigned",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": hw.get("dog_name", ""),
+            "homework_title": hw.get("title", ""),
+            "due_date": hw.get("due_date", "") or "",
+            "assigned_by": hw.get("assigned_by", "") or "",
+        },
         rows=rows,
-        cta_text="Open Portal" if cta_url else None,
         cta_url=cta_url,
-    )
-    await _send(
-        to_email,
-        f"New homework · {hw.get('title','')} · {hw.get('dog_name','')}",
-        html,
     )
 
 
@@ -775,18 +988,18 @@ async def notify_client_low_credits(client: dict, service_type: str, remaining: 
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     first_name = (client.get('name') or 'there').split(' ')[0]
-    intro_state = "you're out of credits" if remaining <= 0 else f"you've only got <strong>{remaining} {unit}</strong> left on your <strong>{label.lower()}</strong> pack"
-    html = _wrap(
-        title=f"⚠️ Low {label.lower()} credits",
-        intro=f"Hi {first_name}, heads up — {intro_state}. Reach out anytime and we'll get a new pack set up so {label.lower()} doesn't pause.",
+    await _dispatch(
+        slug="client_low_credits",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "service_label": label.lower(),
+            "remaining": remaining,
+            "unit": unit,
+        },
         rows=rows,
-        cta_text="Open Portal" if cta_url else None,
         cta_url=cta_url,
-    )
-    await _send(
-        to_email,
-        f"Low {label.lower()} credits · {remaining} {unit} left",
-        html,
     )
 
 
@@ -857,11 +1070,27 @@ async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, pa
     </td></tr>
   </table>
 </body></html>"""
-    await _send(
-        to_email,
-        f"Receipt · ${grand_total:.2f} · Sit Happens credit packs",
-        body_html,
+    # Pack receipts use a hand-crafted HTML layout (above) for the line-item
+    # table. We still honor the admin's customized SUBJECT for this template
+    # so they can change "Receipt · $X · Sit Happens credit packs" to match
+    # their brand voice.
+    reg = _registry_get_template("client_pack_receipt") or {}
+    override = await _get_template_override("client_pack_receipt")
+    ctx = {
+        "first_name": first_name,
+        "client_name": client.get("name", ""),
+        "total_label": f"${grand_total:.2f}",
+        "payment_method": method_label,
+        "sold_by": sold_by,
+        "sold_at": sold_at[:10] if sold_at else "",
+    }
+    subject = _substitute(
+        override.get("subject")
+        or reg.get("default_subject")
+        or f"Receipt · ${grand_total:.2f} · Sit Happens credit packs",
+        ctx,
     )
+    await _send(to_email, subject, body_html)
 
 
 async def notify_client_booking_approved(booking: dict, client: dict) -> None:
@@ -884,17 +1113,18 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
         rows.append(("Pickup", booking["pickup_time"]))
     if booking.get("kennel"):
         rows.append(("Kennel", booking["kennel"]))
-    html = _wrap(
-        title=f"You're confirmed! · {booking.get('dog_name', '')}",
-        intro=f"Hi {client.get('name', 'there').split(' ')[0]}, your booking has been approved. We can't wait to see {booking.get('dog_name','your pup')}!",
+    await _dispatch(
+        slug="client_booking_approved",
+        to_email=to_email,
+        ctx={
+            "first_name": client.get('name', 'there').split(' ')[0],
+            "client_name": client.get("name", ""),
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+            "date_range": _date_range(booking.get("date", ""), booking.get("end_date")),
+            "kennel": booking.get("kennel", "") or "",
+        },
         rows=rows,
-        cta_text=None,
-        cta_url=None,
-    )
-    await _send(
-        to_email,
-        f"Booking confirmed · {booking.get('dog_name','')} · {booking.get('date','')}",
-        html,
     )
 
 
@@ -943,7 +1173,16 @@ async def send_account_claim(
         rows=[("Account", to_email)],
         cta_text=cta_text,
         cta_url=claim_url,
+        settings=await _get_email_settings(),
     )
+    # account_claim is a slightly different beast (dynamic title/intro per
+    # is_reset flag) so we don't run it through _dispatch's registry path.
+    # We still honor a custom subject override if one is set.
+    override = await _get_template_override("account_claim")
+    if override.get("subject"):
+        subject = _substitute(override["subject"], {
+            "first_name": first, "client_name": client_name, "dog_name_or_dogs": "",
+        })
     await _send(to_email, subject, html)
 
 
@@ -978,17 +1217,21 @@ async def notify_client_dog_birthday(client: dict, dog: dict) -> None:
         ("From", "The Sit Happens crew 🐾"),
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    html = _wrap(
-        title=f"🎉 Happy birthday, {dog_name}!",
-        intro=intro,
+    await _dispatch(
+        slug="client_dog_birthday",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": dog_name,
+            "age": dog.get("age", "") or "",
+        },
         rows=rows,
-        cta_text="Open Portal" if cta_url else None,
         cta_url=cta_url,
-    )
-    await _send(
-        to_email,
-        f"🎂 Happy birthday, {dog_name}!",
-        html,
+        fallback_title=f"🎉 Happy birthday, {dog_name}!",
+        fallback_intro=intro,
+        fallback_subject=f"🎂 Happy birthday, {dog_name}!",
+        fallback_cta_text="Open Portal" if cta_url else "",
     )
 
 
@@ -1013,17 +1256,20 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
     )
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     rows = [("Dog", dog_name), ("Renewals due", str(len(vaccines_expiring)))]
-    html = _wrap(
-        title=f"📋 Vaccine renewal coming up for {dog_name}",
-        intro=intro,
+    await _dispatch(
+        slug="client_vaccine_expiring",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": dog_name,
+        },
         rows=rows,
-        cta_text="Upload Updated Record" if cta_url else None,
         cta_url=cta_url,
-    )
-    await _send(
-        to_email,
-        f"📋 {dog_name}: vaccine renewal in 30 days",
-        html,
+        fallback_title=f"📋 Vaccine renewal coming up for {dog_name}",
+        fallback_intro=intro,
+        fallback_subject=f"📋 {dog_name}: vaccine renewal in 30 days",
+        fallback_cta_text="Upload Updated Record" if cta_url else "",
     )
 
 
@@ -1055,16 +1301,29 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         ("Completed bookings", str(summary.get("income", {}).get("completed_count", 0))),
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    period_label = f"{start_date} → {end_date}"
+    reg = _registry_get_template("admin_pl_report") or {}
+    override = await _get_template_override("admin_pl_report")
+    ctx = {
+        "period_label": period_label,
+        "revenue": f"${income:,.2f}",
+        "expenses": f"${expenses:,.2f}",
+        "net": f"${net:,.2f}",
+    }
+    title = _substitute(override.get("title") or reg.get("default_title") or f"📊 P&L Report · {period_label}", ctx)
+    intro = _substitute(override.get("intro_html") or reg.get("default_intro_html") or (
+        f"Your monthly Profit & Loss report is attached as a PDF. "
+        f"<strong style='color:{net_color}'>Net: ${net:,.2f}</strong> for this period."
+    ), ctx)
+    subject = _substitute(override.get("subject") or reg.get("default_subject") or f"📊 P&L Report · {period_label} · Net ${net:,.2f}", ctx)
     html = _wrap(
-        title=f"📊 P&amp;L Report · {start_date} → {end_date}",
-        intro=(
-            "Your monthly Profit &amp; Loss report is attached as a PDF. "
-            f"<strong style='color:{net_color}'>Net: ${net:,.2f}</strong> for this period."
-        ),
+        title=title,
+        intro=intro,
         rows=rows,
         cta_text="Open Income Dashboard" if cta_url else None,
         cta_url=cta_url + "#income" if cta_url else None,
         show_install=False,
+        settings=await _get_email_settings(),
     )
 
     attachment_name = f"PL_Report_{start_date}_to_{end_date}.pdf"
@@ -1072,7 +1331,7 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
         params = {
             "from": SENDER_EMAIL,
             "to": [ADMIN_NOTIFICATION_EMAIL],
-            "subject": f"📊 P&L Report · {start_date} → {end_date} · Net ${net:,.2f}",
+            "subject": subject,
             "html": html,
             "attachments": [{
                 "filename": attachment_name,
