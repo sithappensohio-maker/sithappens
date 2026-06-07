@@ -7842,16 +7842,23 @@ BACKUP_COLLECTIONS = [
     # that regenerates from trivia_questions on the next portal hit. Including
     # it would create duplicate rows on restore (no stable key field).
     "trivia_questions", "trivia_attempts", "dog_facts",
+    # Sprint 110by — admin email customization (per-template overrides + singleton branding)
+    "email_templates", "email_settings",
+    # Sprint 110bx — homework auto-assign audit trail (program-driven sends)
+    "notification_log",
+    # Vaccine reminder dismissals so restored state doesn't re-fire stale alerts
+    "vaccine_dismissals",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
-# (we upsert by `_id` instead of `id`). Currently just `app_settings` which
-# stores things like {_id: "quarterly_tax", ...} and {_id: "trivia_rewards", ...}.
-STRING_ID_COLLECTIONS = {"app_settings"}
-# Bumped to v3 with the expanded collection list. Restore accepts v1/v2 backups
-# too (older snapshots simply won't include the new collections — restore
-# leaves missing collections untouched rather than wiping them).
-BACKUP_VERSION = 3
+# (we upsert by `_id` instead of `id`).
+#   • `app_settings`   — stores rows like {_id: "quarterly_tax", ...}
+#   • `email_settings` — singleton {_id: "singleton", brand_*, logo_url, ...}
+STRING_ID_COLLECTIONS = {"app_settings", "email_settings"}
+# Bumped to v4 with the email customization + notification log additions.
+# Restore accepts older v1/v2/v3 backups too (missing collections are left
+# untouched rather than wiped).
+BACKUP_VERSION = 4
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
