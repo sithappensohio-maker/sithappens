@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeMonths } from "../lib/dogAge";
+import { scrollToCardAndFlash } from "../lib/scrollToCard";
 import ClientPortalPreview from "../components/ClientPortalPreview";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import Avatar from "../components/Avatar";
@@ -16,7 +17,7 @@ import PageHero from "../components/PageHero";
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
-export default function Clients({ focusId = null, onConsumed = () => {}, onJumpToDog = () => {} }) {
+export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {} }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
@@ -73,9 +74,17 @@ export default function Clients({ focusId = null, onConsumed = () => {}, onJumpT
 
   useEffect(() => {
     if (!focusId || clients.length === 0) return;
-    const c = clients.find(x => x.id === focusId);
-    if (c) { openEditClient(c); onConsumed(); }
-  }, [focusId, clients]);
+    // Sprint 110cm — Search result clicked → scroll-and-flash (don't auto-
+    // open the edit modal — disorienting). Explicit "Open profile" buttons
+    // from Pipeline/Dashboard pass mode="open" so they keep their old
+    // behavior of yanking the modal up.
+    if (focusMode === "open") {
+      const c = clients.find(x => x.id === focusId);
+      if (c) { openEditClient(c); onConsumed(); }
+    } else {
+      scrollToCardAndFlash(`client-card-${focusId}`).then(onConsumed);
+    }
+  }, [focusId, focusMode, clients]);
 
   const submitClient = async () => {
     setErr("");

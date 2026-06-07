@@ -52,8 +52,10 @@ function AdminShell() {
 
   const navigateTo = (item) => {
     setSearchOpen(false);
-    if (item.kind === "dog") { setSearchTarget({ kind: "dog", id: item.id }); setTab("dogs"); }
-    else if (item.kind === "client") { setSearchTarget({ kind: "client", id: item.id }); setTab("clients"); }
+    // Sprint 110cm — search results scroll-and-flash (don't auto-open the
+    // edit modal). Operator clicks the card if they want to drill in.
+    if (item.kind === "dog") { setSearchTarget({ kind: "dog", id: item.id, mode: "scroll" }); setTab("dogs"); }
+    else if (item.kind === "client") { setSearchTarget({ kind: "client", id: item.id, mode: "scroll" }); setTab("clients"); }
   };
 
   const navItems = [
@@ -162,16 +164,16 @@ function AdminShell() {
         <div className="flex-1 overflow-y-auto p-4 md:p-8 relative" data-scroll-root>
           {tab === "dashboard" && <Dashboard
             onNavigate={(t)=>setTab(t)}
-            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }}
-            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id}); setTab("clients"); }}
+            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
+            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
           />}
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "bookings" && <Bookings />}
           {tab === "recurring" && <RecurringTemplates />}
-          {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
-          {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} onConsumed={()=>setSearchTarget(null)} />}
-          {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id}); setTab("dogs"); }} />}
+          {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
+          {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} />}
+          {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "homework" && <Homework />}
           {tab === "trophies" && <Trophies />}
           {tab === "income" && <Income />}

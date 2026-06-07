@@ -143,6 +143,19 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 }
 .animate-slide-in { animation: slide-in 0.25s ease-out; }
 
+/* Sprint 110cm — search-result highlight. When the operator picks a result
+   from Cmd+K we scroll to the card and pulse it for ~2s so it's obvious
+   which one matched, without auto-opening any modal. */
+@keyframes search-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(140,198,63,0.0), 0 0 0 0 rgba(140,198,63,0.0); }
+  20%  { box-shadow: 0 0 0 4px rgba(140,198,63,0.55), 0 0 32px 4px rgba(140,198,63,0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(140,198,63,0.0), 0 0 0 0 rgba(140,198,63,0.0); }
+}
+.search-flash {
+  animation: search-flash 1.8s ease-out;
+  border-color: #8cc63f !important;
+}
+
 /* Sprint 110q — CSS-only confetti burst used when a client finishes the
    final day of a daily-tracker plan. Each piece is a small square that
    falls + rotates + fades over ~1.5s. Randomization comes from inline

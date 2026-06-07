@@ -9,6 +9,7 @@ import DogTrainingTab from "../components/DogTrainingTab";
 import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
+import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {
   owner_id: "", name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -91,7 +92,7 @@ const PROGRAM_TYPE_COLORS = {
   custom: { bg: "bg-pink-500/15", text: "text-pink-400", bar: "bg-pink-400" },
 };
 
-export default function Dogs({ focusId = null, onConsumed = () => {} }) {
+export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed = () => {} }) {
   const [dogs, setDogs] = useState([]);
   const [clients, setClients] = useState([]);
   const [enrollmentsByDog, setEnrollmentsByDog] = useState({});
@@ -139,12 +140,18 @@ export default function Dogs({ focusId = null, onConsumed = () => {} }) {
   };
   useEffect(() => { load(); }, []);
 
-  // Auto-open dog when navigated from global search
+  // Sprint 110cm — Search result clicked → scroll-and-flash. Explicit
+  // "Open dog profile" buttons (Pipeline/Dashboard/BookingDetail) pass
+  // mode="open" so they keep their direct-into-modal behavior.
   useEffect(() => {
     if (!focusId || dogs.length === 0) return;
-    const dog = dogs.find(d => d.id === focusId);
-    if (dog) { openEdit(dog); onConsumed(); }
-  }, [focusId, dogs]);
+    if (focusMode === "open") {
+      const d = dogs.find(x => x.id === focusId);
+      if (d) { openEdit(d); onConsumed(); }
+    } else {
+      scrollToCardAndFlash(`dog-card-${focusId}`).then(onConsumed);
+    }
+  }, [focusId, focusMode, dogs]);
 
   const openNew = () => {
     if (clients.length === 0) { alert("Add a client first."); return; }

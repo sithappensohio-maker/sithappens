@@ -30,6 +30,17 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cm — Search-to-card scroll (instead of force-open) (2026-06-08)
+**User ask**: "When searching a dog or client and I click the name, instead of opening right away take me to their card location."
+
+- ✅ Added `scrollToCardAndFlash(testId)` helper (`/app/frontend/src/lib/scrollToCard.js`). Scrolls the matching DOM node into view with `scrollIntoView({behavior:"smooth", block:"center"})` and pulses a green halo around it for 1.8s using a new CSS keyframe (`.search-flash` in `index.css`). Retries up to 20× × 50ms in case the card hasn't rendered yet after the tab switch.
+- ✅ `searchTarget` now carries a `mode` field. Search results from Cmd+K pass `mode:"scroll"`; explicit "Open dog profile" / "Open client" buttons in Pipeline, Dashboard, and Booking Detail pass `mode:"open"` so they keep their direct-into-modal behavior.
+- ✅ Clients.jsx + Dogs.jsx `focusId` effects branch on `focusMode`: `"open"` → openEdit (legacy behavior preserved for the contextual jump buttons), `"scroll"` → scrollToCardAndFlash (new search behavior).
+- ✅ Smoke test: search "test" → click BuddyTest → sidebar switches to DOGS, page scrolls so BUDDY · TEST card is in view, no modal opens. Behavior confirmed via playwright capture.
+- 🎯 **User impact**: search no longer slams you into a modal you might not want. You see WHERE the dog/client lives in your list (with a green halo telling you which one matched), then choose whether to click in.
+
+
+
 ## Sprint 110cl — Performance + Operator-Safety cleanup (2026-06-08)
 **Why**: Audit surfaced 4 obvious wins — no feature changes, just stability.
 
