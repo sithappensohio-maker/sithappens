@@ -329,14 +329,29 @@ export default function Income() {
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)} sub="outstanding" color="text-shOrange" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
           </div>
-          {(summary.retail_total > 0 || summary.retail_count > 0) && (
-            <div className="mt-3 flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded px-4 py-2.5" data-testid="weekly-retail-chip">
-              <i className="fas fa-bag-shopping text-purple-300"/>
-              <span className="text-[14px] font-black uppercase tracking-widest text-purple-300">Retail</span>
-              <span className="text-white font-black text-[18px]">{fmt(summary.retail_total || 0)}</span>
-              <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.retail_count || 0} sale{(summary.retail_count===1)?"":"s"}</span>
-              <span className="text-gray-500 text-[13px] mx-1">·</span>
-              <span className="text-gray-400 text-[13px] font-black uppercase tracking-widest">Gross w/ retail: <span className="text-white">{fmt(summary.gross_total || summary.completed_total)}</span></span>
+          {(summary.retail_total > 0 || summary.retail_count > 0 || summary.training_revenue_total > 0) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {summary.training_revenue_total > 0 && (
+                <div className="flex items-center gap-3 bg-shGreen/10 border border-shGreen/40 rounded px-4 py-2.5"
+                     data-testid="weekly-training-revenue-chip">
+                  <i className="fas fa-graduation-cap text-shGreen"/>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-shGreen">Training Revenue</span>
+                  <span className="text-white font-black text-[18px]">{fmt(summary.training_revenue_total)}</span>
+                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.training_revenue_count} sale{(summary.training_revenue_count===1)?"":"s"}</span>
+                </div>
+              )}
+              {(summary.retail_total > 0 || summary.retail_count > 0) && (
+                <div className="flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded px-4 py-2.5" data-testid="weekly-retail-chip">
+                  <i className="fas fa-bag-shopping text-purple-300"/>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-purple-300">Retail</span>
+                  <span className="text-white font-black text-[18px]">{fmt(summary.retail_total || 0)}</span>
+                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.retail_count || 0} sale{(summary.retail_count===1)?"":"s"}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-gray-400 text-[13px] font-black uppercase tracking-widest px-1">
+                <span>Gross:</span>
+                <span className="text-white">{fmt(summary.gross_total || summary.completed_total)}</span>
+              </div>
             </div>
           )}
           {summary.by_service?.length > 0 && (

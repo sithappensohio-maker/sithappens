@@ -30,6 +30,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cg — Income screen: Training Revenue actually splits from Retail (2026-06-08)
+**User-reported bug**: The Income screen *still* showed training program sales lumped under "RETAIL · $3750 · 17 sales" even after Sprint 110cb separated them server-side.
+
+- ✅ **Root cause**: Two backend endpoints serve the Income screen:
+  - `/transactions/summary-range` — fixed in 110cb (monthly/quarterly view) ✅
+  - `/transactions/weekly-summary` — **NOT fixed** in 110cb (this-week view) ❌ — the bug.
+- ✅ **Fix**: Mirrored the `source_kind="training_program_sale"` filter into `/transactions/weekly-summary`. Now returns `training_revenue_total` + `training_revenue_count` separately from `retail_total` + `retail_count`. `gross_total` still includes both buckets.
+- ✅ **Income.jsx UI**: Replaced the single purple "Retail" chip with **two independent chips** — a green 🎓 "Training Revenue" chip (only renders when > 0) and the purple "Retail" chip (only renders when > 0). Gross summary moved to its own neutral pill so both can coexist cleanly.
+- ✅ **Data**: Confirmed via curl — the 17 program sales now correctly attribute to `training_revenue_total = $3750.00` with `retail_total = $0` (test data has 1 stray retail row).
+- ✅ Screenshot confirms the Income screen now shows: 🎓 **TRAINING REVENUE $3750.00 · 17 sales**  ·  Gross $4063.25, with no misleading "Retail" bar.
+- ✅ Existing test `test_sell_program_income_appears_in_summary_range` still passes; weekly-summary semantics unchanged for retail (separation is additive).
+- 🎯 **User impact**: The Income screen now matches reality — services revenue, training revenue, and retail revenue each stand on their own.
+
+
+
 ## Sprint 110cf — Client-Initiated Reschedule Requests (2026-06-08)
 
 **Goal**: Owners can request to move a prepaid program session by proposing 1–3 alternate slots. Operator gets an email + an inbox row to approve with one click — no more "what time works?" phone tag.

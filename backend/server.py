@@ -11102,14 +11102,20 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         b["count"] += 1
         b["total"] += price
 
-    # Retail sales in the same week — fold gross retail into the weekly tile so
-    # the user's "total revenue" includes their external-POS sales.
-    retail_rows = await db.retail_sales.find(
+    # Retail sales in the same week. Sprint 110cb — training-program sales
+    # are split into their own "training revenue" bucket so the operator can
+    # tell merchandise apart from services on the Income screen.
+    retail_rows_all = await db.retail_sales.find(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
-        {"_id": 0, "amount": 1},
+        {"_id": 0, "amount": 1, "source_kind": 1},
     ).to_list(2000)
+    retail_rows = [x for x in retail_rows_all if x.get("source_kind") != "training_program_sale"]
+    training_rows = [x for x in retail_rows_all if x.get("source_kind") == "training_program_sale"]
     retail_total = round(sum(float(x.get("amount") or 0) for x in retail_rows), 2)
     retail_count = len(retail_rows)
+    training_revenue_total = round(sum(float(x.get("amount") or 0) for x in training_rows), 2)
+    training_revenue_count = len(training_rows)
+    other_revenue_total = round(retail_total + training_revenue_total, 2)
 
     return {
         "week_start": monday_iso,
@@ -11124,8 +11130,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         "by_service": sorted(by_service.values(), key=lambda x: -x["total"]),
         "retail_total": retail_total,
         "retail_count": retail_count,
+        "training_revenue_total": training_revenue_total,
+        "training_revenue_count": training_revenue_count,
         "service_total": round(completed_total, 2),
-        "gross_total": round(completed_total + retail_total, 2),
+        "gross_total": round(completed_total + other_revenue_total, 2),
     }
 
 
