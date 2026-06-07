@@ -470,6 +470,14 @@ class BookingOut(BaseModel):
     feeding_log: Optional[List[Dict[str, Any]]] = None
     medication_log: Optional[List[Dict[str, Any]]] = None
     bathroom_log: Optional[Dict[str, Any]] = None
+    # Sprint 110cp — Timestamps for the "Day in Pictures" email idempotency.
+    # `attempted_at` is stamped on every send attempt so we don't keep retrying.
+    # `sent_at` is stamped only on confirmed Resend success.
+    # `error` carries the most recent failure message (if any). Frontend uses
+    # all three to show "✓ Emailed at X", "⚠ Failed (reason)", or a "Re-send" button.
+    report_card_email_sent_at: Optional[str] = None
+    report_card_email_attempted_at: Optional[str] = None
+    report_card_email_error: Optional[str] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -3272,7 +3280,81 @@ async def check_out(
     except Exception as exc:
         logger.warning("Trophy check on checkout failed: %s", exc)
 
+    # Sprint 110cp — Auto-send the "Day in Pictures" email to the client at
+    # check-out. Fires once per booking (guarded by `report_card_email_sent_at`).
+    # Only sends when there's actually something to show — a report card OR
+    # any care-log activity. Boarding/daycare/grooming only; training visits
+    # skip this (they get their own training-program comms).
+    try:
+        await _maybe_send_report_card_email(booking)
+    except Exception as exc:
+        logger.warning("Report card email on checkout failed for %s: %s", booking_id, exc)
+
     return booking
+
+
+async def _maybe_send_report_card_email(booking: dict) -> dict:
+    """Send `client_report_card` once per booking. Returns a status dict:
+      {"sent": bool, "attempted": bool, "reason": str}
+
+    Stamps `report_card_email_attempted_at` on every attempt (so we don't
+    retry forever on transient failures) and `report_card_email_sent_at`
+    only on confirmed Resend success. Admin can use the resend endpoint to
+    clear both flags and re-fire (handy once they verify their Resend
+    domain).
+
+    Skips when:
+      - admin disabled the auto-send in settings.report_card_email_auto
+      - already attempted (idempotent)
+      - service is `training` (different comms flow)
+      - no payload to show (no report card AND no care log)
+      - client has no email
+    """
+    if not booking:
+        return {"sent": False, "attempted": False, "reason": "no booking"}
+    if booking.get("report_card_email_attempted_at"):
+        return {"sent": False, "attempted": False, "reason": "already attempted"}
+    if (booking.get("service_type") or "").lower() == "training":
+        return {"sent": False, "attempted": False, "reason": "training visit"}
+    rc = booking.get("report_card") or {}
+    feedings = booking.get("feeding_log") or []
+    meds = booking.get("medication_log") or []
+    bathroom = booking.get("bathroom_log") or {}
+    has_content = bool(rc) or bool(feedings) or bool(meds) or \
+        ((bathroom.get("pee") or 0) + (bathroom.get("poop") or 0) > 0)
+    if not has_content:
+        return {"sent": False, "attempted": False, "reason": "no content"}
+    settings = await get_settings()
+    if (settings or {}).get("report_card_email_auto") is False:
+        return {"sent": False, "attempted": False, "reason": "auto disabled"}
+    client_id = booking.get("client_id")
+    if not client_id:
+        return {"sent": False, "attempted": False, "reason": "no client_id"}
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client or not client.get("email"):
+        return {"sent": False, "attempted": False, "reason": "no email on file"}
+    dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
+
+    from email_service import notify_client_report_card
+    ts = now_iso()
+    update: Dict[str, Any] = {"report_card_email_attempted_at": ts}
+    try:
+        sent = await notify_client_report_card(booking, client, dog)
+    except Exception as exc:
+        sent = False
+        update["report_card_email_error"] = str(exc)[:300]
+    if sent:
+        update["report_card_email_sent_at"] = ts
+        update.pop("report_card_email_error", None)
+    else:
+        update.setdefault(
+            "report_card_email_error",
+            "Resend rejected the send — verify your domain on https://resend.com/domains",
+        )
+    await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
+    return {"sent": bool(sent), "attempted": True,
+            "reason": "ok" if sent else update.get("report_card_email_error", "unknown")}
+
 
 @api.post("/bookings/{booking_id}/report-card", response_model=BookingOut)
 async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Depends(require_employee_or_admin)):
@@ -3289,7 +3371,51 @@ async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Dep
     }
     await db.bookings.update_one({"id": booking_id}, {"$set": {"report_card": rc}})
     booking["report_card"] = rc
+    # Sprint 110cp — Send "Day in Pictures" email when the report card lands.
+    # If the booking was already checked-out, this is the natural trigger
+    # (common workflow: check out → write report card → send to client).
+    try:
+        await _maybe_send_report_card_email(booking)
+    except Exception as exc:
+        logger.warning("Report card email on save failed for %s: %s", booking_id, exc)
     return booking
+
+
+@api.post("/bookings/{booking_id}/resend-report-card")
+async def resend_report_card_email(booking_id: str, _: dict = Depends(require_admin)):
+    """Manual re-send of the Day-in-Pictures email. Clears the idempotency
+    flags and triggers the email again — useful when the client says they
+    didn't get it, when you fix typos in the report card after auto-send,
+    or when a domain-verification fix needs the email re-attempted."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    await db.bookings.update_one(
+        {"id": booking_id},
+        {"$unset": {
+            "report_card_email_sent_at": "",
+            "report_card_email_attempted_at": "",
+            "report_card_email_error": "",
+        }},
+    )
+    booking.pop("report_card_email_sent_at", None)
+    booking.pop("report_card_email_attempted_at", None)
+    booking.pop("report_card_email_error", None)
+    result = await _maybe_send_report_card_email(booking)
+    if not result["attempted"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Email not sent — {result['reason']}. Ensure the client has an email on file and the visit has a report card or care log.",
+        )
+    sent_to = (await db.clients.find_one(
+        {"id": booking["client_id"]}, {"_id": 0, "email": 1}
+    ) or {}).get("email", "")
+    return {
+        "ok": True,
+        "sent": result["sent"],
+        "sent_to": sent_to,
+        "error": None if result["sent"] else result["reason"],
+    }
 
 # -------- Vaccine Alerts --------
 @api.get("/vaccine-alerts")

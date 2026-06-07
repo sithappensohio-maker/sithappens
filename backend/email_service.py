@@ -1129,6 +1129,188 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
 
 
 
+async def notify_client_report_card(booking: dict, client: dict, dog: dict | None = None) -> bool:
+    """Sprint 110cp — "Day in Pictures" email. Sent at check-out when a
+    report card OR any care-log activity exists for the visit. Pulls photos,
+    mood tags, note, feeding/medication log w/ photo proof, and bathroom
+    counters straight from the booking doc into a beautifully formatted
+    branded HTML body.
+
+    Idempotent: if the booking already has `report_card_email_sent_at`, this
+    no-ops unless explicitly re-sent (caller clears the flag).
+    """
+    to_email = client.get("email", "")
+    if not to_email:
+        return False
+
+    dog_name = booking.get("dog_name") or (dog or {}).get("name") or "your dog"
+    first_name = (client.get("name") or "there").split(" ")[0]
+    svc_label = _service_label(booking.get("service_type", ""))
+    visit_date = booking.get("date") or ""
+    rc = booking.get("report_card") or {}
+    feedings = booking.get("feeding_log") or []
+    meds = booking.get("medication_log") or []
+    bathroom = booking.get("bathroom_log") or {}
+
+    settings = await _get_email_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+
+    # Build the rich HTML body section that goes UNDER the standard rows.
+    body_parts: list[str] = []
+
+    # ─── Photos grid (max 4) ──────────────────────────────────────────
+    photos = (rc.get("photos") or [])[:4]
+    if photos:
+        cells = "".join(
+            f'<td style="padding:4px;width:50%;"><img src="{p}" alt="{dog_name}" '
+            f'style="width:100%;max-width:240px;border-radius:10px;display:block;"/></td>'
+            for p in photos
+        )
+        # Group into rows of 2.
+        rows_html = ""
+        for i in range(0, len(photos), 2):
+            row_cells = "".join(
+                f'<td style="padding:4px;width:50%;"><img src="{p}" alt="{dog_name}" '
+                f'style="width:100%;max-width:240px;border-radius:10px;display:block;"/></td>'
+                for p in photos[i:i+2]
+            )
+            rows_html += f"<tr>{row_cells}</tr>"
+        body_parts.append(
+            f'<div style="margin:18px 0;"><table cellpadding="0" cellspacing="0" '
+            f'style="width:100%;border-collapse:separate;">{rows_html}</table></div>'
+        )
+
+    # ─── Mood tags ────────────────────────────────────────────────────
+    tags = rc.get("mood_tags") or []
+    if tags:
+        chips = "".join(
+            f'<span style="display:inline-block;background:#8cc63f15;border:1px solid #8cc63f55;'
+            f'color:#577d22;border-radius:999px;padding:6px 12px;margin:2px;font-size:13px;'
+            f'font-weight:800;text-transform:uppercase;letter-spacing:0.05em;">{t if isinstance(t, str) else t.get("label", "")}</span>'
+            for t in tags
+        )
+        body_parts.append(f'<div style="margin:14px 0;">{chips}</div>')
+
+    # ─── Staff note ───────────────────────────────────────────────────
+    note = (rc.get("note") or "").strip()
+    if note:
+        body_parts.append(
+            f'<div style="margin:16px 0;padding:14px;background:#f8fafc;border-left:4px solid #8cc63f;'
+            f'border-radius:6px;"><p style="margin:0;color:#0f172a;font-style:italic;font-size:15px;'
+            f'line-height:1.45;">"{note}"</p></div>'
+        )
+
+    # ─── Care log ─────────────────────────────────────────────────────
+    care_chunks: list[str] = []
+    if feedings:
+        items = "".join(
+            f'<li style="margin:4px 0;color:#0f172a;font-size:14px;">'
+            f'<strong>Meal {f.get("index", 0) + 1}</strong> given'
+            f'{(" · " + _short_time(f.get("at"))) if f.get("at") else ""}'
+            f'{(" · " + str(f.get("by_name"))) if f.get("by_name") else ""}'
+            f'{(" — " + str(f.get("note"))) if f.get("note") else ""}'
+            f'</li>'
+            for f in feedings
+        )
+        care_chunks.append(
+            f'<p style="margin:10px 0 4px 0;font-weight:800;color:#1e293b;text-transform:uppercase;'
+            f'font-size:11px;letter-spacing:0.18em;">🥣 Meals</p>'
+            f'<ul style="margin:0 0 8px 18px;padding:0;">{items}</ul>'
+        )
+    if meds:
+        items = ""
+        for m in meds:
+            photo_html = ""
+            if m.get("photo"):
+                photo_html = (
+                    f' <a href="{m["photo"]}" style="color:#3a99fb;text-decoration:none;'
+                    f'font-weight:800;">📷 photo</a>'
+                )
+            items += (
+                f'<li style="margin:4px 0;color:#0f172a;font-size:14px;">'
+                f'<strong>Dose {m.get("index", 0) + 1}</strong> given'
+                f'{(" · " + _short_time(m.get("at"))) if m.get("at") else ""}'
+                f'{(" · " + str(m.get("by_name"))) if m.get("by_name") else ""}'
+                f'{(" — " + str(m.get("note"))) if m.get("note") else ""}'
+                f'{photo_html}'
+                f'</li>'
+            )
+        care_chunks.append(
+            f'<p style="margin:10px 0 4px 0;font-weight:800;color:#1e293b;text-transform:uppercase;'
+            f'font-size:11px;letter-spacing:0.18em;">💊 Medications</p>'
+            f'<ul style="margin:0 0 8px 18px;padding:0;">{items}</ul>'
+        )
+    if (bathroom.get("pee") or 0) + (bathroom.get("poop") or 0) > 0:
+        chips = []
+        if bathroom.get("pee"):
+            chips.append(
+                f'<span style="display:inline-block;background:#3a99fb1a;border:1px solid #3a99fb55;'
+                f'color:#0c5fbb;border-radius:6px;padding:4px 10px;margin-right:6px;font-weight:800;'
+                f'font-size:13px;">💧 {bathroom["pee"]}</span>'
+            )
+        if bathroom.get("poop"):
+            chips.append(
+                f'<span style="display:inline-block;background:#f78c401a;border:1px solid #f78c4055;'
+                f'color:#a85a18;border-radius:6px;padding:4px 10px;margin-right:6px;font-weight:800;'
+                f'font-size:13px;">💩 {bathroom["poop"]}</span>'
+            )
+        care_chunks.append(
+            f'<p style="margin:10px 0 4px 0;font-weight:800;color:#1e293b;text-transform:uppercase;'
+            f'font-size:11px;letter-spacing:0.18em;">🚽 Bathroom</p>'
+            f'<div style="margin:0 0 8px 0;">{"".join(chips)}</div>'
+        )
+
+    if care_chunks:
+        body_parts.append(
+            f'<div style="margin:18px 0;padding:14px 16px;background:#f1f5f9;border-radius:10px;">'
+            f'<p style="margin:0 0 8px 0;font-weight:800;color:#577d22;text-transform:uppercase;'
+            f'font-size:12px;letter-spacing:0.22em;">📋 Care log</p>'
+            + "".join(care_chunks) +
+            f'</div>'
+        )
+
+    body_html = "".join(body_parts)
+
+    rows = [
+        ("Dog", dog_name),
+        ("Service", svc_label),
+        ("Date", visit_date),
+    ]
+    if booking.get("end_date") and booking["end_date"] != visit_date:
+        rows.append(("Dates", _date_range(visit_date, booking["end_date"])))
+
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    sent = await _dispatch(
+        slug="client_report_card",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": dog_name,
+            "service_label": svc_label,
+            "visit_date": visit_date,
+            "brand_name": brand_name,
+        },
+        rows=rows,
+        cta_url=cta_url,
+        body_html=body_html,
+    )
+    return sent
+
+
+def _short_time(iso: str | None) -> str:
+    """Format an ISO datetime as `8:12 AM` for the email body."""
+    if not iso:
+        return ""
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.strftime("%-I:%M %p")
+    except Exception:
+        return ""
+
+
+
 async def send_account_claim(
     to_email: str,
     client_name: str,

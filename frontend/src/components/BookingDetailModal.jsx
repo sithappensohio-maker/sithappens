@@ -297,8 +297,9 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           {/* Report card */}
           {reportCard && (
             <section>
-              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shOrange mb-2">
-                <i className="fas fa-clipboard-list mr-1"/>Report card
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shOrange mb-2 flex items-center gap-2 flex-wrap">
+                <span><i className="fas fa-clipboard-list mr-1"/>Report card</span>
+                <ReportCardEmailStatus booking={booking} onResent={onClose}/>
               </h3>
               <div className="bg-shOrange/5 border border-shOrange/30 rounded-lg p-3 space-y-2">
                 {reportCard.mood && (
@@ -347,5 +348,82 @@ function TimelineItem({ dot, label, time, sub }) {
       </div>
       {sub && <div className="text-[12px] text-gray-500 mt-0.5">{sub}</div>}
     </li>
+  );
+}
+
+
+
+function _fmtAgo(iso) {
+  if (!iso) return "";
+  try {
+    const m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.round(h / 24)}d ago`;
+  } catch { return ""; }
+}
+
+/** Sprint 110cp — Email-send status badge for the Report Card section.
+ *  Renders one of:
+ *   - "✓ Emailed Xm ago"      (success)
+ *   - "⚠ Failed (reason)"     (attempted but Resend rejected — domain etc.)
+ *   - "→ Send report card"    (no attempt yet)
+ *  Plus a "Re-send" action that wipes the flags and re-fires. */
+function ReportCardEmailStatus({ booking, onResent: _onResent }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const sentAt = booking.report_card_email_sent_at;
+  const attemptedAt = booking.report_card_email_attempted_at;
+  const error = booking.report_card_email_error;
+
+  const resend = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await api.post(`/bookings/${booking.id}/resend-report-card`);
+      const body = r.data || {};
+      if (body.sent) setMsg(`✓ Sent to ${body.sent_to}`);
+      else setMsg(`⚠ ${body.error || "Failed"}`);
+      // Give the modal a beat to render the new state, then refresh by closing.
+      setTimeout(() => { window.location.reload(); }, 1400);
+    } catch (e) {
+      setMsg(`⚠ ${e?.response?.data?.detail || "Failed"}`);
+    } finally { setBusy(false); }
+  };
+
+  if (sentAt) {
+    return (
+      <span className="inline-flex items-center gap-2" data-testid="report-card-email-status-sent">
+        <span className="bg-shGreen/15 border border-shGreen/40 text-shGreen px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest">
+          <i className="fas fa-paper-plane mr-1"/>Emailed {_fmtAgo(sentAt)}
+        </span>
+        <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
+                className="text-gray-500 hover:text-shBlue text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
+          {busy ? "Sending…" : "Re-send"}
+        </button>
+        {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
+      </span>
+    );
+  }
+  if (attemptedAt && error) {
+    return (
+      <span className="inline-flex items-center gap-2" data-testid="report-card-email-status-failed">
+        <span className="bg-red-600/15 border border-red-500/40 text-red-300 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest" title={error}>
+          <i className="fas fa-triangle-exclamation mr-1"/>Email failed
+        </span>
+        <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
+                className="text-shBlue hover:text-white text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
+          {busy ? "Retrying…" : "Retry"}
+        </button>
+        {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
+      </span>
+    );
+  }
+  return (
+    <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
+            className="text-shBlue hover:text-white text-[10px] font-black uppercase tracking-widest hover:underline underline-offset-2 disabled:opacity-50">
+      <i className="fas fa-paper-plane mr-1"/>{busy ? "Sending…" : "Send to client"}
+    </button>
   );
 }

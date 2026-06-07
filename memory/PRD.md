@@ -30,6 +30,46 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cp — Day-in-Pictures Email at Check-out (2026-06-08)
+**User ask**: "Wire up the auto-send 'your dog's day in pictures' email to boarding clients at check-out via Resend."
+
+### Backend
+- ✅ **`notify_client_report_card(booking, client, dog)`** — new email function in `email_service.py`. Builds a beautifully formatted HTML body with: photos in a 2-up grid (up to 4), mood-tag chips with brand colors, italic staff note in a green-bordered quote box, and a "Care Log" panel with meals (timestamp + staff name + notes), medications (with clickable photo-proof links), and bathroom pill counters (💧 N · 💩 N).
+- ✅ **Registered template** `client_report_card` with editable subject/title/intro/CTA — admin can customize via existing Email Designer.
+- ✅ **`_maybe_send_report_card_email(booking)`** — guard logic. Skips when: training visit, no content, no email, auto disabled in settings, or already attempted. Returns rich status dict (`{sent, attempted, reason}`).
+- ✅ **Two auto-triggers**:
+  1. `POST /bookings/{id}/check-out` — fires on every checkout for boarding/daycare/grooming.
+  2. `POST /bookings/{id}/report-card` — fires when a report card is filed AFTER checkout (common workflow: check out → write report → autofire email).
+- ✅ **`POST /bookings/{id}/resend-report-card`** — admin-only manual resend. Clears all idempotency flags and re-fires. Returns `{sent, sent_to, error}` so the UI can show success or Resend error inline.
+- ✅ **Three idempotency fields** on `BookingOut`:
+  - `report_card_email_attempted_at` — stamped on every attempt (prevents retry storms)
+  - `report_card_email_sent_at` — stamped only on confirmed Resend success
+  - `report_card_email_error` — last failure reason (e.g. "domain not verified")
+- ✅ **Settings opt-out** — `settings.report_card_email_auto = false` disables all auto-sends globally.
+
+### Frontend
+- ✅ **`ReportCardEmailStatus` badge** in admin `BookingDetailModal`. Three states:
+  - 🟢 `✓ Emailed Xm ago` + "Re-send" link (success)
+  - 🔴 `⚠ Email failed` (hover = error reason) + "Retry" link (Resend rejected)
+  - 🔵 `→ Send to client` button (never attempted)
+- ✅ Resend uses `_fmtAgo()` helper (extracted outside the component to satisfy `react-hooks/purity`).
+
+### Tests
+- ✅ `tests/test_report_card_email.py` (7 new):
+  1. Checkout auto-stamps `attempted_at` for boarding visits with content
+  2. Training visits are skipped (different comms flow)
+  3. No-content visits are skipped
+  4. Report card filed AFTER checkout fires the email
+  5. Manual resend clears flags + re-fires
+  6. Resend 400s on no-content visits
+  7. Staff cannot resend (admin-only)
+- ✅ All 20 tests across this work passing.
+
+### Operator note
+**Resend domain verification required for actual delivery.** Code is correct and idempotency works. Live preview env logs `"sithappensohiodogtraining.com domain is not verified"` — once the user adds + verifies the domain at https://resend.com/domains, every email queued by this code will actually deliver. Existing `report_card_email_error` records will surface this clearly in the admin UI with the Resend error message.
+
+
+
 ## Sprint 110co — Care Log on Report Card (2026-06-08)
 **User ask**: "Wire the boarding report card to auto-pull the day's feeding_log, medication_log, and bathroom_log."
 

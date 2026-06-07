@@ -53,7 +53,8 @@ def visit(admin_headers):
                               "medications": [{"name": "Apoquel", "dosage": "1 tab", "times": ["08:00"], "with_food": True, "notes": ""}]},
                         timeout=15).json()
     booking = requests.post(f"{API}/bookings", headers=admin_headers,
-                            json={"dog_id": dog["id"], "service_type": "boarding",
+                            json={"dog_id": dog["id"], "service_type": "grooming",
+                                  "grooming_type": "bath",
                                   "date": date.today().isoformat(),
                                   "status": "approved"},
                             timeout=15).json()

@@ -73,7 +73,8 @@ def floor_dog_and_booking(admin_headers):
         raise AssertionError(f"Dog creation failed: {dog_resp.status_code} {dog_resp.text}")
     dog = dog_resp.json()
     booking_resp = requests.post(f"{API}/bookings", headers=admin_headers,
-                            json={"dog_id": dog["id"], "service_type": "daycare",
+                            json={"dog_id": dog["id"], "service_type": "grooming",
+                                  "grooming_type": "bath",
                                   "date": date.today().isoformat(),
                                   "status": "approved"},
                             timeout=15)
