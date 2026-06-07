@@ -10527,19 +10527,26 @@ async def list_services(
         if for_service_type:
             q["addon_for"] = for_service_type
     items = await db.services.find(q, {"_id": 0}).sort("name", 1).to_list(500)
+    # Sprint 110bv — when a client browses, rewrite catalog prices to their
+    # locked-in legacy rates so the portal never shows the wrong price.
+    if user.get("role") == "client" and user.get("client_id"):
+        await _apply_client_overrides(items, user["client_id"], "service", "base_price")
     return items
 
 
 @api.get("/services/addons")
 async def list_eligible_addons(
     for_service_type: str = Query(alias="for"),
-    _: dict = Depends(get_current_user),
+    user: dict = Depends(get_current_user),
 ):
     """Add-ons eligible to be tacked on to a base service of the given type.
     Used by the client booking form, admin quick check-in modal, and the
     check-out add-on picker so the same source of truth gates all three."""
     q = {"active": True, "is_addon": True, "addon_for": for_service_type}
     items = await db.services.find(q, {"_id": 0}).sort("base_price", 1).to_list(200)
+    # Sprint 110bv — apply client's legacy add-on overrides too
+    if user.get("role") == "client" and user.get("client_id"):
+        await _apply_client_overrides(items, user["client_id"], "service", "base_price")
     return items
 
 
@@ -13681,6 +13688,50 @@ def _override_is_active(row: dict, today: Optional[date] = None) -> bool:
         return True  # malformed date — assume still active rather than silently dropping rate
 
 
+
+async def _apply_client_overrides(
+    items: List[Dict[str, Any]],
+    client_id: Optional[str],
+    target_kind: str,  # "service" or "credit_pack"
+    price_field: str,  # "base_price" for services, "price" for credit_packs
+) -> List[Dict[str, Any]]:
+    """Sprint 110bv — bulk-rewrite catalog prices to a client's locked-in
+    legacy rates. Used by `/services` and `/credit-packs` so a grandfathered
+    client never sees the new catalog price in the portal.
+
+    Mutates each item in place:
+      - adds `legacy_price` = original list price (so the UI can show "was $X")
+      - adds `has_legacy_override = True` when this client has an active row
+      - overwrites `price_field` with the override price
+    Items without an active override are returned unchanged.
+    """
+    if not client_id or not items:
+        return items
+    codes = [str(it.get("id") or it.get("code") or "")
+             for it in items if it.get("id") or it.get("code")]
+    if not codes:
+        return items
+    rows = await db.price_overrides.find(
+        {"client_id": client_id, "target_kind": target_kind, "target_code": {"$in": codes}},
+        {"_id": 0, "target_code": 1, "override_price": 1, "expires_on": 1, "id": 1},
+    ).to_list(500)
+    overrides_by_code: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        if _override_is_active(row):
+            overrides_by_code[row["target_code"]] = row
+    for it in items:
+        code = str(it.get("id") or it.get("code") or "")
+        ovr = overrides_by_code.get(code)
+        if not ovr:
+            continue
+        list_price = float(it.get(price_field) or 0)
+        it["legacy_price"] = list_price
+        it["has_legacy_override"] = True
+        it[price_field] = float(ovr.get("override_price") or 0)
+    return items
+
+
+
 async def resolve_client_price(
     client_id: Optional[str],
     target_kind: str,
@@ -13896,10 +13947,13 @@ class SellCreditPacksBulkIn(BaseModel):
 
 
 @api.get("/credit-packs")
-async def list_credit_packs(_: dict = Depends(get_current_user), include_inactive: bool = False):
+async def list_credit_packs(user: dict = Depends(get_current_user), include_inactive: bool = False):
     q: Dict = {} if include_inactive else {"active": True}
     packs = await db.credit_packs.find(q, {"_id": 0}).sort("qty", 1).to_list(200)
-    # Compute value_each on the fly so admins always see correct per-credit cost
+    # Sprint 110bv — rewrite to client's legacy price when applicable
+    if user.get("role") == "client" and user.get("client_id"):
+        await _apply_client_overrides(packs, user["client_id"], "credit_pack", "price")
+    # Compute value_each AFTER override so it reflects what the client actually pays
     for p in packs:
         p["value_each"] = round(float(p.get("price") or 0) / max(int(p.get("qty") or 1), 1), 2)
     return packs

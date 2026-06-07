@@ -29,6 +29,20 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 - Dashboard with daycare occupancy, boarding count, health flags, total dogs
 
 
+## Sprint 110bv — Bug fix: legacy clients shown new catalog prices (2026-06-01)
+- 🔴 **Reported**: "We have legacy pricing but clients that have it are being shown the new prices." — UX/trust issue: portal showed catalog price even though `resolve_client_price` correctly charged the locked-in legacy rate at booking-create time.
+- ✅ **Root cause**: `GET /services`, `GET /services/addons`, and `GET /credit-packs` returned raw catalog rows. They never consulted `price_overrides` so the portal display didn't match the actual charge.
+- ✅ **Fix**: new helper `_apply_client_overrides(items, client_id, target_kind, price_field)` bulk-loads the client's active overrides and rewrites `base_price` (services) / `price` (credit packs) in place. Adds `legacy_price` (original list) + `has_legacy_override: true` so the UI can show "was $X" / "your rate" badges.
+- ✅ Applied to: `/services`, `/services/addons`, `/credit-packs`. Admin callers still see raw catalog prices (the override only triggers when `user.role == "client"`). `value_each` on credit packs is now computed AFTER the override so it reflects the actual per-credit cost the client pays.
+- ✅ **Tests** `test_legacy_pricing_portal.py` — 4 pass + 1 skipped (no daycare add-ons in catalog):
+  - Service price rewritten to legacy rate for grandfathered client
+  - Credit pack price rewritten + value_each recomputed correctly
+  - Admin browsing catalog still sees the real list price (no leakage of `has_legacy_override`)
+  - Client without an override row sees unchanged catalog prices (no false flag)
+  - Add-on listing endpoint also honours overrides (skipped here for empty catalog)
+- ✅ **Regression-clean** — full pricing suite (`test_price_overrides`, `test_today_pnl_legacy_pricing`, `test_legacy_pricing_portal`) → 13 pass / 2 skip, zero failures.
+
+
 ## Sprint 110bu — Staff W-2 / 1099 prep + grouped year-end CSV (2026-06-01)
 - ✅ **Two new fields on the staff profile**: `tax_status` (`w2` | `1099` | `other`, defaults to `1099` for backward compat) + `address_street` / `address_city` / `address_state` / `address_zip`. Lives on the user record so it survives backups (`users` is intentionally NOT in the backup, but tax_status is captured via the year-end CSV export).
 - ✅ **EmployeeIn/Out + create + update endpoints** all updated in lock-step. Pydantic `Literal["w2", "1099", "other"]` rejects invalid values with 422.
