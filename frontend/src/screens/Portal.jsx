@@ -18,6 +18,7 @@ import InstallAppButton from "../components/InstallAppButton";
 import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
+import CareLogStrip from "../components/CareLogStrip";
 import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
@@ -1571,6 +1572,16 @@ export default function Portal() {
                         </div>
                       )}
                       {b.report_card.note && <p className="text-xs text-gray-300 italic">"{b.report_card.note}"</p>}
+                      {/* Sprint 110co — staff floor actions surfaced inline. */}
+                      <CareLogStrip feedings={b.feeding_log} medications={b.medication_log} bathroom={b.bathroom_log} />
+                    </div>
+                  )}
+                  {/* Sprint 110co — Care log shows even WITHOUT a formal
+                      report card. Clients want this transparency for every
+                      visit, especially boarding. */}
+                  {!b.report_card && ((b.feeding_log?.length || 0) + (b.medication_log?.length || 0) + ((b.bathroom_log?.pee || 0) + (b.bathroom_log?.poop || 0)) > 0) && (
+                    <div className="border-t border-bgHover/50 p-4">
+                      <CareLogStrip feedings={b.feeding_log} medications={b.medication_log} bathroom={b.bathroom_log} />
                     </div>
                   )}
                 </div>

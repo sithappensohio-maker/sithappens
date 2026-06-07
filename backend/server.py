@@ -463,6 +463,13 @@ class BookingOut(BaseModel):
     rescheduled_from: Optional[str] = None
     rescheduled_at: Optional[str] = None
     rescheduled_via_request: Optional[str] = None
+    # Sprint 110co — Care logs captured by staff on the floor during the
+    # visit (feeding/medication confirmations, pee/poop counter). Surfaced
+    # alongside the report card so clients can see exactly how their dog
+    # was cared for — turns the data into a love-letter for every report.
+    feeding_log: Optional[List[Dict[str, Any]]] = None
+    medication_log: Optional[List[Dict[str, Any]]] = None
+    bathroom_log: Optional[Dict[str, Any]] = None
 
 class ReportCardIn(BaseModel):
     photos: List[str] = []
@@ -5071,6 +5078,10 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
             "date": b.get("date"),
             "end_date": b.get("end_date"),
             "report_card": b.get("report_card") or None,
+            # Sprint 110co — care logs captured during the visit.
+            "feeding_log": b.get("feeding_log") or [],
+            "medication_log": b.get("medication_log") or [],
+            "bathroom_log": b.get("bathroom_log") or None,
             "actual_price": b.get("actual_price"),
             "paid": b.get("paid", False),
         }

@@ -30,6 +30,20 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110co — Care Log on Report Card (2026-06-08)
+**User ask**: "Wire the boarding report card to auto-pull the day's feeding_log, medication_log, and bathroom_log."
+
+- ✅ **Backend** — Added `feeding_log`, `medication_log`, `bathroom_log` (optional) to the `BookingOut` Pydantic model so the data flows through every booking endpoint (`/bookings`, `/bookings/{id}`, `/bookings/me`, etc.). Dog timeline events also surface these fields.
+- ✅ **New shared component** — `CareLogStrip.jsx` renders all three streams: meals with timestamp + staff name + notes; medications with timestamp + clickable photo-proof thumbnail (zoomable); bathroom pill counters (💧 N / 💩 N). Auto-hides when there's nothing to show.
+- ✅ **Client portal** — embedded inside the green report-card section + a standalone variant for visits that have care data but no formal report card yet. Boarding clients now see exactly what happened with zero typing from the operator.
+- ✅ **Admin BookingDetailModal** — same component embedded so operator gets the same view from the admin side (one source of truth).
+- ✅ **Tests** — `test_care_log_on_booking.py` (2 new):
+  1. After staff logs feeding/medication/bathroom, the booking endpoint returns those arrays with correct shape, `by_name` stamped, and bathroom counters intact.
+  2. Even with no logs yet, the keys (`feeding_log`, `medication_log`, `bathroom_log`) are present in the booking response — frontend depends on the shape.
+- ✅ Regression: all 12 P0 + care-log tests passing.
+
+
+
 ## Sprint 110cn — Staff Portal P0 + Shift Adjust + Trivia (2026-06-08)
 
 **User ask**: "P0 [incident, vaccine banner, med confirm, feeding confirm] + shift adjust (punch corrections) + let staff play trivia."

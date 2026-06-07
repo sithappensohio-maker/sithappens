@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
+import CareLogStrip from "./CareLogStrip";
 
 // Sprint 110aq — One-stop overview of a single booking, opened by clicking
 // any row on the Today's Check-in Board (and reusable from other screens).
@@ -316,7 +317,18 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                     ))}
                   </div>
                 )}
+                {/* Sprint 110co — Floor care logs inline. */}
+                <CareLogStrip feedings={booking.feeding_log} medications={booking.medication_log} bathroom={booking.bathroom_log} />
               </div>
+            </section>
+          )}
+          {/* Show care log standalone if no report card was filed yet. */}
+          {!reportCard && ((booking.feeding_log?.length || 0) + (booking.medication_log?.length || 0) + ((booking.bathroom_log?.pee || 0) + (booking.bathroom_log?.poop || 0)) > 0) && (
+            <section>
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shGreen mb-2">
+                <i className="fas fa-clipboard-check mr-1"/>Care log
+              </h3>
+              <CareLogStrip feedings={booking.feeding_log} medications={booking.medication_log} bathroom={booking.bathroom_log} />
             </section>
           )}
         </div>
