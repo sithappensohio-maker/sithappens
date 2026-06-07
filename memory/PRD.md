@@ -30,6 +30,21 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cj — Invisible-text bug + variable confusion (2026-06-08)
+**User-reported bugs**:
+1. "I have these weird text fields that don't show what's typed" (white text on white background).
+2. "We are still using variables in the agreement, I don't know how to use".
+
+- ✅ **Invisible text fix**: My new components were using a custom Tailwind class `bg-bgInput` that **doesn't exist in the project's Tailwind config** — so inputs fell back to white backgrounds with white text (literally invisible typing). Replaced every `bg-bgInput` → `bg-bgBase` (the dark color that already exists). Confirmed via screenshot: "Sit Happens Test Type" now visible in the Brand Name field, hex codes readable, all inputs dark.
+- ✅ **Variable chips made human-readable** (in `RichTextEditor`):
+  - **Before**: tiny cryptic `{{client_name}}` chips with the label "Insert:" and zero explanation.
+  - **After**: friendly chips with **plain-English labels** like "Client's full name", "Total amount", "Number of payments", "Full payment schedule" — each prefixed with a `+` icon and a tooltip that says "Inserts a placeholder that gets replaced with the actual ___ when the message is sent". Section header now reads "🪄 Auto-fill — tap to insert".
+- ✅ **Better instructions on the agreement editor** (Payment Plans settings): added a clear two-sentence explanation: *"Auto-fill buttons drop in placeholders that get automatically replaced with each client's actual info when the agreement is sent. Example: clicking Client's full name shows up as `{{client_name}}` in the editor, but the client sees their real name (e.g. 'Alex Rivera'). You don't need to type these by hand — just click."*
+- ✅ Lint clean on both updated files. 5 files (`PaymentPlanSettingsPanel`, `EmailDesignerPanel`, `AdminClientPaymentPlans`, `PortalPaymentPlans`, `RichTextEditor`) all had the `bg-bgInput` bug — all fixed in one sweep.
+- 🎯 **User impact**: You can now actually SEE what you type. And the variable buttons explain themselves — no more wondering what `{{client_name}}` means.
+
+
+
 ## Sprint 110ci — Replaced HTML textareas with friendly WYSIWYG editors (2026-06-08)
 **User complaint**: "Why are things asking me for HTML code? I don't know how to do that."
 

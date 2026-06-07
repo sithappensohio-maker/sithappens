@@ -62,7 +62,7 @@ export default function PaymentPlanSettingsPanel() {
             <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Business name (in agreement)</label>
             <input value={draft.business_name || ""} onChange={e => update("business_name", e.target.value)}
                    data-testid="plan-business-name"
-                   className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
           </div>
           <div>
             <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Reminder · days before due</label>
@@ -70,14 +70,14 @@ export default function PaymentPlanSettingsPanel() {
                    value={draft.reminder_days_before ?? 3}
                    onChange={e => update("reminder_days_before", Number(e.target.value))}
                    data-testid="plan-reminder-days"
-                   className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
           </div>
           <div>
             <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Default cadence</label>
             <select value={draft.default_cadence || "biweekly"}
                     onChange={e => update("default_cadence", e.target.value)}
                     data-testid="plan-default-cadence"
-                    className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white">
+                    className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
               <option value="weekly">Weekly</option>
               <option value="biweekly">Bi-weekly</option>
               <option value="monthly">Monthly</option>
@@ -90,8 +90,12 @@ export default function PaymentPlanSettingsPanel() {
           <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
             Agreement text
           </label>
-          <p className="text-[11px] text-gray-500 mb-2">
-            Type your agreement like a normal document. Use the toolbar to bold/italicize, add lists, or insert clickable links. Click a variable chip to drop in your client&apos;s name, the total amount, etc. — the system fills them in automatically.
+          <p className="text-[11px] text-gray-500 mb-1">
+            Type your agreement like a normal document — bold, italic, lists, links all work via the toolbar.
+          </p>
+          <p className="text-[11px] text-gray-400 mb-2">
+            <i className="fas fa-magic-wand-sparkles text-shBlue mr-1"/>
+            <strong>Auto-fill buttons</strong> at the bottom drop in placeholders that get <em>automatically</em> replaced with each client&apos;s actual info when the agreement is sent. Example: clicking <span className="text-shBlue font-black">Client&apos;s full name</span> shows up as <code className="bg-bgHover px-1 rounded text-shBlue">{`{{client_name}}`}</code> in the editor, but the client sees their real name (e.g. &ldquo;Alex Rivera&rdquo;). You don&apos;t need to type these by hand — just click.
           </p>
           <RichTextEditor
             value={draft.agreement_html || ""}

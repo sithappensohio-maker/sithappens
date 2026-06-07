@@ -171,7 +171,7 @@ function SignAgreementModal({ plan, onClose, onSigned }) {
             <input value={typedName} onChange={e => setTypedName(e.target.value)}
                    data-testid="typed-name-input"
                    placeholder="e.g. Alex Rivera"
-                   className="w-full bg-bgInput border border-bgHover rounded px-3 py-2.5 text-white text-base font-serif italic" />
+                   className="w-full bg-bgBase border border-bgHover rounded px-3 py-2.5 text-white text-base font-serif italic" />
           </label>
 
           {error && (

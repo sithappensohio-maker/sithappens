@@ -143,7 +143,7 @@ function BrandingCard() {
         <button
           onClick={() => setDraft({ ...DEFAULT_BRAND })}
           data-testid="reset-branding"
-          className="bg-bgHover hover:bg-bgInput text-gray-300 px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest"
+          className="bg-bgHover hover:bg-bgBase text-gray-300 px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest"
         >
           Reset to Defaults
         </button>
@@ -231,7 +231,7 @@ function TemplatesCard() {
             key={t.slug}
             onClick={() => setEditing(t.slug)}
             data-testid={`template-row-${t.slug}`}
-            className="w-full text-left bg-bgInput hover:bg-bgHover border border-bgHover hover:border-shBlue/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4"
+            className="w-full text-left bg-bgBase hover:bg-bgHover border border-bgHover hover:border-shBlue/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4"
           >
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 mb-0.5">
@@ -446,7 +446,7 @@ function TemplateEditorModal({ slug, onClose }) {
                 onChange={e => setTestTo(e.target.value)}
                 placeholder="Recipient (blank = your admin email)"
                 data-testid="tpl-test-to"
-                className="flex-1 bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white"
+                className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
               />
               <button
                 onClick={sendTest}
@@ -473,7 +473,7 @@ function TemplateEditorModal({ slug, onClose }) {
             <button
               onClick={onClose}
               data-testid="tpl-cancel"
-              className="bg-bgHover hover:bg-bgInput text-gray-300 px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
+              className="bg-bgHover hover:bg-bgBase text-gray-300 px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
             >
               Close
             </button>
@@ -528,7 +528,7 @@ function Field({ label, value, onChange, testId, placeholder, type = "text" }) {
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder || ""}
         data-testid={testId}
-        className="w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white"
+        className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
       />
     </div>
   );
@@ -544,14 +544,14 @@ function ColorField({ label, value, onChange, testId }) {
           value={value || "#000000"}
           onChange={e => onChange(e.target.value)}
           data-testid={`${testId}-picker`}
-          className="h-10 w-14 bg-bgInput border border-bgHover rounded cursor-pointer"
+          className="h-10 w-14 bg-bgBase border border-bgHover rounded cursor-pointer"
         />
         <input
           type="text"
           value={value || ""}
           onChange={e => onChange(e.target.value)}
           data-testid={testId}
-          className="flex-1 bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white font-mono uppercase"
+          className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white font-mono uppercase"
         />
       </div>
     </div>

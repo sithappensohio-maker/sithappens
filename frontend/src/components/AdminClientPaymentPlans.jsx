@@ -204,7 +204,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
             <input value={programName} onChange={e => setProgramName(e.target.value)}
                    data-testid="plan-name"
                    placeholder="e.g. Service Dog Foundation Program"
-                   className="mt-1 w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
@@ -212,13 +212,13 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               <input type="number" min={0} step="0.01" value={total} onChange={e => setTotal(e.target.value)}
                      data-testid="plan-total"
                      placeholder="2000.00"
-                     className="mt-1 w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
             </label>
             <label className="block">
               <span className="text-[11px] font-black uppercase tracking-widest text-gray-400"># of installments</span>
               <input type="number" min={1} max={24} value={n} onChange={e => setN(e.target.value)}
                      data-testid="plan-count"
-                     className="mt-1 w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
             </label>
           </div>
           <div className="grid grid-cols-2 gap-2">
@@ -226,7 +226,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Cadence</span>
               <select value={cadence} onChange={e => setCadence(e.target.value)}
                       data-testid="plan-cadence"
-                      className="mt-1 w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white">
+                      className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Bi-weekly</option>
                 <option value="monthly">Monthly</option>
@@ -236,7 +236,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">First payment date</span>
               <input type="date" value={start} onChange={e => setStart(e.target.value)}
                      data-testid="plan-start"
-                     className="mt-1 w-full bg-bgInput border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
             </label>
           </div>
 
