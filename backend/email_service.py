@@ -1129,24 +1129,11 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
 
 
 
-async def notify_client_report_card(booking: dict, client: dict, dog: dict | None = None) -> bool:
-    """Sprint 110cp — "Day in Pictures" email. Sent at check-out when a
-    report card OR any care-log activity exists for the visit. Pulls photos,
-    mood tags, note, feeding/medication log w/ photo proof, and bathroom
-    counters straight from the booking doc into a beautifully formatted
-    branded HTML body.
-
-    Idempotent: if the booking already has `report_card_email_sent_at`, this
-    no-ops unless explicitly re-sent (caller clears the flag).
-    """
-    to_email = client.get("email", "")
-    if not to_email:
-        return False
-
+async def _build_report_card_email_body(booking: dict, client: dict, dog: dict | None = None) -> str:
+    """Sprint 110cq — Build (but do not send) the HTML body of the
+    Day-in-Pictures email. Extracted from `notify_client_report_card` so the
+    admin preview endpoint and unit tests can render without sending."""
     dog_name = booking.get("dog_name") or (dog or {}).get("name") or "your dog"
-    first_name = (client.get("name") or "there").split(" ")[0]
-    svc_label = _service_label(booking.get("service_type", ""))
-    visit_date = booking.get("date") or ""
     rc = booking.get("report_card") or {}
     feedings = booking.get("feeding_log") or []
     meds = booking.get("medication_log") or []
@@ -1155,18 +1142,11 @@ async def notify_client_report_card(booking: dict, client: dict, dog: dict | Non
     settings = await _get_email_settings()
     brand_name = settings.get("brand_name") or "Sit Happens"
 
-    # Build the rich HTML body section that goes UNDER the standard rows.
     body_parts: list[str] = []
 
     # ─── Photos grid (max 4) ──────────────────────────────────────────
     photos = (rc.get("photos") or [])[:4]
     if photos:
-        cells = "".join(
-            f'<td style="padding:4px;width:50%;"><img src="{p}" alt="{dog_name}" '
-            f'style="width:100%;max-width:240px;border-radius:10px;display:block;"/></td>'
-            for p in photos
-        )
-        # Group into rows of 2.
         rows_html = ""
         for i in range(0, len(photos), 2):
             row_cells = "".join(
@@ -1269,7 +1249,106 @@ async def notify_client_report_card(booking: dict, client: dict, dog: dict | Non
             f'</div>'
         )
 
-    body_html = "".join(body_parts)
+    # ─── Sprint 110cq — Share + review CTA footer ──────────────────────
+    referral_code = (client.get("referral_code") or "").upper()
+    review_url = (settings.get("google_review_url") or "").strip()
+    share_url = APP_PUBLIC_URL or ""
+    if referral_code and share_url:
+        share_url_with_ref = f"{share_url}/?ref={referral_code}"
+    else:
+        share_url_with_ref = share_url
+    share_text = (
+        settings.get("report_card_share_message")
+        or f"My dog {dog_name} had the best day at {brand_name}! 🐾"
+    )
+    from urllib.parse import quote_plus
+    fb_url = f"https://www.facebook.com/sharer/sharer.php?u={quote_plus(share_url_with_ref)}" if share_url_with_ref else ""
+    x_url = (
+        f"https://twitter.com/intent/tweet?text={quote_plus(share_text)}&url={quote_plus(share_url_with_ref)}"
+        if share_url_with_ref else ""
+    )
+
+    share_pieces: list[str] = []
+    if referral_code:
+        share_pieces.append(
+            f'<div style="margin:10px 0;padding:14px 16px;background:#ffffff;border:2px dashed #8cc63f;'
+            f'border-radius:10px;text-align:center;">'
+            f'<p style="margin:0;color:#577d22;font-size:11px;font-weight:800;text-transform:uppercase;'
+            f'letter-spacing:0.22em;">Your referral code</p>'
+            f'<p style="margin:6px 0 4px 0;color:#0f172a;font-size:28px;font-weight:900;letter-spacing:0.08em;">'
+            f'{referral_code}</p>'
+            f'<p style="margin:0;color:#64748b;font-size:13px;line-height:1.4;">'
+            f'Share with a fellow dog parent — when they book their first visit, you both get credit. 🐾</p>'
+            f'</div>'
+        )
+    button_cells: list[str] = []
+    if fb_url:
+        button_cells.append(
+            f'<td style="padding:4px;">'
+            f'<a href="{fb_url}" style="display:inline-block;background:#1877f2;color:#ffffff;'
+            f'padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;'
+            f'text-transform:uppercase;letter-spacing:0.06em;">📘 Share on Facebook</a></td>'
+        )
+    if x_url:
+        button_cells.append(
+            f'<td style="padding:4px;">'
+            f'<a href="{x_url}" style="display:inline-block;background:#0f1419;color:#ffffff;'
+            f'padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;'
+            f'text-transform:uppercase;letter-spacing:0.06em;">𝕏 Share on X</a></td>'
+        )
+    if review_url:
+        button_cells.append(
+            f'<td style="padding:4px;">'
+            f'<a href="{review_url}" style="display:inline-block;background:#fbbf24;color:#0f172a;'
+            f'padding:11px 18px;border-radius:8px;text-decoration:none;font-weight:800;font-size:13px;'
+            f'text-transform:uppercase;letter-spacing:0.06em;">⭐ Leave a Google review</a></td>'
+        )
+    if button_cells:
+        rows_html = ""
+        for i in range(0, len(button_cells), 2):
+            rows_html += f"<tr>{''.join(button_cells[i:i+2])}</tr>"
+        share_pieces.append(
+            f'<div style="margin:8px 0 4px 0;text-align:center;">'
+            f'<table cellpadding="0" cellspacing="0" style="margin:0 auto;border-collapse:separate;">'
+            f'{rows_html}</table></div>'
+        )
+    if share_pieces:
+        body_parts.append(
+            f'<div style="margin:20px 0 4px 0;padding:18px 16px;background:#fefce8;border:1px solid '
+            f'#fde68a;border-radius:12px;">'
+            f'<p style="margin:0 0 10px 0;color:#854d0e;font-size:14px;font-weight:800;text-align:center;'
+            f'text-transform:uppercase;letter-spacing:0.18em;">💚 Loved {dog_name}\'s day?</p>'
+            f'<p style="margin:0 0 8px 0;color:#475569;font-size:14px;text-align:center;line-height:1.5;">'
+            f'Help us out — it takes 10 seconds and means the world to a small business.</p>'
+            + "".join(share_pieces) +
+            f'</div>'
+        )
+
+    return "".join(body_parts)
+
+
+async def notify_client_report_card(booking: dict, client: dict, dog: dict | None = None) -> bool:
+    """Sprint 110cp — "Day in Pictures" email. Sent at check-out when a
+    report card OR any care-log activity exists for the visit. The actual
+    HTML body is built by `_build_report_card_email_body` so the admin
+    preview endpoint can render the same content without sending.
+
+    Idempotent: if the booking already has `report_card_email_sent_at`, this
+    no-ops unless explicitly re-sent (caller clears the flag).
+    """
+    to_email = client.get("email", "")
+    if not to_email:
+        return False
+
+    dog_name = booking.get("dog_name") or (dog or {}).get("name") or "your dog"
+    first_name = (client.get("name") or "there").split(" ")[0]
+    svc_label = _service_label(booking.get("service_type", ""))
+    visit_date = booking.get("date") or ""
+
+    settings = await _get_email_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+
+    body_html = await _build_report_card_email_body(booking, client, dog)
 
     rows = [
         ("Dog", dog_name),

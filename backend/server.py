@@ -2346,14 +2346,8 @@ async def portal_me(user: dict = Depends(get_current_user)):
 
     # Ensure the client has a referral code minted (one-time, server-generated).
     if not client.get("referral_code"):
-        code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
-        # Re-roll on the (unlikely) chance of collision.
-        for _ in range(3):
-            if not await db.clients.find_one({"referral_code": code}):
-                break
-            code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
-        await db.clients.update_one({"id": cid}, {"$set": {"referral_code": code}})
-        client["referral_code"] = code
+        await _ensure_client_referral_code(cid)
+        client = await db.clients.find_one({"id": cid}, {"_id": 0}) or client
 
     # Visit counts per dog (status=completed counts as a real visit).
     dog_ids = [d["id"] async for d in db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1})]
@@ -2373,6 +2367,27 @@ async def portal_me(user: dict = Depends(get_current_user)):
         "visit_counts": visit_counts,
         "referral_code": client.get("referral_code"),
     }
+
+
+async def _ensure_client_referral_code(client_id: str) -> str:
+    """Sprint 110cq — Mint a referral code for the client if they don't have
+    one yet, and return it. Idempotent: subsequent calls return the existing
+    code. Used by both the portal-load path and the report-card email
+    builder so a fresh client gets a code in their first email even if they
+    haven't logged into the portal yet."""
+    existing = await db.clients.find_one(
+        {"id": client_id}, {"_id": 0, "referral_code": 1},
+    )
+    if existing and existing.get("referral_code"):
+        return existing["referral_code"]
+    code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
+    # Re-roll on the (unlikely) chance of collision.
+    for _ in range(3):
+        if not await db.clients.find_one({"referral_code": code}):
+            break
+        code = secrets.token_urlsafe(4).replace("-", "").replace("_", "").upper()[:6]
+    await db.clients.update_one({"id": client_id}, {"$set": {"referral_code": code}})
+    return code
 
 
 # -------- Referral lookup (admin only, used to validate referral codes during seed/sign-up) --------
@@ -3333,6 +3348,10 @@ async def _maybe_send_report_card_email(booking: dict) -> dict:
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client or not client.get("email"):
         return {"sent": False, "attempted": False, "reason": "no email on file"}
+    # Sprint 110cq — make sure this client has a referral code so the email
+    # can pitch a referral CTA. Idempotent; cheap.
+    if not client.get("referral_code"):
+        client["referral_code"] = await _ensure_client_referral_code(client_id)
     dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
 
     from email_service import notify_client_report_card
@@ -3379,6 +3398,30 @@ async def save_report_card(booking_id: str, body: ReportCardIn, user: dict = Dep
     except Exception as exc:
         logger.warning("Report card email on save failed for %s: %s", booking_id, exc)
     return booking
+
+
+@api.get("/bookings/{booking_id}/report-card-email/preview")
+async def preview_report_card_email(booking_id: str, _: dict = Depends(require_admin)):
+    """Sprint 110cq — Returns the rendered HTML body the report-card email
+    would send for this booking, without actually sending it. Useful for
+    admin preview before resending, and (in tests) for asserting on the
+    rendered body without exercising Resend."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    client = await db.clients.find_one({"id": booking.get("client_id")}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if not client.get("referral_code"):
+        client["referral_code"] = await _ensure_client_referral_code(client["id"])
+    dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
+    from email_service import _build_report_card_email_body
+    body_html = await _build_report_card_email_body(booking, client, dog)
+    return {
+        "to_email": client.get("email", ""),
+        "referral_code": client.get("referral_code", ""),
+        "body_html": body_html,
+    }
 
 
 @api.post("/bookings/{booking_id}/resend-report-card")
@@ -15874,6 +15917,10 @@ class EmailSettingsUpdate(BaseModel):
     logo_url: Optional[str] = None
     signature_html: Optional[str] = None
     footer_html: Optional[str] = None
+    # Sprint 110cq — share + review knobs surfaced in the report-card email.
+    # Both are optional. Empty string = hide that CTA in the email footer.
+    google_review_url: Optional[str] = None         # paste from Google Business Profile
+    report_card_share_message: Optional[str] = None  # tweet/Facebook prefilled text
 
 
 @api.get("/admin/email-templates")

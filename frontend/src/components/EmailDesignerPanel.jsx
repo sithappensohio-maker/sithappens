@@ -30,6 +30,9 @@ const DEFAULT_BRAND = {
   logo_url: "",
   signature_html: "",
   footer_html: "Sit Happens Dog Training · Daycare · Boarding<br/>You're receiving this because of activity on your Sit Happens account.",
+  // Sprint 110cq — Report-card email "Loved your day?" footer knobs.
+  google_review_url: "",
+  report_card_share_message: "",
 };
 
 function BrandingCard() {
@@ -130,6 +133,32 @@ function BrandingCard() {
       </div>
 
       <BrandPreview draft={draft}/>
+
+      {/* Sprint 110cq — Share/review knobs that drive the report-card email footer */}
+      <div className="mt-6 border-t border-bgHover/70 pt-5 space-y-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+            <i className="fas fa-share-nodes mr-1.5"/>Report-card email footer
+          </p>
+          <p className="text-xs text-gray-400">Auto-attached to every check-out email — boarding/daycare clients are at peak gratitude when they open it, so this is your highest-converting moment for reviews + referrals.</p>
+        </div>
+        <Field label="Google review link (paste from Google Business Profile)"
+               value={draft.google_review_url}
+               onChange={v => update("google_review_url", v)}
+               testId="google-review-url"
+               placeholder="https://g.page/r/.../review"/>
+        <div>
+          <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">
+            Pre-filled share message
+          </label>
+          <p className="text-[11px] text-gray-500 mb-1">Shown when clients tap "Share on Facebook" or "Share on X". Leave blank for the default ("My dog had the best day at &lt;brand&gt;! 🐾").</p>
+          <input value={draft.report_card_share_message || ""}
+                 onChange={(e) => update("report_card_share_message", e.target.value)}
+                 data-testid="report-card-share-message"
+                 placeholder="My pup had the best day at Sit Happens! 🐾"
+                 className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-white text-sm"/>
+        </div>
+      </div>
 
       <div className="mt-5 flex gap-2">
         <button

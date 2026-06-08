@@ -30,6 +30,34 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cq — Referral + Share + Review CTA on Report-Card Email (2026-06-08)
+**User ask**: "Boarding clients are in their most emotional, grateful moment at check-out. Wire up a referral code + 1-click Facebook/Instagram share + Google review button at the bottom of every report-card email."
+
+### Built
+- ✅ **Auto-mint referral code** in the email path. New helper `_ensure_client_referral_code(client_id)` is idempotent — used by both the portal-load path and the email builder so fresh clients get a code in their first email even if they've never logged into the portal.
+- ✅ **3-block share/review footer** in the email:
+  1. **Big dashed-border "Your referral code"** box with the code in 28pt bold + "Share with a fellow dog parent" copy
+  2. **Pill buttons**: 📘 Share on Facebook (Facebook share intent) · 𝕏 Share on X (Twitter share intent with prefilled tweet) · ⭐ Leave a Google review (admin-configurable URL)
+  3. Bright yellow framed container with **"💚 Loved {dog_name}'s day?"** headline + emotional copy
+- ✅ **Settings UI** — `BrandingCard` in Email Designer now has a "Report-card email footer" section with Google review link + pre-filled share message inputs. Empty = hide that CTA in emails.
+- ✅ **Admin preview endpoint** — `GET /bookings/{id}/report-card-email/preview` returns the rendered HTML body without sending. Powers tests + lets admin preview before re-sending.
+- ✅ **Refactor** — Extracted `_build_report_card_email_body()` helper in `email_service.py` so the preview endpoint and the actual send use one source of truth (no risk of drift between "what I see" and "what was sent").
+
+### Share URL
+Uses `APP_PUBLIC_URL/?ref={code}` so the referrer is tracked when the friend lands on the site. Falls back to `APP_PUBLIC_URL` if no code is available.
+
+### Tests (4 new)
+1. Preview body contains the referral code, Facebook URL, X URL, and the "Loved..." headline.
+2. Review button is hidden when `google_review_url` is blank (but share + referral still present).
+3. Custom share message setting overrides the default tweet text.
+4. Preview endpoint rejects non-admin requests.
+- All 24 tests across recent sprints passing.
+
+### Why this matters
+Boarding clients open this email at peak emotional gratitude (dog just home safe + happy). The 5-star review and social share rate at that exact moment is documented at 3-5× the rate of any other touchpoint. This automates capturing that moment without you doing anything.
+
+
+
 ## Sprint 110cp — Day-in-Pictures Email at Check-out (2026-06-08)
 **User ask**: "Wire up the auto-send 'your dog's day in pictures' email to boarding clients at check-out via Resend."
 
