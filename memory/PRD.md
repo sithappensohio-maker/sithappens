@@ -30,6 +30,28 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cr — Owner Clock + End-of-Day Wrap-up (2026-06-08)
+**User ask**: "End of Day screen would be cool also admin should be able to clock in as owner."
+
+### Owner Clock
+- ✅ New `<OwnerClock>` widget on Dashboard. Reuses the existing `/time-clock/clock-in` + `/time-clock/clock-out` endpoints which already accepted admin role (`require_employee_or_admin`).
+- ✅ Live "currently open" hours tick every minute. Geo capture optional. Sends `note: "Owner shift"` so the timecard distinguishes owner hours from employee hours.
+- ✅ Confirmation modal before clock-out to prevent accidents.
+
+### End-of-Day Wrap-up
+- ✅ New `GET /admin/end-of-day` endpoint returns: dogs still on-site (checked in, never out), unpaid completed bookings, missing report cards (daycare/boarding/training only), today's cash revenue, care-log totals (feedings · meds · pee · poop), and an `all_clear` boolean.
+- ✅ Smart filtering: prepaid training-program sessions excluded from unpaid; boarding visits only flagged "still on-site" if they end today.
+- ✅ New `<EndOfDayPanel>` button on Dashboard → modal showing each category as color-coded sections (red for still-on, orange for unpaid, blue for missing cards). Tap any row → jumps to BookingDetailModal so the operator can fix it on the spot.
+- ✅ "All clear!" celebration state when nothing's dangling.
+
+### Tests (3 new)
+1. End-of-day endpoint returns the right shape
+2. Endpoint rejects non-admin requests (403)
+3. Admin can clock in + clock out using the staff time-clock endpoints
+- All 27 tests across recent sprints passing.
+
+
+
 ## Sprint 110cq — Referral + Share + Review CTA on Report-Card Email (2026-06-08)
 **User ask**: "Boarding clients are in their most emotional, grateful moment at check-out. Wire up a referral code + 1-click Facebook/Instagram share + Google review button at the bottom of every report-card email."
 

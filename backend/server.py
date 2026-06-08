@@ -13727,6 +13727,87 @@ async def employee_my_shifts(
 
 
 
+@api.get("/admin/end-of-day")
+async def admin_end_of_day(_: dict = Depends(require_admin)):
+    """Sprint 110cr — Wrap-up snapshot for the operator at end of day:
+       - who's still on-site (checked in, never checked out)
+       - which completed bookings are unpaid
+       - which completed bookings have no report card filed yet
+       - today's revenue snapshot
+       - care-log roll-up (total feedings/medications/bathroom across all visits)
+    Designed to drive a single 'did I close everything out?' review screen so
+    the solo operator doesn't leave anything dangling overnight."""
+    today = business_today().isoformat()
+    bookings = await db.bookings.find(
+        {"date": today, "status": {"$in": ["approved", "completed"]}},
+        {"_id": 0},
+    ).to_list(2000)
+    still_on = [
+        {
+            "booking_id": b["id"],
+            "dog_name": b.get("dog_name", ""),
+            "client_name": b.get("client_name", ""),
+            "service_type": b.get("service_type", ""),
+            "kennel": b.get("kennel", ""),
+            "checked_in_at": b.get("checked_in_at", ""),
+        }
+        for b in bookings
+        if b.get("checked_in_at") and not b.get("checked_out_at")
+        and (b.get("service_type") != "boarding" or (b.get("end_date") or b.get("date")) == today)
+    ]
+    completed_today = [b for b in bookings if b.get("status") == "completed"]
+    unpaid = [
+        {
+            "booking_id": b["id"],
+            "dog_name": b.get("dog_name", ""),
+            "client_name": b.get("client_name", ""),
+            "amount": float(b.get("actual_price") or 0),
+            "service_type": b.get("service_type", ""),
+        }
+        for b in completed_today
+        if b.get("payment_status") not in ("paid", "comped")
+        and float(b.get("actual_price") or 0) > 0
+        and not b.get("is_prepaid_program_session")
+    ]
+    missing_cards = [
+        {
+            "booking_id": b["id"],
+            "dog_name": b.get("dog_name", ""),
+            "client_name": b.get("client_name", ""),
+            "service_type": b.get("service_type", ""),
+        }
+        for b in completed_today
+        if not (b.get("report_card") or {}).get("note")
+        and (b.get("report_card") or {}).get("photos", []) == []
+        and (b.get("service_type") or "") in ("daycare", "boarding", "training")
+    ]
+    revenue_cash = round(sum(float(b.get("actual_price") or 0)
+                             for b in completed_today
+                             if b.get("payment_method") != "credits"
+                             and not b.get("is_prepaid_program_session")), 2)
+    feedings_total = sum(len(b.get("feeding_log") or []) for b in bookings)
+    meds_total = sum(len(b.get("medication_log") or []) for b in bookings)
+    bathroom_pee = sum((b.get("bathroom_log") or {}).get("pee", 0) for b in bookings)
+    bathroom_poop = sum((b.get("bathroom_log") or {}).get("poop", 0) for b in bookings)
+    return {
+        "date": today,
+        "still_on_premises": still_on,
+        "unpaid_bookings": unpaid,
+        "missing_report_cards": missing_cards,
+        "revenue_cash": revenue_cash,
+        "completed_count": len(completed_today),
+        "care_log_totals": {
+            "feedings": feedings_total,
+            "medications": meds_total,
+            "pee": bathroom_pee,
+            "poop": bathroom_poop,
+        },
+        "all_clear": (not still_on and not unpaid and not missing_cards),
+    }
+
+
+
+
 @api.get("/admin/today-pnl")
 async def today_pnl(_: dict = Depends(require_admin)):
     """Live 'am I profitable today?' gauge — expected revenue minus labor cost

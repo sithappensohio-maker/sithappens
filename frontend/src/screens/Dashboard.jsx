@@ -11,6 +11,7 @@ import { MileageDashTile } from "../components/MileageDashTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
 import { toast } from "sonner";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
@@ -196,6 +197,12 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Sprint 110cr — Solo-operator owner clock + end-of-day wrap-up */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="owner-tools-row">
+        <OwnerClock/>
+        <EndOfDayPanel onJump={(bid)=>setDetailFor({ id: bid })}/>
       </div>
 
       {pendingVax.length > 0 && (
