@@ -30,6 +30,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cx — Group grooming sub-services under one bucket (2026-06-10)
+**User report**: "In the same area Bath and Nail Trims should be grouped into Grooming."
+
+### Fix
+Tightened the `service_type → canonical display name` map: when a single service occupies a type (e.g. Boarding has only "Boarding (per night)"), keep the full product name; when MULTIPLE services share a type (Grooming has Bath + Nail Trim; Training has 1-on-1 Lesson + Board & Train + Service Dog Eval), use the title-cased type as the label. Result: every grooming or training booking now rolls up to a single "Grooming" / "Training" row instead of fragmenting per sub-service.
+
+### Verified
+Live data: Grooming · $90 (9), Training · $0 (2). Boarding & Daycare keep their full product names since only one service occupies each type. 15/15 backend tests still passing.
+
+
+
+
 ## Sprint 110cw — Income breakdown polish (2026-06-10)
 **User report**: "Showing boarding twice and not showing photography in the breakdown by service."
 

@@ -11524,16 +11524,23 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         {"$or": [{"active": True}, {"active": {"$exists": False}}]},
         {"_id": 0, "id": 1, "name": 1, "service_type": 1, "active": 1},
     ).to_list(200)
-    type_to_name: Dict[str, str] = {}
-    type_to_label: Dict[str, str] = {}
+    # Group services per type so we can detect multi-service categories
+    # (e.g. Bath + Nail trim both belong to "grooming") and collapse them
+    # under the title-cased type name instead of picking one display name.
+    type_services: Dict[str, List[str]] = {}
     for s in services_catalog:
         st = (s.get("service_type") or "").lower().strip()
         if not st:
             continue
-        # Prefer the active service's display name; first-wins for the rest
-        if st not in type_to_name or s.get("active", True):
-            type_to_name[st] = s.get("name") or st.title()
-        type_to_label.setdefault(st, s.get("name") or st.title())
+        type_services.setdefault(st, []).append(s.get("name") or st.title())
+    type_to_label: Dict[str, str] = {}
+    for st, names in type_services.items():
+        if len(names) == 1:
+            # Single canonical service for this type → use its full name
+            type_to_label[st] = names[0]
+        else:
+            # Multi-service category → use the title-cased type as the label
+            type_to_label[st] = st.title()
 
     def _bucket_key(booking: dict) -> tuple:
         """Return (key, display_name) for grouping a booking."""
