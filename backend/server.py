@@ -11515,6 +11515,33 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         {"_id": 0},
     ).to_list(2000)
 
+    # Sprint 110cw — Build a service_type → canonical display name map from
+    # the services catalog so duplicates like "Boarding (per night)" + raw
+    # "boarding" get merged into one bucket. Also lets us surface every
+    # registered service category (e.g. Photography) even with 0 bookings
+    # this week so the operator sees a complete picture.
+    services_catalog = await db.services.find(
+        {"$or": [{"active": True}, {"active": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "name": 1, "service_type": 1, "active": 1},
+    ).to_list(200)
+    type_to_name: Dict[str, str] = {}
+    type_to_label: Dict[str, str] = {}
+    for s in services_catalog:
+        st = (s.get("service_type") or "").lower().strip()
+        if not st:
+            continue
+        # Prefer the active service's display name; first-wins for the rest
+        if st not in type_to_name or s.get("active", True):
+            type_to_name[st] = s.get("name") or st.title()
+        type_to_label.setdefault(st, s.get("name") or st.title())
+
+    def _bucket_key(booking: dict) -> tuple:
+        """Return (key, display_name) for grouping a booking."""
+        raw_type = (booking.get("service_type") or "").lower().strip()
+        name = booking.get("service_name") or type_to_label.get(raw_type) or (raw_type.title() if raw_type else "Other")
+        key = raw_type or (booking.get("service_name") or "other").lower()
+        return key, name
+
     # Sprint 110cj — exclude training-program credit redemptions from income
     # totals; their revenue was already counted at sell-time.
     program_lot_ids = await _get_training_program_lot_ids()
@@ -11533,6 +11560,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     credit_pack_redeemed_count = 0
     credit_pack_redeemed_value = 0.0
     by_service: Dict[str, Dict] = {}
+    # Pre-seed buckets for every registered service category so even a
+    # zero-booking category (e.g. Photography this week) shows up.
+    for st, label in type_to_label.items():
+        by_service[st] = {"name": label, "count": 0, "total": 0.0}
 
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
@@ -11563,8 +11594,11 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         # Don't pollute by_service with $0 program-redemption rows.
         if is_program_credit or is_pos_credit_pack:
             continue
-        svc_key = r.get("service_name") or r.get("service_type") or "Other"
-        b = by_service.setdefault(svc_key, {"name": svc_key, "count": 0, "total": 0.0})
+        svc_key, svc_name = _bucket_key(r)
+        b = by_service.setdefault(svc_key, {"name": svc_name, "count": 0, "total": 0.0})
+        # Prefer the catalog-derived display name when one bucket has it
+        if svc_name and svc_name != svc_key.title():
+            b["name"] = svc_name
         b["count"] += 1
         b["total"] += price
 
@@ -11595,7 +11629,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         "booked_count": booked_count,
         "credit_pack_redeemed_count": credit_pack_redeemed_count,
         "credit_pack_redeemed_value": round(credit_pack_redeemed_value, 2),
-        "by_service": sorted(by_service.values(), key=lambda x: -x["total"]),
+        "by_service": sorted(
+            by_service.values(),
+            key=lambda x: (-x["total"], -x["count"], x["name"].lower()),
+        ),
         "retail_total": retail_total,
         "retail_count": retail_count,
         "training_revenue_total": training_revenue_total,

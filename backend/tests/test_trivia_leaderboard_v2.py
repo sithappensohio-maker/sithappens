@@ -58,10 +58,12 @@ def _seed_player(name, attempt_dates, today_d):
         await db.clients.insert_one({
             "id": cid, "name": name, "email": email, "user_id": uid,
             "credits": 0, "training_credits": 0, "boarding_credits": 0,
+            "created_at": "2026-06-10T00:00:00+00:00",
         })
         await db.dogs.insert_one({
             "id": str(uuid.uuid4()), "name": f"{name}Dog", "client_id": cid,
             "owner_id": cid, "breed": "Mix", "age_y": 3,
+            "created_at": "2026-06-10T00:00:00+00:00",
         })
         for d in attempt_dates:
             await db.trivia_attempts.insert_one({
@@ -146,6 +148,7 @@ def test_recent_winners_lists_pending_only(admin_headers):
         db = _mongo()
         await db.clients.insert_one({
             "id": cid, "name": f"PerkPending {suffix}", "credits": 0,
+            "created_at": "2026-06-10T00:00:00+00:00",
             "trivia_milestones": [
                 {"days": 7, "earned_on": today_iso, "label": "🐾 7-day"},
                 {"days": 14, "earned_on": today_iso, "label": "🦴 14-day",

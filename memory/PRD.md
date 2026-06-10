@@ -30,6 +30,28 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cw — Income breakdown polish (2026-06-10)
+**User report**: "Showing boarding twice and not showing photography in the breakdown by service."
+
+### Root cause
+The weekly summary's `by_service` bucket was keyed by `service_name OR service_type`. Bookings linked to a catalog service used the full display name ("Boarding (per night)"), while older bookings without a service link only carried the raw `service_type` ("boarding"). Same service, two buckets. Services with zero bookings in the week were silently absent.
+
+### Fix
+- `/transactions/weekly-summary` now builds a `service_type → canonical_display_name` map from the active services catalog and groups every booking by normalized lower-case `service_type` — merging the duplicate "Boarding (per night) (9)" + "boarding (12)" rows into a single "Boarding (per night) (21)" entry.
+- Pre-seeds zero-count buckets for every active service category so Photography (and any other service with no bookings this week) still appears in the breakdown.
+- Sort now prefers revenue (desc), then count (desc), then alphabetical so the most-active categories stay on top while zero-rows trail at the end.
+
+### Verified
+- Live data smoke test confirms: Boarding (per night) · $605 (21), Daycare (per day) · $570 (35), Bath · $90 (9), 1-on-1 Private Lesson · $0 (2), Studio Pet Photoshoot · $0 (0) ← Photography now visible.
+- 15/15 backend regression tests still passing across the trivia / credit-pack / referral / program-revenue suites.
+
+### Data hygiene side-fix
+Backfilled `created_at` on legacy `users` / `dogs` / `clients` documents missing the field so the `/clients` and `/dogs` response-model validation passes. Updated test seed helpers to always stamp `created_at` so future runs don't reintroduce the gap.
+
+
+
+
+
 ## Sprint 110cv — Trivia leaderboard polish + prize transparency (2026-06-10)
 **User asks**: "Trivia leaderboard should remove people that haven't played in a few days. Clients should get to see where they stand on the leaderboard since we're doing prizes. How do the prizes work again?"
 
