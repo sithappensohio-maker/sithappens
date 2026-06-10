@@ -3244,6 +3244,8 @@ async def check_out(
                     referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
                     # Don't credit self-referrals
                     if referrer and referrer.get("id") != client_id:
+                        before_balance = int(referrer.get("credits") or 0)
+                        new_balance = before_balance + 1
                         await db.clients.update_one(
                             {"id": referrer["id"]},
                             {"$inc": {"credits": 1}},
@@ -3267,14 +3269,28 @@ async def check_out(
                             "client_id": referrer["id"],
                             "client_name": referrer.get("name", ""),
                             "changes": {"daycare": {
-                                "before": int(referrer.get("credits") or 0),
+                                "before": before_balance,
                                 "delta": 1,
-                                "after": int(referrer.get("credits") or 0) + 1,
+                                "after": new_balance,
                             }},
                             "note": f"Referral bonus — referred {client.get('name','')}",
                             "adjusted_by": "system",
                             "adjusted_at": now,
                         })
+                        # Sprint 110cu — Notify both parties. Errors are
+                        # logged but don't block the checkout flow.
+                        try:
+                            await _ensure_client_referral_code(client_id)
+                            referee_fresh = await db.clients.find_one({"id": client_id}, {"_id": 0})
+                            dog_name = booking.get("dog_name") or ""
+                            await email_service.notify_client_referral_payout(
+                                referrer, referee_fresh or client, new_balance,
+                            )
+                            await email_service.notify_client_referral_welcome(
+                                referee_fresh or client, referrer, dog_name,
+                            )
+                        except Exception as exc:
+                            logger.warning("Referral notification email failed: %s", exc)
     except Exception as exc:
         logger.warning("Referral auto-credit hook failed: %s", exc)
 
@@ -11300,20 +11316,50 @@ async def list_transactions(
 
 
 async def _get_training_program_lot_ids() -> set:
-    """Sprint 110cj — Returns the set of credit_lot IDs whose `pack_kind` is
-    `training_program`. Bookings that consume credits from these lots must NOT
-    be counted as completed/paid revenue on the Income screens, because the
-    program's revenue was already recognized up-front at the point of sale
-    (recorded in `retail_sales` with `source_kind=training_program_sale`).
-    Counting them again at checkout-time would double-count the same dollar.
-    Daycare/boarding credit packs are unaffected — their revenue is only
-    recognized at checkout, so credit-paid bookings DO count there.
+    """Sprint 110cj/110cs — Returns the set of credit_lot IDs whose revenue
+    has ALREADY been recognized at sale-time (so any booking that consumes
+    a credit from them must NOT contribute to completed/paid totals).
+    Two flavors qualify:
+      - `pack_kind == "training_program"` (Sprint 110cj — training programs)
+      - `recognize_at_sale == True` (Sprint 110cs — all new credit packs)
+    Grandfathered lots (no flag, no pack_kind) keep their old per-redemption
+    behavior.
     """
     cursor = db.credit_lots.find(
-        {"pack_kind": "training_program"},
+        {"$or": [
+            {"pack_kind": "training_program"},
+            {"recognize_at_sale": True},
+        ]},
         {"_id": 0, "id": 1},
     )
     return {lot["id"] async for lot in cursor}
+
+
+async def _get_pos_credit_pack_lot_ids() -> set:
+    """Sprint 110ct — Returns ONLY `recognize_at_sale: True` credit-pack lots
+    (NOT training programs — those have their own "Training Revenue" tile).
+    Used to surface "🎟️ Credits Redeemed" operational burn so the operator
+    can see prepaid usage without it mixing back into cash revenue.
+    """
+    cursor = db.credit_lots.find(
+        {"recognize_at_sale": True, "pack_kind": {"$ne": "training_program"}},
+        {"_id": 0, "id": 1},
+    )
+    return {lot["id"] async for lot in cursor}
+
+
+def _is_pos_credit_pack_redemption(booking: dict, pos_lot_ids: set) -> bool:
+    """Return True if booking consumed a Sprint 110cs grandfathered credit
+    pack (revenue already recognized at sale). Skipped for training-program
+    sessions, which have their own tile."""
+    if booking.get("is_prepaid_program_session"):
+        return False
+    if booking.get("payment_method") != "credits":
+        return False
+    for lid in (booking.get("credit_lot_ids") or []):
+        if lid in pos_lot_ids:
+            return True
+    return False
 
 
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
@@ -11350,6 +11396,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     # Sprint 110cj — exclude training-program credit redemptions from income
     # totals; their revenue was already counted at sell-time.
     program_lot_ids = await _get_training_program_lot_ids()
+    # Sprint 110ct — separately track POS credit pack redemptions (grandfathered
+    # `recognize_at_sale: True` lots) so the Income screen can surface a
+    # "🎟️ Credits Redeemed" informational chip without polluting cash revenue.
+    pos_lot_ids = await _get_pos_credit_pack_lot_ids()
 
     completed_total = 0.0
     booked_total = 0.0
@@ -11358,6 +11408,8 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     credits_redeemed = 0
     completed_count = 0
     booked_count = 0
+    credit_pack_redeemed_count = 0
+    credit_pack_redeemed_value = 0.0
     by_service: Dict[str, Dict] = {}
 
     for r in rows:
@@ -11366,10 +11418,17 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         # Skip price contribution for training-program credit redemptions to
         # avoid double-counting (program revenue is in retail_sales).
         is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
-        price = 0.0 if is_program_credit else float(r.get("actual_price") or 0)
+        is_pos_credit_pack = _is_pos_credit_pack_redemption(r, pos_lot_ids)
+        # The nominal "what would they have paid" value, captured BEFORE we
+        # zero it out so we can surface it on the redemption tile.
+        nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
+        price = 0.0 if (is_program_credit or is_pos_credit_pack) else nominal_price
         if r.get("status") == "completed":
             completed_total += price
             completed_count += 1
+            if is_pos_credit_pack:
+                credit_pack_redeemed_count += 1
+                credit_pack_redeemed_value += nominal_price
         elif r.get("status") in ("approved", "pending"):
             booked_total += price
             booked_count += 1
@@ -11380,7 +11439,7 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         credits_redeemed += int(r.get("credits_deducted") or 0)
 
         # Don't pollute by_service with $0 program-redemption rows.
-        if is_program_credit:
+        if is_program_credit or is_pos_credit_pack:
             continue
         svc_key = r.get("service_name") or r.get("service_type") or "Other"
         b = by_service.setdefault(svc_key, {"name": svc_key, "count": 0, "total": 0.0})
@@ -11412,6 +11471,8 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         "credits_redeemed": credits_redeemed,
         "completed_count": completed_count,
         "booked_count": booked_count,
+        "credit_pack_redeemed_count": credit_pack_redeemed_count,
+        "credit_pack_redeemed_value": round(credit_pack_redeemed_value, 2),
         "by_service": sorted(by_service.values(), key=lambda x: -x["total"]),
         "retail_total": retail_total,
         "retail_count": retail_count,
@@ -11436,16 +11497,27 @@ async def summary_range(
     # Sprint 110cj — exclude training-program credit redemptions (already
     # counted as Training Revenue at sale-time).
     program_lot_ids = await _get_training_program_lot_ids()
+    # Sprint 110ct — track POS credit-pack burns separately for the "Credits
+    # Redeemed" informational tile.
+    pos_lot_ids = await _get_pos_credit_pack_lot_ids()
     completed_total = 0.0
     paid_total = 0.0
+    credit_pack_redeemed_count = 0
+    credit_pack_redeemed_value = 0.0
     by_day: Dict[str, float] = {}
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
-        price = 0.0 if _is_program_credit_redemption(r, program_lot_ids) else float(r.get("actual_price") or 0)
+        is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
+        is_pos_credit_pack = _is_pos_credit_pack_redemption(r, pos_lot_ids)
+        nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
+        price = 0.0 if (is_program_credit or is_pos_credit_pack) else nominal_price
         if r.get("status") == "completed":
             completed_total += price
             by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
+            if is_pos_credit_pack:
+                credit_pack_redeemed_count += 1
+                credit_pack_redeemed_value += nominal_price
         if r.get("payment_status") == "paid":
             paid_total += price
     # Expenses in the same window so the UI can show NET (income - expenses)
@@ -11532,6 +11604,8 @@ async def summary_range(
         "retail_count": len(retail_rows),
         "training_revenue_total": training_revenue_total,
         "training_revenue_count": len(training_rows),
+        "credit_pack_redeemed_count": credit_pack_redeemed_count,
+        "credit_pack_redeemed_value": round(credit_pack_redeemed_value, 2),
         "paid_total": round(paid_total + other_revenue_total, 2),
         "expenses_total": expenses_total,
         "labor_gross": labor_gross,
@@ -15688,10 +15762,35 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
         "note": body.note or "",
         "sold_by": user.get("name", "Admin"),
         "purchased_at": now_iso(),
+        # Sprint 110cs — Mark new lots so revenue is recognized at sale-time
+        # (point-of-sale / cash basis). Existing lots without this flag keep
+        # their old behavior (recognize per-redemption) so we never touch
+        # grandfathered data.
+        "recognize_at_sale": True,
     }
     await db.credit_lots.insert_one(lot)
     balance_field = _credit_balance_field(svc_type) or "credits"
     await db.clients.update_one({"id": client_id}, {"$inc": {balance_field: qty}})
+
+    # Sprint 110cs — Insert matching retail_sales row so income reports show
+    # the sale on the day cash came in (not piecemeal at redemption).
+    if effective_price > 0:
+        await db.retail_sales.insert_one({
+            "id": str(uuid.uuid4()),
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "amount": effective_price,
+            "date": business_today().isoformat(),
+            "payment_method": body.payment_method,
+            "source_kind": "credit_pack_sale",
+            "lot_id": lot["id"],
+            "pack_id": pack["id"],
+            "pack_name": pack["name"],
+            "note": body.note or "",
+            "logged_by": user.get("name", "Admin"),
+            "created_at": now_iso(),
+        })
+
     lot.pop("_id", None)
     return lot
 

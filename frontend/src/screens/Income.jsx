@@ -329,7 +329,7 @@ export default function Income() {
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)} sub="outstanding" color="text-shOrange" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
           </div>
-          {(summary.retail_total > 0 || summary.retail_count > 0 || summary.training_revenue_total > 0) && (
+          {(summary.retail_total > 0 || summary.retail_count > 0 || summary.training_revenue_total > 0 || summary.credit_pack_redeemed_count > 0) && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {summary.training_revenue_total > 0 && (
                 <div className="flex items-center gap-3 bg-shGreen/10 border border-shGreen/40 rounded px-4 py-2.5"
@@ -346,6 +346,16 @@ export default function Income() {
                   <span className="text-[14px] font-black uppercase tracking-widest text-purple-300">Retail</span>
                   <span className="text-white font-black text-[18px]">{fmt(summary.retail_total || 0)}</span>
                   <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.retail_count || 0} sale{(summary.retail_count===1)?"":"s"}</span>
+                </div>
+              )}
+              {summary.credit_pack_redeemed_count > 0 && (
+                <div className="flex items-center gap-3 bg-shBlue/10 border border-shBlue/30 rounded px-4 py-2.5"
+                     data-testid="weekly-credit-redeemed-chip"
+                     title="Prepaid credit packs burned this week. Revenue was already recognized at the time of sale, so this is operational tracking only — not added to cash revenue.">
+                  <span className="text-[18px]" aria-hidden>🎟️</span>
+                  <span className="text-[14px] font-black uppercase tracking-widest text-shBlue">Credits Redeemed</span>
+                  <span className="text-white font-black text-[18px]">{fmt(summary.credit_pack_redeemed_value || 0)}</span>
+                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.credit_pack_redeemed_count} visit{(summary.credit_pack_redeemed_count===1)?"":"s"} · prepaid</span>
                 </div>
               )}
               <div className="flex items-center gap-2 text-gray-400 text-[13px] font-black uppercase tracking-widest px-1">
@@ -405,6 +415,16 @@ export default function Income() {
             <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
             <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
           </div>
+          {rangeSummary.credit_pack_redeemed_count > 0 && (
+            <div className="mb-4 flex items-center gap-3 bg-shBlue/10 border border-shBlue/30 rounded px-4 py-2.5 w-fit"
+                 data-testid="range-credit-redeemed-chip"
+                 title="Prepaid credit packs burned in this range. Cash revenue was already recognized at the time of sale.">
+              <span className="text-[18px]" aria-hidden>🎟️</span>
+              <span className="text-[14px] font-black uppercase tracking-widest text-shBlue">Credits Redeemed</span>
+              <span className="text-white font-black text-[18px]">{fmt(rangeSummary.credit_pack_redeemed_value || 0)}</span>
+              <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{rangeSummary.credit_pack_redeemed_count} visit{(rangeSummary.credit_pack_redeemed_count===1)?"":"s"} · prepaid (not in gross)</span>
+            </div>
+          )}
           {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}
         </div>
       )}

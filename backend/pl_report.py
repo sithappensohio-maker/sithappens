@@ -173,11 +173,16 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         {"_id": 0},
     ).to_list(20000)
 
-    # Sprint 110cj — bookings whose payment came from a training-program
-    # credit lot must be excluded from completed/paid revenue (the program
-    # was already counted as Training Revenue at sale-time in `retail_sales`).
+    # Sprint 110cj/110cs — bookings whose payment came from a lot whose
+    # revenue was already recognized at sale-time must be excluded from
+    # completed/paid totals. Two flavors qualify:
+    #   - training programs (`pack_kind == "training_program"`)
+    #   - all new credit packs (`recognize_at_sale == True`, Sprint 110cs)
     program_lots = await db.credit_lots.find(
-        {"pack_kind": "training_program"},
+        {"$or": [
+            {"pack_kind": "training_program"},
+            {"recognize_at_sale": True},
+        ]},
         {"_id": 0, "id": 1},
     ).to_list(20000)
     program_lot_ids = {lot["id"] for lot in program_lots}

@@ -367,6 +367,30 @@ EMAIL_TEMPLATES = [
         "default_cta_text": "View in portal",
         "variables": ["first_name", "client_name", "dog_name", "service_label", "visit_date", "brand_name"],
     },
+    {
+        "slug": "client_referral_payout",
+        "name": "Referral Payout (to referrer)",
+        "description": "Sent to the referrer when their friend completes their first appointment. Awards one free daycare day credit.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "🎉 You just earned a free daycare day, {{first_name}}!",
+        "default_title": "🎁 Your referral paid off!",
+        "default_intro_html": "Hi {{first_name}} — your friend <strong>{{referred_name}}</strong> just wrapped up their first visit at {{brand_name}}. Because they used your referral code <strong>{{referral_code}}</strong>, you've earned <strong>one free daycare day</strong> on the house. Your new daycare credit balance is <strong>{{new_balance}}</strong>. Thanks for spreading the word! 🐾",
+        "default_cta_text": "Open Portal",
+        "variables": ["first_name", "client_name", "referred_name", "referral_code", "new_balance", "brand_name"],
+    },
+    {
+        "slug": "client_referral_welcome",
+        "name": "Referral Welcome (to referee)",
+        "description": "Sent to the new client when their first appointment completes, thanking them for joining via a referral and letting them know their referrer was rewarded.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Welcome to {{brand_name}}, {{first_name}}! 🐾",
+        "default_title": "💚 Welcome to the pack",
+        "default_intro_html": "Hi {{first_name}} — so glad we got to meet {{dog_name}} today! Because you joined through <strong>{{referrer_name}}</strong>'s referral, they just earned a free daycare day on us. Now it's your turn — share <strong>{{referral_code}}</strong> with another dog parent and you'll earn one too when they finish their first visit.",
+        "default_cta_text": "Open Portal",
+        "variables": ["first_name", "client_name", "dog_name", "referrer_name", "referral_code", "brand_name"],
+    },
 ]
 
 

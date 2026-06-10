@@ -550,6 +550,80 @@ async def notify_client_quote_received(client: dict, item: dict, message: str) -
 
 
 
+async def notify_client_referral_payout(referrer: dict, referred: dict, new_balance: int) -> bool:
+    """Send a celebration email to the REFERRER when their referred friend
+    completes their first appointment. Awards one free daycare day and
+    surfaces the new balance.
+    """
+    to_email = (referrer or {}).get("email") or ""
+    if not to_email:
+        return False
+    rname = (referrer or {}).get("name") or "there"
+    first_name = rname.split()[0] if rname else "there"
+    code = (referrer or {}).get("referral_code") or ""
+    referred_name = (referred or {}).get("name") or "your friend"
+    settings = await _get_email_settings()
+    brand_name = (settings or {}).get("brand_name") or "Sit Happens"
+    rows = [
+        ("Bonus awarded", "1 free daycare day"),
+        ("New daycare balance", str(new_balance)),
+        ("Referred", referred_name),
+        ("Your code", code),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    return bool(await _dispatch(
+        slug="client_referral_payout",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": rname,
+            "referred_name": referred_name,
+            "referral_code": code,
+            "new_balance": str(new_balance),
+            "brand_name": brand_name,
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+    ))
+
+
+async def notify_client_referral_welcome(referee: dict, referrer: dict, dog_name: str) -> bool:
+    """Send a welcome email to the REFEREE (newly converted client) thanking
+    them for joining via a referral and telling them their referrer just got
+    rewarded. Includes their own referral code so the chain keeps going.
+    """
+    to_email = (referee or {}).get("email") or ""
+    if not to_email:
+        return False
+    name = (referee or {}).get("name") or "there"
+    first_name = name.split()[0] if name else "there"
+    referrer_name = (referrer or {}).get("name") or "a friend"
+    code = (referee or {}).get("referral_code") or ""
+    settings = await _get_email_settings()
+    brand_name = (settings or {}).get("brand_name") or "Sit Happens"
+    rows = [
+        ("Referred by", referrer_name),
+        ("Your referral code", code or "—"),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    return bool(await _dispatch(
+        slug="client_referral_welcome",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": name,
+            "dog_name": dog_name or "",
+            "referrer_name": referrer_name,
+            "referral_code": code,
+            "brand_name": brand_name,
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+    ))
+
+
 async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     """A client logged a training note on their dog — notify the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:

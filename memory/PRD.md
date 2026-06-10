@@ -30,6 +30,34 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cu — Credits Redeemed tile + Auto-credit referrer emails (2026-06-10)
+**User asks**: (1) "Finish the 🎟️ Credits Redeemed Today tile on the Income screen so I can see prepaid burn without it polluting cash revenue." (2) "Auto-credit referrer on conversion — make those codes actually pay out" (1 free daycare day per successful referral).
+
+### Credits Redeemed UI tile
+- ✅ **Backend** — `_get_pos_credit_pack_lot_ids()` + `_is_pos_credit_pack_redemption()` helpers identify Sprint 110cs grandfathered packs (`recognize_at_sale: True`, excluding training-program lots which have their own bucket). Both `/transactions/weekly-summary` and `/transactions/summary-range` now expose `credit_pack_redeemed_count` and `credit_pack_redeemed_value` while zeroing those redemptions out of `completed_total` so cash revenue stays honest.
+- ✅ **Frontend `Income.jsx`** — new info chip `🎟️ Credits Redeemed · $X · N visits · prepaid` renders on the weekly tile (next to Training Revenue + Retail) AND under the longer-range view (with explicit "not in gross" hint). Hover tooltip explains the operational-only semantics.
+- ✅ **Tests** — `test_credit_pack_redemption_tile_fields_present` + `test_credit_pack_redemption_tile_increments` in `test_credit_pack_recognize_at_sale.py` confirm the fields exist and increment by exactly +1 / +nominal_price when a daycare credit pack is burned. Plus regression: `completed_total` still doesn't move.
+
+### Referral auto-payout
+- ✅ **Wired** — Existing `db.referrals` guard at the check-out hook already credited the referrer +1 daycare credit on first conversion. Refactored to capture `before_balance` / `new_balance` for the email and audit row.
+- ✅ **Two new email templates** registered in `email_templates_registry.py`:
+  - `client_referral_payout` — sent to the REFERRER with celebration message + new balance.
+  - `client_referral_welcome` — sent to the REFEREE thanking them + sharing their own referral code so the chain keeps going.
+  - Both fully customizable in Email Designer (subject / title / intro / CTA).
+- ✅ **`email_service.notify_client_referral_payout` + `notify_client_referral_welcome`** new send helpers; both errors are caught + logged but never block the checkout flow.
+- ✅ **`_ensure_client_referral_code()` called on the referee** at conversion time so the welcome email always carries the referee's own code (closes the share loop even if they haven't visited the portal yet).
+- ✅ **Tests** `test_referral_auto_credit.py` (4/4 passing):
+  1. End-to-end: referrer's daycare credit balance grows by exactly 1 after referee's first paid daycare checkout.
+  2. Idempotency: 2 checkouts from the same referee still only credit the referrer once.
+  3. No referral code → no credit movement.
+  4. Both new email templates are discoverable via `/admin/email-templates`.
+
+### Why this matters
+The 🎟️ tile finally separates "money in" from "credits burning" so the operator can read both metrics at a glance — no more wondering whether $315 in credits means $315 more revenue or just operational throughput. The referral auto-payout makes the just-launched referral codes (Sprint 110cq) actually deliver value: the moment a friend completes their first appointment, the referrer gets a free daycare day AND an email celebrating it — turning the report-card email's referral code from a vanity field into a working growth loop.
+
+
+
+
 ## Sprint 110cr — Owner Clock + End-of-Day Wrap-up (2026-06-08)
 **User ask**: "End of Day screen would be cool also admin should be able to clock in as owner."
 
