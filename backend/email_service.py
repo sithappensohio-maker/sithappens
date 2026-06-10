@@ -624,6 +624,39 @@ async def notify_client_referral_welcome(referee: dict, referrer: dict, dog_name
     ))
 
 
+async def notify_admin_trivia_milestone(client: dict, milestone: dict, earned_on: str) -> bool:
+    """Sprint 110cv — Notify the operator that a client just earned a
+    trivia-streak milestone so the perk can be handed over at next pickup.
+    """
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return False
+    client_name = (client or {}).get("name") or "—"
+    days = int((milestone or {}).get("days") or 0)
+    label = (milestone or {}).get("label") or f"{days}-day streak"
+    perk_type = (milestone or {}).get("perk_type") or ""
+    rows = [
+        ("Client", client_name),
+        ("Streak", f"{days} days"),
+        ("Perk", label),
+        ("Earned on", earned_on or ""),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/clients" if APP_PUBLIC_URL else None
+    return bool(await _dispatch(
+        slug="admin_trivia_milestone",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client_name,
+            "days": str(days),
+            "reward_label": label,
+            "perk_type": perk_type,
+            "earned_on": earned_on or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+    ))
+
+
 async def notify_admin_training_log(dog: dict, log: dict, client: dict) -> None:
     """A client logged a training note on their dog — notify the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:

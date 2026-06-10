@@ -391,6 +391,18 @@ EMAIL_TEMPLATES = [
         "default_cta_text": "Open Portal",
         "variables": ["first_name", "client_name", "dog_name", "referrer_name", "referral_code", "brand_name"],
     },
+    {
+        "slug": "admin_trivia_milestone",
+        "name": "Admin · Trivia Milestone Earned",
+        "description": "Notifies the operator when a client hits a trivia streak reward (puzzle toy / retail credit / service upgrade) so the perk can be handed over at next pickup.",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "🏆 Trivia perk earned · {{client_name}} · {{days}}-day streak",
+        "default_title": "🏆 Trivia milestone earned",
+        "default_intro_html": "<strong>{{client_name}}</strong> just hit a <strong>{{days}}-day trivia streak</strong> and earned a perk: <em>{{reward_label}}</em>. Drop it on them at their next pickup!",
+        "default_cta_text": "Open Client",
+        "variables": ["client_name", "days", "reward_label", "perk_type", "earned_on"],
+    },
 ]
 
 

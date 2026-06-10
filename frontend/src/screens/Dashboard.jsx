@@ -732,14 +732,32 @@ function DashHeroTile({ icon, color, label, value }) {
 // ─── Sprint 110bk — Trivia at-a-glance ──────────────────────────────────────
 function TriviaDashboardTile({ onNavSettings }) {
   const [data, setData] = useState(null);
+  const [winners, setWinners] = useState([]);
+  const [winnersBusy, setWinnersBusy] = useState(false);
+  const [showWinners, setShowWinners] = useState(false);
   useEffect(() => {
     (async () => {
       try { const r = await api.get("/admin/trivia/leaderboard"); setData(r.data); } catch {}
+      try {
+        const w = await api.get("/admin/trivia/recent-winners", { params: { days_back: 30, limit: 15 } });
+        setWinners(w.data?.pending || []);
+      } catch {}
     })();
   }, []);
+  const redeemPerk = async (w) => {
+    if (winnersBusy) return;
+    setWinnersBusy(true);
+    try {
+      await api.post("/admin/trivia/milestones/redeem", {
+        client_id: w.client_id, days: w.days, earned_on: w.earned_on,
+      });
+      setWinners(prev => prev.filter(x => !(x.client_id === w.client_id && x.days === w.days && x.earned_on === w.earned_on)));
+    } catch {}
+    setWinnersBusy(false);
+  };
   if (!data || data.total_players === 0) return null;
   const top = (data.players || []).slice(0, 5);
-  const pending = data.pending_milestones?.length || 0;
+  const pending = winners.length || (data.pending_milestones?.length || 0);
   return (
     <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden card-pop" data-testid="trivia-dash-tile">
       <button onClick={onNavSettings}
@@ -780,6 +798,43 @@ function TriviaDashboardTile({ onNavSettings }) {
               ))}
             </tbody>
           </table>
+        )}
+        {/* Sprint 110cv — Recent winners feed: shows un-redeemed trivia perks
+            so the operator can mark them claimed once delivered. */}
+        {winners.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-bgHover/60" data-testid="trivia-recent-winners">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowWinners(s => !s); }}
+              data-testid="trivia-recent-winners-toggle"
+              className="w-full flex items-center justify-between text-left text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-white">
+              <span><i className="fas fa-gift mr-2"/>Pending perks ({winners.length})</span>
+              <i className={`fas fa-chevron-${showWinners ? "up" : "down"} text-[11px]`}/>
+            </button>
+            {showWinners && (
+              <div className="mt-2 space-y-1.5">
+                {winners.map(w => (
+                  <div key={`${w.client_id}-${w.days}-${w.earned_on}`}
+                       className="flex items-start gap-2 bg-bgBase/70 border border-bgHover/60 rounded px-2 py-1.5"
+                       data-testid={`trivia-pending-perk-${w.client_id}-${w.days}`}>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] text-white font-black truncate">
+                        <span className="text-shOrange mr-1">🏆 {w.days}d</span> {w.client_name}
+                      </p>
+                      <p className="text-[11px] text-gray-400 truncate leading-snug">{w.label}</p>
+                      <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-0.5">Earned {w.earned_on}</p>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); redeemPerk(w); }}
+                      disabled={winnersBusy}
+                      data-testid={`trivia-pending-redeem-${w.client_id}-${w.days}`}
+                      className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest hover:bg-shGreen/30 disabled:opacity-50 whitespace-nowrap">
+                      ✓ Awarded
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         <p className="text-[10px] text-gray-500 italic mt-2 text-right">{data.total_players} player{data.total_players===1?"":"s"} · tap card to manage</p>
       </div>

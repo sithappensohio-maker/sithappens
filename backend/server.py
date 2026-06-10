@@ -9091,6 +9091,17 @@ async def portal_trivia_daily_answer(
                     "perk_type": milestone["perk_type"],
                 }}},
             )
+            # Sprint 110cv — notify the admin so they remember to hand the
+            # perk over at the client's next pickup. Best-effort; never
+            # blocks the answer flow.
+            try:
+                client_doc = await db.clients.find_one({"id": cid}, {"_id": 0})
+                if client_doc:
+                    await email_service.notify_admin_trivia_milestone(
+                        client_doc, milestone, date_str,
+                    )
+            except Exception as exc:
+                logger.warning("Trivia milestone admin email failed: %s", exc)
     return {
         "correct": correct,
         "correct_index": q["correct_index"],
@@ -9101,10 +9112,60 @@ async def portal_trivia_daily_answer(
     }
 
 
+@api.get("/portal/trivia/rewards-progress")
+async def portal_trivia_rewards_progress(user: dict = Depends(get_current_user)):
+    """Sprint 110cv — Show the prize ladder + this client's progress toward
+    the next milestone so they understand the incentive at a glance.
+
+    Returns:
+      - rewards: full milestone ladder ([{days, label, perk_type}])
+      - current_streak: client's active streak today
+      - best_streak: their personal best
+      - next_milestone: the next unearned reward (with days_remaining), or
+        None if they've already maxed out the ladder
+      - earned: list of milestones already claimed/awarded to this client
+    """
+    cid = await _require_client_with_record(user)
+    today_d = business_today()
+    stats = await _compute_streak(cid, today_d)
+    rewards = await _get_trivia_rewards()
+    rewards_sorted = sorted(rewards, key=lambda r: int(r.get("days") or 0))
+    cur = int(stats.get("current_streak") or 0)
+    client_doc = await db.clients.find_one(
+        {"id": cid}, {"_id": 0, "trivia_milestones": 1},
+    ) or {}
+    earned = client_doc.get("trivia_milestones") or []
+    earned_days = {int(m.get("days") or 0) for m in earned}
+    next_milestone = None
+    for r in rewards_sorted:
+        days = int(r.get("days") or 0)
+        if days > cur:
+            next_milestone = {
+                "days": days,
+                "label": r.get("label") or "",
+                "perk_type": r.get("perk_type") or "",
+                "days_remaining": max(days - cur, 0),
+            }
+            break
+    return {
+        "rewards": rewards_sorted,
+        "current_streak": cur,
+        "best_streak": int(stats.get("best_streak") or 0),
+        "next_milestone": next_milestone,
+        "earned_days": sorted(list(earned_days)),
+        "earned": earned,  # full earned-records for the "you've won" badges
+    }
+
+
 @api.get("/portal/trivia/leaderboard")
 async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)
     today_d = business_today()
+    # Sprint 110cv — only surface ACTIVE players (last_played within 7 days).
+    # Inactive players keep their stats in the DB but get hidden from the
+    # public board so it doesn't become a graveyard of dormant streaks.
+    INACTIVE_AFTER_DAYS = 7
+    cutoff_iso = (today_d - timedelta(days=INACTIVE_AFTER_DAYS)).isoformat()
     # Compute streak/total for every client who has answered at least once.
     attempts = await db.trivia_attempts.find(
         {}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
@@ -9138,11 +9199,13 @@ async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
             best = max(best, run)
             try: prev = date.fromisoformat(ds)
             except Exception: prev = None
+        last_played = max(by_date.keys()) if by_date else ""
         rows.append({
             "client_id": cli,
             "current_streak": cur,
             "best_streak": max(best, cur),
             "total_correct": total,
+            "last_played": last_played,
         })
     # Attach dog name(s) (anonymized — first names only)
     if rows:
@@ -9162,13 +9225,31 @@ async def portal_trivia_leaderboard(user: dict = Depends(get_current_user)):
             r["display_name"] = cmap.get(r["client_id"], "Player")
             r["dogs"] = [n for n in dmap.get(r["client_id"], []) if n][:3]
             r["is_me"] = (r["client_id"] == cid)
-    # Rank by current_streak, then best_streak, then total_correct
-    rows.sort(key=lambda r: (-r["current_streak"], -r["best_streak"], -r["total_correct"]))
-    for i, r in enumerate(rows):
+    # Sprint 110cv — drop inactive players (haven't answered in >7 days) from
+    # the public board. Caller's own row is preserved separately as `me`.
+    active_rows = [r for r in rows if r.get("last_played", "") >= cutoff_iso]
+    active_rows.sort(key=lambda r: (-r["current_streak"], -r["best_streak"], -r["total_correct"]))
+    for i, r in enumerate(active_rows):
         r["rank"] = i + 1
-    top10 = rows[:10]
-    me = next((r for r in rows if r.get("is_me")), None)
-    return {"top": top10, "me": me, "total_players": len(rows)}
+    top10 = active_rows[:10]
+    # Caller's own row — even if inactive / outside the top 10, we always
+    # surface their position so the prize ladder feels personal.
+    me = next((r for r in active_rows if r.get("is_me")), None)
+    if me is None:
+        # Caller was filtered out (inactive or never played) — surface a
+        # zero-state row so the UI can still render "you've never played yet".
+        me_raw = next((r for r in rows if r.get("client_id") == cid), None)
+        if me_raw:
+            me_raw["is_me"] = True
+            me_raw["rank"] = None  # not on the active board
+            me = me_raw
+    return {
+        "top": top10,
+        "me": me,
+        "total_players": len(active_rows),  # active count = what's shown
+        "total_players_all_time": len(rows),
+        "inactive_after_days": INACTIVE_AFTER_DAYS,
+    }
 
 
 @api.get("/portal/trivia/quiz")
@@ -9401,6 +9482,47 @@ async def admin_trivia_redeem_milestone(
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Milestone not found")
     return {"ok": True}
+
+
+@api.get("/admin/trivia/recent-winners")
+async def admin_trivia_recent_winners(
+    days_back: int = 30, limit: int = 20,
+    _: dict = Depends(require_admin),
+):
+    """Sprint 110cv — Dashboard mini-feed of clients who earned a trivia
+    milestone in the last `days_back` days and haven't been marked redeemed
+    yet. Sorted newest-first so the operator can spot perks to hand out at
+    the next visit.
+    """
+    days_back = max(1, min(int(days_back), 180))
+    limit = max(1, min(int(limit), 100))
+    cutoff = (business_today() - timedelta(days=days_back)).isoformat()
+    cursor = db.clients.find(
+        {"trivia_milestones": {"$exists": True, "$ne": []}},
+        {"_id": 0, "id": 1, "name": 1, "trivia_milestones": 1},
+    )
+    winners: List[dict] = []
+    async for c in cursor:
+        for m in (c.get("trivia_milestones") or []):
+            earned_on = m.get("earned_on") or ""
+            if earned_on < cutoff:
+                continue
+            winners.append({
+                "client_id": c["id"],
+                "client_name": c.get("name") or "—",
+                "days": int(m.get("days") or 0),
+                "label": m.get("label") or "",
+                "perk_type": m.get("perk_type") or "",
+                "earned_on": earned_on,
+                "redeemed_at": m.get("redeemed_at") or None,
+            })
+    winners.sort(key=lambda x: x.get("earned_on") or "", reverse=True)
+    pending = [w for w in winners if not w.get("redeemed_at")][:limit]
+    return {
+        "winners": winners[:limit],
+        "pending": pending,
+        "pending_count": len([w for w in winners if not w.get("redeemed_at")]),
+    }
 
 
 @api.get("/admin/trivia/questions")

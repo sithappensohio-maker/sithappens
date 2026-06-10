@@ -346,6 +346,11 @@ export function DailyTriviaCard() {
                       className="bg-bgBase border border-bgHover text-gray-200 hover:border-shBlue px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
                 <i className="fas fa-trophy mr-1 text-shOrange"/>Leaderboard
               </button>
+              <button onClick={()=>setView(view==="prizes"?"daily":"prizes")}
+                      data-testid="trivia-prizes-btn"
+                      className="bg-bgBase border border-bgHover text-gray-200 hover:border-shOrange px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-gift mr-1 text-shOrange"/>Prizes
+              </button>
               <button onClick={()=>setView(view==="quiz"?"daily":"quiz")}
                       data-testid="trivia-quiz-btn"
                       className="bg-bgBase border border-bgHover text-gray-200 hover:border-shGreen px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
@@ -356,6 +361,7 @@ export function DailyTriviaCard() {
         )}
 
         {view === "leaderboard" && <LeaderboardPanel/>}
+        {view === "prizes" && <PrizesPanel/>}
         {view === "quiz" && <QuizPanel/>}
       </div>
     </div>
@@ -379,11 +385,20 @@ function LeaderboardPanel() {
     })();
   }, []);
   if (!data) return <p className="text-gray-500 text-sm mt-3">Loading leaderboard…</p>;
+  const me = data.me;
+  // Decide whether to show the separate "your rank" footer: only when the
+  // user isn't already highlighted in the top-10 list above.
+  const meAlreadyInTop = me && me.rank && data.top.some(r => r.is_me);
   return (
     <div className="mt-4 bg-bgBase rounded-lg border border-bgHover p-3" data-testid="trivia-leaderboard">
-      <p className="text-[11px] font-black uppercase tracking-widest text-shOrange mb-2">
-        <i className="fas fa-trophy mr-1"/>Top streaks
-      </p>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-black uppercase tracking-widest text-shOrange">
+          <i className="fas fa-trophy mr-1"/>Top streaks
+        </p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500" data-testid="trivia-lb-activity-hint">
+          Active in last {data.inactive_after_days || 7}d · {data.total_players || 0} player{data.total_players === 1 ? "" : "s"}
+        </p>
+      </div>
       {data.top.length === 0 ? (
         <p className="text-gray-500 text-sm">Be the first to play! 🐾</p>
       ) : (
@@ -409,6 +424,102 @@ function LeaderboardPanel() {
           ))}
         </div>
       )}
+      {/* Sprint 110cv — Your rank panel shows up when the user isn't already
+          in the visible top-10 (rank is either >10 or null because they're
+          inactive / never played). */}
+      {me && !meAlreadyInTop && (
+        <div className="mt-3 pt-3 border-t border-bgHover" data-testid="trivia-lb-me">
+          <p className="text-[10px] font-black uppercase tracking-widest text-shBlue mb-1.5">Your rank</p>
+          <div className="flex items-center gap-2 text-[13px] bg-shBlue/10 border border-shBlue/40 rounded px-2 py-1.5">
+            <span className="text-gray-400 w-12 font-black">
+              {me.rank ? `#${me.rank}` : <span className="text-gray-500 text-[11px]">—</span>}
+            </span>
+            <span className="flex-1 truncate text-white font-black">
+              {me.display_name || "You"}
+              <span className="ml-2 text-[10px] text-shBlue">YOU</span>
+            </span>
+            <span className="text-shOrange font-black text-[12px]"><i className="fas fa-fire mr-1"/>{me.current_streak}d</span>
+            <span className="text-gray-500 text-[11px] hidden sm:inline">best {me.best_streak}d</span>
+            <span className="text-gray-400 text-[11px] w-12 text-right">{me.total_correct} ✓</span>
+          </div>
+          {!me.rank && (
+            <p className="text-[11px] text-gray-500 mt-1.5 italic">
+              {me.current_streak > 0
+                ? `Play today to climb the active board.`
+                : `Answer today's question to claim your spot.`}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrizesPanel() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try { const r = await api.get("/portal/trivia/rewards-progress"); setData(r.data); } catch {}
+    })();
+  }, []);
+  if (!data) return <p className="text-gray-500 text-sm mt-3">Loading prizes…</p>;
+  const rewards = data.rewards || [];
+  const cur = data.current_streak || 0;
+  const earnedDays = new Set(data.earned_days || []);
+  const next = data.next_milestone;
+  return (
+    <div className="mt-4 bg-bgBase rounded-lg border border-shOrange/40 p-3" data-testid="trivia-prizes">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-black uppercase tracking-widest text-shOrange">
+          <i className="fas fa-gift mr-1"/>How to win prizes
+        </p>
+        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+          🔥 {cur}-day streak
+        </p>
+      </div>
+      <p className="text-[12px] text-gray-400 leading-relaxed mb-3">
+        Answer today's trivia question correctly every day to build a streak. Hit any of the milestones below and you'll get the perk at your next pickup — we'll remember for you.
+      </p>
+      {next && (
+        <div className="bg-shOrange/10 border border-shOrange/30 rounded px-3 py-2 mb-3" data-testid="trivia-next-milestone">
+          <p className="text-[10px] font-black uppercase tracking-widest text-shOrange mb-0.5">Next reward</p>
+          <p className="text-[13px] text-white font-black">{next.label}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            <span className="text-shGreen font-black">{next.days_remaining} more day{next.days_remaining === 1 ? "" : "s"}</span> to unlock (at {next.days}-day streak)
+          </p>
+        </div>
+      )}
+      {rewards.length === 0 ? (
+        <p className="text-[12px] text-gray-500 italic">Your trainer hasn't set up trivia rewards yet — check back soon!</p>
+      ) : (
+        <div className="space-y-1.5" data-testid="trivia-prizes-ladder">
+          {rewards.map(r => {
+            const days = Number(r.days) || 0;
+            const earned = earnedDays.has(days);
+            const reached = cur >= days;
+            return (
+              <div key={days}
+                   className={`flex items-start gap-2 px-2 py-1.5 rounded border ${earned ? "bg-shGreen/10 border-shGreen/40" : reached ? "bg-shBlue/10 border-shBlue/40" : "bg-transparent border-bgHover"}`}
+                   data-testid={`trivia-prize-${days}`}>
+                <span className={`text-[11px] font-black w-12 shrink-0 ${earned ? "text-shGreen" : reached ? "text-shBlue" : "text-gray-500"}`}>
+                  {days}d
+                </span>
+                <span className={`flex-1 text-[12px] leading-snug ${earned ? "text-shGreen font-black" : reached ? "text-white" : "text-gray-300"}`}>
+                  {r.label}
+                </span>
+                {earned ? (
+                  <span className="text-[10px] font-black text-shGreen uppercase tracking-widest shrink-0">✓ Earned</span>
+                ) : reached ? (
+                  <span className="text-[10px] font-black text-shBlue uppercase tracking-widest shrink-0">Ready</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[10px] text-gray-500 italic mt-3 leading-relaxed">
+        Streak resets if you miss a day. Daily question shows up on your portal home every morning.
+      </p>
     </div>
   );
 }

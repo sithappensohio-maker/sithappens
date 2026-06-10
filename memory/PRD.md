@@ -30,7 +30,42 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
-## Sprint 110cu — Credits Redeemed tile + Auto-credit referrer emails (2026-06-10)
+## Sprint 110cv — Trivia leaderboard polish + prize transparency (2026-06-10)
+**User asks**: "Trivia leaderboard should remove people that haven't played in a few days. Clients should get to see where they stand on the leaderboard since we're doing prizes. How do the prizes work again?"
+
+### Leaderboard freshness
+- ✅ `/portal/trivia/leaderboard` now filters players inactive >7 days (`INACTIVE_AFTER_DAYS = 7`). Returns `inactive_after_days` + `total_players_all_time` so the UI can label the board ("Active in last 7d · N players").
+- ✅ Caller's `me` row is preserved even when filtered out — when the caller is rank >10 OR inactive, the front-end shows a dedicated "Your rank" footer (with a zero-state nudge if they've never played).
+
+### Prize transparency
+- ✅ New `/portal/trivia/rewards-progress` endpoint returns the full milestone ladder + the caller's `current_streak`, `best_streak`, `next_milestone` (with `days_remaining`), and `earned_days`.
+- ✅ New `🎁 Prizes` button on the Daily Trivia card alongside Leaderboard / Quiz. Opens a `PrizesPanel` that shows:
+  - Plain-English explainer of how the streak prizes work
+  - Highlighted "Next reward" tile with X-more-days-to-unlock copy
+  - Full milestone ladder with three states per row: ✓ Earned (green), Ready (shBlue), or upcoming (grey)
+  - Reset-on-miss footer hint
+- ✅ Existing Leaderboard panel now stamps "ACTIVE IN LAST 7D · N PLAYERS" so clients know why the board feels smaller.
+
+### Admin perk follow-up (so the operator never forgets a prize)
+- ✅ New `admin_trivia_milestone` email template + `notify_admin_trivia_milestone()` sender. Fires from the `/portal/trivia/daily/answer` endpoint the moment a streak milestone is earned. Subject: "🏆 Trivia perk earned · {{client_name}} · {{days}}-day streak" + a quick perk-summary table. Errors logged but never block the client answer.
+- ✅ New `/admin/trivia/recent-winners?days_back=30&limit=20` endpoint returning pending (un-redeemed) milestones, sorted newest-first.
+- ✅ Dashboard `TriviaDashboardTile` enhanced with a collapsible "Pending perks (N)" feed beneath the top-5 streaks. Each row shows the streak badge + client name + perk label + earned date, plus a one-tap "✓ Awarded" button that hits `/admin/trivia/milestones/redeem` and removes the row from the list. Same wiring as the existing leaderboard redeem path.
+
+### Tests
+- ✅ `tests/test_trivia_leaderboard_v2.py` (5/5 passing):
+  1. Players inactive >7d are filtered from the top-board.
+  2. Caller's `me` row surfaces even when they're inactive.
+  3. `rewards-progress` returns a ladder + correct `next_milestone.days_remaining` for a seeded 5-day streak.
+  4. `recent-winners` only includes pending (un-redeemed) perks.
+  5. `admin_trivia_milestone` template is registered.
+- ✅ Regression: 14/14 across trivia + credit-pack + referral suites.
+
+### Why this matters
+The leaderboard now stays a competitive, current board (no graveyard of week-old streaks). Clients see the prize ladder + their progress in one tap, which turns the streak from "a thing they might do" into "a thing they're four days from winning." The operator gets an email at the moment a perk is earned + a dashboard mini-feed listing every pending perk — so the right toy/credit/upgrade actually makes it to the client's hands at next pickup.
+
+
+
+
 **User asks**: (1) "Finish the 🎟️ Credits Redeemed Today tile on the Income screen so I can see prepaid burn without it polluting cash revenue." (2) "Auto-credit referrer on conversion — make those codes actually pay out" (1 free daycare day per successful referral).
 
 ### Credits Redeemed UI tile
