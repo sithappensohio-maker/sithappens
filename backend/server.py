@@ -16014,6 +16014,10 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
                 "note": body.note or "",
                 "sold_by": user.get("name", "Admin"),
                 "purchased_at": now,
+                # Sprint 110cs — Same point-of-sale recognition as the
+                # singular sell-pack endpoint. Bulk flow is the one the UI
+                # uses, so this is the one operators actually see.
+                "recognize_at_sale": True,
             }
             new_lots.append(lot)
             pool_increments[pool_key] += qty
@@ -16021,6 +16025,31 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             totals_by_pool[pool_key]["price"] += effective_price
 
     await db.credit_lots.insert_many(new_lots)
+    # Sprint 110cs — Bulk-sell mirrors the singular path: log every lot as a
+    # `retail_sales` row on today's business date so the operator sees the
+    # money land in Income / P&L immediately. One row per lot keeps audit
+    # easy (matches qty + price 1:1 with credit_lots).
+    today_iso = business_today().isoformat()
+    retail_rows = [
+        {
+            "id": str(uuid.uuid4()),
+            "client_id": client_id,
+            "client_name": client.get("name", ""),
+            "amount": float(lot["price_paid"]),
+            "date": today_iso,
+            "payment_method": body.payment_method,
+            "source_kind": "credit_pack_sale",
+            "lot_id": lot["id"],
+            "pack_id": lot["pack_id"],
+            "pack_name": lot["pack_name"],
+            "note": body.note or "",
+            "logged_by": user.get("name", "Admin"),
+            "created_at": now,
+        }
+        for lot in new_lots if float(lot.get("price_paid") or 0) > 0
+    ]
+    if retail_rows:
+        await db.retail_sales.insert_many(retail_rows)
     inc_doc: Dict[str, int] = {}
     if pool_increments["daycare"]:
         inc_doc["credits"] = pool_increments["daycare"]

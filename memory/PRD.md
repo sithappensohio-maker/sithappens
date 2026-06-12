@@ -30,6 +30,30 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cy — Bulk credit-pack sales now hit Retail / P&L immediately (2026-06-10)
+**User report**: "Selling a credit pack did not show in today's P&L or in 'Completed' on the Income page — I thought we changed this so new credit pack sales would count right away instead of on the day used."
+
+### Root cause
+Sprint 110cs added point-of-sale revenue recognition to the **singular** `/clients/{id}/sell-pack` endpoint, but the UI actually hits the **bulk** `/clients/{id}/sell-packs` (plural) endpoint. The bulk path was still creating lots WITHOUT the `recognize_at_sale: True` flag and skipping the `retail_sales` row entirely — so sold packs never landed in P&L until each credit was redeemed.
+
+### Fix
+Bulk endpoint now mirrors the singular path:
+- Every lot is stamped `recognize_at_sale: True`.
+- One `retail_sales` row is inserted per lot (`source_kind: credit_pack_sale`, today's business date, amount = price_paid). One-to-one with credit_lots keeps audit easy.
+- Downstream summaries (weekly + P&L + Income screen) already aggregate `retail_sales`, so this lands in the **Retail** tile + **Gross** total instantly.
+
+### Where the money shows up
+Credit pack sales appear in **Retail · $X · N sales** (purple chip on Income / weekly summary) and roll into **Gross total**, NOT in "Completed" — "Completed" is reserved for *services delivered* (bookings checked out). This is correct cash-basis accounting: a pack sale is a retail transaction, not a service-delivery event.
+
+### Tests
+- ✅ `tests/test_bulk_sell_pack_recognition.py` (2/2):
+  1. Bulk-sell flow stamps `recognize_at_sale: True` on every minted lot AND bumps `retail_total` + `gross_total` by exactly the pack price.
+  2. Subsequent redemption of that bulk-sold pack does NOT grow `completed_total` or `retail_total` (no double-count); `credit_pack_redeemed_count` reflects the burn.
+- ✅ Regression: 17/17 backend tests passing across all sprint suites.
+
+
+
+
 ## Sprint 110cx — Group grooming sub-services under one bucket (2026-06-10)
 **User report**: "In the same area Bath and Nail Trims should be grouped into Grooming."
 
