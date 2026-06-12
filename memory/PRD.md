@@ -30,6 +30,25 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110da — "View Pack Lots" modal with Legacy / Paid-at-sale badges (2026-06-10)
+**User asks**: Add a tiny "Legacy" badge next to old pack lots on the client's credits view so I instantly know "this one needs a price at checkout" vs "this one's already paid for."
+
+### Implementation
+- New **"View Pack Lots"** button on every client card (shBlue, alongside Legacy Pricing).
+- New `PackLotsModal` component fetches `/clients/{id}/credit-lots` and groups them into three labelled sections, each with a distinct visual badge + color:
+  - 🟦 **Paid at Sale (Sprint 110cs+)** — `recognize_at_sale: True` lots. Blue badge: `✓ PAID AT SALE`. Revenue already counted, no $ needed at checkout.
+  - 🟪 **Training Programs** — `pack_kind: training_program` lots. Purple badge: `🎓 PROGRAM`. Recognized at sale, full-program revenue.
+  - 🟧 **Legacy (needs $ at checkout)** — unflagged pre-110cs lots. Amber badge: `🏷️ LEGACY`. Operator still enters a $ at checkout; revenue lands then.
+- Per-lot rows show: pack name + qty remaining/total + per-credit value + sold date + payment method + price_paid + a green progress bar visualizing burn-down.
+- "Show fully drained lots" toggle hides 0-remaining lots by default (keeps the view focused on what still has juice).
+- Tiny retry-on-429 in the fetch effect handles React StrictMode double-fires + ingress rate-limits gracefully.
+
+### Verified live
+Seeded a "Mixed Lots Demo" client with one of each lot kind. Modal renders all three sections with correct badges, progress bars, and sale metadata. Closes cleanly via X button or backdrop click. 12/12 backend tests still passing.
+
+
+
+
 ## Sprint 110cz — Income screen simplified to one all-in-one tile (2026-06-10)
 **User report**: "Our income page is all screwed up and a mess. All sales of anything should go into Completed. The training revenue and retail boxes don't need to be there — we already have the breakdown below."
 

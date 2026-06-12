@@ -11,6 +11,7 @@ import Avatar from "../components/Avatar";
 import { startImpersonation } from "../lib/impersonation";
 import ClientFilesModal from "../components/ClientFilesModal";
 import LegacyPricingModal from "../components/LegacyPricingModal";
+import PackLotsModal from "../components/PackLotsModal";
 import AdminClientPaymentPlans from "../components/AdminClientPaymentPlans";
 import PageHero from "../components/PageHero";
 
@@ -36,6 +37,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [filesOpen, setFilesOpen] = useState(null); // client object — shows files/homework manager
   const [legacyOpen, setLegacyOpen] = useState(null); // client object — shows the grandfathered-price overrides
+  const [lotsOpen, setLotsOpen] = useState(null); // Sprint 110da — credit-lot viewer w/ legacy vs paid-at-sale badges
   const [packs, setPacks] = useState([]);
   const [err, setErr] = useState("");
   const [receipt, setReceipt] = useState(null); // populated after a sale to show the printable receipt
@@ -351,6 +353,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                     className="mt-2 w-full bg-amber-500/10 text-amber-400 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-amber-500/20">
               <i className="fas fa-lock mr-1"/>Legacy Pricing
             </button>
+            <button onClick={()=>setLotsOpen(c)} data-testid={`view-pack-lots-${c.id}`}
+                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
+              <i className="fas fa-layer-group mr-1"/>View Pack Lots
+            </button>
             {/* Sprint 110ch — Payment plans for big-ticket items */}
             <div className="mt-3 pt-3 border-t border-bgHover">
               <AdminClientPaymentPlans clientId={c.id} />
@@ -558,6 +564,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       )}
       {filesOpen && <ClientFilesModal client={filesOpen} onClose={()=>setFilesOpen(null)} />}
       {legacyOpen && <LegacyPricingModal client={legacyOpen} onClose={()=>setLegacyOpen(null)} />}
+      {lotsOpen && <PackLotsModal client={lotsOpen} onClose={()=>setLotsOpen(null)} />}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
       {adjustOpen && <AdjustCreditsModal client={adjustOpen} onClose={()=>setAdjustOpen(null)} onSaved={()=>{ setAdjustOpen(null); load(); }} />}
     </div>
