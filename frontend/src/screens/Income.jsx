@@ -324,46 +324,11 @@ export default function Income() {
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} sessions`} color="text-shGreen" icon="fa-circle-check" big data-testid="tile-completed" />
+            <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} transaction${summary.completed_count===1?"":"s"}`} color="text-shGreen" icon="fa-circle-check" big data-testid="tile-completed" />
             <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shBlue" icon="fa-dollar-sign" />
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)} sub="outstanding" color="text-shOrange" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
           </div>
-          {(summary.retail_total > 0 || summary.retail_count > 0 || summary.training_revenue_total > 0 || summary.credit_pack_redeemed_count > 0) && (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {summary.training_revenue_total > 0 && (
-                <div className="flex items-center gap-3 bg-shGreen/10 border border-shGreen/40 rounded px-4 py-2.5"
-                     data-testid="weekly-training-revenue-chip">
-                  <i className="fas fa-graduation-cap text-shGreen"/>
-                  <span className="text-[14px] font-black uppercase tracking-widest text-shGreen">Training Revenue</span>
-                  <span className="text-white font-black text-[18px]">{fmt(summary.training_revenue_total)}</span>
-                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.training_revenue_count} sale{(summary.training_revenue_count===1)?"":"s"}</span>
-                </div>
-              )}
-              {(summary.retail_total > 0 || summary.retail_count > 0) && (
-                <div className="flex items-center gap-3 bg-purple-500/10 border border-purple-500/30 rounded px-4 py-2.5" data-testid="weekly-retail-chip">
-                  <i className="fas fa-bag-shopping text-purple-300"/>
-                  <span className="text-[14px] font-black uppercase tracking-widest text-purple-300">Retail</span>
-                  <span className="text-white font-black text-[18px]">{fmt(summary.retail_total || 0)}</span>
-                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.retail_count || 0} sale{(summary.retail_count===1)?"":"s"}</span>
-                </div>
-              )}
-              {summary.credit_pack_redeemed_count > 0 && (
-                <div className="flex items-center gap-3 bg-shBlue/10 border border-shBlue/30 rounded px-4 py-2.5"
-                     data-testid="weekly-credit-redeemed-chip"
-                     title="Prepaid credit packs burned this week. Revenue was already recognized at the time of sale, so this is operational tracking only — not added to cash revenue.">
-                  <span className="text-[18px]" aria-hidden>🎟️</span>
-                  <span className="text-[14px] font-black uppercase tracking-widest text-shBlue">Credits Redeemed</span>
-                  <span className="text-white font-black text-[18px]">{fmt(summary.credit_pack_redeemed_value || 0)}</span>
-                  <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{summary.credit_pack_redeemed_count} visit{(summary.credit_pack_redeemed_count===1)?"":"s"} · prepaid</span>
-                </div>
-              )}
-              <div className="flex items-center gap-2 text-gray-400 text-[13px] font-black uppercase tracking-widest px-1">
-                <span>Gross:</span>
-                <span className="text-white">{fmt(summary.gross_total || summary.completed_total)}</span>
-              </div>
-            </div>
-          )}
           {summary.by_service?.length > 0 && (
             <div className="mt-4">
               <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mb-2">Breakdown by service</p>
@@ -409,22 +374,14 @@ export default function Income() {
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatTile label="Income (gross)" value={fmt(rangeSummary.completed_total)} sub={`Services ${fmt(rangeSummary.service_total ?? rangeSummary.completed_total)} · Training ${fmt(rangeSummary.training_revenue_total || 0)} · Retail ${fmt(rangeSummary.retail_total || 0)}`} color="text-shGreen" icon="fa-circle-check" big />
+            <StatTile label="Income (all sources)" value={fmt(rangeSummary.completed_total)} sub="Services · Training · Retail · Packs" color="text-shGreen" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
             <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shOrange" icon="fa-user-clock" />
             <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
             <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
           </div>
-          {rangeSummary.credit_pack_redeemed_count > 0 && (
-            <div className="mb-4 flex items-center gap-3 bg-shBlue/10 border border-shBlue/30 rounded px-4 py-2.5 w-fit"
-                 data-testid="range-credit-redeemed-chip"
-                 title="Prepaid credit packs burned in this range. Cash revenue was already recognized at the time of sale.">
-              <span className="text-[18px]" aria-hidden>🎟️</span>
-              <span className="text-[14px] font-black uppercase tracking-widest text-shBlue">Credits Redeemed</span>
-              <span className="text-white font-black text-[18px]">{fmt(rangeSummary.credit_pack_redeemed_value || 0)}</span>
-              <span className="text-gray-500 text-[13px] font-black uppercase tracking-widest">{rangeSummary.credit_pack_redeemed_count} visit{(rangeSummary.credit_pack_redeemed_count===1)?"":"s"} · prepaid (not in gross)</span>
-            </div>
-          )}
+          {/* Sprint 110cz — removed Credits Redeemed range-view chip; the
+              all-in-one Income tile + breakdown shows the full picture now. */}
           {rangeSummary.by_day?.length > 0 && <DailyBarChart points={rangeSummary.by_day} />}
         </div>
       )}

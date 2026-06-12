@@ -42,12 +42,12 @@ def test_bulk_sell_packs_logs_retail_sale_and_lot_flag(admin_headers):
         pytest.skip("No credit pack in catalog")
     today = date.today().isoformat()
 
-    # Snapshot weekly retail BEFORE
+    # Snapshot weekly totals BEFORE
     before = requests.get(f"{API}/transactions/weekly-summary",
                           headers=admin_headers,
                           params={"ref_date": today}, timeout=15).json()
-    retail_before = float(before.get("retail_total") or 0)
-    gross_before = float(before.get("gross_total") or 0)
+    pack_sales_before = float(before.get("credit_pack_sales_total") or 0)
+    completed_before = float(before.get("completed_total") or 0)
 
     # Create client
     suffix = uuid.uuid4().hex[:6]
@@ -77,19 +77,20 @@ def test_bulk_sell_packs_logs_retail_sale_and_lot_flag(admin_headers):
         f"Bulk-sold lot must have recognize_at_sale=True, got lots={lots}"
     )
 
-    # Weekly retail must be up by pack_price
+    # The pack sale must land in credit_pack_sales_total AND completed_total
     after = requests.get(f"{API}/transactions/weekly-summary",
                          headers=admin_headers,
                          params={"ref_date": today}, timeout=15).json()
-    retail_after = float(after.get("retail_total") or 0)
-    gross_after = float(after.get("gross_total") or 0)
+    pack_sales_after = float(after.get("credit_pack_sales_total") or 0)
+    completed_after = float(after.get("completed_total") or 0)
 
-    assert round(retail_after - retail_before, 2) == round(pack_price, 2), (
-        f"Retail total should jump by pack price ${pack_price}; "
-        f"before=${retail_before} after=${retail_after}"
+    assert round(pack_sales_after - pack_sales_before, 2) == round(pack_price, 2), (
+        f"credit_pack_sales_total should jump by pack price ${pack_price}; "
+        f"before=${pack_sales_before} after=${pack_sales_after}"
     )
-    assert round(gross_after - gross_before, 2) >= round(pack_price, 2), (
-        "Gross total should grow by at least the pack price"
+    assert round(completed_after - completed_before, 2) >= round(pack_price, 2), (
+        f"completed_total should grow by at least the pack price ${pack_price}; "
+        f"before=${completed_before} after=${completed_after}"
     )
 
 

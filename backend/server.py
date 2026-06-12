@@ -11609,20 +11609,44 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         b["count"] += 1
         b["total"] += price
 
-    # Retail sales in the same week. Sprint 110cb — training-program sales
-    # are split into their own "training revenue" bucket so the operator can
-    # tell merchandise apart from services on the Income screen.
+    # Retail sales in the same week — Sprint 110cz splits them into three
+    # buckets so the Income breakdown can show each as its own row:
+    #   - credit_pack_sale  → "Credit Packs"
+    #   - training_program_sale → "Training Programs"
+    #   - everything else (treats, toys, items) → "Retail"
     retail_rows_all = await db.retail_sales.find(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         {"_id": 0, "amount": 1, "source_kind": 1},
     ).to_list(2000)
-    retail_rows = [x for x in retail_rows_all if x.get("source_kind") != "training_program_sale"]
+    retail_only = [x for x in retail_rows_all
+                   if x.get("source_kind") not in ("training_program_sale", "credit_pack_sale")]
+    credit_pack_rows = [x for x in retail_rows_all if x.get("source_kind") == "credit_pack_sale"]
     training_rows = [x for x in retail_rows_all if x.get("source_kind") == "training_program_sale"]
-    retail_total = round(sum(float(x.get("amount") or 0) for x in retail_rows), 2)
-    retail_count = len(retail_rows)
+    retail_total = round(sum(float(x.get("amount") or 0) for x in retail_only), 2)
+    retail_count = len(retail_only)
+    credit_pack_sales_total = round(sum(float(x.get("amount") or 0) for x in credit_pack_rows), 2)
+    credit_pack_sales_count = len(credit_pack_rows)
     training_revenue_total = round(sum(float(x.get("amount") or 0) for x in training_rows), 2)
     training_revenue_count = len(training_rows)
-    other_revenue_total = round(retail_total + training_revenue_total, 2)
+    other_revenue_total = round(retail_total + credit_pack_sales_total + training_revenue_total, 2)
+
+    # Sprint 110cz — Fold retail / credit-pack-sales / training-program-sales
+    # into the SAME `completed_total` and `by_service` breakdown so the
+    # Income screen has one "money received" number. Operator was getting
+    # confused seeing four separate tiles for the same cash drawer.
+    if retail_total > 0 or retail_count > 0:
+        by_service["__retail"] = {"name": "Retail (items)", "count": retail_count, "total": retail_total}
+    if credit_pack_sales_total > 0 or credit_pack_sales_count > 0:
+        by_service["__credit_packs"] = {"name": "Credit Packs", "count": credit_pack_sales_count, "total": credit_pack_sales_total}
+    if training_revenue_total > 0 or training_revenue_count > 0:
+        by_service["__training"] = {"name": "Training Programs", "count": training_revenue_count, "total": training_revenue_total}
+
+    # Retail/training/pack-sale rows are always "paid in full" at sale time,
+    # so roll them into both `completed_total` AND `paid_total` so the
+    # Paid/Unpaid split stays mathematically honest.
+    completed_total += other_revenue_total
+    completed_count += retail_count + credit_pack_sales_count + training_revenue_count
+    paid_total += other_revenue_total
 
     return {
         "week_start": monday_iso,
@@ -11640,12 +11664,16 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
             by_service.values(),
             key=lambda x: (-x["total"], -x["count"], x["name"].lower()),
         ),
+        # Kept for backward-compat consumers (P&L PDF, CSV export). The UI
+        # uses `completed_total` as the single source of truth now.
         "retail_total": retail_total,
         "retail_count": retail_count,
+        "credit_pack_sales_total": credit_pack_sales_total,
+        "credit_pack_sales_count": credit_pack_sales_count,
         "training_revenue_total": training_revenue_total,
         "training_revenue_count": training_revenue_count,
-        "service_total": round(completed_total, 2),
-        "gross_total": round(completed_total + other_revenue_total, 2),
+        "service_total": round(completed_total - other_revenue_total, 2),
+        "gross_total": round(completed_total, 2),
     }
 
 

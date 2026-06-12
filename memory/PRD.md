@@ -30,6 +30,18 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110cz — Income screen simplified to one all-in-one tile (2026-06-10)
+**User report**: "Our income page is all screwed up and a mess. All sales of anything should go into Completed. The training revenue and retail boxes don't need to be there — we already have the breakdown below."
+
+### Fix
+- `/transactions/weekly-summary`: `completed_total` + `completed_count` + `paid_total` now roll in **all** revenue sources (services + retail + credit pack sales + training programs). Retail rows split into three buckets by `source_kind` so each appears as its own row in `by_service` (Retail (items), Credit Packs, Training Programs).
+- `Income.jsx`: removed Training Revenue / Retail / Credits Redeemed chips + "Gross:" footer. Single "COMPLETED · $X · N transactions" tile is now the source of truth. Longer-range tile relabeled "Income (all sources)" with "Services · Training · Retail · Packs" sub-text.
+
+### Verified live
+Income screen now shows: Completed $6235 · 127 transactions + clean breakdown list (Training Programs $2800, Credit Packs $1630, Daycare $1140, Boarding $605, Grooming $90, etc.). 17/17 backend regression tests still passing.
+
+
+
 ## Sprint 110cy — Bulk credit-pack sales now hit Retail / P&L immediately (2026-06-10)
 **User report**: "Selling a credit pack did not show in today's P&L or in 'Completed' on the Income page — I thought we changed this so new credit pack sales would count right away instead of on the day used."
 
