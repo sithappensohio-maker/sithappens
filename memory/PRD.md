@@ -30,6 +30,33 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110db — Manually flag lots Legacy / Paid-at-Sale + checkout preview banner (2026-06-10)
+**User ask**: "I need to assign what's new and old style for the transitional phase, and it should show me at checkout."
+
+### Two pieces
+**1) Per-lot toggle in PackLotsModal**
+- New `PATCH /credit-lots/{lot_id}/recognition` endpoint flips a lot's `recognize_at_sale` flag in-place. Stamps `recognition_updated_at` + `recognition_updated_by` for audit. Refuses to flip training-program lots (safety: those are always paid at sale).
+- **Historical `retail_sales` rows are NEVER touched** — past P&L stays frozen. The flag only changes how future redemptions contribute to `completed_total`.
+- PackLotsModal now shows a per-lot **"✓ Mark Paid at Sale"** button on legacy rows and a **"🏷️ Mark Legacy"** button on paid-at-sale rows. Confirm dialog explains exactly what changes before flipping.
+
+**2) Live "next-up lot" banner in CheckoutModal**
+- When the operator picks "Deduct credits", a colored inline banner appears beneath the radio option showing which lot is about to be consumed (FIFO oldest-first by service_type), with:
+  - 🏷️ **Legacy** (amber): "Will add to today's income at $X per credit (N credits = $Y on the books)"
+  - 🎓 **Program** (purple): "Training program — already paid"
+  - ✓ **Paid at sale** (blue): "Revenue was already counted when this pack was sold. $0 to today's drawer."
+- Operator no longer has to mentally cross-reference the Pack Lots modal — they see the impact of THIS checkout right where they confirm it.
+
+### Tests
+- ✅ `tests/test_lot_recognition_flip.py` (4/4):
+  1. Flipping legacy ↔ paid-at-sale persists + sets audit stamps.
+  2. After flipping legacy → paid-at-sale, a future redemption does NOT grow `completed_total` (the flag actually changes runtime behavior).
+  3. Training-program lots refuse to flip (400 error).
+  4. `retail_sales` count is unchanged across flip on/off cycles (historical P&L untouched).
+- ✅ Regression: 25/25 backend tests passing across all sprint suites.
+
+
+
+
 ## Sprint 110da — "View Pack Lots" modal with Legacy / Paid-at-sale badges (2026-06-10)
 **User asks**: Add a tiny "Legacy" badge next to old pack lots on the client's credits view so I instantly know "this one needs a price at checkout" vs "this one's already paid for."
 

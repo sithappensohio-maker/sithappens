@@ -61,6 +61,33 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const available = clientBal ? (clientBal[balField] || 0) : 0;
   const canPayWithCredits = !hadCredit && !booking.actual_price && available >= nightsNeeded;
 
+  // Sprint 110db — Preview the lot that's about to be consumed FIFO so the
+  // operator sees its Legacy / Paid-at-sale badge BEFORE clicking
+  // "Confirm checkout". Same info that lives in the Pack Lots modal —
+  // surfaced inline so they don't have to cross-reference.
+  const [nextLot, setNextLot] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/clients/${booking.client_id}/credit-lots`);
+        if (!alive || !Array.isArray(data)) return;
+        const svc = booking.service_type || "daycare";
+        const next = data
+          .filter(l => (l.service_type || "").toLowerCase() === svc.toLowerCase())
+          .filter(l => (l.qty_remaining || 0) > 0)
+          .sort((a, b) => (a.purchased_at || "").localeCompare(b.purchased_at || ""))[0];
+        setNextLot(next || null);
+      } catch { /* non-fatal — banner just won't show */ }
+    })();
+    return () => { alive = false; };
+  }, [booking.client_id, booking.service_type]);
+  const nextLotKind = nextLot
+    ? (nextLot.pack_kind === "training_program" ? "program"
+       : nextLot.recognize_at_sale ? "paid_at_sale"
+       : "legacy")
+    : null;
+
   const [useCredits, setUseCredits] = useState(hadCredit);
   const [defaultedFromBal, setDefaultedFromBal] = useState(false);
   useEffect(() => {
@@ -232,6 +259,42 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Deduct {nightsNeeded} {booking.service_type} credit{nightsNeeded === 1 ? "" : "s"} now</p>
                   <p className="text-[14px] text-gray-400">Client has <span className="text-shGreen font-black">{available}</span> available · FIFO from oldest pack</p>
+                  {useCredits && nextLot && (
+                    <div
+                      data-testid={`checkout-next-lot-${nextLotKind}`}
+                      className={`mt-2 flex items-start gap-2 text-[12px] rounded px-2.5 py-2 border ${
+                        nextLotKind === "legacy"
+                          ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
+                          : nextLotKind === "program"
+                          ? "border-purple-500/50 bg-purple-500/10 text-purple-200"
+                          : "border-shBlue/50 bg-shBlue/10 text-shBlue"
+                      }`}>
+                      <span className="text-[14px]">
+                        {nextLotKind === "legacy" ? "🏷️" : nextLotKind === "program" ? "🎓" : "✓"}
+                      </span>
+                      <span className="flex-1 leading-snug">
+                        <strong className="font-black uppercase tracking-widest">
+                          {nextLotKind === "legacy" ? "Legacy pack — needs $ at checkout"
+                            : nextLotKind === "program" ? "Training program — already paid"
+                            : "Paid at sale — already counted"}
+                        </strong>
+                        <span className="block text-[11px] text-gray-300 mt-0.5">
+                          Next up: <strong>{nextLot.pack_name}</strong> · {nextLot.qty_remaining} of {nextLot.qty_total} left
+                          {Number(nextLot.value_each || 0) > 0 && ` · $${Number(nextLot.value_each).toFixed(2)}/credit`}
+                        </span>
+                        {nextLotKind === "legacy" && (
+                          <span className="block text-[11px] text-amber-300/90 mt-1">
+                            Will add to today's income at $<strong>{Number(nextLot.value_each || 0).toFixed(2)}</strong> per credit ({nightsNeeded} credit{nightsNeeded===1?"":"s"} = ${(Number(nextLot.value_each || 0) * nightsNeeded).toFixed(2)} on the books).
+                          </span>
+                        )}
+                        {nextLotKind === "paid_at_sale" && (
+                          <span className="block text-[11px] text-shBlue/90 mt-1">
+                            Revenue was already counted when this pack was sold. $0 to today's drawer.
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </label>
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${!useCredits ? "border-shBlue bg-shBlue/10" : "border-bgHover hover:border-shBlue/50"}`} data-testid="opt-no-credit-at-checkout">

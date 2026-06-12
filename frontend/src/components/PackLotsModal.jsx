@@ -13,37 +13,55 @@ export default function PackLotsModal({ client, onClose }) {
   const [loading, setLoading] = useState(true);
   const [showDrained, setShowDrained] = useState(false);
   const [err, setErr] = useState("");
+  const [busyLotId, setBusyLotId] = useState(null);
+
+  const refresh = async () => {
+    setLoading(true);
+    setErr("");
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await api.get(`/clients/${client.id}/credit-lots`);
+        setLots(Array.isArray(r.data) ? r.data : []);
+        setLoading(false);
+        return;
+      } catch (e) {
+        if (e?.response?.status === 429 && attempt < 2) {
+          await new Promise(res => setTimeout(res, 600 + attempt * 400));
+          continue;
+        }
+        setErr(e?.response?.data?.detail || "Couldn't load lots");
+        setLots([]);
+        setLoading(false);
+        return;
+      }
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setErr("");
-      // Tiny retry-on-429: React StrictMode double-fires effects in dev and
-      // the ingress can rate-limit two parallel requests. One short retry
-      // recovers gracefully without bothering the operator.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const r = await api.get(`/clients/${client.id}/credit-lots`);
-          if (cancelled) return;
-          setLots(Array.isArray(r.data) ? r.data : []);
-          setLoading(false);
-          return;
-        } catch (e) {
-          if (cancelled) return;
-          if (e?.response?.status === 429 && attempt < 2) {
-            await new Promise(res => setTimeout(res, 600 + attempt * 400));
-            continue;
-          }
-          setErr(e?.response?.data?.detail || "Couldn't load lots");
-          setLots([]);
-          setLoading(false);
-          return;
-        }
-      }
-    })();
+    (async () => { if (!cancelled) await refresh(); })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client.id]);
+
+  const toggleRecognition = async (lot) => {
+    const wantsPaidAtSale = !lot.recognize_at_sale;
+    const verb = wantsPaidAtSale ? "Paid at sale" : "Legacy (needs $ at checkout)";
+    const msg = wantsPaidAtSale
+      ? `Mark "${lot.pack_name}" as PAID AT SALE? Future redemptions will be $0 to revenue (we'll treat them as already counted). Historical P&L is NOT changed.`
+      : `Mark "${lot.pack_name}" as LEGACY? Each future redemption will add to revenue at checkout time. Historical P&L is NOT changed.`;
+    if (!window.confirm(msg)) return;
+    setBusyLotId(lot.id);
+    try {
+      await api.patch(`/credit-lots/${lot.id}/recognition`, {
+        recognize_at_sale: wantsPaidAtSale,
+      });
+      await refresh();
+    } catch (e) {
+      alert(e?.response?.data?.detail || `Couldn't switch to ${verb}`);
+    }
+    setBusyLotId(null);
+  };
 
   const visible = lots.filter(l => showDrained || (l.qty_remaining || 0) > 0);
   const legacy = visible.filter(l => !l.recognize_at_sale && !l.pack_kind);
@@ -88,6 +106,10 @@ export default function PackLotsModal({ client, onClose }) {
                 badgeLabel="✓ Paid at sale"
                 lots={paidAtSale}
                 testidPrefix="lot-paid-at-sale"
+                toggleable
+                toggleLabel="🏷️ Mark Legacy"
+                onToggle={toggleRecognition}
+                busyLotId={busyLotId}
               />
             )}
             {programs.length > 0 && (
@@ -108,6 +130,10 @@ export default function PackLotsModal({ client, onClose }) {
                 badgeLabel="🏷️ Legacy"
                 lots={legacy}
                 testidPrefix="lot-legacy"
+                toggleable
+                toggleLabel="✓ Mark Paid at Sale"
+                onToggle={toggleRecognition}
+                busyLotId={busyLotId}
               />
             )}
           </div>
@@ -123,7 +149,7 @@ export default function PackLotsModal({ client, onClose }) {
   );
 }
 
-function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix }) {
+function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix, toggleable, toggleLabel, onToggle, busyLotId }) {
   const fmt = (n) => `$${Number(n || 0).toFixed(2)}`;
   return (
     <div>
@@ -138,6 +164,7 @@ function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix }) 
           const pct = totalQty > 0 ? Math.round((remaining / totalQty) * 100) : 0;
           const valueEach = Number(lot.value_each || 0);
           const drained = remaining <= 0;
+          const isBusy = busyLotId === lot.id;
           return (
             <div key={lot.id}
                  className={`bg-bgBase border rounded-lg p-3 ${drained ? "border-bgHover/40 opacity-60" : "border-bgHover"}`}
@@ -169,6 +196,15 @@ function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix }) 
                 <p className="text-[10px] text-gray-500 mt-1 italic">
                   {used} used · {pct}% remaining
                 </p>
+              )}
+              {toggleable && onToggle && (
+                <button
+                  onClick={() => onToggle(lot)}
+                  disabled={isBusy}
+                  data-testid={`${testidPrefix}-toggle-${lot.id}`}
+                  className="mt-2 w-full bg-bgHover/40 border border-bgHover text-gray-300 hover:border-shOrange hover:text-shOrange py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                  {isBusy ? "Switching…" : toggleLabel}
+                </button>
               )}
             </div>
           );

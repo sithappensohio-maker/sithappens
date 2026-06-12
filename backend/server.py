@@ -16152,6 +16152,52 @@ async def list_client_lots(client_id: str, _: dict = Depends(require_admin)):
     return lots
 
 
+class LotRecognitionIn(BaseModel):
+    recognize_at_sale: bool
+
+
+@api.patch("/credit-lots/{lot_id}/recognition")
+async def patch_lot_recognition(
+    lot_id: str,
+    body: LotRecognitionIn,
+    admin: dict = Depends(require_admin),
+):
+    """Sprint 110db — Manually flip a lot's `recognize_at_sale` flag during
+    the transitional period. Use cases:
+      - Operator imported / data-migrated old packs that should have been
+        marked legacy but got flagged paid-at-sale by accident.
+      - A new pack was incorrectly stamped legacy and needs to be flipped.
+      - Bulk seasonal cleanup: convert remaining legacy lots to paid-at-sale
+        once the operator has "settled" them in their books.
+
+    Note: This ONLY flips the per-redemption recognition flag. It does NOT
+    retroactively write or remove `retail_sales` rows — historical P&L is
+    untouched on purpose (changing past income would corrupt year-end
+    reports). The flag only affects how FUTURE redemptions of this lot
+    contribute to `completed_total`.
+    """
+    lot = await db.credit_lots.find_one({"id": lot_id}, {"_id": 0})
+    if not lot:
+        raise HTTPException(status_code=404, detail="Lot not found")
+    if lot.get("pack_kind") == "training_program":
+        # Training programs are always recognized at sale — refuse to flip
+        # so the operator can't accidentally double-count program revenue.
+        raise HTTPException(
+            status_code=400,
+            detail="Training-program lots are always recognized at sale and can't be re-flagged.",
+        )
+    await db.credit_lots.update_one(
+        {"id": lot_id},
+        {"$set": {
+            "recognize_at_sale": bool(body.recognize_at_sale),
+            "recognition_updated_at": now_iso(),
+            "recognition_updated_by": admin.get("id", "admin"),
+        }},
+    )
+    fresh = await db.credit_lots.find_one({"id": lot_id}, {"_id": 0})
+    return fresh
+
+
 @api.get("/clients/{client_id}/receipts")
 async def list_client_receipts(client_id: str, _: dict = Depends(require_admin)):
     """Group credit_lots into receipts (one per bulk-sale transaction). All
