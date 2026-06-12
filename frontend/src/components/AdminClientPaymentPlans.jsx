@@ -15,9 +15,13 @@ const STATUS_META = {
  * Sprint 110ch — Admin "Payment Plans" widget rendered inside each client
  * expansion. Shows existing plans + lets the operator create a new one with
  * a preset cadence (weekly / biweekly / monthly / N installments).
+ *
+ * Sprint 110dc — Accept an optional `plans` prop. When provided (parent has
+ * bulk-loaded all plans), we skip our own fetch to avoid an N+1 request
+ * storm that was crippling the Clients screen on accounts with many clients.
  */
-export default function AdminClientPaymentPlans({ clientId }) {
-  const [plans, setPlans] = useState([]);
+export default function AdminClientPaymentPlans({ clientId, plans: plansFromParent }) {
+  const [plans, setPlans] = useState(plansFromParent || []);
   const [creating, setCreating] = useState(false);
 
   const load = () => {
@@ -25,7 +29,17 @@ export default function AdminClientPaymentPlans({ clientId }) {
       .then(r => setPlans(r.data || []))
       .catch(() => setPlans([]));
   };
-  useEffect(() => { if (clientId) load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [clientId]);
+  useEffect(() => {
+    if (!clientId) return;
+    // Use parent-supplied plans when available; only hit the API if we have
+    // to fetch our own (legacy callers, or after a local create/update).
+    if (Array.isArray(plansFromParent)) {
+      setPlans(plansFromParent);
+    } else {
+      load();
+    }
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [clientId, plansFromParent]);
 
   const markPaid = async (planId, instId, method) => {
     try {

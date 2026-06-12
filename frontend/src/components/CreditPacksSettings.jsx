@@ -71,7 +71,7 @@ export default function CreditPacksSettings() {
       <div className="flex items-center justify-between">
         <div>
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Credit Packs</h4>
-          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1">Bulk pricing for daycare, training, and boarding credits. Income is recognized when each credit is redeemed at check-out, not when the pack is sold.</p>
+          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1">Bulk pricing for daycare, training, and boarding credits. New packs sold from this point on are recognized as revenue at sale-time.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={seed} data-testid="seed-packs-btn"
@@ -84,6 +84,8 @@ export default function CreditPacksSettings() {
           </button>
         </div>
       </div>
+
+      <LegacyMigrationCard />
 
       <div className="space-y-2" data-testid="credit-packs-list">
         {packs.length === 0 && (
@@ -221,6 +223,103 @@ export default function CreditPacksSettings() {
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * Sprint 110dc — One-shot transitional migration card. Marks every CURRENT
+ * (non-program) credit lot as Legacy (recognize at redemption). New packs
+ * sold AFTER this call continue to land as paid-at-sale (the bulk
+ * sell-packs flow stamps `recognize_at_sale: true` automatically).
+ * Historical P&L is NOT touched — only future-redemption behavior changes.
+ */
+function LegacyMigrationCard() {
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/admin/credit-lots/legacy-migration-preview");
+        setPreview(r.data);
+      } catch { /* hide card silently if endpoint isn't reachable */ }
+    })();
+  }, []);
+
+  if (!preview) return null;
+  const { to_migrate, already_legacy, training_programs_skipped } = preview;
+
+  const run = async () => {
+    const ok = window.confirm(
+      `Mark ALL ${to_migrate} currently paid-at-sale lot${to_migrate===1?"":"s"} as Legacy?\n\n` +
+      `From now on, those packs will add to revenue WHEN EACH CREDIT IS REDEEMED at checkout (you'll enter the $ then).\n\n` +
+      `Any NEW credit packs sold AFTER this point will keep using the new "paid at sale" model automatically — no change there.\n\n` +
+      `Historical income / P&L is NOT modified. This is fully reversible per-lot from the Pack Lots modal on each client.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await api.post("/admin/credit-lots/migrate-existing-to-legacy");
+      setDone(r.data);
+      // Refresh the preview so the card reflects the new state
+      const r2 = await api.get("/admin/credit-lots/legacy-migration-preview");
+      setPreview(r2.data);
+    } catch (e) {
+      setErr(formatErr(e?.response?.data?.detail) || "Migration failed");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bg-amber-500/5 border border-amber-500/30 rounded-xl p-4"
+         data-testid="legacy-migration-card">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0 flex-1">
+          <p className="text-[12px] font-black uppercase tracking-widest text-amber-400 mb-1">
+            <i className="fas fa-flag-checkered mr-1"/>One-Shot Cutover
+          </p>
+          <h5 className="text-white font-black text-[15px] mb-1">Mark existing credit packs as Legacy</h5>
+          <p className="text-[13px] text-gray-300 leading-relaxed">
+            Use this once during the transitional period: it stamps every pack already on file as <strong className="text-amber-400">Legacy</strong> (you'll enter $ at checkout for those). Any packs sold from this moment on use the new <strong className="text-shBlue">paid-at-sale</strong> model automatically. Historical income is not changed.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-black uppercase tracking-widest">
+            <span className="bg-amber-500/15 text-amber-400 border border-amber-500/40 rounded px-2 py-1" data-testid="legacy-migration-to-migrate">
+              🏷️ {to_migrate} lot{to_migrate===1?"":"s"} will switch to Legacy
+            </span>
+            <span className="bg-bgHover/40 text-gray-300 border border-bgHover rounded px-2 py-1">
+              ✓ {already_legacy} already Legacy
+            </span>
+            <span className="bg-purple-500/15 text-purple-300 border border-purple-500/40 rounded px-2 py-1">
+              🎓 {training_programs_skipped} training program{training_programs_skipped===1?"":"s"} (skipped — always paid at sale)
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={run}
+          disabled={busy || to_migrate === 0}
+          data-testid="legacy-migration-run-btn"
+          className="bg-amber-500 text-black px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-amber-400 disabled:opacity-50 whitespace-nowrap self-start">
+          {busy
+            ? "Migrating…"
+            : to_migrate === 0
+            ? "✓ Already Done"
+            : `Mark ${to_migrate} as Legacy`}
+        </button>
+      </div>
+      {err && (
+        <p className="mt-2 text-[13px] text-red-400 font-black" data-testid="legacy-migration-err">{err}</p>
+      )}
+      {done && (
+        <p className="mt-2 text-[13px] text-shGreen" data-testid="legacy-migration-done">
+          <i className="fas fa-check-circle mr-1"/>
+          Migrated {done.modified_count} lot{done.modified_count===1?"":"s"}. New packs sold from here will use the paid-at-sale model.
+        </p>
       )}
     </div>
   );

@@ -18,23 +18,32 @@ export default function PackLotsModal({ client, onClose }) {
   const refresh = async () => {
     setLoading(true);
     setErr("");
-    for (let attempt = 0; attempt < 3; attempt++) {
+    let lastErr = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
         const r = await api.get(`/clients/${client.id}/credit-lots`);
         setLots(Array.isArray(r.data) ? r.data : []);
         setLoading(false);
         return;
       } catch (e) {
-        if (e?.response?.status === 429 && attempt < 2) {
-          await new Promise(res => setTimeout(res, 600 + attempt * 400));
+        lastErr = e;
+        // Retry on rate-limit, server errors, or pure network failure.
+        const retryable = !e?.response  // network/CORS/timeout
+                       || e?.response?.status === 429
+                       || (e?.response?.status >= 500 && e?.response?.status < 600);
+        if (retryable && attempt < 3) {
+          await new Promise(res => setTimeout(res, 500 * (attempt + 1)));
           continue;
         }
-        setErr(e?.response?.data?.detail || "Couldn't load lots");
-        setLots([]);
-        setLoading(false);
-        return;
+        break;
       }
     }
+    const status = lastErr?.response?.status;
+    const detail = lastErr?.response?.data?.detail;
+    const tail = status ? ` (HTTP ${status})` : " (network)";
+    setErr(`${detail || "Couldn't load lots"}${tail}`);
+    setLots([]);
+    setLoading(false);
   };
 
   useEffect(() => {

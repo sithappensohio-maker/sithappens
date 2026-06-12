@@ -16198,6 +16198,61 @@ async def patch_lot_recognition(
     return fresh
 
 
+@api.get("/admin/credit-lots/legacy-migration-preview")
+async def preview_legacy_migration(_: dict = Depends(require_admin)):
+    """Sprint 110dc — Tell the operator how many lots would be touched if
+    they ran the one-shot "mark all current lots as Legacy" migration.
+    Excludes training-program lots (always paid-at-sale by design)."""
+    base_filter = {"pack_kind": {"$ne": "training_program"}}
+    to_migrate = await db.credit_lots.count_documents({
+        **base_filter,
+        "recognize_at_sale": True,
+    })
+    already_legacy = await db.credit_lots.count_documents({
+        **base_filter,
+        "$or": [
+            {"recognize_at_sale": False},
+            {"recognize_at_sale": {"$exists": False}},
+        ],
+    })
+    programs = await db.credit_lots.count_documents({"pack_kind": "training_program"})
+    return {
+        "to_migrate": to_migrate,
+        "already_legacy": already_legacy,
+        "training_programs_skipped": programs,
+    }
+
+
+@api.post("/admin/credit-lots/migrate-existing-to-legacy")
+async def migrate_existing_lots_to_legacy(admin: dict = Depends(require_admin)):
+    """Sprint 110dc — One-shot transitional migration: stamps every CURRENT
+    credit lot as Legacy (`recognize_at_sale: False`) so the operator
+    continues to enter $ at checkout for those packs. Any NEW packs sold
+    AFTER this call continue to land as `recognize_at_sale: True` via the
+    sell-packs flow — so the cutover is clean.
+
+    - Training-program lots are NOT touched (they're always paid-at-sale).
+    - Idempotent: re-running just stamps the same flag again, no side
+      effect on `retail_sales` or historical P&L.
+    """
+    now = now_iso()
+    res = await db.credit_lots.update_many(
+        {"pack_kind": {"$ne": "training_program"}},
+        {"$set": {
+            "recognize_at_sale": False,
+            "recognition_updated_at": now,
+            "recognition_updated_by": admin.get("id", "admin"),
+            "recognition_migrated_by_bulk": True,
+        }},
+    )
+    return {
+        "ok": True,
+        "matched_count": res.matched_count,
+        "modified_count": res.modified_count,
+        "migrated_at": now,
+    }
+
+
 @api.get("/clients/{client_id}/receipts")
 async def list_client_receipts(client_id: str, _: dict = Depends(require_admin)):
     """Group credit_lots into receipts (one per bulk-sale transaction). All

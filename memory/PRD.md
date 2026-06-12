@@ -30,6 +30,35 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110dc — One-shot Legacy cutover migration (2026-06-10)
+**User ask**: "Basically all I want to do is mark the credits clients currently have to use the amount at checkout. Any credit packs sold after this update use the new system. Make sense?"
+
+### Implementation
+- **Backend**:
+  - `GET /admin/credit-lots/legacy-migration-preview` — returns counts: `to_migrate` (flagged paid-at-sale lots), `already_legacy`, `training_programs_skipped`.
+  - `POST /admin/credit-lots/migrate-existing-to-legacy` — stamps every non-program lot with `recognize_at_sale: False` + audit fields (`recognition_updated_at`, `recognition_updated_by`, `recognition_migrated_by_bulk: true`). Training-program lots are NEVER touched. Idempotent — re-running is a no-op for already-legacy lots.
+  - `retail_sales` rows are NEVER touched; historical P&L stays frozen.
+- **Frontend** (Settings → Credit Packs):
+  - New `LegacyMigrationCard` at the top of the Credit Packs settings panel shows counts ("🏷️ 67 lots will switch to Legacy · ✓ 100 already Legacy · 🎓 24 training programs (skipped)").
+  - "Mark N as Legacy" button (amber) with a clear confirmation dialog explaining what will happen.
+  - Disabled when there's nothing left to migrate ("✓ Already Done"). Refreshes preview after run so the operator sees the result immediately.
+  - Subtle header copy update: "New packs sold from this point on are recognized as revenue at sale-time" (no longer says income is recognized at redemption — accurate to current behavior).
+
+### Why this is the clean cutover
+- One click, one confirmation, full database swept.
+- Future packs (sold from this moment on) automatically land as paid-at-sale via the existing bulk `/sell-packs` flow — no operator change needed there.
+- Per-lot re-flag via the existing PATCH endpoint stays available as an escape hatch if a specific lot needs to swing back.
+
+### Tests (4/4 passing)
+- `test_preview_shape` — endpoint returns the three integer counts.
+- `test_one_shot_migration_flips_only_paid_at_sale_non_program` — flips both paid-at-sale and already-legacy lots to flag=False; training programs untouched; audit `recognition_migrated_by_bulk` stamped only on non-program lots.
+- `test_migration_is_idempotent` — running twice leaves every non-program lot stably Legacy.
+- `test_new_packs_sold_after_migration_still_recognize_at_sale` — a pack sold AFTER the migration still lands with `recognize_at_sale: True`, proving the cutover is forward-only.
+- Full regression: 16/16 across all credit-recognition test suites.
+
+
+
+
 ## Sprint 110db — Manually flag lots Legacy / Paid-at-Sale + checkout preview banner (2026-06-10)
 **User ask**: "I need to assign what's new and old style for the transitional phase, and it should show me at checkout."
 
