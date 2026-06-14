@@ -496,6 +496,178 @@ h3.uppercase.italic,
   backdrop-filter: blur(6px) saturate(120%);
 }
 
+/* ── Sprint 110dg — Polish pass: hero splatter, header accents,
+   task list refinement, sidebar premium feel, mobile fixes ──────────── */
+
+/* Hero card — auto-detect by the "TODAY AT SIT HAPPENS" / "GOOD" hero
+   pattern (bg-bgPanel with the chunky display heading inside). Add a
+   subtle multi-color splatter wash so the hero feels like the site
+   banners without overpowering the text. */
+.bg-bgPanel:has(h1.sh-display),
+.bg-bgPanel:has(.text-5xl.italic.uppercase),
+.bg-bgPanel:has(.text-6xl.italic.uppercase) {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 5% 10%, rgba(155, 229, 31, 0.10), transparent 35%),
+    radial-gradient(circle at 95% 90%, rgba(0, 174, 240, 0.10), transparent 35%),
+    radial-gradient(circle at 80% 15%, rgba(255, 121, 0, 0.07), transparent 30%),
+    linear-gradient(135deg, rgba(3, 18, 33, 0.94) 0%, rgba(1, 8, 20, 0.98) 100%) !important;
+}
+.bg-bgPanel:has(h1.sh-display)::after,
+.bg-bgPanel:has(.text-5xl.italic.uppercase)::after {
+  content: ""; position: absolute; pointer-events: none;
+  right: -60px; bottom: -60px; width: 360px; height: 360px;
+  background: url("./assets/brand/splatter-trio.png") no-repeat center/contain;
+  opacity: 0.18; z-index: 0;
+  transform: rotate(-12deg);
+}
+
+/* Section-header accent — small lime paw before any h2/h3 that uses
+   the uppercase italic display treatment. Keeps text untouched. */
+h2.uppercase:not(.no-paw):not([class*="text-xs"]):not([class*="text-sm"])::before,
+.text-2xl.uppercase.italic:not(.no-paw)::before,
+.text-xl.uppercase.italic:not(.no-paw)::before {
+  content: "🐾";
+  display: inline-block;
+  margin-right: 0.5ch;
+  font-size: 0.7em;
+  vertical-align: middle;
+  filter: drop-shadow(0 0 6px rgba(155, 229, 31, 0.7));
+  -webkit-text-stroke: 0;
+}
+
+/* Breathing room — bump default gap inside main panels so dashboard
+   doesn't feel cramped. Tailwind's `space-y-4` becomes `space-y-6`-ish. */
+main.flex-1 > div > div.space-y-4 > * + *,
+main > div.space-y-4 > * + * {
+  margin-top: 1.5rem;
+}
+
+/* Task list rows — replace full red-glow with a clean red left-accent
+   bar. Targets the existing pattern: `bg-bgPanel.rounded-xl` rows that
+   contain a red status pill. */
+.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]),
+.bg-bgPanel.rounded-xl:has([class*="text-red"]) {
+  position: relative;
+  box-shadow:
+    inset 4px 0 0 0 #f43f5e,
+    0 0 16px -4px rgba(244, 63, 94, 0.25),
+    0 18px 30px -18px rgba(0, 0, 0, 0.85) !important;
+}
+.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]):hover {
+  box-shadow:
+    inset 4px 0 0 0 #fb7185,
+    0 0 24px -4px rgba(244, 63, 94, 0.4),
+    0 22px 36px -16px rgba(0, 0, 0, 0.9) !important;
+}
+
+/* Sidebar logo area — divider with lime glow underneath the brand
+   block. Catches the existing aside > a[href="/"] logo wrapper. */
+aside > a[href="/"],
+aside > div:first-child {
+  position: relative;
+}
+aside > a[href="/"]::after,
+aside > div.flex.items-center.gap-2:first-child::after {
+  content: ""; display: block;
+  margin: 0.75rem 0 0; height: 1px;
+  background: linear-gradient(90deg,
+              transparent 0%,
+              rgba(155, 229, 31, 0.55) 50%,
+              transparent 100%);
+  box-shadow: 0 0 8px rgba(155, 229, 31, 0.45);
+}
+
+/* Sidebar inactive items — make text easier to read. */
+aside button[data-testid^="nav-"]:not(.bg-shGreen),
+aside a[data-testid^="nav-"]:not(.bg-shGreen) {
+  color: #b9c6d8 !important;
+}
+aside button[data-testid^="nav-"]:not(.bg-shGreen):hover,
+aside a[data-testid^="nav-"]:not(.bg-shGreen):hover {
+  color: #ffffff !important;
+  background: rgba(0, 174, 240, 0.08) !important;
+  box-shadow: inset 4px 0 0 0 rgba(0, 174, 240, 0.4) !important;
+}
+
+/* Danger buttons — dark with red/orange border, not flat red fill. */
+button.bg-red-500,
+button.bg-red-600 {
+  background: rgba(2, 8, 23, 0.85) !important;
+  color: #fb7185 !important;
+  border: 1.5px solid rgba(244, 63, 94, 0.6) !important;
+  box-shadow: 0 0 14px rgba(244, 63, 94, 0.3),
+              inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+button.bg-red-500:hover,
+button.bg-red-600:hover {
+  border-color: rgba(244, 63, 94, 1) !important;
+  background: rgba(244, 63, 94, 0.12) !important;
+  color: #fecaca !important;
+  box-shadow: 0 0 22px rgba(244, 63, 94, 0.55) !important;
+}
+
+/* Form labels — lime/green tint for the standard `<label>` element. */
+label.text-gray-400,
+label.text-gray-500,
+label[class*="font-black"][class*="uppercase"] {
+  color: rgba(155, 229, 31, 0.85) !important;
+  letter-spacing: 0.05em;
+}
+
+/* Inputs — consistent height + rounded corners. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+select {
+  border-radius: 8px !important;
+}
+textarea {
+  border-radius: 10px !important;
+}
+
+/* Mobile — sidebar collapses to a top strip; horizontal scroll killed. */
+@media (max-width: 768px) {
+  html, body { overflow-x: hidden; }
+  aside {
+    min-width: 0 !important;
+    max-width: 100vw;
+  }
+  /* Stack dashboard tile rows vertically on narrow screens. */
+  .grid-cols-5,
+  .md\:grid-cols-5,
+  .lg\:grid-cols-5 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  /* Tables → mobile cards: hide secondary columns. */
+  table thead { display: none; }
+  table tbody tr {
+    display: block;
+    padding: 0.75rem;
+    border-radius: 12px;
+    margin-bottom: 0.5rem;
+    background: rgba(3, 18, 33, 0.7) !important;
+  }
+  table tbody td { display: block; padding: 0.15rem 0; }
+}
+
+/* Client portal — friendlier softer tone (subtle warm filter). The
+   portal layout is wrapped in `<div data-testid="portal-container">`
+   in the existing code. Catch a few common portal classes too. */
+[data-testid="portal-container"],
+body:has([data-testid="portal-hero"]) {
+  --portal-warm: rgba(155, 229, 31, 0.04);
+}
+[data-testid="portal-container"] .bg-bgPanel.rounded-xl,
+[data-testid="portal-container"] .bg-bgPanel.rounded-2xl {
+  border-color: rgba(155, 229, 31, 0.42) !important;
+  box-shadow:
+    0 0 22px rgba(155, 229, 31, 0.14),
+    inset 0 0 22px rgba(155, 229, 31, 0.04),
+    0 18px 30px -18px rgba(0, 0, 0, 0.85) !important;
+}
+
+
 
 
 .sh-card-glow {
