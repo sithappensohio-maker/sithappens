@@ -667,6 +667,182 @@ body:has([data-testid="portal-hero"]) {
     0 18px 30px -18px rgba(0, 0, 0, 0.85) !important;
 }
 
+/* ── Sprint 110dh — Brand splatter utility system ──────────────────────
+   Sharp brush-marks + spray paint dots + angled streaks (NOT pastel
+   blobs). Reusable across the app via simple utility classes that the
+   global rules below also auto-apply to the right surfaces. */
+
+/* Reusable SVG splatters. Each blob: 1 main angled stroke + ~12 small
+   scattered drops + a halo of spray dots. Sharp edges, not gradients. */
+:root {
+  --splat-lime: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'><g fill='%239be51f'><path d='M30 90 L 60 60 L 110 50 L 150 65 L 170 100 L 140 130 L 95 145 L 55 130 Z' opacity='0.95'/><ellipse cx='190' cy='40' rx='14' ry='6' transform='rotate(35 190 40)'/><circle cx='35' cy='180' r='9'/><circle cx='75' cy='200' r='5'/><circle cx='110' cy='195' r='3'/><circle cx='160' cy='185' r='7'/><circle cx='200' cy='160' r='4'/><circle cx='215' cy='80' r='6'/><circle cx='10' cy='30' r='4'/><circle cx='130' cy='15' r='3'/><circle cx='195' cy='220' r='2'/><circle cx='55' cy='25' r='2'/><circle cx='225' cy='115' r='2'/></g></svg>");
+  --splat-blue: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'><g fill='%2300aef0'><path d='M50 70 L 100 50 L 160 60 L 195 95 L 175 145 L 120 165 L 70 150 L 40 110 Z' opacity='0.95'/><ellipse cx='30' cy='30' rx='10' ry='4' transform='rotate(-25 30 30)'/><circle cx='210' cy='185' r='9'/><circle cx='170' cy='205' r='4'/><circle cx='90' cy='210' r='6'/><circle cx='35' cy='195' r='3'/><circle cx='220' cy='40' r='5'/><circle cx='180' cy='25' r='3'/><circle cx='10' cy='130' r='4'/><circle cx='225' cy='105' r='2'/><circle cx='130' cy='225' r='2'/><circle cx='65' cy='10' r='2'/></g></svg>");
+  --splat-orange: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'><g fill='%23ff7900'><path d='M40 60 L 95 45 L 150 60 L 180 100 L 165 145 L 110 160 L 60 145 L 35 100 Z' opacity='0.95'/><ellipse cx='200' cy='200' rx='12' ry='5' transform='rotate(20 200 200)'/><circle cx='25' cy='180' r='8'/><circle cx='70' cy='205' r='4'/><circle cx='130' cy='210' r='3'/><circle cx='195' cy='40' r='6'/><circle cx='220' cy='75' r='3'/><circle cx='15' cy='35' r='5'/><circle cx='220' cy='150' r='4'/><circle cx='160' cy='220' r='2'/><circle cx='110' cy='5' r='2'/></g></svg>");
+  --grunge-noise: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' seed='5'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.22 0'/></filter><rect width='180' height='180' filter='url(%23n)' opacity='0.4'/></svg>");
+}
+
+/* Per-color splatter overlay — drop on any container. Adds a small splash
+   in the top-right corner with sharp brush-mark edges. */
+.splatter-lime, .splatter-blue, .splatter-orange {
+  position: relative;
+  isolation: isolate;
+}
+.splatter-lime > *, .splatter-blue > *, .splatter-orange > * { position: relative; z-index: 1; }
+.splatter-lime::before, .splatter-blue::before, .splatter-orange::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -18px; right: -18px; width: 130px; height: 130px;
+  background-repeat: no-repeat; background-size: contain;
+  opacity: 0.32; transform: rotate(8deg);
+}
+.splatter-lime::before   { background-image: var(--splat-lime); filter: drop-shadow(0 0 8px rgba(155,229,31,.45)); }
+.splatter-blue::before   { background-image: var(--splat-blue); filter: drop-shadow(0 0 8px rgba(0,174,240,.45)); }
+.splatter-orange::before { background-image: var(--splat-orange); filter: drop-shadow(0 0 8px rgba(255,121,0,.45)); }
+
+/* Opposite-corner pairing — `.splatter-corner` adds a second blob in the
+   bottom-left so the card frames itself with brand paint. */
+.splatter-corner { position: relative; isolation: isolate; }
+.splatter-corner > * { position: relative; z-index: 1; }
+.splatter-corner::after {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  bottom: -16px; left: -16px; width: 110px; height: 110px;
+  background: var(--splat-blue) no-repeat center/contain;
+  opacity: 0.22; transform: rotate(-12deg);
+}
+
+/* Header splash — a wide horizontal paint stroke behind page titles. */
+.splatter-header { position: relative; isolation: isolate; }
+.splatter-header::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: 50%; left: -30px; width: 280px; height: 90px;
+  transform: translateY(-50%) rotate(-3deg);
+  background: var(--splat-lime) no-repeat left center/contain;
+  opacity: 0.16;
+}
+.splatter-header > * { position: relative; z-index: 1; }
+
+/* Grunge texture overlay — adds subtle film grain to any panel. */
+.grunge-panel {
+  position: relative; isolation: isolate;
+}
+.grunge-panel::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: var(--grunge-noise) repeat;
+  opacity: 0.18; mix-blend-mode: overlay; z-index: 0;
+  border-radius: inherit;
+}
+.grunge-panel > * { position: relative; z-index: 1; }
+
+/* ─── Auto-apply rules — bring splatters to the right surfaces with
+       no React edits. Opacity stays low so text remains readable. ─── */
+
+/* Body canvas — fixed-position background paint texture. */
+body::before {
+  content: ""; position: fixed; pointer-events: none; z-index: 0;
+  top: -100px; left: -100px; width: 420px; height: 420px;
+  background: var(--splat-lime) no-repeat center/contain;
+  opacity: 0.06; transform: rotate(-10deg);
+}
+body::after {
+  content: ""; position: fixed; pointer-events: none; z-index: 0;
+  bottom: -120px; right: -120px; width: 460px; height: 460px;
+  background: var(--splat-orange) no-repeat center/contain;
+  opacity: 0.05; transform: rotate(15deg);
+}
+
+/* Sidebar — corner splashes. Lime top, blue mid, orange bottom. */
+aside {
+  position: relative;
+  background-image: var(--grunge-noise);
+  background-blend-mode: overlay;
+}
+aside::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -30px; left: -30px; width: 220px; height: 220px;
+  background: var(--splat-lime) no-repeat center/contain;
+  opacity: 0.08;
+}
+aside::after {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  bottom: -30px; right: -30px; width: 200px; height: 200px;
+  background: var(--splat-orange) no-repeat center/contain;
+  opacity: 0.07; transform: rotate(20deg);
+}
+aside > * { position: relative; z-index: 1; }
+
+/* Active sidebar item — paint-stroke behind the lime indicator. */
+aside button[data-testid^="nav-"].bg-shGreen::before,
+aside a[data-testid^="nav-"].bg-shGreen::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  left: -8px; top: 50%; width: 200px; height: 60px;
+  transform: translateY(-50%) rotate(-2deg);
+  background: var(--splat-lime) no-repeat left center/contain;
+  opacity: 0.30; filter: drop-shadow(0 0 8px rgba(155,229,31,.5));
+}
+aside button[data-testid^="nav-"].bg-shGreen,
+aside a[data-testid^="nav-"].bg-shGreen { position: relative; overflow: hidden; }
+aside button[data-testid^="nav-"].bg-shGreen > *,
+aside a[data-testid^="nav-"].bg-shGreen > * { position: relative; z-index: 1; }
+
+/* Page headers — auto-promote any top-level page title to a header
+   with a lime paint stroke behind. Catches the existing pattern
+   `h1.italic.uppercase` used across screens. */
+h1.italic.uppercase {
+  position: relative; isolation: isolate; display: inline-block;
+  padding: 0.1em 0.4em 0.1em 0;
+}
+h1.italic.uppercase::before {
+  content: ""; position: absolute; pointer-events: none; z-index: -1;
+  inset: -20% -8% -20% -12%;
+  background: var(--splat-lime) no-repeat left center/contain;
+  opacity: 0.16; transform: rotate(-2deg);
+}
+
+/* Primary lime buttons — paint-brush edge glow. */
+button.bg-shGreen::after,
+a.bg-shGreen::after {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  inset: -6px; border-radius: inherit;
+  background: var(--splat-lime) no-repeat center/contain;
+  opacity: 0; transition: opacity 0.2s ease;
+  filter: blur(2px);
+}
+button.bg-shGreen:hover::after,
+a.bg-shGreen:hover::after { opacity: 0.45; }
+button.bg-shGreen, a.bg-shGreen { position: relative; }
+button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
+
+/* Section cards — small splatter accent based on semantic color cues.
+   Detects color cues by the dominant accent class inside the card. */
+.bg-bgPanel.rounded-xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -10px; right: -10px; width: 90px; height: 90px;
+  background: var(--splat-lime) no-repeat center/contain;
+  opacity: 0.22; transform: rotate(10deg);
+  filter: drop-shadow(0 0 6px rgba(155,229,31,.35));
+}
+.bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400))::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -10px; right: -10px; width: 90px; height: 90px;
+  background: var(--splat-orange) no-repeat center/contain;
+  opacity: 0.22; transform: rotate(-8deg);
+  filter: drop-shadow(0 0 6px rgba(255,121,0,.35));
+}
+.bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
+.bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  top: -10px; right: -10px; width: 90px; height: 90px;
+  background: var(--splat-blue) no-repeat center/contain;
+  opacity: 0.22; transform: rotate(12deg);
+  filter: drop-shadow(0 0 6px rgba(0,174,240,.35));
+}
+.bg-bgPanel.rounded-xl, .bg-bgPanel.rounded-2xl {
+  position: relative; overflow: hidden;
+}
+.bg-bgPanel.rounded-xl > *, .bg-bgPanel.rounded-2xl > * { position: relative; z-index: 1; }
+
+
 
 
 
