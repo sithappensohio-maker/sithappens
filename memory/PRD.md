@@ -30,6 +30,27 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110dd — Whole-app refresh to match sithappensohiodogtraining.com (2026-06-10)
+**User ask**: "Can you make this app look like my site so it matches themes."
+
+### Three coordinated layers
+- **Palette** — replaced the slate-gray base (`#0f172a` etc.) with the site's deep midnight-navy stack (`#060c2e` base · `#0c143e` panels · `#03061a` header · `#1a225a` hover). Tailwind `bgBase / bgPanel / bgHeader / bgHover` + CSS variables in `index.css` updated together so every screen inherits without per-component edits. Brand-color CSS vars (`--sh-green/-blue/-orange`) preserved so the Settings theme picker still works.
+- **Typography** — pulled in **Bowlby One SC** + **Black Ops One** + **Anton** from Google Fonts and routed them through a new `--sh-display` var. New `.sh-display` utility (italic, uppercase, slight black shadow) plus an auto-rule that promotes any `h1.italic.uppercase` / `text-5xl.italic.uppercase` heading to the chunky stencil look — so the existing page heroes (Login, Dashboard, Income, Clients, etc.) automatically pick it up without per-screen edits.
+- **Brand motifs** — added `.sh-splatter` paint-splatter overlays (green top-left + blue bottom-right SVG drips via `::before`/`::after`), `.sh-card-glow--green/blue/orange` neon-outline cards, and `.sh-cta-pill` lime-gradient pill button matching the public site's "BOOK NOW".
+
+### Where you'll see it
+- **Login** — hero now reads "**WHERE EVERY PUP** / **FINDS THEIR HAPPY.**" in the on-brand display font with the two-color treatment + lime pill CTA + paint splatter behind.
+- **Dashboard** — "**GOOD MORNING, LET'S GET TO IT**" in the same display font, navy backdrop, brand-color tile icons (daycare/boarding/training/grooming/photography).
+- **All screens app-wide** — clients, income, settings, schedule, portal — all switched to the navy palette automatically since they read from `bgBase/bgPanel` via Tailwind.
+
+### Why it's safe
+- No per-component edits — palette is variable-driven, so future Settings-level theme tweaks still work.
+- Brand colors unchanged; only the canvas + display headings changed. Existing readability + contrast preserved.
+- Backwards-compat: pages that used non-italic / non-uppercase headings keep their existing weight.
+
+
+
+
 ## Sprint 110dc — One-shot Legacy cutover migration (2026-06-10)
 **User ask**: "Basically all I want to do is mark the credits clients currently have to use the amount at checkout. Any credit packs sold after this update use the new system. Make sense?"
 

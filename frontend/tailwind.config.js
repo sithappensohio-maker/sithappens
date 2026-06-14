@@ -11,10 +11,12 @@ module.exports = {
         shGreen:  'var(--sh-green,  #8cc63f)',
         shBlue:   'var(--sh-blue,   #00a9e0)',
         shOrange: 'var(--sh-orange, #f26522)',
-        bgBase:   '#0f172a',
-        bgPanel:  '#1e293b',
-        bgHeader: '#020617',
-        bgHover:  '#334155',
+        // Sprint 110dd — Deep midnight navy palette matching the public
+        // sithappensohiodogtraining.com site.
+        bgBase:   '#060c2e',
+        bgPanel:  '#0c143e',
+        bgHeader: '#03061a',
+        bgHover:  '#1a225a',
       },
       fontFamily: {
         // Same trick: --sh-font is set at runtime by ThemeProvider.

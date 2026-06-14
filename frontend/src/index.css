@@ -2,14 +2,20 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Sprint 110dd — On-brand display font. Matches the chunky distressed
+   stencil look used across sithappensohiodogtraining.com hero headlines. */
+@import url('https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=Black+Ops+One&family=Anton&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
 :root {
   --sh-green: #8cc63f;
   --sh-blue: #00a9e0;
   --sh-orange: #f26522;
-  --bg-base: #0f172a;
-  --bg-panel: #1e293b;
-  --bg-header: #020617;
-  --bg-hover: #334155;
+  /* Sprint 110dd — Deep midnight navy palette to match the public site. */
+  --bg-base: #060c2e;
+  --bg-panel: #0c143e;
+  --bg-header: #03061a;
+  --bg-hover: #1a225a;
+  --sh-display: 'Bowlby One SC', 'Black Ops One', 'Anton', 'Impact', sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -189,3 +195,75 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
   #root:has([data-testid="pack-receipt"]) [data-testid="pack-receipt"] * { visibility: visible !important; }
   [data-testid="pack-receipt"] { position: absolute !important; inset: 0 !important; background: #fff !important; }
 }
+
+/* ── Sprint 110dd — Sit Happens public-site visual identity ────────────────
+   Display font, paint-splatter overlay motifs, and glow card outlines that
+   mirror the sithappensohiodogtraining.com hero treatment. */
+
+.sh-display {
+  font-family: var(--sh-display);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  font-style: italic;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6);
+}
+.sh-display-stencil {
+  font-family: 'Black Ops One', 'Anton', 'Impact', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.sh-pop-green  { color: var(--sh-green); }
+.sh-pop-blue   { color: var(--sh-blue); }
+.sh-pop-orange { color: var(--sh-orange); }
+
+.sh-splatter { position: relative; isolation: isolate; }
+.sh-splatter::before,
+.sh-splatter::after {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  opacity: 0.18; background-repeat: no-repeat; background-size: contain;
+}
+.sh-splatter::before {
+  top: -10px; left: -10px; width: 220px; height: 220px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><g fill='%238cc63f'><circle cx='40' cy='60' r='26'/><circle cx='90' cy='30' r='12'/><circle cx='130' cy='70' r='18'/><circle cx='70' cy='110' r='10'/><circle cx='20' cy='130' r='8'/><circle cx='150' cy='40' r='6'/><circle cx='110' cy='130' r='14'/></g></svg>");
+}
+.sh-splatter::after {
+  bottom: -10px; right: -10px; width: 240px; height: 240px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><g fill='%2300a9e0'><circle cx='160' cy='60' r='24'/><circle cx='120' cy='110' r='14'/><circle cx='80' cy='140' r='10'/><circle cx='180' cy='130' r='12'/><circle cx='50' cy='90' r='8'/><circle cx='110' cy='170' r='16'/></g></svg>");
+}
+.sh-splatter > * { position: relative; z-index: 1; }
+
+.sh-card-glow {
+  border-width: 1.5px; border-style: solid; border-radius: 12px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04), 0 0 24px -4px currentColor;
+}
+.sh-card-glow--green  { border-color: rgba(140, 198, 63, 0.55); color: rgba(140, 198, 63, 0.45); }
+.sh-card-glow--blue   { border-color: rgba(0, 169, 224, 0.55); color: rgba(0, 169, 224, 0.45); }
+.sh-card-glow--orange { border-color: rgba(242, 101, 34, 0.55); color: rgba(242, 101, 34, 0.45); }
+
+.sh-cta-pill {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  font-family: var(--sh-display); font-style: italic; font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  background: linear-gradient(180deg, #b8eb45 0%, #8cc63f 100%);
+  color: #03061a; padding: 0.75rem 1.75rem; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.18);
+  box-shadow: 0 10px 30px -10px rgba(140, 198, 63, 0.6),
+              inset 0 1px 0 rgba(255,255,255,0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.sh-cta-pill:hover { transform: translateY(-1px); }
+.sh-cta-pill:active { transform: translateY(1px); }
+
+/* Auto-apply the chunky display look to the biggest page titles app-wide.
+   The match is intentionally narrow — only headings that already use the
+   "huge italic uppercase" treatment (text-4xl+ + italic + uppercase) get
+   promoted to the public-site stencil font, so smaller H2/H3 stay legible. */
+h1.italic.uppercase,
+.text-4xl.italic.uppercase,
+.text-5xl.italic.uppercase,
+.text-6xl.italic.uppercase {
+  font-family: var(--sh-display);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55);
+  letter-spacing: 0.005em;
+}
+

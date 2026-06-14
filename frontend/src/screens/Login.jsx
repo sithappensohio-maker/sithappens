@@ -154,7 +154,7 @@ export default function Login() {
                "radial-gradient(circle at 12% 18%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 78%, #8cc63f 0%, transparent 42%), radial-gradient(circle at 70% 10%, #f26522 0%, transparent 30%)"
              }}/>
 
-        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-20 grid lg:grid-cols-5 gap-8 lg:gap-12 items-center">
+        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-20 grid lg:grid-cols-5 gap-8 lg:gap-12 items-center sh-splatter">
           {/* Hero copy + feature logo */}
           <div className="lg:col-span-3" data-testid="landing-hero-copy">
             {/* Sprint 110u — feature logo, large and proud at the top of the
@@ -172,9 +172,9 @@ export default function Login() {
             <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-3">
               <i className="fas fa-paw mr-2"/>For pups who deserve more than a kennel
             </p>
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black uppercase italic tracking-tight text-white leading-[1.05]">
+            <h1 className="sh-display text-5xl sm:text-6xl lg:text-7xl text-white leading-[0.95]">
               Where every pup<br/>
-              <span className="text-shGreen">finds their happy.</span>
+              <span className="sh-pop-green">finds their happy.</span>
             </h1>
             <p className="text-base sm:text-lg text-gray-300 leading-relaxed mt-5 max-w-xl">
               Training, daycare, boarding & photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
@@ -183,12 +183,12 @@ export default function Login() {
             <div className="flex flex-wrap gap-3 mt-7">
               <button onClick={() => { setMode("register"); scrollToAuth(); }}
                       data-testid="landing-hero-register-cta"
-                      className="bg-shGreen text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
-                <i className="fas fa-paw mr-2"/>Get started — it's free
+                      className="sh-cta-pill">
+                <i className="fas fa-paw"/>Get started — it's free
               </button>
               <button onClick={() => { setMode("login"); scrollToAuth(); }}
                       data-testid="landing-hero-login-cta"
-                      className="bg-bgPanel border border-bgHover text-gray-200 px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
+                      className="bg-bgPanel border border-bgHover text-gray-200 px-6 py-3 rounded-full font-black text-[14px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
                 I'm already a client
               </button>
             </div>
