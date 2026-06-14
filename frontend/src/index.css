@@ -220,17 +220,104 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
 .sh-splatter::before,
 .sh-splatter::after {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
-  opacity: 0.18; background-repeat: no-repeat; background-size: contain;
+  background-repeat: no-repeat; background-size: contain;
 }
+/* Real designer assets (PNG with green/blue/orange + black ink drips).
+   Top-left corner-burst + bottom-right corner-burst — mirrored. */
 .sh-splatter::before {
-  top: -10px; left: -10px; width: 220px; height: 220px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><g fill='%238cc63f'><circle cx='40' cy='60' r='26'/><circle cx='90' cy='30' r='12'/><circle cx='130' cy='70' r='18'/><circle cx='70' cy='110' r='10'/><circle cx='20' cy='130' r='8'/><circle cx='150' cy='40' r='6'/><circle cx='110' cy='130' r='14'/></g></svg>");
+  top: -20px; left: -20px; width: 360px; height: 360px;
+  background-image: url("./assets/brand/splatter-trio.png");
+  opacity: 0.55;
+  filter: drop-shadow(0 0 18px rgba(140,198,63,0.35));
 }
 .sh-splatter::after {
-  bottom: -10px; right: -10px; width: 240px; height: 240px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><g fill='%2300a9e0'><circle cx='160' cy='60' r='24'/><circle cx='120' cy='110' r='14'/><circle cx='80' cy='140' r='10'/><circle cx='180' cy='130' r='12'/><circle cx='50' cy='90' r='8'/><circle cx='110' cy='170' r='16'/></g></svg>");
+  bottom: -20px; right: -20px; width: 360px; height: 360px;
+  background-image: url("./assets/brand/splatter-explosion.png");
+  opacity: 0.5;
+  transform: scale(-1, -1);
+  filter: drop-shadow(0 0 18px rgba(0,169,224,0.35));
 }
 .sh-splatter > * { position: relative; z-index: 1; }
+
+/* Single-explosion overlay variant — drop on hero sections. */
+.sh-splatter-explosion {
+  position: relative; isolation: isolate;
+}
+.sh-splatter-explosion::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  inset: -40px; background: url("./assets/brand/splatter-explosion.png") center/cover no-repeat;
+  opacity: 0.22; mix-blend-mode: screen;
+}
+.sh-splatter-explosion > * { position: relative; z-index: 1; }
+
+/* Diagonal brush stripe — for narrow banners (Income / Dashboard widgets). */
+.sh-splatter-brush {
+  position: relative;
+}
+.sh-splatter-brush::before {
+  content: ""; position: absolute; pointer-events: none; z-index: 0;
+  inset: 0; background: url("./assets/brand/splatter-brush.png") right center/auto 110% no-repeat;
+  opacity: 0.28;
+}
+
+/* ── 3D Card depth + tri-color outline (Sprint 110de) ─────────────────
+   Adds a colored "edge stripe" and deep shadow to make cards pop off
+   the navy canvas. Apply by tagging a container `.sh-card-pop` (and
+   optionally a color variant `--green / --blue / --orange / --tri`). */
+.sh-card-pop {
+  position: relative;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 18px 30px -18px rgba(0, 0, 0, 0.85),
+    0 6px 0 -2px rgba(0, 0, 0, 0.55);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.sh-card-pop:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 24px 40px -18px rgba(0, 0, 0, 0.9),
+    0 8px 0 -2px rgba(0, 0, 0, 0.6);
+}
+/* The colored edge stripe lives in a ::before so it doesn't fight the
+   card's own border + background. */
+.sh-card-pop::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  padding: 1.5px; pointer-events: none;
+  background: linear-gradient(135deg,
+              rgba(140, 198, 63, 0.75) 0%,
+              rgba(0, 169, 224, 0.75) 50%,
+              rgba(242, 101, 34, 0.75) 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: 0.55;
+}
+.sh-card-pop--green::before { background: linear-gradient(180deg, rgba(140,198,63,0.85), rgba(140,198,63,0.25)); opacity: 0.8; }
+.sh-card-pop--blue::before  { background: linear-gradient(180deg, rgba(0,169,224,0.85), rgba(0,169,224,0.25)); opacity: 0.8; }
+.sh-card-pop--orange::before{ background: linear-gradient(180deg, rgba(242,101,34,0.85), rgba(242,101,34,0.25)); opacity: 0.8; }
+
+/* Auto-promote ALL bgPanel-class cards to the 3D pop look without touching
+   individual screens. Targets the panel cards used across Dashboard /
+   Income / Clients / Settings etc. */
+.bg-bgPanel.rounded-xl,
+.bg-bgPanel.rounded-2xl,
+.bg-bgPanel.rounded-lg {
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 18px 30px -18px rgba(0, 0, 0, 0.85),
+    0 6px 0 -2px rgba(0, 0, 0, 0.45);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.bg-bgPanel.rounded-xl:hover,
+.bg-bgPanel.rounded-2xl:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 22px 36px -16px rgba(0, 0, 0, 0.9),
+    0 7px 0 -2px rgba(0, 0, 0, 0.55);
+}
+
 
 .sh-card-glow {
   border-width: 1.5px; border-style: solid; border-radius: 12px;

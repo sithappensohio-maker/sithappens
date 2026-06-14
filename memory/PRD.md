@@ -30,6 +30,26 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110de — Real paint-splatter PNGs + 3D card depth + multicolor outlines (2026-06-10)
+**User asks**: Use the splatter PNGs they sent + outline cards with brand colors + deeper 3D effect.
+
+### What changed
+- **Real splatter assets** — saved 4 splatter PNGs into `/app/frontend/src/assets/brand/` and stripped the baked-in transparency-grid pattern (PIL pass that converts gray/light pixels to alpha=0) so they overlay cleanly. The CSS `.sh-splatter` (`::before` + `::after` corner anchors), `.sh-splatter-explosion`, and `.sh-splatter-brush` utilities now reference these files via webpack-resolved relative URLs (`./assets/brand/...`).
+- **3D card depth (`.bg-bgPanel.rounded-xl/2xl/lg`)** — auto-applied multi-shadow to EVERY panel card across the app (Dashboard tiles, Income, Clients, Settings, etc.): inset white highlight at top + 18px blurred drop shadow at bottom + 6px solid edge shadow for that "floating card" feeling. Hover lifts the card -1px and deepens the shadow.
+- **Multicolor outline `.sh-card-pop`** — opt-in utility that adds a green/blue/orange gradient border via masked `::before` so cards can carry the three-color brand edge.
+- **Glow border variants** — `.sh-card-pop--green/--blue/--orange` for solid-color emphasis.
+
+### Verified live
+Login + Dashboard screenshots both render: explosion splatter visible bottom-right of login hero, navy canvas, chunky display headlines, and every panel card has the lifted 3D effect. Sit Happens husky logo sits in the sidebar as the brand mark.
+
+### Why it's safe
+- Splatter PNGs are imported via CSS relative path → webpack hashes them into the build, no broken refs.
+- 3D depth rule is scoped to `.bg-bgPanel.rounded-*` so existing flat surfaces / form inputs / modals stay untouched.
+- No JS / no React component changes — pure CSS uplift.
+
+
+
+
 ## Sprint 110dd — Whole-app refresh to match sithappensohiodogtraining.com (2026-06-10)
 **User ask**: "Can you make this app look like my site so it matches themes."
 
