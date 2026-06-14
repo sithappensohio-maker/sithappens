@@ -821,30 +821,38 @@ button.bg-shGreen, a.bg-shGreen { position: relative; }
 button.bg-shGreen > *, a.bg-shGreen > * { position: relative; z-index: 1; }
 
 /* Section cards — small splatter accent based on semantic color cues.
-   Each cue uses one of the real PNG assets so the boards feel varied. */
+   Pulled inside the card box (top/right: 0) so we no longer need
+   overflow:hidden to clip them — that was breaking scroll on modals. */
 .bg-bgPanel.rounded-xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
 .bg-bgPanel.rounded-2xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
-  top: -14px; right: -14px; width: 110px; height: 110px;
-  background: var(--splat-trio) no-repeat center/contain;
+  top: 0; right: 0; width: 96px; height: 96px;
+  background: var(--splat-trio) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(10deg);
+  border-top-right-radius: inherit;
 }
 .bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400))::before,
 .bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400))::before {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
-  top: -14px; right: -14px; width: 110px; height: 110px;
-  background: var(--splat-explosion) no-repeat center/contain;
+  top: 0; right: 0; width: 96px; height: 96px;
+  background: var(--splat-explosion) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(-8deg);
+  border-top-right-radius: inherit;
 }
 .bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
 .bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before {
   content: ""; position: absolute; pointer-events: none; z-index: 0;
-  top: -14px; right: -14px; width: 110px; height: 110px;
-  background: var(--splat-corner) no-repeat center/contain;
+  top: 0; right: 0; width: 96px; height: 96px;
+  background: var(--splat-corner) no-repeat top right/contain;
   opacity: 0.22; transform: rotate(12deg);
+  border-top-right-radius: inherit;
 }
 .bg-bgPanel.rounded-xl, .bg-bgPanel.rounded-2xl {
-  position: relative; overflow: hidden;
+  position: relative;
+  /* Use isolation (creates a new stacking context for ::before/::after)
+     instead of overflow:hidden, which clobbered Tailwind's overflow-y-auto
+     on scrollable modal/sheet containers (Sprint 110dj scroll bug fix). */
+  isolation: isolate;
 }
 .bg-bgPanel.rounded-xl > *, .bg-bgPanel.rounded-2xl > * { position: relative; z-index: 1; }
 

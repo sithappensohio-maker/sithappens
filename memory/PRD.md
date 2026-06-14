@@ -2843,6 +2843,11 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - Clients (CLIENT HUB. WHERE HUMANS LIVE. poster hero with multi-color brush, clean client cards no longer over-tinted red).
 - Income (INCOME & SERVICES. THE CASH STORY. poster hero, THIS WEEK stat card with semantic-colored sub-stats, LONGER-RANGE VIEW stat tiles).
 
+### Scroll bug fix (2026-02-14)
+- **Bug**: After 110dj landed, modal checkout (mobile) + multiple desktop pages stopped scrolling.
+- **Root cause**: `.bg-bgPanel.rounded-xl, .bg-bgPanel.rounded-2xl { overflow: hidden }` (Sprint 110dh) was clobbering Tailwind's `overflow-y-auto` on scrollable modal/sheet containers. Selector specificity (0,2,0) beat Tailwind's `.overflow-y-auto` (0,1,0).
+- **Fix**: Replaced `overflow: hidden` with `isolation: isolate` (same stacking-context benefit, no scroll clobber). Repositioned the corner color-cue splatter ::before pseudos from `top/right: -14px` to `top/right: 0` with `border-top-right-radius: inherit` so they stay inside the card box without needing overflow clipping. All other `overflow: hidden` instances (hero, sidebar active button, table) are non-scrollable so safe to keep.
+
 ## Sprint 110di+ — Referrer auto-credit verification (2026-02-14)
 - ✅ **Confirmed already-shipped feature**: `server.py` lines 3227-3295 contain the complete referrer auto-credit hook on booking checkout. Credits referrer +1 daycare credit on the referred client's first completed appointment, idempotent via `referrals` collection, dual email notifications (`notify_client_referral_payout` + `notify_client_referral_welcome`), audit-logged to `credit_adjustments`, and trophy re-evaluation for both parties.
 - ✅ **Pytest** `test_referral_auto_credit.py` — 4/4 pass: payout fires on first checkout, payout is idempotent across repeated checkouts, self-referrals blocked, signup-time `referred_by_code` is normalised.
