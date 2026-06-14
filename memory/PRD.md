@@ -2803,3 +2803,36 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **P3** Smart credit-pack suggester in client portal
 - **P3** Universal Cmd-K search v2 (currently scoped to dogs/clients — extend to bookings/income/homework)
 - **Refactor** Split `server.py` (~8700 lines) into route modules
+
+
+## Sprint 110di — Real PNG splatter overhaul (2026-02-14)
+**User feedback**: Previous CSS-generated SVG "blob" splatters were rejected as looking like "pastel floating blobs". User provided 4 transparent PNG brush-stroke assets and demanded they be used as-is.
+
+### What changed
+- **`/app/frontend/src/index.css`**: The `:root` block in Sprint 110dh that defined `--splat-lime`, `--splat-blue`, `--splat-orange` as inline SVG `<path>` blobs has been replaced. The variables now point at the real PNG assets in `/app/frontend/src/assets/brand/`:
+  - `--splat-trio` → `splatter-trio.png`
+  - `--splat-explosion` → `splatter-explosion.png`
+  - `--splat-corner` → `splatter-corner.png`
+  - `--splat-brush` → `splatter-brush.png`
+  - Color-cue aliases `--splat-lime` / `--splat-blue` / `--splat-orange` now resolve to one of the real PNGs each (variety across cards).
+- **Removed all `filter: drop-shadow(0 0 Xpx rgba(...))` colored glows** on splatter ::before pseudo-elements — the PNGs already carry their own multi-color paint, the lime glow on top was muddying it.
+- **Opacity normalised to 0.18-0.32** per user spec (body canvas 0.06-0.09, hero/cards 0.20-0.32, never above 0.32).
+- **Brush PNG used for**: page titles (`h1.italic.uppercase`), `.splatter-header`, active sidebar nav indicator, primary lime button hover halo.
+- **Trio / Corner / Explosion PNGs** used as: body corner washes, sidebar corner accents, and the three card-cue ::before splatters (green/blue/orange semantic).
+- **Verified live** on dashboard hero — real brush-stroke paint visible behind "GOOD MORNING" headline, sidebar corner has authentic ink texture, body bottom-right shows real explosion PNG. Text fully readable.
+
+## Sprint 110di+ — Referrer auto-credit verification (2026-02-14)
+- ✅ **Confirmed already-shipped feature**: `server.py` lines 3227-3295 contain the complete referrer auto-credit hook on booking checkout. Credits referrer +1 daycare credit on the referred client's first completed appointment, idempotent via `referrals` collection, dual email notifications (`notify_client_referral_payout` + `notify_client_referral_welcome`), audit-logged to `credit_adjustments`, and trophy re-evaluation for both parties.
+- ✅ **Pytest** `test_referral_auto_credit.py` — 4/4 pass: payout fires on first checkout, payout is idempotent across repeated checkouts, self-referrals blocked, signup-time `referred_by_code` is normalised.
+
+## Backlog / Next Up
+- **P1** Check-in / Check-out flow with daily census
+- **P1** Public booking page (`yourdomain.com/book` — no login required)
+- **P1** Retail items catalog (Quick-pick vs Full POS — needs user decision)
+- **P1** Daycare capacity guardrail (prevent overbooking without admin override)
+- **P2** "Currently on premises" kiosk wall view
+- **P2** Holiday / closure calendar
+- **P2** Tipping at checkout / Gift cards
+- **P2** Admin "App Update" button via host trigger file (Bazzite Docker workaround)
+- **P3** SMS reminders (Twilio)
+- **Refactor** Split `server.py` (~17k lines) into route modules — deprioritised by user
