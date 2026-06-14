@@ -546,9 +546,9 @@ main > div.space-y-4 > * + * {
 
 /* Task list rows — replace full red-glow with a clean red left-accent
    bar. Targets the existing pattern: `bg-bgPanel.rounded-xl` rows that
-   contain a red status pill. */
-.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]),
-.bg-bgPanel.rounded-xl:has([class*="text-red"]) {
+   contain a red BG status pill (narrow — text-red alone doesn't trigger
+   so client/dog cards with red labels don't go red). */
+.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]) {
   position: relative;
   box-shadow:
     inset 4px 0 0 0 #f43f5e,
@@ -887,3 +887,442 @@ h1.italic.uppercase,
   letter-spacing: 0.005em;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   Sprint 110dj — Training Levels poster overhaul (2026-02-14)
+   Push the PWA cards/background closer to the sithappensohiodogtraining.com
+   "Training Levels" graphic style: poster panels with thick neon outlines,
+   dark gritty interior, controlled paint splatter framing, sharp diagonal
+   brush strokes. No JSX edits — all selectors target existing class
+   patterns in the codebase. Styling only.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Global background — grunge wash, NOT soft blobs ────────────────
+   Replace the prior radial-circle "blob" gradients with sharp diagonal
+   streaks + fractal noise. Corner color washes are kept extremely low
+   opacity so they read as paint flecks, not pastel halos. */
+:root {
+  --grunge-fine: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' seed='9'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.45 0'/></filter><rect width='220' height='220' filter='url(%23n)'/></svg>");
+  --grunge-coarse: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='320' height='320'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='2' seed='3'/><feColorMatrix values='0 0 0 0 0.6  0 0 0 0 0.7  0 0 0 0 0.9  0 0 0 0.18 0'/></filter><rect width='320' height='320' filter='url(%23n)'/></svg>");
+  --speckle-lime: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><g fill='%239be51f' opacity='0.55'><circle cx='12' cy='40' r='1.2'/><circle cx='80' cy='15' r='0.9'/><circle cx='180' cy='60' r='1.3'/><circle cx='220' cy='180' r='1.1'/><circle cx='44' cy='150' r='0.7'/><circle cx='130' cy='210' r='1.0'/><circle cx='200' cy='105' r='0.8'/><circle cx='65' cy='95' r='0.6'/></g></svg>");
+}
+
+body {
+  background:
+    /* Sharp diagonal grunge streaks — very faint, repeats */
+    repeating-linear-gradient(115deg,
+      rgba(255, 255, 255, 0.015) 0px,
+      rgba(255, 255, 255, 0.015) 1px,
+      transparent 1px,
+      transparent 14px),
+    repeating-linear-gradient(65deg,
+      rgba(0, 174, 240, 0.018) 0px,
+      rgba(0, 174, 240, 0.018) 1px,
+      transparent 1px,
+      transparent 22px),
+    /* Subtle fractal noise as paint grain */
+    var(--grunge-fine),
+    /* Off-axis corner color washes — paint flecks, not halos */
+    radial-gradient(60% 40% at -5% -10%, rgba(155, 229, 31, 0.08), transparent 55%),
+    radial-gradient(55% 35% at 110% 110%, rgba(242, 101, 34, 0.08), transparent 55%),
+    radial-gradient(40% 30% at 110% 0%, rgba(0, 174, 240, 0.06), transparent 60%),
+    /* Deep navy base — true near-black for the grunge to read */
+    linear-gradient(160deg, #050b1d 0%, #02060f 50%, #050b1d 100%) !important;
+  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed !important;
+  background-blend-mode: normal, normal, overlay, normal, normal, normal, normal;
+}
+
+/* ── 2. Card poster style — thick semantic border, grunge interior,
+   inner shadow, corner brush splatter. Replaces the prior uniform
+   blue glow with content-aware colors. Defaults to lime when no cue. */
+.bg-bgPanel.rounded-xl,
+.bg-bgPanel.rounded-2xl {
+  --card-accent: 155, 229, 31; /* lime default */
+  background:
+    /* Inner speckle + grunge — subtle paint grain inside the card */
+    var(--grunge-fine),
+    /* Soft inner vignette — adds the "shadowed interior" poster feel */
+    radial-gradient(120% 80% at 50% 0%, rgba(0, 0, 0, 0.0), rgba(0, 0, 0, 0.28) 100%),
+    /* Base navy gradient — slightly deeper than before */
+    linear-gradient(155deg, rgba(5, 14, 32, 0.97) 0%, rgba(1, 4, 12, 0.99) 100%) !important;
+  background-blend-mode: overlay, normal, normal !important;
+  border: 2px solid rgb(var(--card-accent) / 0.6) !important;
+  border-radius: 22px !important;
+  box-shadow:
+    /* Outer neon halo */
+    0 0 18px rgb(var(--card-accent) / 0.32),
+    0 0 36px -8px rgb(var(--card-accent) / 0.22),
+    /* Inner dark vignette + bright top edge for depth */
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 0 28px rgba(0, 0, 0, 0.45),
+    /* Drop shadow under the card */
+    0 22px 36px -18px rgba(0, 0, 0, 0.92),
+    0 6px 0 -2px rgba(0, 0, 0, 0.55) !important;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.bg-bgPanel.rounded-xl:hover,
+.bg-bgPanel.rounded-2xl:hover {
+  transform: translateY(-2px);
+  border-color: rgb(var(--card-accent) / 0.95) !important;
+  box-shadow:
+    0 0 26px rgb(var(--card-accent) / 0.5),
+    0 0 50px -8px rgb(var(--card-accent) / 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 28px rgba(0, 0, 0, 0.4),
+    0 28px 44px -18px rgba(0, 0, 0, 0.95),
+    0 8px 0 -2px rgba(0, 0, 0, 0.6) !important;
+}
+
+/* Content-aware card accent — detect the dominant color cue inside the
+   card and swap the accent var. Cards that already showed `.text-shGreen`
+   stay green, `.text-shBlue` become blue, etc. */
+.bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400)),
+.bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400)) {
+  --card-accent: 0, 174, 240;
+}
+.bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400)),
+.bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400)) {
+  --card-accent: 255, 121, 0;
+}
+/* Note: We intentionally don't auto-set a red --card-accent based on the
+   presence of red BG pills. The existing task-row inset shadow (Sprint
+   110dg) already paints the left stripe + outer red glow for urgent
+   rows, and any client/dog card that happens to contain a red delete
+   button shouldn't be themed red overall. */
+
+/* ── 3. Bold card title strip — promote the first heading inside any card
+   to a poster-style header with a colored underline stroke. The brush
+   PNG behind only renders on hero-class titles to avoid clutter. */
+.bg-bgPanel.rounded-xl > h2,
+.bg-bgPanel.rounded-xl > h3,
+.bg-bgPanel.rounded-2xl > h2,
+.bg-bgPanel.rounded-2xl > h3,
+.bg-bgPanel.rounded-xl > div > h2.uppercase,
+.bg-bgPanel.rounded-xl > div > h3.uppercase,
+.bg-bgPanel.rounded-2xl > div > h2.uppercase,
+.bg-bgPanel.rounded-2xl > div > h3.uppercase,
+.bg-bgPanel.rounded-xl > .flex > h2.uppercase,
+.bg-bgPanel.rounded-xl > .flex > h3.uppercase,
+.bg-bgPanel.rounded-2xl > .flex > h2.uppercase,
+.bg-bgPanel.rounded-2xl > .flex > h3.uppercase {
+  position: relative;
+  padding-bottom: 0.55em;
+  margin-bottom: 0.35em;
+}
+.bg-bgPanel.rounded-xl > h2::after,
+.bg-bgPanel.rounded-xl > h3::after,
+.bg-bgPanel.rounded-2xl > h2::after,
+.bg-bgPanel.rounded-2xl > h3::after,
+.bg-bgPanel.rounded-xl > div > h2.uppercase::after,
+.bg-bgPanel.rounded-xl > div > h3.uppercase::after,
+.bg-bgPanel.rounded-2xl > div > h2.uppercase::after,
+.bg-bgPanel.rounded-2xl > div > h3.uppercase::after,
+.bg-bgPanel.rounded-xl > .flex > h2.uppercase::after,
+.bg-bgPanel.rounded-xl > .flex > h3.uppercase::after,
+.bg-bgPanel.rounded-2xl > .flex > h2.uppercase::after,
+.bg-bgPanel.rounded-2xl > .flex > h3.uppercase::after {
+  content: "";
+  position: absolute;
+  left: 0; bottom: 0.05em;
+  width: 56px; height: 3px;
+  background: linear-gradient(90deg,
+    rgb(var(--card-accent, 155 229 31) / 0.95) 0%,
+    rgb(var(--card-accent, 155 229 31) / 0.4) 60%,
+    transparent 100%);
+  box-shadow: 0 0 10px rgb(var(--card-accent, 155 229 31) / 0.6);
+  border-radius: 2px;
+}
+
+/* ── 4. Dashboard stat cards — small tiles inside a 5/4-col grid.
+   Make each tile a mini-poster: icon badge left, colored ring, big
+   number, uppercase label. Borders stay tight so they don't bloat. */
+.grid.grid-cols-2 > .bg-bgPanel.rounded-xl,
+.grid.grid-cols-3 > .bg-bgPanel.rounded-xl,
+.grid.grid-cols-4 > .bg-bgPanel.rounded-xl,
+.grid.grid-cols-5 > .bg-bgPanel.rounded-xl,
+.md\:grid-cols-3 > .bg-bgPanel.rounded-xl,
+.md\:grid-cols-4 > .bg-bgPanel.rounded-xl,
+.md\:grid-cols-5 > .bg-bgPanel.rounded-xl,
+.lg\:grid-cols-3 > .bg-bgPanel.rounded-xl,
+.lg\:grid-cols-4 > .bg-bgPanel.rounded-xl,
+.lg\:grid-cols-5 > .bg-bgPanel.rounded-xl {
+  border-radius: 16px !important;
+  border-width: 1.5px !important;
+}
+
+/* Icon containers inside stat cards — wrap any small colored block
+   (Tailwind `w-10 h-10 rounded-lg` pattern) in a glowing ring. */
+.bg-bgPanel.rounded-xl .w-10.h-10.rounded-lg,
+.bg-bgPanel.rounded-xl .w-12.h-12.rounded-lg,
+.bg-bgPanel.rounded-xl .w-10.h-10.rounded-full,
+.bg-bgPanel.rounded-xl .w-12.h-12.rounded-full {
+  box-shadow:
+    0 0 0 1px rgb(var(--card-accent, 155 229 31) / 0.6),
+    0 0 14px rgb(var(--card-accent, 155 229 31) / 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* ── 5. Task list rows — orange/red warning poster look.
+   Override the prior subtle red stripe with a stronger left bar +
+   icon glow + slight grunge inside the row. Only triggers on real
+   red BG pills (URGENT) so card lists with red text don't over-tint. */
+.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]),
+.bg-bgPanel.rounded-xl:has([class*="bg-red-600"]),
+.bg-bgPanel.rounded-2xl:has([class*="bg-red-500"]),
+.bg-bgPanel.rounded-2xl:has([class*="bg-red-600"]) {
+  background:
+    var(--grunge-fine),
+    linear-gradient(155deg, rgba(28, 6, 12, 0.96) 0%, rgba(8, 2, 4, 0.99) 100%) !important;
+  background-blend-mode: overlay, normal !important;
+  box-shadow:
+    inset 5px 0 0 0 #f43f5e,
+    0 0 20px -2px rgba(244, 63, 94, 0.42),
+    inset 0 0 28px rgba(244, 63, 94, 0.06),
+    0 22px 32px -18px rgba(0, 0, 0, 0.92) !important;
+}
+.bg-bgPanel.rounded-xl:has([class*="bg-red-500"]):hover,
+.bg-bgPanel.rounded-2xl:has([class*="bg-red-500"]):hover {
+  box-shadow:
+    inset 5px 0 0 0 #fb7185,
+    0 0 28px -2px rgba(244, 63, 94, 0.6),
+    inset 0 0 28px rgba(244, 63, 94, 0.10),
+    0 26px 40px -16px rgba(0, 0, 0, 0.95) !important;
+}
+
+/* Warning rows — orange variant for non-urgent task rows. */
+.bg-bgPanel.rounded-xl:has([class*="bg-shOrange"]):not(:has([class*="bg-red"])):not(:has([class*="text-red"])),
+.bg-bgPanel.rounded-xl:has([class*="bg-amber-500"]):not(:has([class*="bg-red"])):not(:has([class*="text-red"])) {
+  box-shadow:
+    inset 5px 0 0 0 #ff7900,
+    0 0 18px -2px rgba(255, 121, 0, 0.36),
+    inset 0 0 22px rgba(255, 121, 0, 0.05),
+    0 22px 32px -18px rgba(0, 0, 0, 0.92) !important;
+}
+
+/* Urgent/Warn badges inside task list — pill with neon glow ring. */
+.bg-red-500,
+.bg-red-600 { /* pills, not buttons (handled separately above) */ }
+span.bg-red-500,
+span.bg-red-600,
+div.bg-red-500.text-white,
+div.bg-red-600.text-white {
+  background: linear-gradient(135deg, #f43f5e 0%, #be123c 100%) !important;
+  color: #fff !important;
+  box-shadow: 0 0 14px rgba(244, 63, 94, 0.5),
+              inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 900;
+}
+
+/* ── 6. Dashboard hero — sharper diagonal brush strokes only,
+   no soft blobs. Replaces the prior radial halos. */
+.bg-bgPanel:has(h1.sh-display),
+.bg-bgPanel:has(.text-5xl.italic.uppercase),
+.bg-bgPanel:has(.text-6xl.italic.uppercase) {
+  position: relative;
+  overflow: hidden;
+  background:
+    /* Diagonal brush stripe — faint, sharp edge */
+    linear-gradient(115deg,
+      transparent 0%,
+      transparent 30%,
+      rgba(155, 229, 31, 0.05) 31%,
+      rgba(155, 229, 31, 0.07) 33%,
+      transparent 34%,
+      transparent 100%),
+    linear-gradient(75deg,
+      transparent 50%,
+      rgba(0, 174, 240, 0.05) 52%,
+      rgba(0, 174, 240, 0.07) 54%,
+      transparent 55%,
+      transparent 100%),
+    /* Inner grunge */
+    var(--grunge-fine),
+    /* Base */
+    linear-gradient(135deg, rgba(3, 12, 28, 0.95) 0%, rgba(0, 4, 12, 0.99) 100%) !important;
+  background-blend-mode: normal, normal, overlay, normal !important;
+}
+/* Hero corner brush — REAL PNG, low opacity, off-canvas anchored. */
+.bg-bgPanel:has(h1.sh-display)::after,
+.bg-bgPanel:has(.text-5xl.italic.uppercase)::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  right: -80px; bottom: -80px;
+  width: 420px; height: 420px;
+  background: url("./assets/brand/splatter-trio.png") no-repeat center/contain;
+  opacity: 0.22;
+  z-index: 0;
+  transform: rotate(-14deg);
+  mix-blend-mode: screen;
+}
+.bg-bgPanel:has(h1.sh-display)::before,
+.bg-bgPanel:has(.text-5xl.italic.uppercase)::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  left: -60px; top: -60px;
+  width: 320px; height: 320px;
+  background: url("./assets/brand/splatter-brush.png") no-repeat center/contain;
+  opacity: 0.16;
+  z-index: 0;
+  transform: rotate(-8deg);
+}
+
+/* ── 7. Sidebar — grunge texture + paint-stroke active item. */
+aside {
+  background:
+    var(--grunge-coarse),
+    linear-gradient(180deg, rgba(2, 6, 16, 0.96) 0%, rgba(0, 2, 8, 0.99) 100%) !important;
+  background-blend-mode: overlay, normal !important;
+  border-right: 1px solid rgba(0, 174, 240, 0.18);
+  box-shadow:
+    inset -1px 0 0 rgba(0, 174, 240, 0.10),
+    8px 0 24px -12px rgba(0, 0, 0, 0.85);
+}
+
+/* Subtle blue divider beneath the brand block + above the install/sign-in
+   footer area. Catches the existing sidebar layout pattern. */
+aside > a[href="/"]::after,
+aside > div.flex.items-center.gap-2:first-child::after {
+  content: "";
+  display: block;
+  margin: 0.75rem 0 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(0, 174, 240, 0.45) 20%,
+    rgba(155, 229, 31, 0.45) 50%,
+    rgba(0, 174, 240, 0.45) 80%,
+    transparent 100%);
+  box-shadow: 0 0 6px rgba(0, 174, 240, 0.35);
+}
+
+/* Inactive nav items — clean, readable. Active gets the paint-brush
+   PNG stroke (already defined earlier — keep it strong). */
+aside button[data-testid^="nav-"]:not(.bg-shGreen),
+aside a[data-testid^="nav-"]:not(.bg-shGreen) {
+  color: #c2cfe2 !important;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+aside button[data-testid^="nav-"]:not(.bg-shGreen):hover,
+aside a[data-testid^="nav-"]:not(.bg-shGreen):hover {
+  color: #ffffff !important;
+  background: linear-gradient(90deg,
+    rgba(0, 174, 240, 0.10) 0%,
+    transparent 80%) !important;
+  box-shadow: inset 3px 0 0 0 rgba(0, 174, 240, 0.5) !important;
+}
+
+/* ── 8. Forms + tables — branded but cleaner than cards/hero. */
+table {
+  background: rgba(3, 12, 28, 0.6);
+  border-radius: 12px;
+  overflow: hidden;
+}
+table thead th {
+  background: linear-gradient(180deg,
+    rgba(0, 174, 240, 0.12) 0%,
+    rgba(0, 174, 240, 0.04) 100%) !important;
+  color: #b8eb45 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 900;
+  font-size: 0.72rem;
+  border-bottom: 1px solid rgba(0, 174, 240, 0.3);
+  padding: 0.6rem 0.75rem;
+}
+table tbody tr {
+  border-bottom: 1px solid rgba(0, 174, 240, 0.08);
+}
+table tbody tr:hover {
+  background: linear-gradient(90deg,
+    rgba(155, 229, 31, 0.07) 0%,
+    rgba(155, 229, 31, 0.02) 100%) !important;
+  box-shadow: inset 3px 0 0 0 rgba(155, 229, 31, 0.6) !important;
+}
+
+/* Form labels — lime/green tint app-wide for clear data hierarchy. */
+label,
+.text-gray-400,
+.text-gray-500 {
+  /* keep generic text styles untouched */
+}
+label.block,
+label.uppercase,
+label[class*="font-black"][class*="uppercase"],
+label.text-xs.uppercase {
+  color: #b8eb45 !important;
+  letter-spacing: 0.06em;
+  text-shadow: 0 0 8px rgba(155, 229, 31, 0.18);
+}
+
+/* ── 9. CTA pills — bigger lime poster button. Keeps existing
+   bg-shGreen rules but slightly thicker for primary actions. */
+button.bg-shGreen,
+a.bg-shGreen {
+  border-radius: 12px !important;
+}
+
+/* ── 10. Override prior auto-applied corner splatters — keep ONLY on
+   larger cards. The stat tiles (small grid items) get a clean look. */
+.grid > .bg-bgPanel.rounded-xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
+.grid > .bg-bgPanel.rounded-2xl:has(.text-shGreen):not(:has(.text-red-400)):not(:has(.text-shOrange))::before,
+.grid > .bg-bgPanel.rounded-xl:has(.text-shOrange):not(:has(.text-red-400))::before,
+.grid > .bg-bgPanel.rounded-2xl:has(.text-shOrange):not(:has(.text-red-400))::before,
+.grid > .bg-bgPanel.rounded-xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before,
+.grid > .bg-bgPanel.rounded-2xl:has(.text-shBlue):not(:has(.text-shGreen)):not(:has(.text-shOrange)):not(:has(.text-red-400))::before {
+  display: none;
+}
+
+/* Ensure card content always sits above splatters. */
+.bg-bgPanel.rounded-xl > *,
+.bg-bgPanel.rounded-2xl > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── 11. Page wrapper — every admin/portal page shares the textured
+   dark base. The body background already paints this; this rule just
+   makes sure any inner "page" container doesn't paint over it. */
+main,
+main > div,
+[data-testid="portal-container"],
+[data-testid="portal-container"] > div {
+  background: transparent !important;
+}
+
+/* ── 12. Modal / dialog poster look — same neon ring + grunge interior. */
+.fixed.inset-0.bg-black\/70 > div[role="dialog"],
+.fixed.inset-0.bg-black\/80 > div[role="dialog"],
+.fixed.inset-0.bg-black\/70 .bg-bgPanel,
+.fixed.inset-0.bg-black\/80 .bg-bgPanel {
+  background:
+    var(--grunge-fine),
+    linear-gradient(155deg, rgba(5, 14, 32, 0.98) 0%, rgba(1, 4, 12, 1) 100%) !important;
+  background-blend-mode: overlay, normal !important;
+  border: 2px solid rgba(0, 174, 240, 0.55) !important;
+  box-shadow:
+    0 0 28px rgba(0, 174, 240, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 32px rgba(0, 0, 0, 0.45),
+    0 28px 50px -18px rgba(0, 0, 0, 0.95) !important;
+  border-radius: 22px !important;
+}
+
+/* ── 13. Page-level hero h1 — bigger, sharper poster type. */
+h1.sh-display,
+h1.italic.uppercase {
+  font-family: var(--sh-display) !important;
+  letter-spacing: 0.01em;
+  line-height: 0.95;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.7),
+    0 0 24px rgba(0, 174, 240, 0.2),
+    0 0 60px rgba(155, 229, 31, 0.08);
+}

@@ -2821,6 +2821,28 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **Trio / Corner / Explosion PNGs** used as: body corner washes, sidebar corner accents, and the three card-cue ::before splatters (green/blue/orange semantic).
 - **Verified live** on dashboard hero — real brush-stroke paint visible behind "GOOD MORNING" headline, sidebar corner has authentic ink texture, body bottom-right shows real explosion PNG. Text fully readable.
 
+## Sprint 110dj — Training Levels poster overhaul (2026-02-14)
+**User ask**: PWA still looked like a generic SaaS dashboard. Cards/background needed to match the sithappensohiodogtraining.com "Training Levels" poster graphic style — thick neon outlines, dark gritty interior, controlled paint splatter framing, sharp diagonal brush strokes, bold uppercase titles with colored underline strokes. Styling only — no JSX edits.
+
+### What changed in `/app/frontend/src/index.css` (Sprint 110dj block, ~280 lines appended)
+- **Body background** — replaced soft radial halos with sharp diagonal grunge streaks (`repeating-linear-gradient(115deg)` + `65deg`) + SVG fractal-noise paint grain + off-axis corner color flecks. Background uses `background-blend-mode: overlay` for the noise layer. Reads as authentic gritty paper, not pastel halos.
+- **Card poster style** — `.bg-bgPanel.rounded-xl/2xl` now uses a CSS variable `--card-accent` (default lime) for border + box-shadow. 2px border, larger 22px radius, dual outer halo + inner vignette + drop shadow + grain noise overlay. Hover lifts the card and intensifies the glow.
+- **Content-aware accent** — `:has()` selectors set `--card-accent` to blue when card has only `.text-shBlue` content cue, orange when `.text-shOrange`, lime by default. Red theme is NOT auto-detected (prevented over-tinting on cards that happen to contain a red delete button).
+- **Card title strip** — first `h2/h3` inside any card gets a colored 56px underline stroke gradient + glow, with bottom padding + margin for separation between title and content. Underline color follows the card's `--card-accent`.
+- **Stat tiles** — small grid-item cards get a 16px radius + 1.5px border (tighter than large cards) and any nested icon-badge (Tailwind `w-10 h-10 rounded-lg/full` pattern) gets a colored ring shadow.
+- **Task rows** — narrowed urgent-row trigger to only fire when a child has `bg-red-500/600` (real urgent pills), not just any red text. Adds stronger 5px left stripe + red glow halo + grain interior.
+- **Hero** — sharper diagonal brush stripes via `linear-gradient` (sharp percentage stops, not soft radial halos) + real `splatter-trio.png` and `splatter-brush.png` overlays in opposite corners at ~0.16-0.22 opacity, `mix-blend-mode: screen`.
+- **Sidebar** — added grunge coarse texture as background + right-side blue glow border + brand-block gradient divider (lime → blue → lime). Inactive nav links normalized to clean uppercase 0.78rem with hover blue stripe.
+- **Tables** — header row gets blue gradient + lime uppercase column labels + row hover lime stripe + faint blue row dividers.
+- **Form labels** — uppercase labels get lime text with subtle glow.
+- **Modals** — dialogs inside `.fixed.inset-0.bg-black/70|80` get the full poster treatment (2px blue ring + grain + inner shadow + drop shadow + 22px radius).
+- **Page hero h1** — added stacked text-shadow (deep black + cyan + lime far-glow) for maximum poster impact on the biggest page titles.
+
+### Verified pages
+- Dashboard (lime owner-clock, orange closing-routine, lime "FIRST BOOKING CELEBRATION", red task list, real PNG splatters in hero).
+- Clients (CLIENT HUB. WHERE HUMANS LIVE. poster hero with multi-color brush, clean client cards no longer over-tinted red).
+- Income (INCOME & SERVICES. THE CASH STORY. poster hero, THIS WEEK stat card with semantic-colored sub-stats, LONGER-RANGE VIEW stat tiles).
+
 ## Sprint 110di+ — Referrer auto-credit verification (2026-02-14)
 - ✅ **Confirmed already-shipped feature**: `server.py` lines 3227-3295 contain the complete referrer auto-credit hook on booking checkout. Credits referrer +1 daycare credit on the referred client's first completed appointment, idempotent via `referrals` collection, dual email notifications (`notify_client_referral_payout` + `notify_client_referral_welcome`), audit-logged to `credit_adjustments`, and trophy re-evaluation for both parties.
 - ✅ **Pytest** `test_referral_auto_credit.py` — 4/4 pass: payout fires on first checkout, payout is idempotent across repeated checkouts, self-referrals blocked, signup-time `referred_by_code` is normalised.
