@@ -2848,6 +2848,12 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **Root cause**: `.bg-bgPanel.rounded-xl, .bg-bgPanel.rounded-2xl { overflow: hidden }` (Sprint 110dh) was clobbering Tailwind's `overflow-y-auto` on scrollable modal/sheet containers. Selector specificity (0,2,0) beat Tailwind's `.overflow-y-auto` (0,1,0).
 - **Fix**: Replaced `overflow: hidden` with `isolation: isolate` (same stacking-context benefit, no scroll clobber). Repositioned the corner color-cue splatter ::before pseudos from `top/right: -14px` to `top/right: 0` with `border-top-right-radius: inherit` so they stay inside the card box without needing overflow clipping. All other `overflow: hidden` instances (hero, sidebar active button, table) are non-scrollable so safe to keep.
 
+### Mobile-viewport bug fix (2026-02-14)
+- **Bug**: On mobile, the PWA started rendering the desktop layout zoomed-out ("everything small").
+- **Root cause**: iOS Safari has a long-standing bug where `background-attachment: fixed` on the body (especially with multiple fixed layers) makes the viewport ignore `width=device-width`, so the page lays out at content width then visually shrinks to fit the device. Sprint 110df set 1 fixed layer; Sprint 110dj added 7 more.
+- **Fix**: Removed `background-attachment: fixed` from both body rules. The app's scroll happens on the inner `main > div`, not body, so visual effect is identical with the default `scroll` attachment. Verified at 390px and 414px viewports: `docScrollWidth === window.innerWidth`, no horizontal overflow, desktop sidebar correctly hidden, mobile drawer active.
+- **PWA note**: Service worker may cache the old CSS — users should hard-refresh or close+reopen the installed PWA to pick up the fix.
+
 ## Sprint 110di+ — Referrer auto-credit verification (2026-02-14)
 - ✅ **Confirmed already-shipped feature**: `server.py` lines 3227-3295 contain the complete referrer auto-credit hook on booking checkout. Credits referrer +1 daycare credit on the referred client's first completed appointment, idempotent via `referrals` collection, dual email notifications (`notify_client_referral_payout` + `notify_client_referral_welcome`), audit-logged to `credit_adjustments`, and trophy re-evaluation for both parties.
 - ✅ **Pytest** `test_referral_auto_credit.py` — 4/4 pass: payout fires on first checkout, payout is idempotent across repeated checkouts, self-referrals blocked, signup-time `referred_by_code` is normalised.

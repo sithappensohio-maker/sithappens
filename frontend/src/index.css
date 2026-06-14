@@ -333,7 +333,12 @@ body {
     radial-gradient(circle at bottom right, rgba(255, 121, 0, 0.10), transparent 35%),
     radial-gradient(circle at center, rgba(0, 174, 240, 0.06), transparent 55%),
     linear-gradient(135deg, #020817 0%, #031525 55%, #020817 100%) !important;
-  background-attachment: fixed !important;
+  /* Note: background-attachment intentionally NOT set to fixed here —
+     iOS Safari has a known bug where fixed-attachment body backgrounds
+     cause the viewport to ignore `width=device-width`, rendering the
+     desktop layout shrunk on phones. Body doesn't scroll in this app
+     (the inner `main > div` does), so visual effect is identical with
+     the default `scroll`. */
 }
 
 /* Override panel cards globally — glassy navy with neon border + glow. */
@@ -936,7 +941,11 @@ body {
     radial-gradient(40% 30% at 110% 0%, rgba(0, 174, 240, 0.06), transparent 60%),
     /* Deep navy base — true near-black for the grunge to read */
     linear-gradient(160deg, #050b1d 0%, #02060f 50%, #050b1d 100%) !important;
-  background-attachment: fixed, fixed, fixed, fixed, fixed, fixed, fixed !important;
+  /* No background-attachment: fixed — iOS Safari has a known bug where
+     multiple fixed-attachment layers force the viewport to ignore
+     `width=device-width`, rendering the desktop layout shrunk on phones.
+     Body doesn't scroll in this app (the inner `main > div` does), so
+     the visual effect is identical with `scroll` (the default). */
   background-blend-mode: normal, normal, overlay, normal, normal, normal, normal;
 }
 
