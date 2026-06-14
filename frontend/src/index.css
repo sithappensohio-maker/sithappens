@@ -318,6 +318,185 @@ input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
     0 7px 0 -2px rgba(0, 0, 0, 0.55);
 }
 
+/* ── Sprint 110df — Full neon dog-training brand overhaul ──────────────
+   App-wide upgrades layered on top of the existing palette so no React
+   components need to change. Targets the standard Tailwind class
+   patterns the codebase already uses (bg-bgPanel, bg-shGreen, button
+   primaries, input fields, sidebar nav, etc.) and gives them the
+   high-energy neon treatment. */
+
+/* Branded canvas — multi-stop radial + linear so every page has subtle
+   green/orange ambient glow even on otherwise blank screens. */
+body {
+  background:
+    radial-gradient(circle at top left, rgba(155, 229, 31, 0.12), transparent 35%),
+    radial-gradient(circle at bottom right, rgba(255, 121, 0, 0.10), transparent 35%),
+    radial-gradient(circle at center, rgba(0, 174, 240, 0.06), transparent 55%),
+    linear-gradient(135deg, #020817 0%, #031525 55%, #020817 100%) !important;
+  background-attachment: fixed !important;
+}
+
+/* Override panel cards globally — glassy navy with neon border + glow. */
+.bg-bgPanel {
+  background:
+    linear-gradient(135deg, rgba(3, 18, 33, 0.94) 0%, rgba(1, 8, 20, 0.98) 100%) !important;
+}
+.bg-bgPanel.rounded-xl,
+.bg-bgPanel.rounded-2xl {
+  border: 1px solid rgba(0, 174, 240, 0.42) !important;
+  box-shadow:
+    0 0 22px rgba(0, 174, 240, 0.16),
+    inset 0 0 22px rgba(0, 174, 240, 0.05),
+    0 18px 30px -18px rgba(0, 0, 0, 0.85),
+    0 6px 0 -2px rgba(0, 0, 0, 0.45) !important;
+  border-radius: 20px !important;
+}
+.bg-bgPanel.rounded-xl:hover,
+.bg-bgPanel.rounded-2xl:hover {
+  border-color: rgba(155, 229, 31, 0.55) !important;
+  box-shadow:
+    0 0 28px rgba(155, 229, 31, 0.25),
+    inset 0 0 22px rgba(155, 229, 31, 0.06),
+    0 22px 36px -16px rgba(0, 0, 0, 0.9),
+    0 7px 0 -2px rgba(0, 0, 0, 0.55) !important;
+}
+
+/* Primary CTA — auto-promote bg-shGreen buttons to lime pill style. */
+button.bg-shGreen,
+a.bg-shGreen,
+.bg-shGreen.text-bgHeader,
+.bg-shGreen.text-black {
+  background: linear-gradient(135deg, #b8ff28 0%, #74c900 100%) !important;
+  color: #06111d !important;
+  border: 1.5px solid rgba(183, 255, 52, 0.85) !important;
+  box-shadow: 0 0 18px rgba(155, 229, 31, 0.42),
+              inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+button.bg-shGreen:hover,
+a.bg-shGreen:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 26px rgba(155, 229, 31, 0.6),
+              inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+}
+
+/* Secondary buttons — outline navy with electric-blue border + glow. */
+button.border-bgHover,
+.border.border-bgHover.text-gray-200 {
+  border-color: rgba(0, 174, 240, 0.55) !important;
+  box-shadow: 0 0 12px rgba(0, 174, 240, 0.18) !important;
+  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+button.border-bgHover:hover,
+.border.border-bgHover.text-gray-200:hover {
+  border-color: rgba(0, 174, 240, 1) !important;
+  background: rgba(0, 174, 240, 0.10) !important;
+  box-shadow: 0 0 18px rgba(0, 174, 240, 0.35) !important;
+}
+
+/* Form fields — dark navy with electric-blue accent + focus glow. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+textarea,
+select {
+  background: rgba(2, 8, 23, 0.82) !important;
+  border: 1px solid rgba(0, 174, 240, 0.35) !important;
+  color: #ffffff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):focus,
+textarea:focus,
+select:focus {
+  border-color: rgba(0, 174, 240, 0.95) !important;
+  box-shadow: 0 0 0 3px rgba(0, 174, 240, 0.22),
+              0 0 14px rgba(0, 174, 240, 0.4) !important;
+  outline: none !important;
+}
+
+/* Sidebar nav — lime active indicator. Targets the existing data-testid
+   nav-link pattern by detecting the active class set in App.js. */
+nav button[data-testid^="nav-"],
+nav a[data-testid^="nav-"],
+aside button[data-testid^="nav-"],
+aside a[data-testid^="nav-"] {
+  position: relative;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+nav button[data-testid^="nav-"].bg-shGreen,
+nav a[data-testid^="nav-"].bg-shGreen,
+aside button[data-testid^="nav-"].bg-shGreen,
+aside a[data-testid^="nav-"].bg-shGreen {
+  background: linear-gradient(90deg,
+              rgba(155, 229, 31, 0.18) 0%,
+              rgba(155, 229, 31, 0.06) 50%,
+              transparent 100%) !important;
+  color: #b8ff28 !important;
+  border: none !important;
+  box-shadow: inset 4px 0 0 0 #b8ff28,
+              0 0 18px -4px rgba(155, 229, 31, 0.5) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+/* Tables — alternating dark navy rows + lime hover border. */
+table tbody tr {
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+table tbody tr:nth-child(odd) {
+  background: rgba(3, 18, 33, 0.45);
+}
+table tbody tr:hover {
+  background: rgba(155, 229, 31, 0.06) !important;
+  box-shadow: inset 0 0 0 1px rgba(155, 229, 31, 0.35) !important;
+}
+
+/* Status pills — semantic glow per state. */
+.bg-red-500\/15,
+.bg-red-500\/20 {
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.3),
+              inset 0 0 12px rgba(244, 63, 94, 0.08) !important;
+}
+.bg-shOrange\/15,
+.bg-amber-500\/15 {
+  box-shadow: 0 0 12px rgba(255, 121, 0, 0.28),
+              inset 0 0 12px rgba(255, 121, 0, 0.08) !important;
+}
+.bg-shGreen\/10,
+.bg-shGreen\/15 {
+  box-shadow: 0 0 12px rgba(155, 229, 31, 0.28),
+              inset 0 0 12px rgba(155, 229, 31, 0.08) !important;
+}
+.bg-shBlue\/10,
+.bg-shBlue\/15 {
+  box-shadow: 0 0 12px rgba(0, 174, 240, 0.28),
+              inset 0 0 12px rgba(0, 174, 240, 0.08) !important;
+}
+
+/* Major page-section headers — promote to athletic poster style without
+   touching components. Catches the "uppercase italic font-black + 2xl/lg
+   text" pattern the codebase uses for section titles. */
+h2.uppercase.italic,
+h3.uppercase.italic,
+.text-2xl.uppercase.italic,
+.text-3xl.uppercase.italic {
+  font-family: var(--sh-display);
+  letter-spacing: 0.015em;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.55),
+               0 0 16px rgba(0, 174, 240, 0.18);
+}
+
+/* Modal backdrops + dialogs — same glassy navy feel. */
+.fixed.inset-0.bg-black\/70,
+.fixed.inset-0.bg-black\/80 {
+  background:
+    radial-gradient(circle at center, rgba(0, 174, 240, 0.08), transparent 60%),
+    rgba(2, 8, 23, 0.84) !important;
+  backdrop-filter: blur(6px) saturate(120%);
+}
+
+
 
 .sh-card-glow {
   border-width: 1.5px; border-style: solid; border-radius: 12px;

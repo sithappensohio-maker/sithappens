@@ -30,6 +30,35 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110df — Full neon dog-training brand overhaul (2026-06-10)
+**User ask**: Comprehensive UI restyle to match the website — dark navy/black grunge, electric blue accents, lime green highlights, orange splashes, athletic typography, neon glow borders, paw energy. Don't change functionality / routing / data.
+
+### Strategy
+Pure CSS layer dropped into `index.css` — zero React component edits. Targets the Tailwind class patterns the codebase already uses (`bg-bgPanel`, `bg-shGreen`, `border-bgHover`, sidebar nav `data-testid="nav-*"`, tables, status pills, modals) and gives them the high-energy neon treatment.
+
+### What changed
+- **Branded canvas** — multi-stop radial-gradients (lime top-left, orange bottom-right, blue center halo) over deep navy, applied to `body` with `background-attachment: fixed` so every page has subtle ambient glow.
+- **Cards** — glassy linear-gradient navy panel + 1px electric-blue border + cyan glow + inset highlight + deep drop shadow. Hover state shifts the border to lime green.
+- **Primary buttons** — every `bg-shGreen` button auto-promoted to lime gradient pill with strong green glow + uppercase weight + lift-on-hover. Matches the public site's "BOOK NOW" exactly.
+- **Secondary buttons** — `border-bgHover` outlined buttons get an electric-blue border + cyan glow; hover deepens the blue.
+- **Form fields** — every `<input>` / `<textarea>` / `<select>` gets dark navy bg + electric-blue border + focus glow (no outline, 3px focus ring).
+- **Sidebar nav** — active nav items (caught by the existing `.bg-shGreen` class on `data-testid^="nav-"`) now show a 4px lime-green left indicator bar + gradient lime background + lime text glow.
+- **Tables** — alternating dark navy rows + lime-glow hover state + lime border-inset.
+- **Status pills** — semantic neon glow per state: red (`bg-red-500/15`), orange (`bg-shOrange/15`), green (`bg-shGreen/10`), blue (`bg-shBlue/10`).
+- **Section headers** — `h2.uppercase.italic` / `h3.uppercase.italic` / `text-2xl.uppercase.italic` promoted to the Bowlby One SC display font with subtle blue text-glow shadow.
+- **Modal backdrops** — radial cyan halo + blur + saturation for the dialog overlay.
+
+### Verified live
+Dashboard screenshot shows the full transformation: lime-pill CLOCK IN button, neon-bordered cards, glowing status pills, sidebar with lime-active indicator, chunky display heading, ambient gradient canvas. No layouts shifted, no functionality broken.
+
+### Why it's safe
+- Pure CSS — no React component changes, no removed `data-testid`s, no route changes.
+- All overrides use `!important` only where Tailwind utility classes need defeat; structural layout properties (display, position, sizing) are untouched.
+- The Settings theme picker still works — `--sh-green/-blue/-orange` CSS vars are preserved.
+
+
+
+
 ## Sprint 110de — Real paint-splatter PNGs + 3D card depth + multicolor outlines (2026-06-10)
 **User asks**: Use the splatter PNGs they sent + outline cards with brand colors + deeper 3D effect.
 
