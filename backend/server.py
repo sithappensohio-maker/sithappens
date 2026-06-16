@@ -2861,6 +2861,7 @@ async def check_out(
         raise HTTPException(status_code=404, detail="Booking not found")
     body = body or CheckoutIn()
     ts = now_iso()
+    settings = await get_settings()  # Sprint 110dk — stay-pricing rules
     update: Dict[str, Any] = {
         "checked_out_at": ts,
         "status": "completed",
@@ -2876,8 +2877,13 @@ async def check_out(
 
     # Resolve a sensible service value for income tracking. Admin's manual
     # base_price wins; otherwise fall back to the booking's default service price.
-    # For BOARDING the per-night rate is multiplied by the actual nights stayed
-    # so a 3-night boarding at $50/night auto-prefills as $150.
+    # Sprint 110dk — auto-price daycare AND boarding from actual check-in /
+    # check-out timestamps. Half-day rule:
+    #   - DAYCARE: if total hours ≤ daycare_half_day_max_hours → half_day_pct% of base
+    #   - BOARDING: nights = floor((co - ci) / 24h); remainder hours decide if
+    #     the trailing partial day is a full day (> threshold) or half day (≤).
+    # Falls back to the prior calendar-night calc if either timestamp is missing
+    # or stay_pricing_enabled is off.
     # Sprint 110am — when no manual override is given, look up the client's
     # legacy-pricing rate so grandfathered customers keep their locked price.
     async def _resolve_service_value(default_for_zero: float = 0.0) -> float:
@@ -2896,14 +2902,52 @@ async def check_out(
                 list_price,
             )
             unit_price = pricing["effective_price"]
-            if booking.get("service_type") == "boarding":
-                try:
-                    start_d = date.fromisoformat(booking.get("date"))
-                    end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
-                    nights_stayed = max(1, (end_d - start_d).days or 1)
-                except Exception:
-                    nights_stayed = 1
-                return unit_price * nights_stayed
+            svc_type = booking.get("service_type")
+            if svc_type in ("boarding", "daycare"):
+                rules = (settings.get("booking_rules") or {})
+                stay_enabled = bool(rules.get("stay_pricing_enabled", True))
+                half_pct = float(rules.get("half_day_pct", 50)) / 100.0
+                ci = booking.get("checked_in_at")
+                co_ts = ts  # this checkout timestamp
+                if stay_enabled and ci and co_ts:
+                    try:
+                        ci_dt = datetime.fromisoformat(ci.replace("Z", "+00:00"))
+                        co_dt = datetime.fromisoformat(co_ts.replace("Z", "+00:00"))
+                        total_hours = max(0.0, (co_dt - ci_dt).total_seconds() / 3600.0)
+                    except Exception:
+                        total_hours = None
+                    if total_hours is not None:
+                        if svc_type == "daycare":
+                            max_half_h = float(rules.get("daycare_half_day_max_hours", 5))
+                            if total_hours <= max_half_h:
+                                return round(unit_price * half_pct, 2)
+                            return round(unit_price, 2)
+                        # boarding
+                        max_half_h = float(rules.get("boarding_half_day_max_hours", 12))
+                        nights = int(total_hours // 24)
+                        remainder_h = total_hours - (nights * 24)
+                        full_units = nights
+                        half_units = 0
+                        # 6-minute tolerance — ignore tiny remainders from clock
+                        # skew (network latency between back-dated check-in and
+                        # checkout-now timestamps).
+                        if remainder_h > max_half_h:
+                            full_units += 1
+                        elif remainder_h > 0.1:
+                            half_units = 1
+                        # Always charge at least 1 unit (even if dog leaves same day)
+                        if full_units == 0 and half_units == 0:
+                            half_units = 1
+                        return round(unit_price * full_units + unit_price * half_pct * half_units, 2)
+                # Fallback (pre-timestamp bookings) — calendar nights for boarding.
+                if svc_type == "boarding":
+                    try:
+                        start_d = date.fromisoformat(booking.get("date"))
+                        end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
+                        nights_stayed = max(1, (end_d - start_d).days or 1)
+                    except Exception:
+                        nights_stayed = 1
+                    return round(unit_price * nights_stayed, 2)
             return unit_price
         return default_for_zero
 
@@ -3041,8 +3085,10 @@ async def check_out(
                 if default_svc:
                     update["service_id"] = default_svc["id"]
                     update["service_name"] = default_svc["name"]
-                    unit_price = float(default_svc.get("base_price") or 0)
-                    base_price = _maybe_apply_nights(unit_price)
+                    # Sprint 110dk — use the stay-pricing aware resolver so
+                    # boarding/daycare auto-bill from actual check-in/out hours
+                    # and the configurable half-day rules.
+                    base_price = await _resolve_service_value(0.0)
                     update["actual_price"] = round(base_price, 2)
         else:
             base_price = float(booking.get("actual_price") or 0)
@@ -3589,6 +3635,14 @@ def _default_settings() -> dict:
             "daycare_cost": 1,
             "boarding_cost_per_night": 1,
             "training_cost": 1,
+            # Sprint 110dk — auto-price stays at checkout based on actual
+            # check-in / check-out timestamps. Settings define what counts
+            # as a "half day" vs "whole day" for each service. half_day_pct
+            # is applied to the service's full-day base_price.
+            "stay_pricing_enabled": True,
+            "half_day_pct": 50,            # half-day bills at 50% of full rate
+            "daycare_half_day_max_hours": 5,    # daycare stays ≤ 5h = half day
+            "boarding_half_day_max_hours": 12,  # boarding final-day ≤ 12h since prior midnight = half day surcharge
         },
         "required_vaccines": DEFAULT_VACCINES,
         "vaccine_warning_days": 30,
@@ -3668,6 +3722,12 @@ async def get_settings() -> dict:
         for lk, lv in (defaults.get("client_portal_links") or {}).items():
             if lk not in s["client_portal_links"]:
                 s["client_portal_links"][lk] = lv
+                changed = True
+    # Sprint 110dk — backfill new booking_rules keys (stay-pricing thresholds)
+    if isinstance(s.get("booking_rules"), dict):
+        for bk, bv in (defaults.get("booking_rules") or {}).items():
+            if bk not in s["booking_rules"]:
+                s["booking_rules"][bk] = bv
                 changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)

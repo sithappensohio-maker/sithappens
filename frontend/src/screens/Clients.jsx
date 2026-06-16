@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -315,48 +315,25 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                     className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
               <i className="fas fa-eye"/>Quick portal snapshot
             </button>
-            <button onClick={()=>sendClaimEmail(c)} data-testid={`send-claim-email-${c.id}`}
-                    className="mt-2 w-full bg-shGreen text-bgHeader py-2 rounded text-[14px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90">
-              <i className="fas fa-envelope mr-1"/>{c.portal_email ? "Send password reset email" : "Send claim account email"}
-            </button>
             {claimToast && claimToast.clientId === c.id && (
               <div data-testid={`claim-toast-${c.id}`}
                    className={`mt-2 text-[14px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shGreen/15 text-shGreen" : "bg-yellow-500/15 text-yellow-300"}`}>
                 <i className={`fas ${claimToast.tone === "ok" ? "fa-check" : "fa-exclamation-triangle"} mr-1`} />{claimToast.msg}
               </div>
             )}
-            <button onClick={()=>openPortal(c)} data-testid={`portal-credentials-${c.id}`}
-                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
-              {c.portal_email ? "Manually set portal password" : "Manually create portal login"}
-            </button>
-            <button onClick={()=>setSellOpen(c)} data-testid={`sell-pack-${c.id}`}
-                    className="mt-2 w-full bg-shGreen/10 text-shGreen py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
-              <i className="fas fa-coins mr-1"/>Sell Credit Pack
-            </button>
-            <button onClick={()=>setSellProgramOpen(c)} data-testid={`sell-program-${c.id}`}
-                    className="mt-2 w-full bg-purple-500/10 text-purple-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/20">
-              <i className="fas fa-graduation-cap mr-1"/>Sell Training Program
-            </button>
-            <button onClick={()=>setAdjustOpen(c)} data-testid={`adjust-credits-${c.id}`}
-                    className="mt-2 w-full bg-shOrange/10 text-shOrange py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shOrange/20">
-              <i className="fas fa-plus-minus mr-1"/>Adjust Credits
-            </button>
-            <button onClick={()=>setReceiptsOpen(c)} data-testid={`receipts-${c.id}`}
-                    className="mt-2 w-full bg-bgHover/40 text-gray-300 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-bgHover/70 hover:text-white">
-              <i className="fas fa-receipt mr-1"/>Receipts
-            </button>
-            <button onClick={()=>setFilesOpen(c)} data-testid={`files-${c.id}`}
-                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
-              <i className="fas fa-folder-open mr-1"/>Files & Homework
-            </button>
-            <button onClick={()=>setLegacyOpen(c)} data-testid={`legacy-pricing-${c.id}`}
-                    className="mt-2 w-full bg-amber-500/10 text-amber-400 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-amber-500/20">
-              <i className="fas fa-lock mr-1"/>Legacy Pricing
-            </button>
-            <button onClick={()=>setLotsOpen(c)} data-testid={`view-pack-lots-${c.id}`}
-                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/20">
-              <i className="fas fa-layer-group mr-1"/>View Pack Lots
-            </button>
+            <ClientActionsMenu
+              clientId={c.id}
+              hasPortal={!!c.portal_email}
+              onSendClaim={()=>sendClaimEmail(c)}
+              onSetPassword={()=>openPortal(c)}
+              onSellPack={()=>setSellOpen(c)}
+              onSellProgram={()=>setSellProgramOpen(c)}
+              onAdjustCredits={()=>setAdjustOpen(c)}
+              onReceipts={()=>setReceiptsOpen(c)}
+              onFiles={()=>setFilesOpen(c)}
+              onLegacy={()=>setLegacyOpen(c)}
+              onPackLots={()=>setLotsOpen(c)}
+            />
             {/* Sprint 110ch — Payment plans for big-ticket items */}
             <div className="mt-3 pt-3 border-t border-bgHover">
               <AdminClientPaymentPlans clientId={c.id} />
@@ -1477,3 +1454,90 @@ function ClientStatusPill({ status, clientId, onChange }) {
 }
 
 
+
+
+// ─── Sprint 110dk — Collapse client card action buttons into one popover ────
+// Single "MANAGE CLIENT ▾" button that opens a floating menu of every
+// secondary admin action. Reduces client-card scroll by ~75%. Color cues
+// preserved per item so visual scanning still works.
+function ClientActionsMenu({
+  clientId, hasPortal,
+  onSendClaim, onSetPassword, onSellPack, onSellProgram,
+  onAdjustCredits, onReceipts, onFiles, onLegacy, onPackLots,
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, [open]);
+
+  const fire = (fn) => () => { setOpen(false); fn && fn(); };
+
+  const items = [
+    { label: hasPortal ? "Send password reset email" : "Send claim account email",
+      icon: "fa-envelope", color: "text-shGreen", onClick: onSendClaim,
+      testId: `menu-send-claim-${clientId}` },
+    { label: hasPortal ? "Manually set portal password" : "Manually create portal login",
+      icon: "fa-key", color: "text-shBlue", onClick: onSetPassword,
+      testId: `menu-set-password-${clientId}` },
+    { divider: true },
+    { label: "Sell Credit Pack", icon: "fa-coins", color: "text-shGreen",
+      onClick: onSellPack, testId: `menu-sell-pack-${clientId}` },
+    { label: "Sell Training Program", icon: "fa-graduation-cap", color: "text-purple-300",
+      onClick: onSellProgram, testId: `menu-sell-program-${clientId}` },
+    { label: "Adjust Credits", icon: "fa-plus-minus", color: "text-shOrange",
+      onClick: onAdjustCredits, testId: `menu-adjust-credits-${clientId}` },
+    { divider: true },
+    { label: "Receipts", icon: "fa-receipt", color: "text-gray-300",
+      onClick: onReceipts, testId: `menu-receipts-${clientId}` },
+    { label: "Files & Homework", icon: "fa-folder-open", color: "text-shBlue",
+      onClick: onFiles, testId: `menu-files-${clientId}` },
+    { label: "Legacy Pricing", icon: "fa-lock", color: "text-amber-400",
+      onClick: onLegacy, testId: `menu-legacy-${clientId}` },
+    { label: "View Pack Lots", icon: "fa-layer-group", color: "text-shBlue",
+      onClick: onPackLots, testId: `menu-pack-lots-${clientId}` },
+  ];
+
+  return (
+    <div ref={wrapRef} className="relative mt-2">
+      <button onClick={()=>setOpen(o=>!o)}
+              data-testid={`manage-client-toggle-${clientId}`}
+              aria-expanded={open}
+              className="w-full bg-bgBase border-2 border-shBlue/60 text-shBlue py-2.5 rounded text-[15px] font-black uppercase tracking-widest hover:border-shBlue hover:bg-shBlue/10 flex items-center justify-center gap-2 transition shadow-[0_0_14px_rgba(0,174,240,0.25)]">
+        <i className="fas fa-bars-staggered" />
+        Manage Client
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] transition-transform`} />
+      </button>
+      {open && (
+        <div data-testid={`manage-client-menu-${clientId}`}
+             role="menu"
+             className="absolute z-30 left-0 right-0 mt-2 bg-bgBase border-2 border-shBlue/60 rounded-lg shadow-[0_24px_44px_-12px_rgba(0,0,0,0.95),0_0_26px_rgba(0,174,240,0.32)] overflow-hidden">
+          {items.map((it, i) => it.divider ? (
+            <div key={`d${i}`} className="h-px bg-bgHover" />
+          ) : (
+            <button key={it.label}
+                    role="menuitem"
+                    onClick={fire(it.onClick)}
+                    data-testid={it.testId}
+                    className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-bgHover/60 transition group">
+              <i className={`fas ${it.icon} ${it.color} w-4 text-center`} />
+              <span className={`text-[14px] font-black uppercase tracking-widest ${it.color}`}>{it.label}</span>
+              <i className="fas fa-chevron-right ml-auto text-[10px] text-gray-600 group-hover:text-gray-300 transition" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

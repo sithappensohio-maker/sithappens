@@ -2821,6 +2821,42 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **Trio / Corner / Explosion PNGs** used as: body corner washes, sidebar corner accents, and the three card-cue ::before splatters (green/blue/orange semantic).
 - **Verified live** on dashboard hero — real brush-stroke paint visible behind "GOOD MORNING" headline, sidebar corner has authentic ink texture, body bottom-right shows real explosion PNG. Text fully readable.
 
+## Sprint 110dk — Client card cleanup + Boarding/daycare auto-pricing (2026-02-15)
+**User asks**:
+1. Collapse the stack of 10+ action buttons on each client card into a single popover/menu — cards were absurdly tall and scrolly.
+2. At check-out, auto-multiply boarding/daycare cost based on **actual** check-in / check-out timestamps, with admin-configurable settings for "half day vs whole day" thresholds.
+3. (Skipped per user) #1+#5 P&L lockdown and #3 sell-individual-credits — user said they can configure / not needed right now.
+
+### Backend changes (`/app/backend/server.py`)
+- **New `booking_rules` settings** with defaults backfilled on existing installs:
+  - `stay_pricing_enabled: bool` (default `True`) — master switch.
+  - `half_day_pct: int` (default `50`) — half-day bills at 50% of the full-day rate.
+  - `daycare_half_day_max_hours: float` (default `5`) — daycare stays ≤ this = half day.
+  - `boarding_half_day_max_hours: float` (default `12`) — boarding trailing remainder > this = +full day, ≤ this = +half day.
+- **`_resolve_service_value()` rewritten** to read `checked_in_at` + checkout `ts` and compute:
+  - **Daycare**: `total_hours = co - ci`; if `total_hours ≤ daycare_half_day_max_hours` → `unit_price × half_pct%`, else `unit_price`.
+  - **Boarding**: `nights = floor(total_hours / 24)`, `remainder = total_hours - nights*24`. If `remainder > boarding_half_day_max_hours` → +1 full day. Elif `remainder > 6min tolerance` → +half day. Always charge at least 1 unit (same-day check-outs). 6-minute float tolerance prevents clock-skew from triggering phantom half-days on exact-multiple-of-24h stays.
+  - Falls back to the prior calendar-night calc when timestamps are missing or `stay_pricing_enabled = False`.
+- **`will_charge` path also routed through `_resolve_service_value`** — previously this paid-today branch used its own `_maybe_apply_nights` helper that hadn't been updated, so all my logic was being bypassed for cash/card check-outs. Now both credit-pays and cash-pays use the same stay-pricing math.
+- **`get_settings()` nested backfill** added for `booking_rules` keys so the new settings appear in the UI for existing installs without requiring a settings save first.
+
+### Frontend changes
+- **`/app/frontend/src/screens/Clients.jsx`**:
+  - Built a new `<ClientActionsMenu>` component (~70 lines) — a floating popover anchored to a single "**MANAGE CLIENT ▾**" button. Click-outside + Escape-key dismissal. Menu items grouped by section with dividers: portal actions (claim/reset, set password), sell actions (pack, training, adjust credits), data actions (receipts, files & homework, legacy pricing, pack lots). Each item keeps its color cue (lime/blue/orange/purple/amber/gray) so visual scanning still works.
+  - Removed 10 stacked buttons from the card body, replacing them with the single Manage Client trigger. `VIEW PORTAL AS CLIENT` (primary, yellow) and `QUICK PORTAL SNAPSHOT` (secondary, blue) stay visible.
+  - Card height dropped by ~75% — the user-reported "extremely scrolly client card" is gone.
+- **`/app/frontend/src/screens/Settings.jsx`**:
+  - Added a new `<Section title="Stay-duration pricing">` under Booking Rules → directly below Credit Costs. Controls: auto-price toggle, half-day rate %, daycare half-day max hours, boarding half-day max hours. Inline explainer copy and an admin-override note.
+
+### Tests (`/app/backend/tests/test_stay_pricing.py` — 6 new pytests)
+- `test_boarding_three_nights_exact` — 72h → $50 × 3 = $150 ✅
+- `test_boarding_two_nights_plus_late_checkout` — 62h (2 nights + 14h > 12h threshold) → 3 × $50 = $150 ✅
+- `test_boarding_one_night_plus_early_pickup` — 30h (1 night + 6h ≤ 12h threshold) → 1.5 × $50 = $75 ✅
+- `test_daycare_half_day` — 4h (≤ 5h threshold) → $40 × 50% = $20 ✅
+- `test_daycare_full_day` — 8h (> 5h threshold) → $40 ✅
+- `test_manual_base_price_override_wins` — admin-entered amount always trumps auto-pricing ✅
+- **All 6 pass, plus 7 existing tests still pass** — no regressions in referral / legacy / bulk-pack flows.
+
 ## Sprint 110dj — Training Levels poster overhaul (2026-02-14)
 **User ask**: PWA still looked like a generic SaaS dashboard. Cards/background needed to match the sithappensohiodogtraining.com "Training Levels" poster graphic style — thick neon outlines, dark gritty interior, controlled paint splatter framing, sharp diagonal brush strokes, bold uppercase titles with colored underline strokes. Styling only — no JSX edits.
 
