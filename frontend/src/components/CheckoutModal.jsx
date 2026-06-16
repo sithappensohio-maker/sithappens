@@ -146,8 +146,14 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const cartItems = Object.values(cart);
   const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
 
+  // Sprint 110eg — When paying with credits, the `basePrice` input is
+  // interpreted as the EXTRA cash to charge today on top of credits
+  // (matches the relabelled "Additional cash charge" field). For non-credit
+  // checkouts, it's the standard base-price override.
+  const extraCashOnCredits = useCredits && basePrice !== "" ? Number(basePrice) : 0;
+
   let basePreview = 0;
-  if (basePrice !== "") {
+  if (basePrice !== "" && !useCredits) {
     basePreview = Number(basePrice) || 0;
   } else if (useCredits && hadCredit && creditAmt > 0) {
     basePreview = creditAmt;
@@ -169,7 +175,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       multiDogDiscount = Math.min(basePreview, Math.round(d.value * 100) / 100);
     }
   }
-  const chargedToday = Math.max(0, (useCredits ? 0 : basePreview) + addOnTotal + extraNightsCharge - multiDogDiscount);
+  // What hits today's P&L. For credit checkouts: extra cash on top + add-ons +
+  // extra-night cash charges. For non-credit: full base + add-ons + extras.
+  const chargedToday = Math.max(
+    0,
+    (useCredits ? extraCashOnCredits : basePreview) + addOnTotal + extraNightsCharge - multiDogDiscount,
+  );
 
   const submit = async () => {
     setBusy(true); setErr("");
@@ -186,18 +197,26 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         body.extra_nights_use_credits = extraUseCredits;
         if (extraRate !== "") body.extra_nights_rate = Number(extraRate);
       }
+      // Sprint 110eg — When checking out with credits, the `basePrice`
+      // input now represents the ADDITIONAL cash charge on top of credits
+      // (label says so). Convert it back to the booking's notional total
+      // (credit value + extra) so backend semantics stay unchanged:
+      // `_cash_revenue` = actual_price − credit_value = the extra slice.
+      const extraOnCredits = useCredits && basePrice !== "" ? Number(basePrice) : 0;
+      const notionalBaseForCredits = creditAmt + extraOnCredits;
+
       if (!useCredits) {
         body.payment_method = payMethod;
         body.payment_status = "paid";
         if (basePrice !== "") body.base_price = Number(basePrice);
       } else if (!hadCredit) {
-        if (basePrice !== "") body.base_price = Number(basePrice);
+        if (basePrice !== "") body.base_price = notionalBaseForCredits;
       } else if (extraNightsCharge > 0) {
         body.payment_method = payMethod;
         body.payment_status = "paid";
-        if (basePrice !== "") body.base_price = Number(basePrice);
+        if (basePrice !== "") body.base_price = notionalBaseForCredits;
       } else {
-        if (basePrice !== "") body.base_price = Number(basePrice);
+        if (basePrice !== "") body.base_price = notionalBaseForCredits;
       }
       // Silent geolocation capture (audit trail)
       try {
@@ -418,16 +437,16 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
           <div>
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
-              {useCredits ? "Service value (for income tracking)" : "Base price"}
-              <span className="text-gray-600"> (blank = use service default)</span>
+              {useCredits ? "Additional cash charge (optional)" : "Base price"}
+              <span className="text-gray-600"> {useCredits ? "(blank = $0 — credits cover everything)" : "(blank = use service default)"}</span>
             </label>
             <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
-                   placeholder={basePreview ? `$${basePreview.toFixed(2)}` : "$0.00"}
+                   placeholder={useCredits ? "$0.00" : (basePreview ? `$${basePreview.toFixed(2)}` : "$0.00")}
                    className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
             {useCredits && (
               <p className="text-[13px] text-gray-500 mt-1.5 normal-case">
                 <i className="fas fa-circle-info text-shGreen mr-1"/>
-                Credit is still consumed from the client's pack. This dollar amount is recorded as today's income so the daily/weekly totals stay accurate.
+                Credits cover the visit — <strong className="text-white">no money hits today's P&amp;L</strong>. The pack sale already counted that revenue. Only enter an amount above if you're charging extra today (paid add-on, overage, tip).
               </p>
             )}
           </div>
@@ -445,6 +464,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 {discountPreview?.discount?.mode === "percent" && (
                   <span className="text-gray-500 normal-case ml-1">({discountPreview.discount.value}% off)</span>
                 )}
+              </p>
+            )}
+            {useCredits && extraCashOnCredits > 0 && (
+              <p className="text-[12px] uppercase tracking-widest text-shGreen font-black" data-testid="checkout-extra-cash">
+                + Extra cash · ${extraCashOnCredits.toFixed(2)}
               </p>
             )}
             {useCredits && hadCredit && <p className="text-[12px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}

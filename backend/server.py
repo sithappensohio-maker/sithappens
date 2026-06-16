@@ -10485,7 +10485,10 @@ async def admin_income_csv(
         ["Date", "Type", "Client", "Dog", "Service / Pack", "Amount (USD)", "Payment method", "Payment status", "Booking/Lot ID"]
     ]
     for b in paid_bookings:
-        amt = float(b.get("actual_price") or b.get("credit_value") or 0)
+        # Sprint 110eg — Universal cash-basis: only the cash portion counts.
+        # Credit redemptions produce $0 here; the original pack sale is
+        # already represented via the matching retail_sales row below.
+        amt = _cash_revenue(b)
         if amt <= 0:
             continue
         out_rows.append([
@@ -11829,17 +11832,50 @@ async def _get_pos_credit_pack_lot_ids() -> set:
 
 
 def _is_pos_credit_pack_redemption(booking: dict, pos_lot_ids: set) -> bool:
-    """Return True if booking consumed a Sprint 110cs grandfathered credit
-    pack (revenue already recognized at sale). Skipped for training-program
-    sessions, which have their own tile."""
+    """Sprint 110eg — Universal cash-basis rule: ANY booking paid by credits
+    counts as a credit redemption (NOT a cash sale). The original revenue
+    was recognized at credit-pack sale-time via the matching `retail_sales`
+    row, so the redemption itself is informational only.
+
+    Training-program sessions are still detected separately (they have their
+    own "Training Revenue" tile / sale path).
+
+    The `pos_lot_ids` arg is retained for signature compatibility but no
+    longer required to identify a redemption.
+    """
     if booking.get("is_prepaid_program_session"):
         return False
-    if booking.get("payment_method") != "credits":
-        return False
-    for lid in (booking.get("credit_lot_ids") or []):
-        if lid in pos_lot_ids:
-            return True
-    return False
+    return booking.get("payment_method") == "credits"
+
+
+def _cash_revenue(booking: dict) -> float:
+    """Sprint 110eg — Returns the cash portion of a booking's revenue for
+    P&L purposes. The rule, applied app-wide:
+
+      • Cash/card paid bookings → full `actual_price` counts.
+      • Credit-paid bookings → only the cash amount charged ON TOP of
+        credits counts (i.e. add-ons or admin override at checkout).
+        Pure credit burns return $0.
+      • Pre-paid training-program sessions → always $0 (revenue already
+        recognized as Training Revenue when the program was sold).
+
+    `actual_price` on a credit-paid booking holds the booking's notional
+    value (≥ credit_value). Cash revenue = max(0, actual_price -
+    credit_value). When the admin types a base_price override AND/OR adds
+    a paid add-on at checkout, the override + add-ons stack into
+    actual_price; the delta over credit_value is the cash piece.
+    """
+    if booking.get("is_prepaid_program_session"):
+        return 0.0
+    actual = float(booking.get("actual_price") or 0)
+    if booking.get("payment_method") == "credits":
+        credit_value = float(booking.get("credit_value") or 0)
+        return max(0.0, round(actual - credit_value, 2))
+    # Legacy data: actual_price empty but credit_value populated → still
+    # treat as $0 (no cash event).
+    if not actual and float(booking.get("credit_value") or 0) > 0:
+        return 0.0
+    return round(actual, 2)
 
 
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
@@ -11933,14 +11969,15 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
-        # Skip price contribution for training-program credit redemptions to
-        # avoid double-counting (program revenue is in retail_sales).
+        # Sprint 110eg — Universal cash-basis: revenue is the CASH portion
+        # only (`_cash_revenue` returns $0 for pure credit redemptions, and
+        # any cash over-and-above for credit + add-on / override checkouts).
         is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
         is_pos_credit_pack = _is_pos_credit_pack_redemption(r, pos_lot_ids)
-        # The nominal "what would they have paid" value, captured BEFORE we
-        # zero it out so we can surface it on the redemption tile.
+        # `nominal_price` preserved for the informational "Credits Redeemed"
+        # tile (we still want to show operational burn value).
         nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
-        price = 0.0 if (is_program_credit or is_pos_credit_pack) else nominal_price
+        price = _cash_revenue(r)
         if r.get("status") == "completed":
             completed_total += price
             completed_count += 1
@@ -11958,7 +11995,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
 
         # Don't pollute by_service with $0 program-redemption rows.
         if is_program_credit or is_pos_credit_pack:
-            continue
+            # …unless there's an add-on / override cash slice above $0
+            # (e.g. credit-redeemed daycare with a $5 nail-trim add-on).
+            if price <= 0:
+                continue
         svc_key, svc_name = _bucket_key(r)
         b = by_service.setdefault(svc_key, {"name": svc_name, "count": 0, "total": 0.0})
         # Prefer the catalog-derived display name when one bucket has it
@@ -12066,10 +12106,11 @@ async def summary_range(
     for r in rows:
         if r.get("status") in ("cancelled", "rejected"):
             continue
+        # Sprint 110eg — Universal cash-basis (see weekly_summary above).
         is_program_credit = _is_program_credit_redemption(r, program_lot_ids)
         is_pos_credit_pack = _is_pos_credit_pack_redemption(r, pos_lot_ids)
         nominal_price = float(r.get("actual_price") or r.get("credit_value") or 0)
-        price = 0.0 if (is_program_credit or is_pos_credit_pack) else nominal_price
+        price = _cash_revenue(r)
         if r.get("status") == "completed":
             completed_total += price
             by_day[r["date"]] = round(by_day.get(r["date"], 0) + price, 2)
@@ -14521,11 +14562,22 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # explicitly 0) is the source of truth. Don't fall back to catalog
         # defaults — that was producing phantom revenue after the admin
         # checked out at $0 (e.g. training visits paid by package).
+        # Sprint 110eg — Use the cash-portion helper so credit redemptions
+        # don't inflate today's revenue (no money actually changed hands).
         if is_completed:
-            revenue += float(b.get("actual_price") or 0)
-            catalog_forecast += float(b.get("actual_price") or 0)
+            cash_today = _cash_revenue(b)
+            revenue += cash_today
+            catalog_forecast += cash_today
             continue
         # ── For not-yet-completed bookings, estimate the forecast price.
+        # Sprint 110eg — If the booking is already pinned to credits as the
+        # payment method, the cash forecast is whatever cash is owed ABOVE
+        # credit value (almost always $0). Skip the catalog fallback chain.
+        if b.get("payment_method") == "credits":
+            cash_forecast = _cash_revenue(b)
+            revenue += cash_forecast
+            catalog_forecast += cash_forecast
+            continue
         price = float(b.get("actual_price") or 0)
         if not price:
             price = float(b.get("credit_value") or 0)

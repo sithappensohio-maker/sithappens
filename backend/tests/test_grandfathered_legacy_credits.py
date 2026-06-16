@@ -1,12 +1,11 @@
-"""Sprint 110cz regression — Grandfathered (pre-110cs) credit lots that
-DON'T carry the `recognize_at_sale` flag must continue to drive revenue at
-redemption-time, NOT sale-time. This guards the operator's mental model:
-"old packs keep working the old way until they're exhausted."
+"""Sprint 110eg — Universal cash-basis rule: ANY credit redemption (new or
+grandfathered) must contribute $0 to revenue. The original pack sale is
+the only money-event; redeeming credits is operational, not financial.
 
-We seed an unflagged lot directly in Mongo (simulating a pre-110cs lot),
-create a booking, check it in and out paying with that legacy credit at
-the operator's manually-entered price, and verify the booking lands in
-`completed_total` as expected — i.e., grandfathering still works.
+(This test originally asserted the OPPOSITE — Sprint 110cz kept legacy
+lots on the redeem-then-recognize path. Sprint 110eg unified everything
+to point-of-sale recognition, including grandfathered lots. The user's
+explicit rule: "no money changes hands when a credit is used anymore".)
 """
 import os
 import uuid
@@ -33,11 +32,11 @@ def admin_headers():
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
-def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
-    """Legacy (pre-110cs) credit lots — no recognize_at_sale flag — must
-    still drive revenue when each credit is redeemed. We seed an unflagged
-    lot, redeem a daycare visit, and verify completed_total grows by the
-    booking price."""
+def test_grandfathered_lot_redemption_no_longer_adds_to_revenue(admin_headers):
+    """Legacy (pre-110cs) credit lot redemption MUST NOT add to revenue
+    under the Sprint 110eg universal cash-basis rule. The "Credits
+    Redeemed" counter still increments (operational visibility), but
+    `completed_total` stays flat."""
     today = date.today().isoformat()
     suffix = uuid.uuid4().hex[:6]
 
@@ -54,9 +53,6 @@ def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
                                            "bordetella": "2028-01-01"}},
                         timeout=15).json()
 
-    # Seed a pre-110cs legacy daycare credit lot directly in Mongo (no
-    # `recognize_at_sale`, no `pack_kind`). This mimics the user's
-    # production state where existing packs predate the new flag.
     legacy_qty = 5
     legacy_price = 100.0  # $20/credit nominal
     lot_id = str(uuid.uuid4())
@@ -78,8 +74,7 @@ def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
             "note": "Pre-110cs legacy lot",
             "sold_by": "test-seed",
             "purchased_at": "2025-12-01T10:00:00+00:00",
-            # NOTE: deliberately NO recognize_at_sale flag — that's the
-            # whole point of the grandfathering path.
+            # NOTE: deliberately NO recognize_at_sale flag — grandfathered.
         })
         await db.clients.update_one(
             {"id": client["id"]},
@@ -88,16 +83,13 @@ def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
 
     asyncio.run(_seed())
 
-    # Snapshot completed_total BEFORE redemption
+    # Snapshot BEFORE redemption
     before = requests.get(f"{API}/transactions/weekly-summary",
                           headers=admin_headers,
                           params={"ref_date": today}, timeout=15).json()
     completed_before = float(before.get("completed_total") or 0)
     pack_redeem_count_before = int(before.get("credit_pack_redeemed_count") or 0)
 
-    # Create + check in + check out a daycare booking (redeems 1 legacy credit
-    # — the operator entered a per-credit price at sale-time so the system
-    # already knows the dollar value of this credit).
     bk = requests.post(f"{API}/bookings", headers=admin_headers,
                        json={"dog_id": dog["id"], "service_type": "daycare",
                              "date": today, "status": "approved"},
@@ -110,8 +102,6 @@ def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
     requests.post(f"{API}/bookings/{bk['id']}/check-out",
                   headers=admin_headers, json={}, timeout=15).raise_for_status()
 
-    # Snapshot AFTER — completed_total MUST grow by the per-credit value
-    # (legacy lots stay on the redemption-recognition path).
     after = requests.get(f"{API}/transactions/weekly-summary",
                          headers=admin_headers,
                          params={"ref_date": today}, timeout=15).json()
@@ -119,23 +109,17 @@ def test_grandfathered_lot_redemption_still_lands_in_completed(admin_headers):
     pack_redeem_count_after = int(after.get("credit_pack_redeemed_count") or 0)
 
     delta = round(completed_after - completed_before, 2)
-    expected = round(legacy_price / legacy_qty, 2)
-
-    # The redemption of a LEGACY lot should still land its per-credit value
-    # in completed_total — exactly the same as before Sprint 110cs.
-    assert delta == expected, (
-        f"GRANDFATHERING BROKEN: legacy lot redemption should add "
-        f"${expected} to completed_total (got delta=${delta}). "
-        f"before=${completed_before} after=${completed_after}. "
-        f"This means a pre-110cs client's pack credits stopped generating "
-        f"income — user's existing data would be invisible to P&L."
+    assert delta == 0.0, (
+        f"UNIVERSAL CASH-BASIS BROKEN: legacy lot redemption added "
+        f"${delta} to completed_total — expected $0. Money should only "
+        f"be recognized at point-of-sale, never at credit redemption."
     )
 
-    # And the "Credits Redeemed" prepaid-burn counter MUST NOT move —
-    # that counter is reserved for Sprint 110cs (recognize_at_sale) lots
-    # only. Legacy lots are normal recognize-at-redemption credits.
-    assert pack_redeem_count_after == pack_redeem_count_before, (
-        f"credit_pack_redeemed_count should ONLY track Sprint 110cs "
-        f"(recognize_at_sale: True) lots. Legacy lot redemption bumped "
-        f"it from {pack_redeem_count_before} to {pack_redeem_count_after}."
+    # Universal "Credits Redeemed" counter MUST still tick — solo operator
+    # wants visibility on how much pre-paid usage hit today even though no
+    # cash moved.
+    assert pack_redeem_count_after == pack_redeem_count_before + 1, (
+        f"credit_pack_redeemed_count should track ANY credit redemption "
+        f"under Sprint 110eg. Got before={pack_redeem_count_before}, "
+        f"after={pack_redeem_count_after}."
     )

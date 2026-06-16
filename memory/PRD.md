@@ -3019,6 +3019,39 @@ Two pages were firing N parallel API requests (N = total records) on every mount
 Headless browser audit on prod-preview URL with `page.on("response")` + `page.on("requestfailed")` listeners; visited Dogs + Clients → **zero** `429` responses, **zero** `ERR_INSUFFICIENT_RESOURCES` failures. Dev-server red overlay no longer triggered.
 
 
+## Sprint 110eg — Universal cash-basis income rule (2026-02-16)
+**User directive**: *"The only time money gets added is at the time of sale. This goes for everything I offer. No money changes hands when a credit is used anymore. So if a day is all credits used, the P&L would have nothing added. But I should still have the ability to add an amount at checkout if I need to."*
+
+### Implementation
+Single source of truth in `server.py`: new `_cash_revenue(booking)` helper.
+- **Cash/card paid** → full `actual_price` counts.
+- **Credit-paid** → `max(0, actual_price − credit_value)` counts. Pure credit redemptions = $0. Admin's checkout override (`base_price`) or paid add-ons stack on top → the cash slice above credit value still hits P&L.
+- **Pre-paid training-program sessions** → $0 (revenue already recognized when the program was sold).
+
+`_is_pos_credit_pack_redemption` widened to catch ANY credit-paid booking (not just `recognize_at_sale: True` lots). Grandfathered lots now behave identically to newly-sold lots.
+
+### Aggregators updated to use `_cash_revenue`
+- `weekly_summary` — `completed_total`, `paid_total`, `booked_total`, `by_service` rows
+- `summary_range` — `completed_total`, `paid_total`, `by_day` map
+- `today_pnl` — completed-today gauge + approved-today forecast
+- Annual P&L CSV export (`/admin/pl/annual.csv`)
+
+### Frontend (CheckoutModal)
+- Relabelled the credit-paid base-price input from *"Service value (for income tracking)"* → *"Additional cash charge (optional) — blank = $0, credits cover everything"*.
+- Reworded the helper text to explain that credits don't add to today's P&L (the pack sale already did).
+- `chargedToday` total now correctly shows `extraCashOnCredits + add-ons + extra-night charges` for credit-paid bookings (was always $0 before, even when admin typed an override).
+- Submit converts the field's value to a notional `base_price = credit_value + extra` so backend semantics stay unchanged.
+- Added a "+ Extra cash · $X.XX" line in the totals summary when admin charges extra on top of credits.
+
+### Regression
+- New `test_universal_cash_basis.py` — 2 invariants:
+  1. Pack sale +$200, redemption +$0 (pure-credit checkout)
+  2. Credit ($20) + $30 override at checkout → $10 cash slice hits P&L
+- Rewritten `test_grandfathered_legacy_credits.py` — flipped to assert legacy lots now redeem at $0 (universal rule).
+- 86 income / P&L / checkout / cancellation / training-program tests all pass.
+
+
+
 ## Backlog / Next Up
 - **P1** Check-in / Check-out flow with daily census
 - **P1** Public booking page (`yourdomain.com/book` — no login required)
