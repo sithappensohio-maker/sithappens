@@ -17285,6 +17285,63 @@ async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
     return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
 
 
+# Sprint 110do — Receivables-this-week summary for the dashboard tile.
+# Aggregates every "due" installment across all active payment plans into
+# three time buckets: overdue, due today, due in the next 7 days. Returns
+# top 5 upcoming installments for the tile drill-down.
+@api.get("/admin/payment-plans/receivables/this-week")
+async def receivables_this_week(_: dict = Depends(require_admin)):
+    today_iso = business_today().isoformat()
+    week_iso  = (business_today() + timedelta(days=7)).isoformat()
+
+    overdue_total = 0.0
+    due_today_total = 0.0
+    due_this_week_total = 0.0
+    upcoming: list = []
+
+    plans = await db.payment_plans.find(
+        {"status": {"$in": ["active", "draft"]}}, {"_id": 0},
+    ).to_list(500)
+    for p in plans:
+        client = await db.clients.find_one({"id": p.get("client_id")}, {"_id": 0, "name": 1})
+        client_name = (client or {}).get("name") or "Unknown"
+        for inst in p.get("installments") or []:
+            if inst.get("status") != "due":
+                continue
+            d = inst.get("due_date") or ""
+            amt = float(inst.get("amount") or 0)
+            row = {
+                "plan_id": p.get("id"),
+                "client_id": p.get("client_id"),
+                "client_name": client_name,
+                "due_date": d,
+                "amount": amt,
+                "label": p.get("label") or p.get("description") or "Payment plan",
+            }
+            if d and d < today_iso:
+                overdue_total += amt
+                row["bucket"] = "overdue"
+                upcoming.append(row)
+            elif d == today_iso:
+                due_today_total += amt
+                row["bucket"] = "today"
+                upcoming.append(row)
+            elif d and d <= week_iso:
+                due_this_week_total += amt
+                row["bucket"] = "this_week"
+                upcoming.append(row)
+    upcoming.sort(key=lambda x: x.get("due_date") or "")
+    return {
+        "overdue_total":      round(overdue_total, 2),
+        "due_today_total":    round(due_today_total, 2),
+        "due_this_week_total": round(due_this_week_total, 2),
+        "grand_total":        round(overdue_total + due_today_total + due_this_week_total, 2),
+        "upcoming": upcoming[:5],
+        "as_of": today_iso,
+    }
+
+
+
 # ──────── Client portal endpoints ────────
 
 @api.get("/portal/payment-plans")
