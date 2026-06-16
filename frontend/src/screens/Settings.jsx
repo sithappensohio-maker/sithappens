@@ -56,30 +56,70 @@ export default function Settings() {
     } catch (e) { setPwMsg(formatErr(e.response?.data?.detail)); }
   };
 
+  // Sprint 110dn — Hooks must come BEFORE the early-return guard. The group
+  // metadata is plain const data and lives below the return guard.
+  const tabGroups = [
+    {
+      id: "operations", label: "Operations", icon: "fa-clipboard-check",
+      tabs: ["day_to_day", "hours", "capacity", "rules", "vaccines", "waiver"],
+    },
+    {
+      id: "money", label: "Money & Sales", icon: "fa-dollar-sign",
+      tabs: ["services", "credit_packs", "payment_plans"],
+    },
+    {
+      id: "comms", label: "Communication", icon: "fa-paper-plane",
+      tabs: ["automation", "email_designer", "portal_links", "marketing_qr"],
+    },
+    {
+      id: "branding", label: "Branding & Content", icon: "fa-palette",
+      tabs: ["brand", "service_info", "tags"],
+    },
+    {
+      id: "training", label: "Training & Care", icon: "fa-graduation-cap",
+      tabs: ["commands"],
+    },
+    {
+      id: "system", label: "System & Admin", icon: "fa-shield-halved",
+      tabs: ["account", "backup", "errors"],
+    },
+  ];
+  const groupOf = (tabId) => tabGroups.find(g => g.tabs.includes(tabId))?.id;
+  const [openGroups, setOpenGroups] = useState(() => new Set([groupOf(tab) || "operations"]));
+  const toggleGroup = (gid) => setOpenGroups(s => { const n = new Set(s); n.has(gid) ? n.delete(gid) : n.add(gid); return n; });
+  useEffect(() => {
+    const g = groupOf(tab);
+    if (g && !openGroups.has(g)) setOpenGroups(prev => new Set([...prev, g]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
   if (!s) return <div className="text-gray-400 text-sm">Loading settings…</div>;
 
-  const tabs = [
-    { id: "day_to_day", label: "Day-to-Day Controls", icon: "fa-sliders" },
-    { id: "hours", label: "Hours", icon: "fa-clock" },
-    { id: "brand", label: "Brand & Theme", icon: "fa-palette" },
-    { id: "capacity", label: "Capacity & Kennels", icon: "fa-warehouse" },
-    { id: "rules", label: "Booking Rules", icon: "fa-clipboard-list" },
-    { id: "vaccines", label: "Vaccines", icon: "fa-shield-virus" },
-    { id: "tags", label: "Mood Tags", icon: "fa-tags" },
-    { id: "waiver", label: "Waiver", icon: "fa-file-signature" },
-    { id: "service_info", label: "Service Info", icon: "fa-circle-info" },
-    { id: "portal_links", label: "Portal Links", icon: "fa-link" },
-    { id: "marketing_qr", label: "Marketing QR", icon: "fa-qrcode" },
-    { id: "services", label: "Services & Programs", icon: "fa-dollar-sign" },
-    { id: "credit_packs", label: "Credit Packs", icon: "fa-coins" },
-    { id: "commands", label: "Training Commands", icon: "fa-graduation-cap" },
-    { id: "backup", label: "Backup & Restore", icon: "fa-database" },
-    { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation" },
-    { id: "automation", label: "Email Automation", icon: "fa-paper-plane" },
-    { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text" },
-    { id: "payment_plans", label: "Payment Plans", icon: "fa-file-signature" },
-    { id: "account", label: "Account", icon: "fa-user-shield" },
-  ];
+  // Tab metadata lookup: maps tab id → label/icon (id keys match the panel
+  // mounts below; the label/icon are what shows in the sidebar).
+  const tabsById = {
+    day_to_day:     { label: "Day-to-Day Controls", icon: "fa-sliders" },
+    hours:          { label: "Hours",               icon: "fa-clock" },
+    capacity:       { label: "Capacity & Kennels",  icon: "fa-warehouse" },
+    rules:          { label: "Booking Rules",       icon: "fa-clipboard-list" },
+    vaccines:       { label: "Vaccines",            icon: "fa-shield-virus" },
+    waiver:         { label: "Waiver",              icon: "fa-file-signature" },
+    services:       { label: "Services & Programs", icon: "fa-dollar-sign" },
+    credit_packs:   { label: "Credit Packs",        icon: "fa-coins" },
+    payment_plans:  { label: "Payment Plans",       icon: "fa-file-invoice-dollar" },
+    automation:     { label: "Email Automation",    icon: "fa-paper-plane" },
+    email_designer: { label: "Email Designer",      icon: "fa-envelope-open-text" },
+    portal_links:   { label: "Portal Links",        icon: "fa-link" },
+    marketing_qr:   { label: "Marketing QR",        icon: "fa-qrcode" },
+    brand:          { label: "Brand & Theme",       icon: "fa-palette" },
+    service_info:   { label: "Service Info",        icon: "fa-circle-info" },
+    tags:           { label: "Mood Tags",           icon: "fa-tags" },
+    commands:       { label: "Training Commands",   icon: "fa-graduation-cap" },
+    account:        { label: "Account",             icon: "fa-user-shield" },
+    backup:         { label: "Backup & Restore",    icon: "fa-database" },
+    errors:         { label: "Server Errors",       icon: "fa-triangle-exclamation" },
+  };
+  const tabs = Object.entries(tabsById).map(([id, meta]) => ({ id, ...meta }));
 
   return (
     <div className="animate-slide-in space-y-6" data-testid="settings-screen">
@@ -93,13 +133,38 @@ export default function Settings() {
       />
 
       <div className="flex flex-col md:flex-row gap-4 md:gap-6">
-        <nav className="w-full md:w-56 md:shrink-0 flex md:block overflow-x-auto md:overflow-visible gap-1 md:space-y-1 md:gap-0 pb-2 md:pb-0">
-          {tabs.map(t => (
-            <button key={t.id} onClick={()=>setTab(t.id)} data-testid={`settings-tab-${t.id}`}
-                    className={`shrink-0 md:w-full text-left py-3 px-4 rounded-lg text-[15px] font-black uppercase tracking-widest transition whitespace-nowrap ${tab===t.id?"bg-bgPanel border-l-4 border-shBlue text-shBlue":"hover:bg-bgHover text-gray-400"}`}>
-              <i className={`fas ${t.icon} mr-3 w-4`} /> {t.label}
-            </button>
-          ))}
+        <nav className="w-full md:w-60 md:shrink-0 md:block flex md:flex-col overflow-x-auto md:overflow-visible gap-1 md:gap-2 pb-2 md:pb-0" data-testid="settings-sidebar">
+          {tabGroups.map(group => {
+            const open = openGroups.has(group.id);
+            return (
+              <div key={group.id} className="md:block flex-shrink-0">
+                <button type="button" onClick={() => toggleGroup(group.id)}
+                        data-testid={`settings-group-${group.id}`}
+                        className="hidden md:flex w-full items-center justify-between py-2 px-3 rounded text-[11px] font-black uppercase tracking-[0.18em] text-gray-500 hover:text-shGreen transition">
+                  <span className="flex items-center gap-2">
+                    <i className={`fas ${group.icon} text-shBlue/70 text-[12px] w-3`} />
+                    {group.label}
+                  </span>
+                  <i className={`fas fa-chevron-${open ? "down" : "right"} text-[10px] text-gray-600`} />
+                </button>
+                <div className={`${open ? "block" : "hidden md:hidden"} md:block`}>
+                  {open && group.tabs.map(tabId => {
+                    const meta = tabsById[tabId];
+                    if (!meta) return null;
+                    const active = tab === tabId;
+                    return (
+                      <button key={tabId} onClick={() => setTab(tabId)} data-testid={`settings-tab-${tabId}`}
+                              className={`shrink-0 md:w-full text-left py-2.5 px-3 md:pl-7 rounded-lg text-[14px] font-black uppercase tracking-widest transition whitespace-nowrap ${
+                                active ? "bg-bgPanel border-l-4 border-shBlue text-shBlue" : "hover:bg-bgHover text-gray-400 hover:text-white"
+                              }`}>
+                        <i className={`fas ${meta.icon} mr-3 w-4 text-[13px]`} /> {meta.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
