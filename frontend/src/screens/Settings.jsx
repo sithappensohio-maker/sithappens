@@ -25,7 +25,7 @@ const VAX_OPTIONS = [
 export default function Settings() {
   const { user } = useAuth();
   const [s, setS] = useState(null);
-  const [tab, setTab] = useState("hours");
+  const [tab, setTab] = useState("day_to_day");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -59,6 +59,7 @@ export default function Settings() {
   if (!s) return <div className="text-gray-400 text-sm">Loading settings…</div>;
 
   const tabs = [
+    { id: "day_to_day", label: "Day-to-Day Controls", icon: "fa-sliders" },
     { id: "hours", label: "Hours", icon: "fa-clock" },
     { id: "brand", label: "Brand & Theme", icon: "fa-palette" },
     { id: "capacity", label: "Capacity & Kennels", icon: "fa-warehouse" },
@@ -102,6 +103,7 @@ export default function Settings() {
         </nav>
 
         <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
+          {tab === "day_to_day" && <DayToDayPanel s={s} save={save} saving={saving} />}
           {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
           {tab === "brand" && <BrandPanel />}
           {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
@@ -521,7 +523,6 @@ function CapacityPanel({ s, save, saving }) {
 
 function RulesPanel({ s, save, saving }) {
   const [r, setR] = useState(s.booking_rules || {});
-  const [d2d, setD2d] = useState(s.day_to_day || {});  // Sprint 110dm — operator controls
   const set = (k, v) => setR({ ...r, [k]: v });
   // Sprint 110h — per-service multi-dog discount: daycare and boarding can be
   // configured separately. Falls back to the legacy flat fields as default.
@@ -661,17 +662,30 @@ function RulesPanel({ s, save, saving }) {
         </p>
       </Section>
 
-      <Section title="Day-to-day operator controls"
-               subtitle="Absolute control over money, capacity, holidays, comms, loyalty, vaccines, services, finance and UI — flip switches as the business changes, no code edits.">
-        <DayToDayControls d2d={d2d} setD2d={setD2d} />
-      </Section>
-
       <SaveBar onSave={()=>save({
         booking_rules: r,
         multi_dog_discount_enabled: mdEnabled,
         multi_dog_discount_by_service: byService,
-        day_to_day: d2d,
       })} saving={saving} />
+    </div>
+  );
+}
+
+// Sprint 110dm — Dedicated tab for the day-to-day operator controls so
+// admins don't have to scroll past Booking Rules to reach them.
+function DayToDayPanel({ s, save, saving }) {
+  const [d2d, setD2d] = useState(s.day_to_day || {});
+  return (
+    <div className="space-y-6" data-testid="day-to-day-panel">
+      <div className="bg-bgPanel/40 border border-bgHover rounded-lg p-4">
+        <h3 className="text-[18px] font-black text-shGreen uppercase tracking-widest mb-1">Day-to-day operator controls</h3>
+        <p className="text-[13px] text-gray-400 leading-relaxed">
+          Absolute control over money rules, holiday pricing, capacity guardrails, email timing, loyalty/referrals, vaccine compliance, service defaults, finance, and branding —
+          flip switches as the business evolves, no code edits required. Every setting defaults to current behavior; changes are opt-in.
+        </p>
+      </div>
+      <DayToDayControls d2d={d2d} setD2d={setD2d} />
+      <SaveBar onSave={()=>save({ day_to_day: d2d })} saving={saving} />
     </div>
   );
 }
