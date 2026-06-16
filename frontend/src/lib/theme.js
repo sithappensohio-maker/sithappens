@@ -71,6 +71,25 @@ function applyBranding(b) {
   root.style.setProperty("--grad-warning-rgb", hexToRgb(b.grad_warning_color || DEFAULT_BRANDING.grad_warning_color));
   root.style.setProperty("--grad-danger-rgb",  hexToRgb(b.grad_danger_color  || DEFAULT_BRANDING.grad_danger_color));
   root.style.setProperty("--grad-success-rgb", hexToRgb(b.grad_success_color || DEFAULT_BRANDING.grad_success_color));
+  // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
+  // selectors (splatter intensity, letter case, time/date format, week start).
+  root.setAttribute("data-splatter", b.splatter_intensity || "medium");
+  root.setAttribute("data-case",     b.letter_case_preference || "upper");
+  root.setAttribute("data-tfmt",     b.time_format || "12h");
+  root.setAttribute("data-dfmt",     b.date_format || "us");
+  root.setAttribute("data-wkstart",  b.week_starts_on || "sunday");
+  // Persist for the lightweight format helpers in lib/format.js
+  try {
+    window.__shUi = {
+      time_format: b.time_format || "12h",
+      date_format: b.date_format || "us",
+      letter_case_preference: b.letter_case_preference || "upper",
+      week_starts_on: b.week_starts_on || "sunday",
+      show_prices_in_portal: b.show_prices_in_portal !== false,
+      pwa_tagline: b.pwa_tagline || "",
+      primary_cta_copy: b.primary_cta_copy || "Book Now",
+    };
+  } catch { /* SSR safety */ }
 }
 
 function applyTextSize(size) {

@@ -1343,3 +1343,48 @@ h1.italic.uppercase {
     0 0 24px rgba(0, 174, 240, 0.2),
     0 0 60px rgba(155, 229, 31, 0.08);
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   Sprint 110dm — Admin-controlled UI intensity knobs.
+   `data-splatter` set on <html> by ThemeProvider from settings.day_to_day.ui.
+   Cascades through opacity multipliers on every splatter ::before/::after
+   so the admin can dial up or down without touching code.
+   ══════════════════════════════════════════════════════════════════════ */
+html[data-splatter="off"] .bg-bgPanel.rounded-xl::before,
+html[data-splatter="off"] .bg-bgPanel.rounded-2xl::before,
+html[data-splatter="off"] aside::before,
+html[data-splatter="off"] aside::after,
+html[data-splatter="off"] body::before,
+html[data-splatter="off"] body::after,
+html[data-splatter="off"] .splatter-header::before,
+html[data-splatter="off"] .bg-bgPanel:has(h1.sh-display)::before,
+html[data-splatter="off"] .bg-bgPanel:has(h1.sh-display)::after { opacity: 0 !important; }
+
+html[data-splatter="low"] .bg-bgPanel.rounded-xl::before,
+html[data-splatter="low"] .bg-bgPanel.rounded-2xl::before,
+html[data-splatter="low"] aside::before,
+html[data-splatter="low"] aside::after { opacity: 0.10 !important; }
+html[data-splatter="low"] body::before,
+html[data-splatter="low"] body::after { opacity: 0.04 !important; }
+html[data-splatter="low"] .splatter-header::before { opacity: 0.10 !important; }
+
+html[data-splatter="high"] .bg-bgPanel.rounded-xl::before,
+html[data-splatter="high"] .bg-bgPanel.rounded-2xl::before { opacity: 0.36 !important; }
+html[data-splatter="high"] aside::before,
+html[data-splatter="high"] aside::after { opacity: 0.18 !important; }
+html[data-splatter="high"] body::before,
+html[data-splatter="high"] body::after { opacity: 0.14 !important; }
+html[data-splatter="high"] .splatter-header::before { opacity: 0.34 !important; }
+
+/* Letter-case knob. data-case applied to <html>; selectors only target
+   classes we own (.sh-display, the auto-promoted page titles, and explicit
+   .uppercase utilities applied to BIG headlines). Body copy is untouched. */
+html[data-case="title"] h1.italic.uppercase,
+html[data-case="title"] .text-5xl.italic.uppercase,
+html[data-case="title"] .text-6xl.italic.uppercase,
+html[data-case="title"] .sh-display { text-transform: capitalize !important; }
+html[data-case="sentence"] h1.italic.uppercase,
+html[data-case="sentence"] .text-5xl.italic.uppercase,
+html[data-case="sentence"] .text-6xl.italic.uppercase,
+html[data-case="sentence"] .sh-display { text-transform: none !important; }

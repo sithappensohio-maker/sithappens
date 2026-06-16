@@ -443,6 +443,8 @@ class BookingOut(BaseModel):
     cancelled_at: Optional[str] = None
     cancellation_charged: Optional[bool] = None
     cancellation_fee: Optional[float] = None
+    cancellation_fee_pct: Optional[float] = None  # Sprint 110dm — tier % applied
+    cancellation_hours_notice: Optional[float] = None  # Sprint 110dm — hours of advance notice given
     # Sprint 110aw — Sales tax snapshot. When `sales_tax.enabled` and the
     # service type is in `applies_to`, `actual_price` includes tax and these
     # fields carry the breakdown so year-end filing / reports stay honest.
@@ -2162,16 +2164,40 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
     if forfeit:
         # Snapshot the fee at the moment of cancellation so later price changes
         # don't retroactively alter what the client was charged.
-        fee = float(booking.get("actual_price") or 0)
-        if not fee:
-            fee = float(booking.get("credit_value") or 0)
-        if not fee and booking.get("service_id"):
+        full_fee = float(booking.get("actual_price") or 0)
+        if not full_fee:
+            full_fee = float(booking.get("credit_value") or 0)
+        if not full_fee and booking.get("service_id"):
             svc = await db.services.find_one(
                 {"id": booking["service_id"]}, {"_id": 0, "base_price": 1}
             )
-            fee = float((svc or {}).get("base_price") or 0)
+            full_fee = float((svc or {}).get("base_price") or 0)
+        # Sprint 110dm — apply 3-tier cancellation policy from day_to_day.money.
+        # Hours until the booking starts decide the % charged.
+        if 'settings' not in locals():
+            settings = await get_settings()
+        money_rules = ((settings.get("day_to_day") or {}).get("money") or {})
+        try:
+            start_dt = datetime.fromisoformat(booking["date"]).replace(tzinfo=timezone.utc)
+            hours_until = (start_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
+        except Exception:
+            hours_until = 0
+        t1h = float(money_rules.get("cancellation_tier1_hours", 48))
+        t2h = float(money_rules.get("cancellation_tier2_hours", 24))
+        t1p = float(money_rules.get("cancellation_tier1_pct", 0))
+        t2p = float(money_rules.get("cancellation_tier2_pct", 50))
+        t3p = float(money_rules.get("cancellation_tier3_pct", 100))
+        if hours_until >= t1h:
+            pct = t1p
+        elif hours_until >= t2h:
+            pct = t2p
+        else:
+            pct = t3p
+        fee = round(full_fee * (pct / 100.0), 2)
         update_payload["cancellation_charged"] = True
-        update_payload["cancellation_fee"] = round(fee, 2)
+        update_payload["cancellation_fee"] = fee
+        update_payload["cancellation_fee_pct"] = pct
+        update_payload["cancellation_hours_notice"] = round(hours_until, 1)
     else:
         # Refund credits (daycare or training) if previously approved
         if booking["status"] == "approved":
@@ -2995,6 +3021,52 @@ async def check_out(
             return unit_price
         return default_for_zero
 
+    def _apply_money_modifiers(amt: float) -> float:
+        """Sprint 110dm — apply post-resolve money modifiers in this order:
+           1. Holiday surcharge multiplier (if booking date hits a holiday/peak)
+           2. Late pickup fee per 15-min block past declared pickup or close
+           3. Round to whole dollar if enabled."""
+        if amt <= 0:
+            return amt
+        money = ((settings.get("day_to_day") or {}).get("money") or {})
+        seasonal = ((settings.get("day_to_day") or {}).get("seasonal") or {})
+
+        # Holiday multiplier (matches booking.date)
+        try:
+            bdate = booking.get("date") or ""
+            for h in (seasonal.get("holiday_surcharges") or []):
+                if h.get("date") == bdate:
+                    amt = amt * float(h.get("multiplier", 1) or 1)
+                    break
+            else:
+                # Peak season range
+                for p in (seasonal.get("peak_season_ranges") or []):
+                    if (p.get("start") or "") <= bdate <= (p.get("end") or "9999"):
+                        amt = amt * float(p.get("multiplier", 1) or 1)
+                        break
+        except Exception:
+            pass
+
+        # Late pickup fee — only when there's a declared pickup_time and we're past it
+        try:
+            per_15 = float(money.get("late_pickup_fee_per_15min", 0) or 0)
+            if per_15 > 0:
+                grace = int(money.get("late_pickup_grace_min", 10) or 0)
+                pickup_time = (booking.get("pickup_time") or "").strip()
+                if pickup_time:
+                    declared_dt = datetime.fromisoformat(f"{booking.get('date')}T{pickup_time}:00+00:00")
+                    co_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                    minutes_late = max(0.0, (co_dt - declared_dt).total_seconds() / 60.0 - grace)
+                    if minutes_late > 0:
+                        blocks = int(minutes_late // 15) + (1 if (minutes_late % 15) > 0 else 0)
+                        amt += blocks * per_15
+        except Exception:
+            pass
+
+        if money.get("round_to_dollar"):
+            amt = round(amt)
+        return round(amt, 2)
+
     # ── Case A: client chose to KEEP using the credits that were already deducted.
     if had_credit and use_credits:
         # Income value: prefer admin's manual override, then the lot value, then
@@ -3133,6 +3205,8 @@ async def check_out(
                     # boarding/daycare auto-bill from actual check-in/out hours
                     # and the configurable half-day rules.
                     base_price = await _resolve_service_value(0.0)
+                    # Sprint 110dm — layer holiday/peak surcharges + late pickup
+                    base_price = _apply_money_modifiers(base_price)
                     update["actual_price"] = round(base_price, 2)
         else:
             base_price = float(booking.get("actual_price") or 0)
@@ -3970,6 +4044,7 @@ async def fetch_branding():
     """Unauthenticated endpoint — returns just the brand colors + font so the
     login screen can theme itself before the user has a token."""
     s = await get_settings()
+    ui = ((s.get("day_to_day") or {}).get("ui") or {})
     return {
         "brand_primary":     s.get("brand_primary")     or "#8cc63f",
         "brand_accent":      s.get("brand_accent")      or "#00a9e0",
@@ -3982,6 +4057,17 @@ async def fetch_branding():
         "grad_warning_color": s.get("grad_warning_color") or "#f59e0b",
         "grad_danger_color":  s.get("grad_danger_color")  or "#ef4444",
         "grad_success_color": s.get("grad_success_color") or "#8cc63f",
+        # Sprint 110dm — UI knobs surfaced for the front-end formatters.
+        "splatter_intensity":      ui.get("splatter_intensity", "medium"),
+        "primary_cta_copy":        ui.get("primary_cta_copy", "Book Now"),
+        "pwa_short_name":          ui.get("pwa_short_name", "Sit Happens"),
+        "pwa_tagline":             ui.get("pwa_tagline", "DOG TRAINING · DAYCARE · BOARDING · PHOTOGRAPHY"),
+        "letter_case_preference":  ui.get("letter_case_preference", "upper"),
+        "time_format":             ui.get("time_format", "12h"),
+        "date_format":             ui.get("date_format", "us"),
+        "week_starts_on":          ui.get("week_starts_on", "sunday"),
+        "show_prices_in_portal":   ui.get("show_prices_in_portal", True),
+        "dog_avatar_fallback":     ui.get("dog_avatar_fallback", "paw"),
     }
 
 @api.get("/settings/public")

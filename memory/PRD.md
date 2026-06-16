@@ -2837,6 +2837,32 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 
 ### Wired live this sprint
 - `create_booking` honours: same-day toggle, min-advance-booking-hours, weekend lead time, max-bookings-per-client-per-day, max-consecutive-boarding-nights. Admins bypass with `override_capacity`.
+- `cancel_booking(forfeit=true)` reads `day_to_day.money.cancellation_tier{1,2,3}_*` and bills the appropriate %. Snapshots `cancellation_fee`, `cancellation_fee_pct`, `cancellation_hours_notice` on the booking for receipt history.
+- `check_out` `_apply_money_modifiers()` post-resolver: applies the matching holiday surcharge multiplier (if `booking.date` hits a `seasonal.holiday_surcharges` entry), then peak-season multiplier, then late-pickup fee per 15-min block past `pickup_time + grace`, then optional `round_to_dollar`.
+- `email_service._send()` defers any non-critical email when `comms.quiet_hours_enabled` and current local time falls inside the window (handles cross-midnight spans like 21:00 → 08:00). Logs the deferred subject for visibility.
+- `/branding` now exposes `day_to_day.ui` knobs (splatter intensity, primary CTA copy, PWA name/tagline, letter case, time/date format, week start, show-prices-in-portal, dog avatar fallback) so the front-end picks them up unauthed.
+- `theme.js` writes those knobs to `data-splatter`, `data-case`, `data-tfmt`, `data-dfmt`, `data-wkstart` on `<html>` + caches the prefs on `window.__shUi` for synchronous formatter access.
+- `index.css` cascades `html[data-splatter="off|low|medium|high"]` onto all splatter ::before/::after pseudos with the appropriate opacity multipliers. `html[data-case="title|sentence"]` overrides `text-transform: uppercase` on the biggest page titles.
+- `/app/frontend/src/lib/format.js` — new lightweight helpers `fmtTime`, `fmtDate`, `fmtPrice`, `applyCase`, `weekStartsOnMonday` that read from `window.__shUi`.
+
+### Tests
+- `test_cancellation_tiers.py` — 3 new pytests covering tier-1 (free), tier-2 (50%), tier-3 (full). All pass.
+- 16/16 total backend tests pass (referral, legacy credits, bulk pack, stay pricing, cancellation tiers).
+
+### Files touched
+- `/app/backend/server.py` — `day_to_day` defaults, nested backfill, guardrails in `create_booking`, 3-tier cancellation in `cancel_booking`, `_apply_money_modifiers` in `check_out`, surfacing UI knobs in `/branding`, `cancellation_fee_pct`/`cancellation_hours_notice` on BookingOut.
+- `/app/backend/email_service.py` — `_is_in_quiet_hours()` + blackout in `_send()`.
+- `/app/frontend/src/components/DayToDayControls.jsx` — new ~430-line component rendering 9 collapsible sub-sections.
+- `/app/frontend/src/screens/Settings.jsx` — imported component, added `d2d` state, mounted under new Section, included in SaveBar payload.
+- `/app/frontend/src/lib/theme.js` — applies UI knobs as `data-*` attributes + window.__shUi cache.
+- `/app/frontend/src/lib/format.js` — new file, lightweight formatters.
+- `/app/frontend/src/index.css` — `html[data-splatter]` opacity cascade + `html[data-case]` text-transform overrides.
+
+### Backlog — narrow scope, low-risk follow-ups
+- **Tipping at checkout** — front-end modal step that adds a tip line to the receipt + sums into actual_price (settings already in place: `tipping_enabled`, `tip_presets_pct`, `tip_allow_custom`).
+- **Loyalty tier recalc** — small endpoint that returns the client's current tier name based on visit count + `loyalty_tier_*_visits` thresholds; called from the client card.
+- **Vaccines-per-service guard** — use `compliance.vaccines_per_service` in `_vaccines_valid()` so each service can require its own subset.
+- **"Show prices in portal" toggle wiring** — wrap dollar amounts in client-portal screens with `fmtPrice(n, { hidable: true })`.
 
 ### Files touched
 - `/app/backend/server.py` — added `day_to_day` block to `_default_settings`, deep nested-backfill in `get_settings`, `day_to_day` field on `SettingsIn`, guardrail enforcement in `create_booking`.

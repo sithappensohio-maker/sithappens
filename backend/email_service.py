@@ -234,12 +234,42 @@ def _date_range(start: str, end: str | None) -> str:
     return start
 
 
+async def _is_in_quiet_hours() -> bool:
+    """Sprint 110dm — return True if the local time is inside the admin's
+    configured quiet-hours window. Non-fatal: any error returns False so
+    email sends never block on a settings glitch."""
+    try:
+        from server import get_settings  # local import to avoid circular at module load
+        s = await get_settings()
+        comms = ((s.get("day_to_day") or {}).get("comms") or {})
+        if not comms.get("quiet_hours_enabled"):
+            return False
+        start = (comms.get("quiet_hours_start") or "").strip()
+        end = (comms.get("quiet_hours_end") or "").strip()
+        if not start or not end:
+            return False
+        from datetime import datetime as _dt
+        now_hm = _dt.now().strftime("%H:%M")
+        # Window spans midnight when end <= start (e.g. 21:00 → 08:00)
+        if end <= start:
+            return now_hm >= start or now_hm < end
+        return start <= now_hm < end
+    except Exception:
+        return False
+
+
 async def _send(to_email: str, subject: str, html: str) -> bool:
     """Fire-and-forget send. Logs failures but never raises. Returns True on success."""
     if not RESEND_API_KEY:
         logger.warning("RESEND_API_KEY not set — skipping email to %s", to_email)
         return False
     if not to_email:
+        return False
+    # Sprint 110dm — quiet hours blackout. Skip non-critical sends during the
+    # configured window. (Auth/password-reset email paths bypass this by
+    # calling resend.Emails.send directly — see send_account_claim.)
+    if await _is_in_quiet_hours():
+        logger.info("Email to %s deferred — quiet hours active. Subject: %s", to_email, subject)
         return False
     try:
         params = {"from": SENDER_EMAIL, "to": [to_email], "subject": subject, "html": html}
