@@ -11943,22 +11943,26 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     # buckets so the Income breakdown can show each as its own row:
     #   - credit_pack_sale  → "Credit Packs"
     #   - training_program_sale → "Training Programs"
+    #   - payment_plan_installment → "Payment Plans"   (Sprint 110do)
     #   - everything else (treats, toys, items) → "Retail"
     retail_rows_all = await db.retail_sales.find(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         {"_id": 0, "amount": 1, "source_kind": 1},
     ).to_list(2000)
-    retail_only = [x for x in retail_rows_all
-                   if x.get("source_kind") not in ("training_program_sale", "credit_pack_sale")]
+    SPECIAL_KINDS = ("training_program_sale", "credit_pack_sale", "payment_plan_installment")
+    retail_only = [x for x in retail_rows_all if x.get("source_kind") not in SPECIAL_KINDS]
     credit_pack_rows = [x for x in retail_rows_all if x.get("source_kind") == "credit_pack_sale"]
     training_rows = [x for x in retail_rows_all if x.get("source_kind") == "training_program_sale"]
+    plan_rows = [x for x in retail_rows_all if x.get("source_kind") == "payment_plan_installment"]
     retail_total = round(sum(float(x.get("amount") or 0) for x in retail_only), 2)
     retail_count = len(retail_only)
     credit_pack_sales_total = round(sum(float(x.get("amount") or 0) for x in credit_pack_rows), 2)
     credit_pack_sales_count = len(credit_pack_rows)
     training_revenue_total = round(sum(float(x.get("amount") or 0) for x in training_rows), 2)
     training_revenue_count = len(training_rows)
-    other_revenue_total = round(retail_total + credit_pack_sales_total + training_revenue_total, 2)
+    plan_revenue_total = round(sum(float(x.get("amount") or 0) for x in plan_rows), 2)
+    plan_revenue_count = len(plan_rows)
+    other_revenue_total = round(retail_total + credit_pack_sales_total + training_revenue_total + plan_revenue_total, 2)
 
     # Sprint 110cz — Fold retail / credit-pack-sales / training-program-sales
     # into the SAME `completed_total` and `by_service` breakdown so the
@@ -11970,12 +11974,14 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         by_service["__credit_packs"] = {"name": "Credit Packs", "count": credit_pack_sales_count, "total": credit_pack_sales_total}
     if training_revenue_total > 0 or training_revenue_count > 0:
         by_service["__training"] = {"name": "Training Programs", "count": training_revenue_count, "total": training_revenue_total}
+    if plan_revenue_total > 0 or plan_revenue_count > 0:
+        by_service["__payment_plans"] = {"name": "Payment Plans", "count": plan_revenue_count, "total": plan_revenue_total}
 
     # Retail/training/pack-sale rows are always "paid in full" at sale time,
     # so roll them into both `completed_total` AND `paid_total` so the
     # Paid/Unpaid split stays mathematically honest.
     completed_total += other_revenue_total
-    completed_count += retail_count + credit_pack_sales_count + training_revenue_count
+    completed_count += retail_count + credit_pack_sales_count + training_revenue_count + plan_revenue_count
     paid_total += other_revenue_total
 
     return {
@@ -17227,6 +17233,35 @@ async def mark_installment_paid(
     target["paid_by_admin_id"] = current.get("id")
     if body.notes:
         target["notes"] = body.notes
+
+    # Sprint 110do — cash-basis income recognition. Every marked-paid installment
+    # writes a real income row so the P&L + Income screen reflect actual cash
+    # collected, not the contract value. If a client defaults later, the
+    # un-collected installments simply never chime — no clawback needed.
+    today_local = business_today().isoformat()
+    income_id = _gid()
+    income_doc = {
+        "id": income_id,
+        "date": today_local,
+        "item_name": f"{(p.get('program_name') or p.get('label') or 'Payment plan')} — installment",
+        "qty": 1,
+        "unit_price": round(target["amount"], 2),
+        "amount": round(target["amount"], 2),
+        "category": "Payment Plan",
+        "notes": body.notes or "",
+        "payment_method": body.method or "cash",
+        "client_id": p["client_id"],
+        "client_name": p.get("client_name") or "",
+        "created_at": now_iso(),
+        "created_by": current.get("id"),
+        "source_kind": "payment_plan_installment",
+        "source_id": plan_id,
+        "installment_id": inst_id,
+        "program_id": p.get("program_id"),
+        "program_name": p.get("program_name"),
+    }
+    await db.retail_sales.insert_one(income_doc)
+    target["income_event_id"] = income_id
 
     # Plan auto-completes when every installment is paid
     new_status = p["status"]
