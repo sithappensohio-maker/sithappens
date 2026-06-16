@@ -2821,6 +2821,26 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **Trio / Corner / Explosion PNGs** used as: body corner washes, sidebar corner accents, and the three card-cue ::before splatters (green/blue/orange semantic).
 - **Verified live** on dashboard hero — real brush-stroke paint visible behind "GOOD MORNING" headline, sidebar corner has authentic ink texture, body bottom-right shows real explosion PNG. Text fully readable.
 
+## Sprint 110dl — Bookings Month → Day grouping (2026-02-15)
+**User ask**: "the bookings page could be stacked by day and month"
+
+### What changed
+- **`/app/frontend/src/components/CollapsibleDateGroups.jsx`**:
+  - Added `compact` prop. When true, renders Month → Day → items directly (skips Year wrapper and Week sub-grouping). Existing Expenses screen keeps the full Year → Month → Week → Day nesting.
+  - Replaced `useState`-with-lazy-init for `openKeys` with a `useEffect` watching `tree` — the prior version ran ONCE with empty `rows` (data still loading) so the first month never auto-opened. Now the most-recent month + day auto-expand the moment data arrives, no matter when.
+  - Day-level label is now lime (was muted gray) for stronger visual separation.
+
+- **`/app/frontend/src/screens/Bookings.jsx`**:
+  - `groupByDate` defaults to `true` — users now see stacked Month → Day hierarchy by default.
+  - Both active-list and history views pass `compact` to the grouper.
+
+- **`/app/frontend/src/screens/Income.jsx`**:
+  - `groupByDate` defaults to `true` — the Income transactions list now auto-stacks Month → Day on load.
+  - All 3 lists on the page (Income transactions, Retail sales, Expenses) pass `compact={true}` for the same clean two-level view.
+
+### Verified
+- Live screenshot: AUGUST 2026 → WED, AUG 5 → 3 booking rows expanded by default. JULY 2026, JUNE 2026 collapsed. Click any month/day to expand/collapse. UNGROUP button still toggles back to flat list. SHOW HISTORY still loads archives.
+
 ## Sprint 110dk — Client card cleanup + Boarding/daycare auto-pricing (2026-02-15)
 **User asks**:
 1. Collapse the stack of 10+ action buttons on each client card into a single popover/menu — cards were absurdly tall and scrolly.

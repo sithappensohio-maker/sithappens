@@ -18,7 +18,7 @@ export default function Bookings() {
   // Sprint 110as — read-only detail overview opened by clicking any booking row.
   const [detailFor, setDetailFor] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
-  const [groupByDate, setGroupByDate] = useState(false);
+  const [groupByDate, setGroupByDate] = useState(true);  // Sprint 110dl — default to grouped Month → Day for cleaner scanning
   const [archived, setArchived] = useState([]);
   const [archiveLoaded, setArchiveLoaded] = useState(false);
   const [archiveLoading, setArchiveLoading] = useState(false);
@@ -155,6 +155,7 @@ export default function Bookings() {
               getDate={(b) => b.date}
               getAmount={() => 1}
               fmtAmount={(n) => `${n} booking${n === 1 ? "" : "s"}`}
+              compact
               testid="bookings-history-groups"
               emptyText="No history yet."
               renderRow={(b) => (
@@ -184,6 +185,7 @@ export default function Bookings() {
               getDate={(b) => b.date}
               getAmount={() => 1}
               fmtAmount={(n) => `${n} booking${n === 1 ? "" : "s"}`}
+              compact
               testid="bookings-active-groups"
               emptyText="No active bookings."
               renderRow={(b) => (

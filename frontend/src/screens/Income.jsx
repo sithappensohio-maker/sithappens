@@ -34,7 +34,7 @@ export default function Income() {
   const [plMsg, setPlMsg] = useState("");
   const [filters, setFilters] = useState({ dog_id: "", service_id: "", payment_status: "", status: "" });
   const [showLegacy, setShowLegacy] = useState(false);
-  const [groupByDate, setGroupByDate] = useState(false);
+  const [groupByDate, setGroupByDate] = useState(true);  // Sprint 110dl — default ON, compact Month → Day
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
@@ -409,6 +409,7 @@ export default function Income() {
             getDate={(r) => r.date}
             getAmount={(r) => Number(r.amount) || 0}
             fmtAmount={(n) => fmt(n)}
+            compact
             testid="retail-groups"
             emptyText="No retail sales logged in this range."
             renderRow={(r) => (
@@ -463,6 +464,7 @@ export default function Income() {
             getDate={(e) => e.date}
             getAmount={(e) => -Math.abs(Number(e.amount) || 0)}
             fmtAmount={(n) => n === 0 ? "—" : `${n < 0 ? "−" : ""}${fmt(Math.abs(n))}`}
+            compact
             testid="expenses-groups"
             emptyText="No expenses logged in this range."
             renderRow={(e) => (
@@ -545,6 +547,7 @@ export default function Income() {
             getDate={(r) => r.date}
             getAmount={(r) => Number(r.actual_price) || 0}
             fmtAmount={(n) => fmt(n)}
+            compact
             testid="income-groups"
             emptyText="No transactions match these filters."
             renderRow={(r) => {
