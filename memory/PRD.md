@@ -2821,6 +2821,44 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - **Trio / Corner / Explosion PNGs** used as: body corner washes, sidebar corner accents, and the three card-cue ::before splatters (green/blue/orange semantic).
 - **Verified live** on dashboard hero — real brush-stroke paint visible behind "GOOD MORNING" headline, sidebar corner has authentic ink texture, body bottom-right shows real explosion PNG. Text fully readable.
 
+## Sprint 110dm — Day-to-day operator controls (2026-02-15)
+**User ask**: Absolute day-to-day control without code edits. ~80 new settings across 9 categories. SMS skipped, email-only.
+
+### Schema additions (nested-backfilled on every install — zero data migration)
+- `day_to_day.money` — tipping prompt + presets, late pickup fee + grace, 3-tier cancellation, no-show %, boarding deposit %, credit pack expiry, auto-decline-if-balance, round-to-dollar.
+- `day_to_day.seasonal` — holiday surcharges (list of date + label + multiplier), peak-season ranges, holiday lockout days, vacation auto-message + start/end.
+- `day_to_day.guardrails` — min advance hours, same-day toggle, weekend lead time, max bookings/client/day, max consecutive nights, max dogs per kennel, staff:dog ratio warn, setup/cleanup buffer, block-on-expired-vax, check-in/out windows.
+- `day_to_day.comms` — reminder email hours, vax expiry extra warn days, inactive-client threshold, review-request lag, birthday emails, report-card mode (per_session/weekly_digest/off), quiet hours, reply-to, footer signature.
+- `day_to_day.loyalty` — streak targets per service, loyalty tier thresholds (Bronze/Silver/Gold/Platinum), trophy reward $, referral reward type/amount/service.
+- `day_to_day.compliance` — vaccines-required per service, block-on-expiry-day, doc upload required, waiver re-sign frequency, waiver scope.
+- `day_to_day.services` — boarding-includes-daycare, training session length, graduation criteria, photography price/photos/SLA, grooming durations.
+- `day_to_day.finance` — fiscal year start month, bookkeeping export format, mileage rate, 1099 threshold.
+- `day_to_day.ui` — splatter intensity, CTA copy, PWA short name/tagline, letter case, time/date format, week start, show prices in portal, show waitlist signup, dog avatar fallback.
+
+### Wired live this sprint
+- `create_booking` honours: same-day toggle, min-advance-booking-hours, weekend lead time, max-bookings-per-client-per-day, max-consecutive-boarding-nights. Admins bypass with `override_capacity`.
+
+### Files touched
+- `/app/backend/server.py` — added `day_to_day` block to `_default_settings`, deep nested-backfill in `get_settings`, `day_to_day` field on `SettingsIn`, guardrail enforcement in `create_booking`.
+- `/app/frontend/src/components/DayToDayControls.jsx` — new ~430-line component rendering 9 collapsible sub-sections.
+- `/app/frontend/src/screens/Settings.jsx` — imported component, added `d2d` state, mounted under new Section, included in SaveBar payload.
+
+### Verified
+- Screenshot: Settings → Booking Rules → all 9 sub-sections render with the right icon + brand color. Money rules open by default; rest collapsed for focus.
+- Regression: 13/13 existing pytests still pass (referral, legacy credits, bulk pack sales, stay pricing).
+
+### Backlog — settings present, behavior wiring pending (incremental, low risk)
+- Tax + tipping prompt at checkout flow
+- Late pickup fee auto-calc on checkout
+- 3-tier cancellation fees in cancel endpoint
+- Holiday surcharge multiplier at booking
+- Vaccines-per-service list in vax guard
+- Quiet hours blackout in email service
+- Loyalty tier recalculation on checkout
+- Splatter intensity → CSS variable
+- Letter case / time / date format / week start → app-wide formatters
+- "Show prices in portal" → portal $ hide
+
 ## Sprint 110dl — Bookings Month → Day grouping (2026-02-15)
 **User ask**: "the bookings page could be stacked by day and month"
 

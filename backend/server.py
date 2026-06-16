@@ -1473,6 +1473,50 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             if body.date > limit_date:
                 raise HTTPException(status_code=400, detail=f"Bookings allowed up to {max_adv} days in advance")
 
+    # Sprint 110dm — day-to-day guardrails (min advance, same-day toggle,
+    # weekend lead time, max-bookings-per-day, max-consecutive-boarding-nights).
+    # Admins bypass these via override_capacity for emergency fixes.
+    if user.get("role") != "admin" or not (body.override_capacity or False):
+        guard = ((settings.get("day_to_day") or {}).get("guardrails") or {})
+        try:
+            book_dt = datetime.combine(date.fromisoformat(body.date),
+                                        datetime.strptime(body.time or "00:00", "%H:%M").time())
+        except Exception:
+            book_dt = datetime.combine(date.fromisoformat(body.date), datetime.min.time())
+        now_local = datetime.now()
+        hours_until = (book_dt - now_local).total_seconds() / 3600.0
+
+        if not guard.get("same_day_booking_allowed", True) and body.date == business_today().isoformat():
+            raise HTTPException(status_code=400, detail="Same-day bookings are currently disabled.")
+        min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
+        if min_adv_h > 0 and hours_until < min_adv_h:
+            raise HTTPException(status_code=400, detail=f"Bookings require at least {int(min_adv_h)}h advance notice.")
+        wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
+        if wknd_lead > 0:
+            try:
+                wd = date.fromisoformat(body.date).weekday()  # 0=Mon..6=Sun
+                if wd in (5, 6) and hours_until < wknd_lead:
+                    raise HTTPException(status_code=400, detail=f"Weekend bookings require {int(wknd_lead)}h advance notice.")
+            except Exception:
+                pass
+        max_pcd = int(guard.get("max_bookings_per_client_per_day", 0) or 0)
+        if max_pcd > 0:
+            same_day = await db.bookings.count_documents({
+                "client_id": user.get("id") if user.get("role") != "admin" else (await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "owner_id": 1}) or {}).get("owner_id"),
+                "date": body.date,
+                "status": {"$nin": ["cancelled", "rejected"]},
+            })
+            if same_day >= max_pcd:
+                raise HTTPException(status_code=400, detail=f"This client already has {max_pcd} booking(s) for that date.")
+        max_nights = int(guard.get("max_consecutive_boarding_nights", 0) or 0)
+        if max_nights > 0 and body.service_type == "boarding" and body.end_date:
+            try:
+                nights = (date.fromisoformat(body.end_date) - date.fromisoformat(body.date)).days
+                if nights > max_nights:
+                    raise HTTPException(status_code=400, detail=f"Boarding stays cannot exceed {max_nights} consecutive nights.")
+            except Exception:
+                pass
+
     # Capacity check
     if not (is_admin and body.override_capacity):
         if body.service_type == "daycare":
@@ -3688,6 +3732,131 @@ def _default_settings() -> dict:
         "evaluation": {
             "require_evaluation_first": False,
         },
+        # Sprint 110dm — Day-to-day operator controls. All defaults preserve
+        # current behavior (no behavior change until admin flips a toggle in
+        # Settings). Wired into checkout, booking creation, email automation,
+        # vaccine guard, and capacity guards. New keys are nested-backfilled
+        # on every `get_settings()` so existing installs gain them silently.
+        "day_to_day": {
+            # ── Money ──────────────────────────────────────────────────
+            "money": {
+                "tipping_enabled": False,           # show tipping prompt at checkout
+                "tip_presets_pct": [15, 18, 20],    # quick-pick tip percentages
+                "tip_allow_custom": True,
+                "late_pickup_fee_per_15min": 0.0,   # $ per 15 min past closing
+                "late_pickup_grace_min": 10,        # grace period before fee kicks in
+                "cancellation_tier1_hours": 48,     # ≥ this many hours → free cancel
+                "cancellation_tier1_pct": 0,
+                "cancellation_tier2_hours": 24,     # between tier1 and tier2 → tier2_pct of service
+                "cancellation_tier2_pct": 50,
+                "cancellation_tier3_pct": 100,      # < tier2 hours → tier3_pct
+                "no_show_fee_pct": 100,             # % of service charged on no-show
+                "boarding_deposit_pct": 0,          # % required upfront at booking
+                "credit_pack_expiry_days": 0,       # 0 = never expire
+                "round_to_dollar": False,
+                "auto_decline_if_balance_over": 0,  # $0 = off; otherwise auto-decline new bookings
+            },
+            # ── Holiday & Peak Season ─────────────────────────────────
+            "seasonal": {
+                "holiday_surcharges": [],           # [{date: "2026-12-25", multiplier: 1.5, label: "Christmas Day"}]
+                "peak_season_ranges": [],           # [{start: "2026-06-15", end: "2026-08-15", multiplier: 1.25, label: "Summer Peak"}]
+                "holiday_lockout_days": 0,          # block new bookings N days before any holiday
+                "vacation_message": "",             # banner shown on portal during owner vacation
+                "vacation_start": "",               # ISO date
+                "vacation_end": "",
+            },
+            # ── Booking & Capacity Guardrails ─────────────────────────
+            "guardrails": {
+                "min_advance_booking_hours": 0,     # 0 = same-day allowed
+                "same_day_booking_allowed": True,
+                "weekend_lead_time_hours": 0,       # extra lead time for Sat/Sun bookings
+                "max_bookings_per_client_per_day": 0,  # 0 = unlimited
+                "max_consecutive_boarding_nights": 0,  # 0 = unlimited
+                "max_dogs_per_kennel": 1,
+                "staff_dog_ratio_warn_at": 10,      # warn (don't block) if ratio exceeds 1:N
+                "setup_cleanup_buffer_min": 0,      # minutes between back-to-back training
+                "block_bookings_if_vaccines_expired": True,
+                "check_in_window_start": "",        # HH:MM, blank = no restriction
+                "check_in_window_end": "",
+                "check_out_window_start": "",
+                "check_out_window_end": "",
+            },
+            # ── Communication Lead Times ──────────────────────────────
+            "comms": {
+                "reminder_email_hours_before": 24,
+                "vaccine_expiry_warn_days_extended": 30,  # additional reminders (existing top-level vaccine_warning_days)
+                "inactive_client_days": 90,         # send "we miss you" after N days no visits
+                "review_request_days_after_visit": 2,
+                "birthday_email_enabled": True,
+                "report_card_auto_send": "per_session",  # per_session | weekly_digest | off
+                "quiet_hours_start": "21:00",       # no automated emails sent during quiet hours
+                "quiet_hours_end": "08:00",
+                "quiet_hours_enabled": False,
+                "reply_to_address": "",             # blank = use system from-address
+                "email_footer_signature": "",
+            },
+            # ── Trophies / Loyalty / Referrals ────────────────────────
+            "loyalty": {
+                "streak_target_daycare": 30,
+                "streak_target_training": 14,
+                "streak_target_boarding": 5,
+                "trophy_reward_value_usd": 0,       # 0 = trophy is symbolic only
+                "referral_reward_type": "credit",   # "credit" | "dollar_off" | "percent_off" | "free_session"
+                "referral_reward_amount": 1,        # interpreted based on _type
+                "referral_reward_service": "daycare",  # which credit pool gets the +1
+                "loyalty_tier_bronze_visits": 10,
+                "loyalty_tier_silver_visits": 25,
+                "loyalty_tier_gold_visits": 50,
+                "loyalty_tier_platinum_visits": 100,
+            },
+            # ── Vaccines & Waiver ─────────────────────────────────────
+            "compliance": {
+                "vaccines_per_service": {           # if blank list → use global required_vaccines
+                    "daycare": [],
+                    "boarding": [],
+                    "training": [],
+                    "grooming": [],
+                    "photography": [],
+                },
+                "block_on_expiry_day": True,        # False = allow day-of, block after
+                "vaccine_doc_upload_required": False,
+                "waiver_resign_frequency": "version_bump",  # "annual" | "never" | "version_bump"
+                "waiver_scope": "first_visit",      # "first_visit" | "every_visit" | "bookings_only"
+            },
+            # ── Service-specific ──────────────────────────────────────
+            "services": {
+                "boarding_includes_daycare": True,  # boarding price covers daycare hours
+                "training_session_length_min": 60,
+                "training_graduation_pct_mastery": 80,
+                "training_graduation_consecutive_successes": 3,
+                "photography_default_price": 200,
+                "photography_edited_photos_included": 25,
+                "photography_delivery_sla_days": 5,
+                "grooming_bath_duration_min": 60,
+                "grooming_nailtrim_duration_min": 15,
+            },
+            # ── Finance / Bookkeeping ─────────────────────────────────
+            "finance": {
+                "fiscal_year_start_month": 1,       # 1-12
+                "bookkeeping_export_format": "csv", # "csv" | "quickbooks" | "wave"
+                "mileage_rate_per_mile": 0.67,      # IRS 2024 standard mileage rate
+                "form_1099_threshold_usd": 600,
+            },
+            # ── Branding / UI knobs ───────────────────────────────────
+            "ui": {
+                "splatter_intensity": "medium",     # "off" | "low" | "medium" | "high"
+                "primary_cta_copy": "Book Now",
+                "pwa_short_name": "Sit Happens",
+                "pwa_tagline": "DOG TRAINING · DAYCARE · BOARDING · PHOTOGRAPHY",
+                "letter_case_preference": "upper",  # "upper" | "title" | "sentence"
+                "time_format": "12h",               # "12h" | "24h"
+                "date_format": "us",                # "us" (MM/DD/YYYY) | "iso" (YYYY-MM-DD) | "eu" (DD/MM/YYYY)
+                "week_starts_on": "sunday",         # "sunday" | "monday"
+                "show_prices_in_portal": True,
+                "show_waitlist_signup_in_portal": False,
+                "dog_avatar_fallback": "paw",       # "paw" | "initials" | "placeholder"
+            },
+        },
     }
 
 async def get_settings() -> dict:
@@ -3729,6 +3898,20 @@ async def get_settings() -> dict:
             if bk not in s["booking_rules"]:
                 s["booking_rules"][bk] = bv
                 changed = True
+    # Sprint 110dm — backfill day_to_day operator controls (deep merge).
+    if not isinstance(s.get("day_to_day"), dict):
+        s["day_to_day"] = defaults.get("day_to_day", {})
+        changed = True
+    else:
+        for section_key, section_defaults in (defaults.get("day_to_day") or {}).items():
+            if not isinstance(s["day_to_day"].get(section_key), dict):
+                s["day_to_day"][section_key] = section_defaults
+                changed = True
+            else:
+                for k, v in section_defaults.items():
+                    if k not in s["day_to_day"][section_key]:
+                        s["day_to_day"][section_key][k] = v
+                        changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -3750,6 +3933,7 @@ class SettingsIn(BaseModel):
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
+    day_to_day: Optional[dict] = None  # Sprint 110dm — free-form day-to-day operator controls
     # Branding (Sprint 68) — admin-set, applies to everyone (login screen, portal, admin shell)
     brand_primary: Optional[str] = None      # CSS color for the primary action (default #8cc63f green)
     brand_accent: Optional[str] = None       # CSS color for accents/highlights (default #00a9e0 blue)

@@ -10,6 +10,7 @@ import PageHero from "../components/PageHero";
 import CsvImportRow from "../components/CsvImportRow";
 import EmailDesignerPanel from "../components/EmailDesignerPanel";
 import PaymentPlanSettingsPanel from "../components/PaymentPlanSettingsPanel";
+import DayToDayControls from "../components/DayToDayControls";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -520,6 +521,7 @@ function CapacityPanel({ s, save, saving }) {
 
 function RulesPanel({ s, save, saving }) {
   const [r, setR] = useState(s.booking_rules || {});
+  const [d2d, setD2d] = useState(s.day_to_day || {});  // Sprint 110dm — operator controls
   const set = (k, v) => setR({ ...r, [k]: v });
   // Sprint 110h — per-service multi-dog discount: daycare and boarding can be
   // configured separately. Falls back to the legacy flat fields as default.
@@ -659,10 +661,16 @@ function RulesPanel({ s, save, saving }) {
         </p>
       </Section>
 
+      <Section title="Day-to-day operator controls"
+               subtitle="Absolute control over money, capacity, holidays, comms, loyalty, vaccines, services, finance and UI — flip switches as the business changes, no code edits.">
+        <DayToDayControls d2d={d2d} setD2d={setD2d} />
+      </Section>
+
       <SaveBar onSave={()=>save({
         booking_rules: r,
         multi_dog_discount_enabled: mdEnabled,
         multi_dog_discount_by_service: byService,
+        day_to_day: d2d,
       })} saving={saving} />
     </div>
   );
