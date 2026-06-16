@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -1460,25 +1461,56 @@ function ClientStatusPill({ status, clientId, onChange }) {
 // Single "MANAGE CLIENT ▾" button that opens a floating menu of every
 // secondary admin action. Reduces client-card scroll by ~75%. Color cues
 // preserved per item so visual scanning still works.
+//
+// IMPLEMENTATION NOTE: The menu is rendered via React portal at document.body
+// because each client card has `isolation: isolate` (Sprint 110dj) for splatter
+// clipping — that traps any z-index inside the card and would hide the
+// popover behind the next card in the grid. Portal + fixed positioning
+// (computed from the trigger's bounding rect) escapes all stacking contexts.
 function ClientActionsMenu({
   clientId, hasPortal,
   onSendClaim, onSetPassword, onSellPack, onSellProgram,
   onAdjustCredits, onReceipts, onFiles, onLegacy, onPackLots,
 }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef(null);
+  const [pos, setPos] = useState({ left: 0, top: 0, width: 0 });
+  const triggerRef = useRef(null);
+  const menuRef = useRef(null);
 
+  // Recompute position when opened OR when window resizes / scrolls.
   useEffect(() => {
     if (!open) return;
+    const reposition = () => {
+      const btn = triggerRef.current;
+      if (!btn) return;
+      const r = btn.getBoundingClientRect();
+      // Open downward by default; if it would overflow the viewport, flip up.
+      const menuMaxH = 460;
+      const spaceBelow = window.innerHeight - r.bottom;
+      const openUp = spaceBelow < 320 && r.top > spaceBelow;
+      setPos({
+        left: r.left,
+        top: openUp ? Math.max(8, r.top - menuMaxH - 8) : r.bottom + 6,
+        width: r.width,
+        openUp,
+      });
+    };
+    reposition();
     const onDocClick = (e) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (triggerRef.current && triggerRef.current.contains(e.target)) return;
+      setOpen(false);
     };
     const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("mousedown", onDocClick);
     document.addEventListener("keydown", onEsc);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
     return () => {
       document.removeEventListener("mousedown", onDocClick);
       document.removeEventListener("keydown", onEsc);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
     };
   }, [open]);
 
@@ -1509,9 +1541,43 @@ function ClientActionsMenu({
       onClick: onPackLots, testId: `menu-pack-lots-${clientId}` },
   ];
 
+  const menu = open ? createPortal(
+    <div ref={menuRef}
+         data-testid={`manage-client-menu-${clientId}`}
+         role="menu"
+         style={{
+           position: "fixed",
+           left: pos.left,
+           top: pos.top,
+           width: pos.width,
+           zIndex: 9999,
+           // Solid opaque dark fill so the menu is visually distinct from the
+           // card behind it (cards have semi-transparent grunge gradients).
+           backgroundColor: "#0a1426",
+           backgroundImage: "linear-gradient(155deg, rgba(10,20,38,1) 0%, rgba(4,10,22,1) 100%)",
+         }}
+         className="border-2 border-shBlue rounded-lg shadow-[0_28px_56px_-12px_rgba(0,0,0,0.95),0_0_28px_rgba(0,174,240,0.45)] overflow-hidden">
+      {items.map((it, i) => it.divider ? (
+        <div key={`d${i}`} className="h-px bg-bgHover" />
+      ) : (
+        <button key={it.label}
+                role="menuitem"
+                onClick={fire(it.onClick)}
+                data-testid={it.testId}
+                className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-shBlue/15 transition group">
+          <i className={`fas ${it.icon} ${it.color} w-4 text-center`} />
+          <span className={`text-[14px] font-black uppercase tracking-widest ${it.color}`}>{it.label}</span>
+          <i className="fas fa-chevron-right ml-auto text-[10px] text-gray-600 group-hover:text-gray-300 transition" />
+        </button>
+      ))}
+    </div>,
+    document.body
+  ) : null;
+
   return (
-    <div ref={wrapRef} className="relative mt-2">
-      <button onClick={()=>setOpen(o=>!o)}
+    <div className="mt-2">
+      <button ref={triggerRef}
+              onClick={()=>setOpen(o=>!o)}
               data-testid={`manage-client-toggle-${clientId}`}
               aria-expanded={open}
               className="w-full bg-bgBase border-2 border-shBlue/60 text-shBlue py-2.5 rounded text-[15px] font-black uppercase tracking-widest hover:border-shBlue hover:bg-shBlue/10 flex items-center justify-center gap-2 transition shadow-[0_0_14px_rgba(0,174,240,0.25)]">
@@ -1519,25 +1585,7 @@ function ClientActionsMenu({
         Manage Client
         <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] transition-transform`} />
       </button>
-      {open && (
-        <div data-testid={`manage-client-menu-${clientId}`}
-             role="menu"
-             className="absolute z-30 left-0 right-0 mt-2 bg-bgBase border-2 border-shBlue/60 rounded-lg shadow-[0_24px_44px_-12px_rgba(0,0,0,0.95),0_0_26px_rgba(0,174,240,0.32)] overflow-hidden">
-          {items.map((it, i) => it.divider ? (
-            <div key={`d${i}`} className="h-px bg-bgHover" />
-          ) : (
-            <button key={it.label}
-                    role="menuitem"
-                    onClick={fire(it.onClick)}
-                    data-testid={it.testId}
-                    className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-bgHover/60 transition group">
-              <i className={`fas ${it.icon} ${it.color} w-4 text-center`} />
-              <span className={`text-[14px] font-black uppercase tracking-widest ${it.color}`}>{it.label}</span>
-              <i className="fas fa-chevron-right ml-auto text-[10px] text-gray-600 group-hover:text-gray-300 transition" />
-            </button>
-          ))}
-        </div>
-      )}
+      {menu}
     </div>
   );
 }

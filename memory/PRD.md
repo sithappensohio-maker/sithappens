@@ -2842,7 +2842,10 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 
 ### Frontend changes
 - **`/app/frontend/src/screens/Clients.jsx`**:
-  - Built a new `<ClientActionsMenu>` component (~70 lines) — a floating popover anchored to a single "**MANAGE CLIENT ▾**" button. Click-outside + Escape-key dismissal. Menu items grouped by section with dividers: portal actions (claim/reset, set password), sell actions (pack, training, adjust credits), data actions (receipts, files & homework, legacy pricing, pack lots). Each item keeps its color cue (lime/blue/orange/purple/amber/gray) so visual scanning still works.
+  - Built a new `<ClientActionsMenu>` component (~120 lines) — a floating popover anchored to a single "**MANAGE CLIENT ▾**" button. Click-outside + Escape-key dismissal. Menu items grouped by section with dividers: portal actions (claim/reset, set password), sell actions (pack, training, adjust credits), data actions (receipts, files & homework, legacy pricing, pack lots). Each item keeps its color cue (lime/blue/orange/purple/amber/gray) so visual scanning still works.
+  - **Renders via React Portal to `document.body`** with `position: fixed` calculated from the trigger button's `getBoundingClientRect`. This escapes the card's `isolation: isolate` stacking context (Sprint 110dj) — otherwise the menu would render hidden behind the next client card in the grid. `z-index: 9999`.
+  - Solid opaque `rgb(10,20,38)` background + 2px lime/blue border + dual-glow shadow so the menu is visually distinct from cards behind it.
+  - Auto-flips upward when there isn't enough room below the trigger (viewport-edge handling).
   - Removed 10 stacked buttons from the card body, replacing them with the single Manage Client trigger. `VIEW PORTAL AS CLIENT` (primary, yellow) and `QUICK PORTAL SNAPSHOT` (secondary, blue) stay visible.
   - Card height dropped by ~75% — the user-reported "extremely scrolly client card" is gone.
 - **`/app/frontend/src/screens/Settings.jsx`**:
