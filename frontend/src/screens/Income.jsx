@@ -38,6 +38,8 @@ export default function Income() {
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
+  // Sprint 110eg-3 — Monthly P&L auto-email status (cron fires on the 1st)
+  const [plAutoStatus, setPlAutoStatus] = useState(null);
 
   // ── Expenses (tracked in the same date range as the Range View above)
   const [expenses, setExpenses] = useState([]);
@@ -81,6 +83,13 @@ export default function Income() {
   // Clients list (loaded once) — used by the retail-sale modal to optionally tag a sale to a client
   useEffect(() => {
     api.get("/clients").then(r => setClients(r.data || [])).catch(()=>{});
+  }, []);
+
+  // Sprint 110eg-3 — Surface the monthly P&L auto-email status near the
+  // "Email Me" button so the operator can see at-a-glance whether the
+  // cron is configured and when the last email went out.
+  useEffect(() => {
+    api.get("/admin/pl-monthly-status").then(r => setPlAutoStatus(r.data)).catch(()=>{});
   }, []);
 
   const refreshAfterExpenseChange = () => {
@@ -295,6 +304,42 @@ export default function Income() {
       {plMsg && (
         <div className="bg-shBlue/10 border border-shBlue/30 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">
           <i className="fas fa-circle-info mr-2"/>{plMsg} · range {rangeStart} → {rangeEnd}
+        </div>
+      )}
+      {/* Sprint 110eg-3 — Monthly P&L auto-email status indicator. */}
+      {plAutoStatus && (
+        <div
+          className={`px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest flex items-center gap-2 flex-wrap ${
+            plAutoStatus.enabled
+              ? "bg-shGreen/10 border border-shGreen/30 text-shGreen"
+              : "bg-shOrange/10 border border-shOrange/30 text-shOrange"
+          }`}
+          data-testid="pl-auto-status"
+        >
+          <i className={`fas ${plAutoStatus.enabled ? "fa-calendar-check" : "fa-triangle-exclamation"}`}/>
+          {plAutoStatus.enabled ? (
+            <>
+              <span>Auto-email · ON</span>
+              <span className="text-gray-400">·</span>
+              <span className="normal-case text-gray-300">
+                Fires the 1st of each month
+                {plAutoStatus.admin_email && <> to <strong className="text-white">{plAutoStatus.admin_email}</strong></>}
+              </span>
+              {plAutoStatus.last_sent_at && (
+                <>
+                  <span className="text-gray-400">·</span>
+                  <span className="normal-case text-gray-300">
+                    Last sent <strong className="text-white">{plAutoStatus.last_sent_at.slice(0,10)}</strong>
+                    {plAutoStatus.last_period_key && (
+                      <> ({plAutoStatus.last_period_key.replace("pl:","")} · net ${(plAutoStatus.last_net||0).toFixed(2)})</>
+                    )}
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            <span className="normal-case">Auto-email OFF — set <code>ADMIN_NOTIFICATION_EMAIL</code> and <code>RESEND_API_KEY</code> in backend env to enable.</span>
+          )}
         </div>
       )}
 

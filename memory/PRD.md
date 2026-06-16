@@ -3080,6 +3080,25 @@ New "Cash Flow Ledger" section sits between the KPI tile row and Daily Revenue c
 
 ### Regression
 - New `test_universal_cash_basis.py` — 2 invariants:
+
+## Sprint 110eg-3 — Monthly P&L auto-email (2026-02-16)
+**User ask**: Auto-email the P&L PDF on the 1st of each month.
+
+### Discovery
+The job was already 100% wired — `daily_jobs.run_pl_monthly_job` generates the previous month's PDF (via the new universal-cash-basis `build_pl_data`) and emails it through `email_service.notify_admin_pl_report` to `ADMIN_NOTIFICATION_EMAIL`. Idempotent via `notification_log` keyed by `pl:YYYY-MM`. The lazy daily cron (`maybe_run_daily`, triggered by dashboard hits) fires it on day-1 only. Test trigger via `POST /api/reports/pl/email-now` succeeded → email delivered to `sithappensohio@gmail.com`. Last automated run: 2026-06-01 for May P&L (net $981.99).
+
+### Added — status visibility
+- **Backend**: `GET /api/admin/pl-monthly-status` returns `{enabled, admin_email, last_sent_at, last_period_key, last_start_date, last_end_date, last_net}` by reading the most recent `pl:*` row from `notification_log` and checking the Resend env.
+- **Frontend (Income screen)**: a green status pill underneath the action buttons shows:
+  > 🟢 **AUTO-EMAIL · ON** · Fires the 1st of each month to **sithappensohio@gmail.com** · Last sent **2026-06-01** (2026-05 · net $981.99)
+  
+  Switches to an orange warning state if `ADMIN_NOTIFICATION_EMAIL` or `RESEND_API_KEY` are missing.
+
+### Verified
+- All 12 P&L / CPA / payroll / cash-flow / universal-cash-basis tests pass.
+- Manual trigger endpoint successfully sent a test P&L to the configured admin email.
+- Status badge rendered correctly in the live preview.
+
   1. Pack sale +$200, redemption +$0 (pure-credit checkout)
   2. Credit ($20) + $30 override at checkout → $10 cash slice hits P&L
 - Rewritten `test_grandfathered_legacy_credits.py` — flipped to assert legacy lots now redeem at $0 (universal rule).

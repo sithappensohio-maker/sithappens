@@ -12273,6 +12273,29 @@ async def pl_report_email_now(
         raise HTTPException(status_code=500, detail=f"Email send failed: {e}")
 
 
+# Sprint 110eg-3 — Status endpoint so the Income screen can show the operator
+# whether the monthly auto-email actually fired (and when the last one went
+# out). Reads the latest `pl:YYYY-MM` row from notification_log + the current
+# Resend / admin email env state so the UI badge can say "ON · last sent X"
+# vs "OFF · no admin email configured".
+@api.get("/admin/pl-monthly-status")
+async def pl_monthly_status(_: dict = Depends(require_admin)):
+    last = await db.notification_log.find_one(
+        {"key": {"$regex": r"^pl:\d{4}-\d{2}$"}, "job": "pl_monthly"},
+        {"_id": 0},
+        sort=[("sent_at", -1)],
+    )
+    return {
+        "enabled": bool(email_service.ADMIN_NOTIFICATION_EMAIL and email_service.RESEND_API_KEY),
+        "admin_email": email_service.ADMIN_NOTIFICATION_EMAIL or None,
+        "last_sent_at": (last or {}).get("sent_at"),
+        "last_period_key": (last or {}).get("key"),
+        "last_start_date": (last or {}).get("start_date"),
+        "last_end_date": (last or {}).get("end_date"),
+        "last_net": (last or {}).get("net"),
+    }
+
+
 # ────────────────────────── Employees + Time Clock (Sprint 92) ──────────────────────────
 # Employees are stored in the same `users` collection (role="employee") so
 # auth/JWT logic stays consistent. Extra employee-only profile fields live
