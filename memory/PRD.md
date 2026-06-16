@@ -3041,6 +3041,41 @@ Single source of truth in `server.py`: new `_cash_revenue(booking)` helper.
 - Reworded the helper text to explain that credits don't add to today's P&L (the pack sale already did).
 - `chargedToday` total now correctly shows `extraCashOnCredits + add-ons + extra-night charges` for credit-paid bookings (was always $0 before, even when admin typed an override).
 - Submit converts the field's value to a notional `base_price = credit_value + extra` so backend semantics stay unchanged.
+
+## Sprint 110eg-2 — Cash Flow Ledger folded into P&L PDF (2026-02-16)
+**User insight**: *"We already do a P&L PDF — shouldn't we just put this into that and any other cash-flow related things into it so it's one cohesive system?"* Spot on. Built it into `pl_report.py` instead of a separate dashboard view.
+
+### `build_pl_data` — universal cash-basis applied to the PDF datasource
+Mirrored the `_cash_revenue(b)` helper from `server.py` inside `pl_report.py`. Replaced raw `actual_price` summations with `_cash_revenue` in: `completed_total`, `paid_total`, `unpaid_total`, `by_day`, `by_service`, `top_clients`, `top_dogs`, YTD income. The PDF now agrees with the in-app Income screen — credit redemptions no longer inflate any P&L number.
+
+### New `cash_flow` block in the JSON payload
+```
+cash_flow:
+  prepaid_in:                ← money banked at sale-time
+    credit_pack_sales
+    training_program_sales
+    payment_plan_installments
+    total
+  register_cash_in:          ← money banked at checkout
+    service_checkouts        ← non-credit + extras-on-credit
+    retail_items
+    total
+  total_cash_in              ← prepaid_in.total + register_cash_in.total
+  credits_redeemed:          ← informational only (NOT revenue)
+    nominal_value
+    redemption_count
+```
+
+### PDF rendering
+New "Cash Flow Ledger" section sits between the KPI tile row and Daily Revenue chart. Contains:
+- A 4-tile row: PRE-PAID CASH IN · REGISTER CASH IN · TOTAL CASH IN · CREDITS REDEEMED (info)
+- An italic explainer line: *"Cash-basis rule: money counts once, at the point of sale. Credit redemptions are operational only — the cash was banked when the pack/program/plan was first sold."*
+- A 6-row breakdown table reconciling each bucket against bank deposits, with the credit-redemption row dimmed/italicised to flag its operational-only nature.
+
+### Regression
+- New `test_pl_cash_flow_section.py` — 3 tests: block presence + arithmetic balance, PDF renders without errors, credit-pack sale correctly populates the `prepaid_in.credit_pack_sales` bucket.
+- All 8 existing P&L / CPA / payroll PDF tests still pass.
+
 - Added a "+ Extra cash · $X.XX" line in the totals summary when admin charges extra on top of credits.
 
 ### Regression

@@ -173,11 +173,29 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         {"_id": 0},
     ).to_list(20000)
 
-    # Sprint 110cj/110cs — bookings whose payment came from a lot whose
-    # revenue was already recognized at sale-time must be excluded from
-    # completed/paid totals. Two flavors qualify:
-    #   - training programs (`pack_kind == "training_program"`)
-    #   - all new credit packs (`recognize_at_sale == True`, Sprint 110cs)
+    # Sprint 110eg — Universal cash-basis: money only counts at point of
+    # sale, never at credit redemption. Mirror of `_cash_revenue` in
+    # server.py. ANY credit-paid booking contributes only the cash slice
+    # ABOVE its credit_value (admin's override + add-ons stack into
+    # actual_price, so delta = cash actually received). Pure credit burns
+    # return $0 — the original pack sale already wrote a retail_sales row.
+    def _cash_revenue(b: dict) -> float:
+        if b.get("is_prepaid_program_session"):
+            return 0.0
+        actual = float(b.get("actual_price") or 0)
+        if b.get("payment_method") == "credits":
+            cv = float(b.get("credit_value") or 0)
+            return max(0.0, round(actual - cv, 2))
+        if not actual and float(b.get("credit_value") or 0) > 0:
+            return 0.0
+        return round(actual, 2)
+
+    # Sprint 110eg — `_is_program_redemption` retained for backwards-compat
+    # filtering (the old per-redemption path), but credit-pack burns now
+    # also yield $0 via `_cash_revenue`. We DON'T pre-filter the booking
+    # list anymore — instead each aggregator below uses `_cash_revenue`
+    # so credit-paid rows still appear in counts (so the operator can see
+    # them) but contribute $0 to revenue.
     program_lots = await db.credit_lots.find(
         {"$or": [
             {"pack_kind": "training_program"},
@@ -199,7 +217,9 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
 
     # Filter program redemptions out of the booking pool BEFORE aggregations
     # so every downstream tally (totals, by_service, by_client, by_day, top_dogs)
-    # naturally excludes the double-count.
+    # naturally excludes the double-count. (Other credit redemptions stay in
+    # the list and earn $0 via `_cash_revenue` so they still show up in
+    # counts / by_service rows when there's a paid add-on slice.)
     bookings = [b for b in bookings if not _is_program_redemption(b)]
 
     # ── Income totals
@@ -207,14 +227,14 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     paid = [b for b in bookings if b.get("payment_status") == "paid"]
     unpaid = [b for b in bookings if b.get("payment_status") == "unpaid" and b.get("actual_price")]
 
-    completed_total = round(sum(float(b.get("actual_price") or 0) for b in completed), 2)
-    paid_total = round(sum(float(b.get("actual_price") or 0) for b in paid), 2)
-    unpaid_total = round(sum(float(b.get("actual_price") or 0) for b in unpaid), 2)
+    completed_total = round(sum(_cash_revenue(b) for b in completed), 2)
+    paid_total = round(sum(_cash_revenue(b) for b in paid), 2)
+    unpaid_total = round(sum(_cash_revenue(b) for b in unpaid), 2)
 
     # ── Daily revenue (completed bookings + retail sales)
     by_day_map: Dict[str, float] = defaultdict(float)
     for b in completed:
-        by_day_map[b["date"]] += float(b.get("actual_price") or 0)
+        by_day_map[b["date"]] += _cash_revenue(b)
     for r in retail_sales:
         if r.get("date"):
             by_day_map[r["date"]] += float(r.get("amount") or 0)
@@ -223,10 +243,13 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # ── Income by service (completed)
     by_service_map: Dict[str, Dict[str, Any]] = {}
     for b in completed:
+        cash = _cash_revenue(b)
+        if cash <= 0:
+            continue
         key = b.get("service_name") or b.get("service_type") or "Other"
         s = by_service_map.setdefault(key, {"name": key, "count": 0, "total": 0.0})
         s["count"] += 1
-        s["total"] = round(s["total"] + float(b.get("actual_price") or 0), 2)
+        s["total"] = round(s["total"] + cash, 2)
     by_service = sorted(by_service_map.values(), key=lambda x: -x["total"])
 
     # ── Top 5 clients by completed revenue
@@ -238,7 +261,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
             continue
         c = by_client_map.setdefault(cid, {"client_id": cid, "name": name, "visits": 0, "total": 0.0})
         c["visits"] += 1
-        c["total"] = round(c["total"] + float(b.get("actual_price") or 0), 2)
+        c["total"] = round(c["total"] + _cash_revenue(b), 2)
     top_clients = sorted(by_client_map.values(), key=lambda x: -x["total"])[:5]
 
     # ── Per-dog visit counts (completed daycare/boarding/training)
@@ -250,7 +273,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         dname = b.get("dog_name") or "Unknown"
         d = by_dog_map.setdefault(did, {"dog_id": did, "name": dname, "visits": 0, "total": 0.0})
         d["visits"] += 1
-        d["total"] = round(d["total"] + float(b.get("actual_price") or 0), 2)
+        d["total"] = round(d["total"] + _cash_revenue(b), 2)
     top_dogs = sorted(by_dog_map.values(), key=lambda x: -x["visits"])[:10]
 
     # ── Staff hours estimate
@@ -345,11 +368,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_start = f"{end_year}-01-01"
         ytd_bookings = await db.bookings.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}, "status": "completed"},
-            {"_id": 0, "actual_price": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
+            {"_id": 0, "actual_price": 1, "credit_value": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
         ).to_list(50000)
         # Sprint 110cj — drop training-program redemptions here too.
         ytd_bookings = [b for b in ytd_bookings if not _is_program_redemption(b)]
-        ytd_income = round(sum(float(b.get("actual_price") or 0) for b in ytd_bookings), 2)
+        # Sprint 110eg — universal cash-basis applies to YTD as well.
+        ytd_income = round(sum(_cash_revenue(b) for b in ytd_bookings), 2)
         ytd_exp_rows = await db.expenses.find(
             {"date": {"$gte": ytd_start, "$lte": end_date}},
             {"_id": 0, "amount": 1},
@@ -362,6 +386,55 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         ytd_retail = round(sum(float(r.get("amount") or 0) for r in ytd_retail_rows), 2)
     except Exception:
         ytd_start, ytd_income, ytd_expenses, ytd_retail = end_date, 0.0, 0.0, 0.0
+
+    # Sprint 110eg — Cash-flow ledger sanity. Three numbers tell the whole
+    # story of where this period's cash came from:
+    #   1. Pre-paid cash IN  (credit packs, training programs, payment-plan
+    #                         installments — all retail_sales rows).
+    #   2. At-the-register cash IN (service checkouts paid in cash/card, plus
+    #                         any cash slice on credit-paid checkouts above
+    #                         credit value — i.e. `completed_total` already
+    #                         computed via `_cash_revenue`).
+    #   3. Credits REDEEMED  (operational burn — what clients consumed from
+    #                         their pre-paid balance. NOT revenue, just info.
+    #                         The original sale paid this; redemption is
+    #                         purely a service-delivery event.)
+    PREPAID_SOURCE_KINDS = ("credit_pack_sale", "training_program_sale", "payment_plan_installment")
+    prepaid_credit_pack = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "credit_pack_sale"), 2)
+    prepaid_training = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "training_program_sale"), 2)
+    prepaid_payment_plan = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") == "payment_plan_installment"), 2)
+    retail_items_cash = round(sum(float(r.get("amount") or 0) for r in retail_sales if r.get("source_kind") not in PREPAID_SOURCE_KINDS), 2)
+    prepaid_total = round(prepaid_credit_pack + prepaid_training + prepaid_payment_plan, 2)
+    register_cash = completed_total  # already cash-basis
+    # Operational burn — counts ALL credit-paid completed bookings (including
+    # the filtered-out training-program redemptions, so the operator sees
+    # the full picture of pre-paid usage even though program redemptions
+    # don't appear in the booking pool above).
+    burn_bookings_full = await db.bookings.find(
+        {"date": {"$gte": start_date, "$lte": end_date}, "status": "completed",
+         "payment_method": "credits"},
+        {"_id": 0, "credit_value": 1, "credits_deducted": 1, "service_type": 1},
+    ).to_list(20000)
+    credit_redemptions_value = round(sum(float(b.get("credit_value") or 0) for b in burn_bookings_full), 2)
+    credit_redemptions_count = len(burn_bookings_full)
+    cash_flow = {
+        "prepaid_in": {
+            "credit_pack_sales": prepaid_credit_pack,
+            "training_program_sales": prepaid_training,
+            "payment_plan_installments": prepaid_payment_plan,
+            "total": prepaid_total,
+        },
+        "register_cash_in": {
+            "service_checkouts": register_cash,
+            "retail_items": retail_items_cash,
+            "total": round(register_cash + retail_items_cash, 2),
+        },
+        "total_cash_in": round(prepaid_total + register_cash + retail_items_cash, 2),
+        "credits_redeemed": {
+            "nominal_value": credit_redemptions_value,
+            "redemption_count": credit_redemptions_count,
+        },
+    }
 
     gross_income = round(completed_total + retail_total + training_revenue_total, 2)
     ytd_gross = round(ytd_income + ytd_retail, 2)
@@ -403,6 +476,7 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         "payroll": payroll,
         "net": round(gross_income - expenses_total - payroll["total_cost"], 2),
         "net_before_payroll": round(gross_income - expenses_total, 2),
+        "cash_flow": cash_flow,
         "top_clients": top_clients,
         "top_dogs": top_dogs,
         "staff_hours": {
@@ -531,6 +605,65 @@ def render_pl_pdf(data: Dict[str, Any], brand_name: str = "Sit Happens") -> byte
         f"<b>{_fmt_money(data['income']['unpaid_total'])}</b> outstanding",
         small,
     ))
+
+    # ── Sprint 110eg — Cash Flow Ledger.
+    # Universal cash-basis rule on one page: where did the money actually
+    # come from, and how much pre-paid value got consumed (operational
+    # only, NOT revenue)?
+    cf = data.get("cash_flow") or {}
+    if cf:
+        story.append(Paragraph("Cash Flow Ledger", h2))
+        story.append(Paragraph(
+            "<i>Cash-basis rule: money counts once, at the point of sale. "
+            "Credit redemptions are operational only — the cash was banked "
+            "when the pack/program/plan was first sold.</i>",
+            small,
+        ))
+        story.append(Spacer(1, 4))
+        prepaid = cf.get("prepaid_in") or {}
+        reg = cf.get("register_cash_in") or {}
+        burn = cf.get("credits_redeemed") or {}
+        cf_row = Table(
+            [[
+                tile("PRE-PAID CASH IN",
+                     _fmt_money(prepaid.get("total") or 0),
+                     BRAND),
+                tile("REGISTER CASH IN",
+                     _fmt_money(reg.get("total") or 0),
+                     BRAND),
+                tile("TOTAL CASH IN",
+                     _fmt_money(cf.get("total_cash_in") or 0),
+                     colors.HexColor("#16a34a")),
+                tile("CREDITS REDEEMED (info)",
+                     _fmt_money(burn.get("nominal_value") or 0),
+                     MUTED),
+            ]],
+            colWidths=[1.6 * inch] * 4,
+            style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE")]),
+        )
+        story.append(cf_row)
+        story.append(Spacer(1, 4))
+        # Detailed breakdown table — shows where each bucket's cash came
+        # from so the operator can reconcile against bank deposits.
+        cf_rows = [
+            ["Source", "Type", "Amount"],
+            ["Credit pack sales", "Pre-paid", _fmt_money(prepaid.get("credit_pack_sales") or 0)],
+            ["Training program sales", "Pre-paid", _fmt_money(prepaid.get("training_program_sales") or 0)],
+            ["Payment plan installments", "Pre-paid", _fmt_money(prepaid.get("payment_plan_installments") or 0)],
+            ["Service checkouts (cash + extras)", "At register", _fmt_money(reg.get("service_checkouts") or 0)],
+            ["Retail item sales", "At register", _fmt_money(reg.get("retail_items") or 0)],
+            ["TOTAL CASH IN", "", _fmt_money(cf.get("total_cash_in") or 0)],
+            [f"Credit redemptions ({burn.get('redemption_count') or 0}× burns)", "Operational only", _fmt_money(burn.get("nominal_value") or 0)],
+        ]
+        t = Table(cf_rows, colWidths=[3.5 * inch, 1.3 * inch, 1.2 * inch])
+        t.setStyle(_table_style(INK, LINE, BRAND))
+        # Dim the redemption row — it's NOT revenue, just operational visibility.
+        t.setStyle(TableStyle([
+            ("TEXTCOLOR", (0, -1), (-1, -1), MUTED),
+            ("FONT", (0, -1), (-1, -1), "Helvetica-Oblique", 9),
+            ("LINEABOVE", (0, -1), (-1, -1), 0.5, LINE),
+        ]))
+        story.append(t)
 
     # ── Daily revenue bar chart (simple ascii-ish bars built with Table for portability)
     by_day = data["income"]["by_day"]
