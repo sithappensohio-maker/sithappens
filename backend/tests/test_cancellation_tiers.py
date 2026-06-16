@@ -142,11 +142,13 @@ def test_cancel_tier2_half(admin_headers):
     # Booking is 2 days from now → ~48h away. Falls in tier 1 boundary (>=48 → tier1).
     # Use ~36h offset by patching the date 1 day + setting time 12h ago via dt math is tricky;
     # easier: set thresholds smaller to force tier-2 with 1-day offset.
+    # Booking date offset by 2 days → 24-48h away. With tier1=72h tier2=12h
+    # the booking lands solidly in tier-2 regardless of what hour the test runs.
     _set_money_rules(admin_headers,
                      cancellation_tier1_hours=72, cancellation_tier1_pct=0,
                      cancellation_tier2_hours=12, cancellation_tier2_pct=50,
                      cancellation_tier3_pct=100)
-    bid = _make_booking_with_actual_price(admin_headers, dog["id"], "daycare", 1, 100.0)
+    bid = _make_booking_with_actual_price(admin_headers, dog["id"], "daycare", 2, 100.0)
     _forfeit_cancel(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
     # 1-day booking → ~24h away → between 12h (tier2) and 72h (tier1) → tier-2 = 50%

@@ -52,6 +52,18 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
     }
   };
 
+  const reversePayment = async (planId, instId) => {
+    if (!window.confirm("Reverse this payment? This removes it from your P&L and flips the installment back to DUE.")) return;
+    try {
+      await api.post(`/admin/payment-plans/${planId}/installments/${instId}/reverse-payment`,
+                     { notes: "Manual reversal" });
+      toast.success("Payment reversed — P&L updated");
+      load();
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Reversal failed");
+    }
+  };
+
   const cancelPlan = async (planId) => {
     if (!window.confirm("Cancel this payment plan? Unpaid installments will be voided.")) return;
     try {
@@ -80,7 +92,7 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
         <p className="text-gray-500 text-xs italic">No plans yet.</p>
       ) : (
         <div className="space-y-2">
-          {plans.map(p => <AdminPlanRow key={p.id} plan={p} onMarkPaid={markPaid} onCancel={cancelPlan} />)}
+          {plans.map(p => <AdminPlanRow key={p.id} plan={p} onMarkPaid={markPaid} onCancel={cancelPlan} onReverse={reversePayment} />)}
         </div>
       )}
 
@@ -95,7 +107,7 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   );
 }
 
-function AdminPlanRow({ plan, onMarkPaid, onCancel }) {
+function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
   const sm = STATUS_META[plan.status] || STATUS_META.active;
   return (
     <div className="bg-bgPanel border border-bgHover rounded p-3" data-testid={`admin-plan-row-${plan.id}`}>
@@ -135,7 +147,17 @@ function AdminPlanRow({ plan, onMarkPaid, onCancel }) {
                 ))}
               </div>
             )}
-            {i.status === "paid" && <i className="fas fa-check-circle text-shGreen text-xs"/>}
+            {i.status === "paid" && (
+              <div className="flex items-center gap-2">
+                <i className="fas fa-check-circle text-shGreen text-xs" />
+                <button onClick={() => onReverse(plan.id, i.id)}
+                        data-testid={`reverse-payment-${i.id}`}
+                        title="Reverse this payment — removes it from your P&L"
+                        className="text-[10px] font-black uppercase tracking-widest text-red-400 border border-red-400/30 rounded px-1.5 py-0.5 hover:bg-red-500/15 hover:text-red-300">
+                  <i className="fas fa-rotate-left mr-1" />Reverse
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>

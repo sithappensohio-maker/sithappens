@@ -17308,6 +17308,77 @@ async def mark_installment_paid(
     return updated
 
 
+@api.post("/admin/payment-plans/{plan_id}/installments/{inst_id}/reverse-payment")
+async def reverse_installment_payment(
+    plan_id: str, inst_id: str,
+    body: Optional[MarkPaidIn] = None,
+    current: dict = Depends(require_admin),
+):
+    """Sprint 110do — Cash-register-style refund for a paid installment.
+    Flips the installment back to "due", deletes the income row that was
+    created at mark-paid time, and records the reversal on the installment
+    for the audit trail. Same principle should apply to ANY return in the
+    app: if cash came out of the till, the P&L must show it."""
+    p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Plan not found")
+    inst = next((i for i in p.get("installments", []) if i.get("id") == inst_id), None)
+    if not inst:
+        raise HTTPException(404, "Installment not found")
+    if inst.get("status") != "paid":
+        raise HTTPException(409, "Installment is not in paid status")
+
+    income_id = inst.get("income_event_id")
+    deleted_count = 0
+    if income_id:
+        res = await db.retail_sales.delete_one({"id": income_id})
+        deleted_count = res.deleted_count
+
+    # Snapshot the reversal for audit (preserves who, when, how much, and the
+    # original income_event_id even though the row is gone).
+    reversal_note = {
+        "reversed_at": now_iso(),
+        "reversed_by_admin_id": current.get("id"),
+        "reversed_amount": float(inst.get("amount") or 0),
+        "deleted_income_event_id": income_id,
+        "deleted_income_rows": deleted_count,
+        "reason": (body.notes if body else "") or "Admin reversal",
+    }
+    history = inst.get("reversal_history") or []
+    history.append(reversal_note)
+
+    # Flip back to "due" and clear the paid-state fields. Keep due_date intact
+    # so the client still owes the same money on the original schedule.
+    new_installments = []
+    for i in p["installments"]:
+        if i.get("id") == inst_id:
+            i = {**i, "status": "due", "reversal_history": history}
+            for k in ("paid_at", "paid_method", "paid_by_admin_id", "income_event_id"):
+                i.pop(k, None)
+        new_installments.append(i)
+
+    # Recompute plan totals.
+    paid = sum(float(i["amount"]) for i in new_installments if i.get("status") == "paid")
+    remaining = float(p.get("total_amount") or 0) - paid
+    plan_status = p.get("status")
+    if plan_status == "completed" and remaining > 0.01:
+        plan_status = "active"  # un-complete the plan since money is owed again
+
+    await db.payment_plans.update_one(
+        {"id": plan_id},
+        {"$set": {
+            "installments": new_installments,
+            "paid_total": round(paid, 2),
+            "remaining_total": round(max(0.0, remaining), 2),
+            "status": plan_status,
+            "updated_at": now_iso(),
+        }},
+    )
+    return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
+
+
+
+
 @api.post("/admin/payment-plans/{plan_id}/cancel")
 async def cancel_payment_plan(plan_id: str, _: dict = Depends(require_admin)):
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})

@@ -92,3 +92,57 @@ def test_default_does_not_chime_for_unpaid_installments(admin_headers):
     inst2 = plan_now["installments"][1]
     assert inst2["status"] == "due"
     assert not inst2.get("income_event_id")
+
+
+def test_reverse_payment_removes_income_row(admin_headers):
+    """Sprint 110do — reversing a paid installment must delete the income row
+    AND flip the installment back to due. Cash-register principle."""
+    from pymongo import MongoClient
+    client, plan = _make_client_and_plan(admin_headers, total=600, count=2)
+    inst = plan["installments"][0]
+    # Mark paid → creates income row
+    pr = requests.post(
+        f"{API}/admin/payment-plans/{plan['id']}/installments/{inst['id']}/mark-paid",
+        headers=admin_headers, json={"method": "cash"}, timeout=15)
+    pr.raise_for_status()
+    paid_inst = next(i for i in pr.json()["installments"] if i["id"] == inst["id"])
+    income_id = paid_inst["income_event_id"]
+    assert income_id
+
+    # Verify the income row exists
+    mc = MongoClient(os.environ["MONGO_URL"])
+    dbn = os.environ.get("DB_NAME", "sit_happens")
+    try:
+        assert mc[dbn].retail_sales.count_documents({"id": income_id}) == 1
+    finally:
+        mc.close()
+
+    # Reverse
+    rr = requests.post(
+        f"{API}/admin/payment-plans/{plan['id']}/installments/{inst['id']}/reverse-payment",
+        headers=admin_headers, json={"method": "cash", "notes": "test reversal"}, timeout=15)
+    rr.raise_for_status()
+
+    reversed_inst = next(i for i in rr.json()["installments"] if i["id"] == inst["id"])
+    # Installment is back to due, income event id is cleared, history captured
+    assert reversed_inst["status"] == "due"
+    assert "income_event_id" not in reversed_inst or reversed_inst.get("income_event_id") in (None, "")
+    assert len(reversed_inst.get("reversal_history") or []) == 1
+    assert reversed_inst["reversal_history"][0]["reversed_amount"] == inst["amount"]
+
+    # And the income row is gone from retail_sales
+    mc = MongoClient(os.environ["MONGO_URL"])
+    try:
+        assert mc[dbn].retail_sales.count_documents({"id": income_id}) == 0
+    finally:
+        mc.close()
+
+
+def test_reverse_payment_rejects_unpaid(admin_headers):
+    """Reversing a still-due installment must 409 (no income row exists)."""
+    client, plan = _make_client_and_plan(admin_headers, total=300, count=2)
+    inst = plan["installments"][0]
+    r = requests.post(
+        f"{API}/admin/payment-plans/{plan['id']}/installments/{inst['id']}/reverse-payment",
+        headers=admin_headers, json={}, timeout=15)
+    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"

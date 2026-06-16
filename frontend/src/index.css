@@ -638,10 +638,14 @@ textarea {
     min-width: 0 !important;
     max-width: 100vw;
   }
-  /* Stack dashboard tile rows vertically on narrow screens. */
-  .grid-cols-5,
-  .md\:grid-cols-5,
-  .lg\:grid-cols-5 {
+  /* Sprint 110ee — Stack dashboard stat-tile rows two-up on narrow screens
+     ONLY when the parent explicitly uses bare `grid-cols-5` (i.e. a 5-up
+     row of small KPI tiles). Hero/section layouts that opt into a 5-col
+     grid only at `lg:` should stack to a single column on mobile, not
+     two — otherwise content like the Login hero (`lg:grid-cols-5` with
+     `lg:col-span-3` + `lg:col-span-2`) ends up rendering as 2 cramped
+     columns on a phone, overlapping itself. */
+  .grid.grid-cols-5 {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
   /* Tables → mobile cards: hide secondary columns. */

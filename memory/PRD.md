@@ -2981,6 +2981,23 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 - ✅ **Confirmed already-shipped feature**: `server.py` lines 3227-3295 contain the complete referrer auto-credit hook on booking checkout. Credits referrer +1 daycare credit on the referred client's first completed appointment, idempotent via `referrals` collection, dual email notifications (`notify_client_referral_payout` + `notify_client_referral_welcome`), audit-logged to `credit_adjustments`, and trophy re-evaluation for both parties.
 - ✅ **Pytest** `test_referral_auto_credit.py` — 4/4 pass: payout fires on first checkout, payout is idempotent across repeated checkouts, self-referrals blocked, signup-time `referred_by_code` is normalised.
 
+
+## Sprint 110ee — Mobile responsive audit & layout fixes (2026-02-16)
+**User ask**: Verify all UI components work well on both PC and mobile — make sure everything scrolls and is visible.
+
+### Bugs found & fixed
+1. **Login hero auth card overlapped the headline on mobile.**
+   - **Root cause**: Global CSS rule in `index.css` (`@media max-width: 768px`) was force-collapsing `.lg\:grid-cols-5` and `.md\:grid-cols-5` to `grid-template-columns: repeat(2, 1fr)` on mobile. This was intended for dashboard KPI tile rows but caught the Login hero's `grid lg:grid-cols-5` (`lg:col-span-3` headline + `lg:col-span-2` auth card), making it render as 2 cramped columns at 390px instead of stacking to single column.
+   - **Fix**: Narrowed the CSS rule to only target bare `.grid.grid-cols-5` (true 5-up tile rows). Tailwind's `md:` / `lg:` responsive variants now stack to 1 column on mobile naturally.
+
+2. **Bookings rows overflowed on mobile — action buttons (EDIT / APPROVE / REJECT / CANCEL) got clipped at the right edge, dog/client names truncated to "TE…".**
+   - **Root cause**: Both grouped active rows and history rows used `flex items-center justify-between gap-2` with `shrink-0` on the status pill + action buttons. The action cluster refused to shrink, forcing the title `<div>` (with `min-w-0 flex-1`) to truncate aggressively, and the rightmost action got pushed off-screen.
+   - **Fix**: Restructured both rows to `flex flex-col sm:flex-row` — on mobile the text takes the full row, then status + buttons wrap below it. Desktop layout unchanged.
+
+### Verified-OK screens on mobile (390px viewport)
+Dashboard, Schedule, Run Sheet, Bookings (after fix), Recurring, Clients, Dogs, Pipeline, Homework, Trophies, Income (KPI tiles stack 2-up), Staff (tax totals stack 2-up), Incidents, Settings (6 collapsible categories scroll fine), Tutorials. Mobile drawer scrolls through all 15 nav items. Modals (AdminBookingModal, etc.) render with `max-h-[90vh] overflow-y-auto` and scroll internally.
+
+
 ## Backlog / Next Up
 - **P1** Check-in / Check-out flow with daily census
 - **P1** Public booking page (`yourdomain.com/book` — no login required)

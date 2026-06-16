@@ -160,7 +160,7 @@ export default function Bookings() {
               emptyText="No history yet."
               renderRow={(b) => (
                 <div key={b.id}
-                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
+                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
                      data-testid={`booking-history-row-${b.id}`}
                      onClick={()=>setDetailFor(b)}>
                   <div className="min-w-0 flex-1">
@@ -172,8 +172,10 @@ export default function Bookings() {
                       {b.service_type} · {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
                     </p>
                   </div>
-                  <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
-                  {!b._archived && <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} className="text-[13px] font-black uppercase text-shBlue hover:underline shrink-0">Open</button>}
+                  <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                    {!b._archived && <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} className="text-[13px] font-black uppercase text-shBlue hover:underline">Open</button>}
+                  </div>
                 </div>
               )}
             />
@@ -190,7 +192,7 @@ export default function Bookings() {
               emptyText="No active bookings."
               renderRow={(b) => (
                 <div key={b.id}
-                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
+                     className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 cursor-pointer hover:border-shGreen/40 transition"
                      data-testid={`booking-grouped-row-${b.id}`}
                      onClick={()=>setDetailFor(b)}>
                   <div className="min-w-0 flex-1">
@@ -200,8 +202,8 @@ export default function Bookings() {
                       {b.end_date && b.end_date !== b.date ? ` · → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
                     </p>
                   </div>
-                  <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
-                  <div className="flex flex-wrap gap-x-3 shrink-0">
+                  <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
                     <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shBlue hover:underline">Edit</button>
                     {b.status === "pending" && <>
                       <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shGreen hover:underline">Approve</button>
