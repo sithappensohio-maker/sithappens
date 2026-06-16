@@ -45,25 +45,38 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [previewId, setPreviewId] = useState(null); // client id whose portal we're previewing
   const [trophyMap, setTrophyMap] = useState({});  // client_id -> awarded[]
   const [awardPicker, setAwardPicker] = useState(null);  // client object
+  const [plansByClient, setPlansByClient] = useState({});  // client_id -> plans[]
 
   const loadTrophies = async (clientList) => {
+    // Sprint 110ef — Single batch call to avoid the N-parallel 429 storm
+    // (see also Dogs.jsx + /admin/dog-trophies-summary).
     try {
-      const entries = await Promise.all(
-        clientList.map(async c => {
-          try { const { data } = await api.get(`/clients/${c.id}/trophies`); return [c.id, data]; }
-          catch { return [c.id, []]; }
-        })
-      );
+      const { data } = await api.get("/admin/client-trophies-summary");
       const map = {};
-      entries.forEach(([id, list]) => { map[id] = list; });
+      clientList.forEach(c => { map[c.id] = data?.[c.id] || []; });
       setTrophyMap(map);
     } catch (e) { console.warn("Clients trophy load failed:", e); }
   };
 
   const load = async () => {
-    const [c, p] = await Promise.all([api.get("/clients"), api.get("/credit-packs").catch(()=>({data:[]}))]);
+    const [c, p, pp] = await Promise.all([
+      api.get("/clients"),
+      api.get("/credit-packs").catch(()=>({data:[]})),
+      api.get("/admin/payment-plans").catch(()=>({data:[]})),
+    ]);
     setClients(c.data);
     setPacks(p.data || []);
+    // Sprint 110ef — Group all payment plans by client_id once so each
+    // AdminClientPaymentPlans card uses the bulk-loaded slice instead of
+    // firing its own /admin/payment-plans?client_id=… request (was causing
+    // browser-level `ERR_INSUFFICIENT_RESOURCES` with hundreds of clients).
+    const byClient = {};
+    (pp.data || []).forEach(plan => {
+      const cid = plan.client_id;
+      if (!cid) return;
+      (byClient[cid] = byClient[cid] || []).push(plan);
+    });
+    setPlansByClient(byClient);
     loadTrophies(c.data);
   };
   useEffect(() => { load(); }, []);
@@ -337,7 +350,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             />
             {/* Sprint 110ch — Payment plans for big-ticket items */}
             <div className="mt-3 pt-3 border-t border-bgHover">
-              <AdminClientPaymentPlans clientId={c.id} />
+              <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id] || []} />
             </div>
             <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">

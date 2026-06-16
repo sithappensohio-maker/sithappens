@@ -109,15 +109,13 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   const [awardPicker, setAwardPicker] = useState(null); // dog object
 
   const loadTrophies = async (dogList) => {
+    // Sprint 110ef — Single batch call instead of N parallel `/dogs/{id}/trophies`
+    // calls. With 500+ dogs the burst was hitting infra rate limits (429) and
+    // surfacing as the dev-server runtime-error overlay.
     try {
-      const entries = await Promise.all(
-        dogList.map(async d => {
-          try { const { data } = await api.get(`/dogs/${d.id}/trophies`); return [d.id, data]; }
-          catch { return [d.id, []]; }
-        })
-      );
+      const { data } = await api.get("/admin/dog-trophies-summary");
       const map = {};
-      entries.forEach(([id, list]) => { map[id] = list; });
+      dogList.forEach(d => { map[d.id] = data?.[d.id] || []; });
       setDogTrophies(map);
     } catch (e) { console.warn("Dogs trophy load failed:", e); }
   };

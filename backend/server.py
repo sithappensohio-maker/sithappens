@@ -10890,6 +10890,21 @@ async def list_dog_trophies(dog_id: str, user: dict = Depends(get_current_user))
     return _serialize_awarded(rows)
 
 
+# Sprint 110ef — Batch endpoint to avoid the 429 storm caused by N parallel
+# `GET /dogs/{id}/trophies` calls when the Dogs admin page loads (one per
+# dog). Returns a `{dog_id: [trophies]}` map in a single round trip.
+@api.get("/admin/dog-trophies-summary")
+async def all_dog_trophies_summary(_: dict = Depends(require_admin)):
+    rows = await db.awarded_trophies.find(
+        {"recipient_type": "dog", "revoked": {"$ne": True}},
+        {"_id": 0},
+    ).sort("awarded_at", -1).to_list(10000)
+    out: Dict[str, list] = {}
+    for r in _serialize_awarded(rows):
+        out.setdefault(r.get("recipient_id"), []).append(r)
+    return out
+
+
 @api.get("/clients/{client_id}/trophies")
 async def list_client_trophies(client_id: str, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin" and user.get("client_id") != client_id:
@@ -10899,6 +10914,19 @@ async def list_client_trophies(client_id: str, user: dict = Depends(get_current_
         {"_id": 0},
     ).sort("awarded_at", -1).to_list(200)
     return _serialize_awarded(rows)
+
+
+# Sprint 110ef — Sibling batch endpoint to `/admin/dog-trophies-summary`.
+@api.get("/admin/client-trophies-summary")
+async def all_client_trophies_summary(_: dict = Depends(require_admin)):
+    rows = await db.awarded_trophies.find(
+        {"recipient_type": "client", "revoked": {"$ne": True}},
+        {"_id": 0},
+    ).sort("awarded_at", -1).to_list(10000)
+    out: Dict[str, list] = {}
+    for r in _serialize_awarded(rows):
+        out.setdefault(r.get("recipient_id"), []).append(r)
+    return out
 
 
 @api.post("/dogs/{dog_id}/trophies/{code}/award")
@@ -17186,7 +17214,7 @@ async def list_payment_plans(
         q["status"] = status
     if client_id:
         q["client_id"] = client_id
-    rows = await db.payment_plans.find(q, {"_id": 0}).sort([("created_at", -1)]).to_list(500)
+    rows = await db.payment_plans.find(q, {"_id": 0}).sort([("created_at", -1)]).to_list(5000)
     # Decorate each row with computed totals
     for p in rows:
         paid = sum(i["amount"] for i in p["installments"] if i["status"] == "paid")

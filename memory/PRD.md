@@ -2998,6 +2998,27 @@ Lint clean. Income screenshot verified live ($604.99 net after labor with the ne
 Dashboard, Schedule, Run Sheet, Bookings (after fix), Recurring, Clients, Dogs, Pipeline, Homework, Trophies, Income (KPI tiles stack 2-up), Staff (tax totals stack 2-up), Incidents, Settings (6 collapsible categories scroll fine), Tutorials. Mobile drawer scrolls through all 15 nav items. Modals (AdminBookingModal, etc.) render with `max-h-[90vh] overflow-y-auto` and scroll internally.
 
 
+## Sprint 110ef — Eliminate 429 / ERR_INSUFFICIENT_RESOURCES storms on Dogs + Clients pages (2026-02-16)
+**User report**: "Getting errors on some pages" — screenshot showed the dev-server runtime-error overlay flooded with `Request failed with status code 429 · AxiosError · Promise.all (index 1)` on the Dogs page.
+
+### Root cause
+Two pages were firing N parallel API requests (N = total records) on every mount:
+1. **Dogs.jsx** → `Promise.all(dogs.map(d => GET /dogs/{d.id}/trophies))` = 550 parallel requests against the ingress' rate-limiter ⇒ 429s.
+2. **Clients.jsx** → each rendered `<AdminClientPaymentPlans clientId={c.id} />` independently fetched `GET /admin/payment-plans?client_id=…`, hitting browser-level `ERR_INSUFFICIENT_RESOURCES` (>6 concurrent same-origin requests) at 823 clients.
+
+### Fix
+1. **Backend** — added two admin-only batch endpoints in `server.py`:
+   - `GET /admin/dog-trophies-summary` → `{dog_id: [awarded[]]}` map in one call (single Mongo query, no per-dog auth check needed).
+   - `GET /admin/client-trophies-summary` → same shape, keyed by `client_id`.
+2. **Backend** — bumped `/admin/payment-plans` `to_list(500)` to `to_list(5000)` so the bulk fetch returns everything.
+3. **Frontend** — `Dogs.jsx` `loadTrophies()` replaced N-parallel loop with single call to `/admin/dog-trophies-summary`, then `dogList.forEach` builds the local map.
+4. **Frontend** — `Clients.jsx` `load()` now also fetches `/admin/payment-plans` once, groups by `client_id`, and passes `plans={plansByClient[c.id] || []}` to each `<AdminClientPaymentPlans />` (the component already supported the prop — `Sprint 110dc` flag).
+5. **Frontend** — `Clients.jsx` `loadTrophies()` similarly switched to the new `/admin/client-trophies-summary` batch endpoint.
+
+### Verification
+Headless browser audit on prod-preview URL with `page.on("response")` + `page.on("requestfailed")` listeners; visited Dogs + Clients → **zero** `429` responses, **zero** `ERR_INSUFFICIENT_RESOURCES` failures. Dev-server red overlay no longer triggered.
+
+
 ## Backlog / Next Up
 - **P1** Check-in / Check-out flow with daily census
 - **P1** Public booking page (`yourdomain.com/book` — no login required)
