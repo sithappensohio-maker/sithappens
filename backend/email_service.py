@@ -25,6 +25,11 @@ if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 
+# Sprint 110eg-4 — Last Resend send failure (string). Populated by `_send()`
+# so admin-facing test endpoints can surface the real error to the UI.
+last_send_error: str | None = None
+
+
 BRAND_GREEN = "#8cc63f"
 BRAND_BLUE = "#00a9e0"
 BRAND_DARK = "#0f172a"
@@ -259,16 +264,26 @@ async def _is_in_quiet_hours() -> bool:
 
 
 async def _send(to_email: str, subject: str, html: str) -> bool:
-    """Fire-and-forget send. Logs failures but never raises. Returns True on success."""
+    """Fire-and-forget send. Logs failures but never raises. Returns True on success.
+
+    Sprint 110eg-4 — stores the last failure on `last_send_error` (module
+    global) so admin-facing endpoints can surface the real Resend reason
+    without forcing the operator to read backend logs.
+    """
+    global last_send_error
+    last_send_error = None
     if not RESEND_API_KEY:
+        last_send_error = "RESEND_API_KEY not set"
         logger.warning("RESEND_API_KEY not set — skipping email to %s", to_email)
         return False
     if not to_email:
+        last_send_error = "Missing recipient address"
         return False
     # Sprint 110dm — quiet hours blackout. Skip non-critical sends during the
     # configured window. (Auth/password-reset email paths bypass this by
     # calling resend.Emails.send directly — see send_account_claim.)
     if await _is_in_quiet_hours():
+        last_send_error = "Quiet hours active"
         logger.info("Email to %s deferred — quiet hours active. Subject: %s", to_email, subject)
         return False
     try:
@@ -280,6 +295,7 @@ async def _send(to_email: str, subject: str, html: str) -> bool:
         logger.info("Email sent to %s: %s", to_email, result.get("id") if isinstance(result, dict) else result)
         return True
     except Exception as e:
+        last_send_error = str(e)
         logger.warning("Email send to %s failed: %s", to_email, e)
         return False
 

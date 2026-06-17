@@ -368,8 +368,15 @@ function TemplateEditorModal({ slug, onClose }) {
       await api.put(`/admin/email-templates/${slug}`, draft);
       const r = await api.post(`/admin/email-templates/${slug}/test`,
                                testTo.trim() ? { to_email: testTo.trim() } : {});
-      setMsg(r.data?.ok ? `Test sent to ${r.data.sent_to}` : "Test email queued (check Resend config)");
-      setTimeout(() => setMsg(""), 3000);
+      if (r.data?.ok) {
+        setMsg(`Test sent to ${r.data.sent_to}`);
+        setTimeout(() => setMsg(""), 4000);
+      } else {
+        // Sprint 110eg-4 — surface why the send failed so the operator
+        // can debug (typically a Resend domain-verification gap).
+        const reason = r.data?.reason || "Send failed — check backend log";
+        setMsg(`Send to ${r.data?.sent_to || "?"} failed · ${reason}`);
+      }
     } catch (e) {
       setMsg(formatErr(e.response?.data?.detail) || "Send test failed");
     }

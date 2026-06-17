@@ -3106,6 +3106,28 @@ The job was already 100% wired — `daily_jobs.run_pl_monthly_job` generates the
 
 
 
+## Sprint 110eg-4 — Email template test sends fixed (2026-02-16)
+**User ask**: *"Test emails would be good so I could send myself emails to see the ones I've created with the designer."*
+
+### Discovery
+Send Test button already exists in `EmailDesignerPanel.jsx` (every one of the 32 customizable templates has one). But two bugs prevented it from being useful:
+
+1. **Wrong default recipient** — when the operator left the "Recipient" field blank, the backend resolved it as: `body.to_email > current.email > ADMIN_NOTIFICATION_EMAIL`. The middle fallback (`current.email`) is the seed CRM-login mailbox (`admin@sithappens.com`), not the operator's real inbox. So blank-recipient test sends never reached the operator.
+
+2. **Silent failure** — the response was `{ok: false}` with no explanation. The UI said *"Test email queued (check Resend config)"* which is wrong and unhelpful.
+
+### Fix
+1. **Backend** — flipped fallback order to `body.to_email > ADMIN_NOTIFICATION_EMAIL > current.email`. Blank recipient now reliably goes to the operator's real personal inbox.
+2. **Backend** — `email_service._send()` now captures the actual Resend exception into `last_send_error` (module global). The test endpoint reads it and returns a `reason` field with the exact error, plus a contextualised hint for the common "domain not verified" case (mentions Cloudflare nameservers since that's the user's current state).
+3. **Frontend** — `EmailDesignerPanel.sendTest` now displays the actual reason instead of the generic queued message.
+
+### Verified
+Live test send now returns the real Resend error verbatim:
+> *"The sithappensohiodogtraining.com domain is not verified. Please, add and verify your domain on https://resend.com/domains. Open https://resend.com/domains, add your sender domain, and copy the SPF + DKIM TXT records into your DNS. This is the most common cause when Cloudflare nameservers have been changed."*
+
+Once the user restores their Cloudflare nameservers and Resend re-verifies the domain, all 32 templates will be testable with one click — and the auto-monthly P&L will start delivering again.
+
+
 ## Backlog / Next Up
 - **P1** Check-in / Check-out flow with daily census
 - **P1** Public booking page (`yourdomain.com/book` — no login required)

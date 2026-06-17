@@ -16955,11 +16955,27 @@ class EmailTestRequest(BaseModel):
 @api.post("/admin/email-templates/{slug}/test")
 async def test_email_template(slug: str, body: EmailTestRequest, current: dict = Depends(require_admin)):
     """Send a test email using sample data so the operator can preview their
-    customizations. Falls back to the current admin's email if no target is given."""
+    customizations.
+
+    Recipient priority:
+      1. explicit `to_email` in the request body, else
+      2. `ADMIN_NOTIFICATION_EMAIL` env var (the operator's REAL personal inbox), else
+      3. the current logged-in admin's account email (CRM login, usually a stub).
+
+    Sprint 110eg-4 — previously priority 2 + 3 were inverted, which routed
+    test emails to the seed `admin@sithappens.com` mailbox even when the
+    operator had a real personal inbox configured. The operator never saw
+    the test arrive.
+    """
     tpl = _email_get_template(slug)
     if not tpl:
         raise HTTPException(status_code=404, detail="Unknown template")
-    to = (body.to_email or "").strip() or current.get("email") or os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+    to = (
+        (body.to_email or "").strip()
+        or os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+        or current.get("email")
+        or ""
+    )
     if not to:
         raise HTTPException(status_code=400, detail="No recipient email available")
     # Build a sample ctx covering every declared variable.
@@ -17014,7 +17030,31 @@ async def test_email_template(slug: str, body: EmailTestRequest, current: dict =
         cta_url=os.environ.get("APP_PUBLIC_URL", "") or None,
         show_install=False,
     )
-    return {"ok": bool(ok), "sent_to": to, "slug": slug}
+    if ok:
+        return {"ok": True, "sent_to": to, "slug": slug}
+    # Sprint 110eg-4 — return a human-readable explanation when `_dispatch`
+    # returns False so the operator can debug without hunting through logs.
+    detail = email_service.last_send_error or ""
+    if not email_service.RESEND_API_KEY:
+        reason = "Resend isn't configured (RESEND_API_KEY missing)."
+    elif await email_service._is_in_quiet_hours():
+        reason = "Quiet-hours window is active — non-critical emails are paused. Adjust in Settings → Day-to-day → Communications."
+    elif "domain is not verified" in detail.lower() or "not verified" in detail.lower():
+        reason = (
+            f"{detail.strip()}. Open https://resend.com/domains, add your "
+            f"sender domain, and copy the SPF + DKIM TXT records into your "
+            f"DNS. This is the most common cause when Cloudflare nameservers "
+            f"have been changed."
+        )
+    elif detail:
+        reason = f"Resend rejected the send: {detail}"
+    else:
+        reason = (
+            "Resend rejected the send. Most common cause: your sender "
+            "domain (used in SENDER_EMAIL) isn't fully verified — open "
+            "Resend → Domains and check SPF / DKIM."
+        )
+    return {"ok": False, "sent_to": to, "slug": slug, "reason": reason}
 
 
 @api.get("/admin/email-settings")
