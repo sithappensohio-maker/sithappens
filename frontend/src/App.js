@@ -23,6 +23,7 @@ import Tutorials from "./screens/Tutorials";
 import IntakeForms from "./screens/IntakeForms";
 import CareBoard from "./screens/CareBoard";
 import Waitlist from "./screens/Waitlist";
+import KennelBoard from "./screens/KennelBoard";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
@@ -78,6 +79,7 @@ function AdminShell() {
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
     { id: "care", label: "Care Board", icon: "fa-bowl-food" },
+    { id: "kennel", label: "Kennel Board", icon: "fa-paw" },
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
     { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half" },
     { id: "recurring", label: "Recurring", icon: "fa-rotate" },
@@ -188,6 +190,7 @@ function AdminShell() {
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}
           {tab === "care" && <CareBoard />}
+          {tab === "kennel" && <KennelBoard />}
           {tab === "bookings" && <Bookings />}
           {tab === "waitlist" && <Waitlist />}
           {tab === "recurring" && <RecurringTemplates />}

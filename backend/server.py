@@ -401,6 +401,11 @@ class BookingOut(BaseModel):
     dropoff_time: Optional[str] = ""
     pickup_time: Optional[str] = ""
     time: Optional[str] = ""  # appointment time slot for training/grooming/photography
+    # Sprint 110eu — Phase 4: Kennel/Daycare board assignment fields
+    room: Optional[str] = ""
+    crate: Optional[str] = ""
+    yard_group: Optional[str] = ""
+    training_group: Optional[str] = ""
     duration_minutes: Optional[int] = 0  # blocks the schedule for time-slotted services
     cost: Optional[int] = 0
     grooming_type: Optional[str] = None
@@ -4272,6 +4277,11 @@ class BookingPatchIn(BaseModel):
     dropoff_time: Optional[str] = None
     pickup_time: Optional[str] = None
     time: Optional[str] = None  # appointment time for training/grooming/photography
+    # Sprint 110eu — Phase 4: Kennel/Daycare board assignments
+    room: Optional[str] = None
+    crate: Optional[str] = None
+    yard_group: Optional[str] = None
+    training_group: Optional[str] = None
 
 @api.patch("/bookings/{booking_id}", response_model=BookingOut)
 async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends(require_admin)):
@@ -19000,6 +19010,224 @@ async def convert_waitlist_to_booking(entry_id: str, user: dict = Depends(requir
         }},
     )
     return {"booking": booking, "waitlist_entry_id": entry_id}
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110eu — Phase 4: Visual Kennel / Daycare board
+# ────────────────────────────────────────────────────────────────────────────
+# `GET /kennel-board` returns today's on-site dogs grouped by service type
+# with their kennel/room/crate/yard/training group assignments and a set of
+# pre-computed warning flags so the UI can render badge icons without making
+# 50 extra round-trips. PATCH /bookings reuses the existing endpoint with
+# the four new assignment fields (kennel was already there).
+#
+# Available labels (kennels, rooms, crates, yard_groups, training_groups)
+# live under the settings doc so the operator can edit them once and pick
+# from dropdowns on every booking card.
+# ────────────────────────────────────────────────────────────────────────────
+
+KENNEL_BOARD_DEFAULTS = {
+    "kennels": ["Kennel A", "Kennel B", "Kennel C", "Kennel D", "Suite 1", "Suite 2"],
+    "rooms":   ["Main Room", "Quiet Room", "Puppy Room"],
+    "crates":  ["Crate 1", "Crate 2", "Crate 3", "Crate 4"],
+    "yard_groups": ["Big Dogs", "Small Dogs", "Puppies", "Senior / Slow"],
+    "training_groups": ["Group A", "Group B", "1:1 Session"],
+}
+
+
+class KennelBoardLabelsIn(BaseModel):
+    kennels: Optional[List[str]] = None
+    rooms: Optional[List[str]] = None
+    crates: Optional[List[str]] = None
+    yard_groups: Optional[List[str]] = None
+    training_groups: Optional[List[str]] = None
+
+
+async def _kennel_board_labels() -> Dict[str, List[str]]:
+    s = await get_settings()
+    saved = (s.get("kennel_board") or {})
+    out: Dict[str, List[str]] = {}
+    for k, default in KENNEL_BOARD_DEFAULTS.items():
+        vals = saved.get(k)
+        if isinstance(vals, list) and vals:
+            out[k] = [str(v).strip() for v in vals if str(v).strip()]
+        else:
+            out[k] = list(default)
+    return out
+
+
+@api.get("/kennel-board/labels")
+async def get_kennel_board_labels(_: dict = Depends(require_employee_or_admin)):
+    return await _kennel_board_labels()
+
+
+@api.put("/kennel-board/labels")
+async def set_kennel_board_labels(body: KennelBoardLabelsIn, _: dict = Depends(require_admin)):
+    s = await get_settings()
+    current = (s.get("kennel_board") or {})
+    patch = body.model_dump(exclude_unset=True)
+    for k, v in patch.items():
+        if isinstance(v, list):
+            current[k] = [str(x).strip() for x in v if str(x).strip()]
+    await db.settings.update_one(
+        {"id": "global"},
+        {"$set": {"kennel_board": current, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    return await _kennel_board_labels()
+
+
+@api.get("/kennel-board")
+async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
+    """Today's operational kennel board. One card per on-site booking with
+    assignment fields + warning flags pre-computed."""
+    today_local = business_today().isoformat()
+    candidates = await db.bookings.find(
+        {"status": {"$in": ["approved", "completed"]}, "date": {"$lte": today_local}},
+        {"_id": 0, "id": 1, "dog_id": 1, "dog_name": 1, "client_id": 1, "client_name": 1,
+         "service_type": 1, "date": 1, "end_date": 1, "status": 1,
+         "kennel": 1, "room": 1, "crate": 1, "yard_group": 1, "training_group": 1,
+         "dropoff_time": 1, "pickup_time": 1, "checked_in_at": 1, "checked_out_at": 1,
+         "notes": 1, "care_items": 1},
+    ).to_list(2000)
+    on_site = []
+    for b in candidates:
+        d = b.get("date") or ""
+        e = b.get("end_date") or d
+        # Skip already-checked-out for today (they've left)
+        if b.get("checked_out_at"):
+            try:
+                if b["checked_out_at"][:10] == today_local:
+                    continue
+            except Exception:
+                pass
+        if d <= today_local <= e:
+            on_site.append(b)
+
+    # Bulk-load dogs (one shot for safety flags + vaccines + photo)
+    dog_ids = list({b.get("dog_id") for b in on_site if b.get("dog_id")})
+    dogs_rows = await db.dogs.find(
+        {"id": {"$in": dog_ids}},
+        {"_id": 0, "id": 1, "name": 1, "breed": 1, "photo": 1, "vaccines": 1,
+         "safety_flags": 1, "feeding_schedule": 1, "medications": 1, "notes": 1},
+    ).to_list(2000) if dog_ids else []
+    dog_map = {d["id"]: d for d in dogs_rows}
+
+    # Required vaccines from settings — used for the vaccine-warning flag
+    settings = await get_settings()
+    required = settings.get("required_vaccines", ["rabies"])
+
+    # Bulk-load recent open incidents
+    inc_rows = await db.incidents.find(
+        {"dog_id": {"$in": dog_ids}, "follow_up_required": True},
+        {"_id": 0, "dog_id": 1, "id": 1},
+    ).to_list(2000) if dog_ids else []
+    open_incidents_by_dog: Dict[str, int] = {}
+    for r in inc_rows:
+        open_incidents_by_dog[r["dog_id"]] = open_incidents_by_dog.get(r["dog_id"], 0) + 1
+
+    def _vaccine_warning(dog: Dict[str, Any]) -> bool:
+        vacc = dog.get("vaccines") or {}
+        for v in required:
+            expires = vacc.get(v) or (vacc.get(v) if isinstance(vacc, dict) else None)
+            # tolerate both flat string and {expires} nested dict
+            if isinstance(expires, dict):
+                expires = expires.get("expires") or expires.get("expiry") or expires.get("date")
+            if not expires or expires < today_local:
+                return True
+        return False
+
+    by_service: Dict[str, List[Dict[str, Any]]] = {
+        "daycare": [], "boarding": [], "training": [], "grooming": [], "photography": [], "other": [],
+    }
+    summary = {"daycare": 0, "boarding": 0, "training": 0, "grooming": 0, "photography": 0, "other": 0}
+    for b in on_site:
+        dog = dog_map.get(b.get("dog_id") or "", {})
+        flags = list(dog.get("safety_flags") or [])
+        care_items = b.get("care_items") or []
+        has_feeding = any(it.get("kind") == "feeding" for it in care_items) or bool(dog.get("feeding_schedule"))
+        has_meds    = any(it.get("kind") == "medication" for it in care_items) or bool(dog.get("medications"))
+        # Status-aware warning: meds overdue if any pending med has time < now
+        now_min = _now_business_minutes()
+        med_overdue = False
+        for it in care_items:
+            if it.get("kind") != "medication": continue
+            if it.get("status") in ("completed", "skipped"): continue
+            tmin = _hhmm_to_minutes(it.get("time") or "")
+            if tmin is not None and now_min - tmin > CARE_GRACE_MINUTES:
+                med_overdue = True; break
+        card = {
+            "booking_id": b.get("id"),
+            "dog_id": b.get("dog_id"),
+            "dog_name": b.get("dog_name") or dog.get("name"),
+            "client_id": b.get("client_id"),
+            "client_name": b.get("client_name"),
+            "service_type": b.get("service_type"),
+            "status": b.get("status"),
+            "kennel": b.get("kennel") or "",
+            "room": b.get("room") or "",
+            "crate": b.get("crate") or "",
+            "yard_group": b.get("yard_group") or "",
+            "training_group": b.get("training_group") or "",
+            "dropoff_time": b.get("dropoff_time") or "",
+            "pickup_time": b.get("pickup_time") or "",
+            "checked_in_at": b.get("checked_in_at") or None,
+            "notes": b.get("notes") or "",
+            "photo": dog.get("photo") or "",
+            "breed": dog.get("breed") or "",
+            "safety_flags": flags,
+            "warnings": {
+                "vaccine_lapsed":      _vaccine_warning(dog),
+                "has_feeding_plan":    has_feeding,
+                "has_med_plan":        has_meds,
+                "med_overdue":         med_overdue,
+                "open_incidents":      open_incidents_by_dog.get(b.get("dog_id") or "", 0),
+                "do_not_group":        any(f.lower().replace(" ", "_") in ("do_not_group", "dont_group") for f in flags),
+            },
+        }
+        bucket = by_service.get(b.get("service_type") or "other", by_service["other"])
+        bucket.append(card)
+        summary[b.get("service_type") or "other"] = summary.get(b.get("service_type") or "other", 0) + 1
+
+    # Stable sort: assigned items first (kennel set), then by pickup time, then dog name
+    for k, lst in by_service.items():
+        lst.sort(key=lambda c: (
+            0 if (c["kennel"] or c["room"] or c["crate"] or c["yard_group"] or c["training_group"]) else 1,
+            c.get("pickup_time") or "99:99",
+            c.get("dog_name") or "",
+        ))
+
+    return {
+        "date": today_local,
+        "summary": summary,
+        "groups": by_service,
+        "on_site_count": sum(summary.values()),
+    }
+
+
+# ── Safety flags on the dog profile (Phase 5 will add the full UI; Phase 4
+# needs at least the API hook so the kennel-board badges render correctly).
+
+class SafetyFlagsIn(BaseModel):
+    flags: List[str]
+
+
+@api.put("/dogs/{dog_id}/safety-flags")
+async def set_dog_safety_flags(dog_id: str, body: SafetyFlagsIn, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    cleaned = []
+    seen = set()
+    for f in body.flags:
+        v = (f or "").strip()
+        if not v: continue
+        key = v.lower()
+        if key in seen: continue
+        seen.add(key)
+        cleaned.append(v)
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"safety_flags": cleaned, "updated_at": now_iso()}})
+    return {"id": dog_id, "safety_flags": cleaned}
 
 
 app.include_router(api)

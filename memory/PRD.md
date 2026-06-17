@@ -3430,3 +3430,26 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_waitlist.py` (2 tests): availability shape for daycare + training (has_limit=false for time-slotted); full lifecycle including bad-status rejection, offered auto-stamp, convert-to-booking happy path, double-convert rejection. Both pass.
+
+## Sprint 110eu — Phase 4: Visual Kennel / Daycare board (2026-02-17)
+**User ask**: Phase 4 — fast operational board that surfaces every on-site dog with kennel/room/crate/yard/training group assignment slots and inline warning badges.
+
+### Backend (`server.py`)
+- **Extended** `BookingPatchIn` + `BookingOut` with four new assignment fields: `room`, `crate`, `yard_group`, `training_group` (kennel was already there). PATCH /bookings round-trips them.
+- **New settings store** `kennel_board` inside the global settings doc, holding lists of available kennels/rooms/crates/yard_groups/training_groups. Defaults seeded on first read.
+- **3 new endpoints**:
+  - `GET /kennel-board/labels` (employee/admin) — returns the five label lists for dropdown population
+  - `PUT /kennel-board/labels` (admin) — partial update of the lists; preserves untouched keys
+  - `GET /kennel-board` (employee/admin) — returns today's on-site dogs grouped by service_type (daycare/boarding/training/grooming/photography/other), each card carrying assignment fields, photo, breed, safety_flags, and pre-computed `warnings`: `vaccine_lapsed`, `has_feeding_plan`, `has_med_plan`, `med_overdue`, `open_incidents`, `do_not_group`
+- **New endpoint** `PUT /dogs/{id}/safety-flags` — persists a deduped list of flag strings on the dog doc; powers the kennel-card badges and primes Phase 5's richer flag management UI. Already-checked-out bookings are filtered from the board.
+
+### Frontend
+- **New screen `KennelBoard.jsx`**, wired into the sidebar between Care Board and Bookings (`fa-paw` icon). Auto-refreshes every 60s.
+- **5 service-type stat tiles** with the color palette already used elsewhere (daycare=green, boarding=orange, training=purple, grooming=blue, photography=pink).
+- **Service-grouped sections** — each visible group renders a 1/2/3-column responsive grid of cards.
+- **Per-card layout**: avatar + dog name + breed + client; pickup/dropoff times; right-rail warning badges (vaccine syringe, overdue meds, do-not-group ban icon, open-incidents triangle, has-feeding-plan, has-med-plan); 4-slot assignment grid (Kennel / Room / Crate / Yard, plus Training when set) showing "— unassigned" italic when empty.
+- **Click-to-edit assignment modal** with one select per slot driven by the saved label lists + a notes textarea. Saves via PATCH /bookings.
+- **Labels editor modal** (admin) with five textareas (one per category, one label per line) for fast bulk-edit of the dropdown options.
+
+### Regression
+- **New** `tests/test_kennel_board.py` (2 tests): labels GET/PUT with partial update preserving untouched keys; assignment roundtrip via PATCH /bookings (all four new fields) + safety-flags PUT reflected on the board with `do_not_group` warning firing correctly. Both pass.
