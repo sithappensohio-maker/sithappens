@@ -12384,6 +12384,13 @@ async def email_health(_: dict = Depends(require_admin)):
     dkim_records: List[str] = []
     if domain:
         spf_records = [r for r in await asyncio.to_thread(_txt_lookup, domain) if "v=spf1" in r.lower()]
+        # Sprint 110em — Subdomain sender (e.g. `mail.sithappens.app`) often
+        # inherits SPF authorization from the root domain in practice. If
+        # we don't find SPF on the subdomain, fall back to the parent so
+        # the health pill matches what Resend actually accepts.
+        if not spf_records and domain.count(".") >= 2:
+            parent = domain.split(".", 1)[1]
+            spf_records = [r for r in await asyncio.to_thread(_txt_lookup, parent) if "v=spf1" in r.lower()]
         # Resend's DKIM selector is published as `resend._domainkey.<domain>`.
         dkim_records = await asyncio.to_thread(_txt_lookup, f"resend._domainkey.{domain}")
 
