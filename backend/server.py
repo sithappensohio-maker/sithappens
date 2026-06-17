@@ -16,7 +16,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
 from zoneinfo import ZoneInfo
-from typing import List, Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body, UploadFile, File
 from fastapi.responses import Response
@@ -19355,6 +19355,252 @@ async def safety_flag_suggestions(dog_id: str, _: dict = Depends(require_admin))
         "library": SAFETY_FLAG_LABELS,
         "incident_count": len(incidents),
         "intake_signal_count": len(submissions),
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110ew — Phase 6: Audit log
+# ────────────────────────────────────────────────────────────────────────────
+# Every authenticated write (POST/PUT/PATCH/DELETE on /api/*) gets written to
+# the `audit_log` collection with the user, IP, method, path, derived action,
+# extracted record id, request payload (sanitized), and response status.
+#
+# Captured automatically by an HTTP middleware so we don't have to instrument
+# 200+ existing endpoints. Read-side surfaces a filterable list to admins.
+# ────────────────────────────────────────────────────────────────────────────
+
+# Skip noisy auto-poll endpoints so the log doesn't fill with junk
+_AUDIT_SKIP_PATH_FRAGMENTS = (
+    "/auth/login", "/auth/refresh", "/auth/me",
+    "/admin/email-health",                  # polled by the badge
+    "/notifications/seen",                  # ack-only, no real change
+    "/admin/recent-errors",
+    "/dogs/trophies/batch",                 # bulk read passthrough used by Dogs/Clients lists
+)
+
+# Action mapping: (method, path-pattern-fragment) → human-readable action.
+# Order matters — first match wins, so specific subpath rules must come first.
+_AUDIT_ACTION_RULES: List[Tuple[str, str, str]] = [
+    # ── Specific subpaths (must precede the generic resource rules) ──
+    ("PUT",    "/safety-flags",  "safety_flags_changed"),
+    ("PUT",    "/kennel-board/labels", "kennel_labels_changed"),
+    ("POST",   "/waitlist/",     "waitlist_status_changed"),
+    ("POST",   "/portal/intake/submissions", "intake_submitted_by_client"),
+    ("PUT",    "/intake/submissions", "intake_submission_edited"),
+    ("POST",   "/intake/submissions", "intake_submission_created"),
+    ("DELETE", "/intake/submissions", "intake_submission_deleted"),
+    ("PUT",    "/intake/templates",   "intake_template_edited"),
+    ("POST",   "/intake/templates",   "intake_template_created"),
+    ("DELETE", "/intake/templates",   "intake_template_deleted"),
+    # method, contains, action
+    ("POST",   "/bookings/", "booking_status_changed"),  # /bookings/{id}/cancel|approve|deny|complete|care
+    ("POST",   "/bookings",  "booking_created"),
+    ("PATCH",  "/bookings",  "booking_edited"),
+    ("DELETE", "/bookings",  "booking_deleted"),
+    ("POST",   "/dogs",      "dog_created"),
+    ("PUT",    "/dogs/",     "dog_edited"),
+    ("PATCH",  "/dogs/",     "dog_edited"),
+    ("DELETE", "/dogs/",     "dog_deleted"),
+    ("POST",   "/clients",   "client_created"),
+    ("PUT",    "/clients/",  "client_edited"),
+    ("PATCH",  "/clients/",  "client_edited"),
+    ("DELETE", "/clients/",  "client_deleted"),
+    ("POST",   "/incidents", "incident_created"),
+    ("PUT",    "/incidents", "incident_edited"),
+    ("DELETE", "/incidents", "incident_deleted"),
+    ("POST",   "/waitlist",   "waitlist_added"),
+    ("PUT",    "/waitlist",   "waitlist_edited"),
+    ("DELETE", "/waitlist",   "waitlist_removed"),
+    ("POST",   "/expenses",   "expense_created"),
+    ("DELETE", "/expenses",   "expense_deleted"),
+    ("PUT",    "/expenses",   "expense_edited"),
+    ("POST",   "/retail",     "retail_recorded"),
+    ("DELETE", "/retail",     "retail_deleted"),
+    ("POST",   "/payment-plans", "payment_plan_created"),
+    ("PUT",    "/payment-plans", "payment_plan_edited"),
+    ("POST",   "/waivers",    "waiver_action"),
+    ("POST",   "/vaccines",   "vaccine_edited"),
+    ("PUT",    "/vaccines",   "vaccine_edited"),
+    ("PUT",    "/settings",   "settings_changed"),
+    ("PATCH",  "/settings",   "settings_changed"),
+    ("POST",   "/settings",   "settings_changed"),
+    ("PUT",    "/timeclock",  "timeclock_edited"),
+    ("POST",   "/timeclock",  "timeclock_edited"),
+]
+
+
+def _audit_action_for(method: str, path: str) -> str:
+    for m, frag, action in _AUDIT_ACTION_RULES:
+        if method == m and frag in path:
+            # Refine /bookings/{id}/X subactions
+            if action == "booking_status_changed":
+                if path.endswith("/cancel"): return "booking_canceled"
+                if path.endswith("/approve"): return "booking_approved"
+                if path.endswith("/deny"): return "booking_denied"
+                if path.endswith("/complete"): return "booking_completed"
+                if "/care/" in path and path.endswith("/complete"): return "care_completed"
+                if "/care/" in path and path.endswith("/skip"): return "care_skipped"
+                if "/care/" in path and path.endswith("/reset"): return "care_reset"
+                if "/check-in" in path: return "booking_checked_in"
+                if "/check-out" in path: return "booking_checked_out"
+                if "/checkout" in path: return "booking_checked_out"
+                # not a recognized subaction — fall through to "booking_created"-ish
+                return "booking_action"
+            return action
+    return f"{method.lower()}_{path.strip('/').split('/', 2)[-1].split('/')[0]}"
+
+
+# Fields whose values should NEVER be persisted to the audit log
+_AUDIT_REDACT_KEYS = {
+    "password", "current_password", "new_password", "token", "access_token",
+    "secret", "api_key", "credit_card", "card_number", "cvv", "ssn",
+}
+
+
+def _redact_payload(payload: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return "[…]"
+    if isinstance(payload, dict):
+        return {k: ("[REDACTED]" if k.lower() in _AUDIT_REDACT_KEYS else _redact_payload(v, depth+1))
+                for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_redact_payload(x, depth+1) for x in payload[:50]]
+    if isinstance(payload, str) and len(payload) > 500:
+        return payload[:500] + "…"
+    return payload
+
+
+def _audit_record_id_from_path(path: str) -> Optional[str]:
+    # Extract any segment that looks like a UUID (heuristic; falls back to "")
+    for part in path.strip("/").split("/")[2:]:  # skip "api" + resource
+        if len(part) >= 12 and "-" in part:
+            return part
+    return None
+
+
+@app.middleware("http")
+async def audit_log_middleware(request, call_next):
+    """Persist a row for every authenticated admin/employee write to /api/*.
+    Skips reads (GET/HEAD/OPTIONS) and a small skip-list of noisy paths."""
+    method = request.method
+    path = request.url.path
+    response = await call_next(request)
+    try:
+        if method in ("GET", "HEAD", "OPTIONS"):
+            return response
+        if not path.startswith("/api/"):
+            return response
+        if any(frag in path for frag in _AUDIT_SKIP_PATH_FRAGMENTS):
+            return response
+        # Only log successful or expected-fail writes (skip 401/403/404 noise from probes)
+        if response.status_code in (401, 403, 404, 405) and method != "DELETE":
+            return response
+        # User context — pulled from the bearer token. If absent, log anonymously.
+        user_info = {"id": None, "name": "anonymous", "role": "anonymous", "email": None}
+        try:
+            auth = request.headers.get("authorization") or request.headers.get("Authorization") or ""
+            if auth.startswith("Bearer "):
+                payload = jwt.decode(auth[7:], JWT_SECRET, algorithms=[JWT_ALG],
+                                     options={"verify_exp": False})
+                user_info["id"] = payload.get("sub") or payload.get("user_id")
+                user_info["name"] = payload.get("name") or payload.get("email") or "user"
+                user_info["role"] = payload.get("role") or "user"
+                user_info["email"] = payload.get("email")
+        except Exception:
+            pass
+        # Anonymous mutations get logged only if they're explicit (e.g. claim links)
+        if user_info["role"] == "anonymous" and "/portal/" not in path and "/claim/" not in path:
+            return response
+        # Capture body only for non-GET (already known) — re-reading requires stash
+        body = getattr(request.state, "_audit_body", None)
+        await db.audit_log.insert_one({
+            "id": str(uuid.uuid4()),
+            "ts": now_iso(),
+            "user_id": user_info["id"],
+            "user_name": user_info["name"],
+            "user_email": user_info["email"],
+            "user_role": user_info["role"],
+            "ip": (request.client.host if request.client else None),
+            "method": method,
+            "path": path,
+            "action": _audit_action_for(method, path),
+            "record_id": _audit_record_id_from_path(path),
+            "status": response.status_code,
+            "payload": _redact_payload(body) if body else None,
+        })
+    except Exception:
+        # Audit MUST NOT break user requests.
+        logger.exception("audit middleware failure on %s %s", method, path)
+    return response
+
+
+# Body stash — FastAPI doesn't let middleware re-read request bodies cleanly
+# once the route reads them, so we stash on `request.state` before dispatch.
+@app.middleware("http")
+async def _stash_request_body(request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/api/"):
+        try:
+            raw = await request.body()
+            if raw and len(raw) < 200_000:
+                try:
+                    import json as _audit_json
+                    request.state._audit_body = _audit_json.loads(raw.decode("utf-8"))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return await call_next(request)
+
+
+# ── Audit log read API ──
+
+AUDIT_ACTION_GROUPS = {
+    "bookings": ["booking_created", "booking_edited", "booking_deleted", "booking_canceled",
+                 "booking_approved", "booking_denied", "booking_completed",
+                 "booking_checked_in", "booking_checked_out", "care_logged",
+                 "care_completed", "care_skipped", "care_reset"],
+    "dogs": ["dog_created", "dog_edited", "dog_deleted", "safety_flags_changed"],
+    "clients": ["client_created", "client_edited", "client_deleted"],
+    "incidents": ["incident_created", "incident_edited", "incident_deleted"],
+    "vaccines": ["vaccine_edited"],
+    "intake": ["intake_template_created", "intake_template_edited", "intake_template_deleted",
+               "intake_submission_created", "intake_submission_edited", "intake_submission_deleted",
+               "intake_submitted_by_client"],
+    "waitlist": ["waitlist_added", "waitlist_edited", "waitlist_removed", "waitlist_status_changed"],
+    "money": ["expense_created", "expense_edited", "expense_deleted", "retail_recorded",
+              "retail_deleted", "payment_plan_created", "payment_plan_edited"],
+    "settings": ["settings_changed", "kennel_labels_changed", "timeclock_edited"],
+    "waivers": ["waiver_action"],
+}
+
+
+@api.get("/audit-log")
+async def list_audit_log(
+    limit: int = 200,
+    user_id: Optional[str] = None,
+    action: Optional[str] = None,
+    group: Optional[str] = None,
+    record_id: Optional[str] = None,
+    since: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {}
+    if user_id: q["user_id"] = user_id
+    if action: q["action"] = action
+    if record_id: q["record_id"] = record_id
+    if group and group in AUDIT_ACTION_GROUPS:
+        q["action"] = {"$in": AUDIT_ACTION_GROUPS[group]}
+    if since: q["ts"] = {"$gte": since}
+    rows = await db.audit_log.find(q, {"_id": 0}).sort("ts", -1).to_list(min(max(limit, 1), 1000))
+    # Distinct users for the filter dropdown
+    pipeline = [{"$group": {"_id": {"user_id": "$user_id", "user_name": "$user_name", "user_role": "$user_role"}}},
+                {"$limit": 200}]
+    users_raw = await db.audit_log.aggregate(pipeline).to_list(200)
+    users = [{"id": r["_id"].get("user_id"), "name": r["_id"].get("user_name"), "role": r["_id"].get("user_role")} for r in users_raw if r["_id"].get("user_id")]
+    return {
+        "entries": rows,
+        "groups": list(AUDIT_ACTION_GROUPS.keys()),
+        "users": users,
     }
 
 

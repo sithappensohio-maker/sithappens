@@ -3476,3 +3476,22 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_incidents_phase5.py` (2 tests): creating an incident with new `human_directed_aggression` + `critical` + staff_involved + manager_reviewed (with bad-value 400 checks for both type and severity); safety-flag suggestions empty by default, then populate "Muzzle required" + "Staff only" after a bite is logged, then disappear from suggestions once accepted into `current_flags`. Both pass.
+
+## Sprint 110ew — Phase 6: Audit Log (2026-02-17)
+**User ask**: Owner-visible audit log with date/time, user, action, record affected, before/after summary, IP placeholder.
+
+### Backend (`server.py`)
+- **Two HTTP middlewares** that auto-capture every authenticated write to `/api/*` (POST/PUT/PATCH/DELETE) — zero changes to existing endpoints. The body-stash middleware caches incoming JSON on `request.state` (200KB cap) before the route reads it; the main audit middleware persists a row to `audit_log` after the response.
+- **Captured fields**: `ts, user_id, user_name, user_email, user_role, ip, method, path, action, record_id, status, payload`.
+- **Action deriver** with 40+ rules mapping `(method, path-fragment)` → action like `booking_created`, `intake_submission_edited`, `care_completed`, `safety_flags_changed`. Specific subpaths ordered first so they match before generic resource rules.
+- **Redaction**: password/token/secret/api_key/credit_card/cvv/ssn replaced with `[REDACTED]`. Long strings clipped at 500 chars; arrays at 50 items.
+- **Skip-list** for `/auth/login`, `/auth/me`, `/admin/email-health`, `/notifications/seen`, trophies batch. GETs always skipped.
+- **New endpoint** `GET /audit-log` (admin) with filters: `user_id`, `action`, `group` (10 groups: bookings/dogs/clients/incidents/vaccines/intake/waitlist/money/settings/waivers), `record_id`, `since`, `limit` (max 1000). Returns entries + distinct users + group keys for the UI.
+
+### Frontend
+- **New screen `AuditLog.jsx`** wired into the sidebar between Intake Forms and Settings (`fa-list-check`).
+- **Filter UI**: pill row for the 10 groups, user dropdown from backend distinct list, free-text search.
+- **Date-grouped timeline** with per-day count headers; per-row color-coded action icon, timestamp, user_name (role), record id, HTTP-status pill (red/orange/green). Click-to-expand drawer pretty-prints the redacted payload + metadata.
+
+### Regression
+- **New** `tests/test_audit_log.py` (2 tests): writes are captured (dog_created/client_created/safety_flags_changed) with subpath correctly resolving to `safety_flags_changed` over generic `dog_edited`; password fields redacted; group filter only returns matching actions; **GETs do NOT pollute the log** (10 reads → ≤ 2 row growth). Both pass.
