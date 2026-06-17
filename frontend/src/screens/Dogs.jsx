@@ -10,6 +10,7 @@ import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
+import SafetyFlagsManager from "../components/SafetyFlagsManager";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {

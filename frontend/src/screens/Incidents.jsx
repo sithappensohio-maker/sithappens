@@ -5,18 +5,25 @@ import { compressImage } from "../lib/imageCompress";
 import PageHero from "../components/PageHero";
 
 const TYPES = [
+  // Sprint 110ev — expanded type set (Phase 5)
   { key: "bite", label: "Bite", color: "bg-red-500/15 text-red-400" },
+  { key: "fight", label: "Fight", color: "bg-red-500/15 text-red-300" },
   { key: "injury", label: "Injury", color: "bg-shOrange/15 text-shOrange" },
-  { key: "escape", label: "Escape", color: "bg-yellow-500/15 text-yellow-400" },
   { key: "illness", label: "Illness", color: "bg-purple-500/15 text-purple-400" },
+  { key: "escape_attempt", label: "Escape", color: "bg-yellow-500/15 text-yellow-400" },
+  { key: "resource_guarding", label: "Resource", color: "bg-shOrange/15 text-shOrange" },
+  { key: "reactivity", label: "Reactivity", color: "bg-shBlue/15 text-shBlue" },
+  { key: "human_directed_aggression", label: "Human-aggression", color: "bg-red-500/20 text-red-300" },
+  { key: "dog_directed_aggression", label: "Dog-aggression", color: "bg-red-500/20 text-red-400" },
   { key: "property_damage", label: "Property", color: "bg-gray-500/15 text-gray-300" },
-  { key: "behavior", label: "Behavior", color: "bg-shBlue/15 text-shBlue" },
   { key: "other", label: "Other", color: "bg-bgHover text-gray-300" },
 ];
 const SEVERITIES = [
-  { key: "minor", label: "Minor", color: "bg-shGreen/15 text-shGreen" },
-  { key: "moderate", label: "Moderate", color: "bg-shOrange/15 text-shOrange" },
-  { key: "severe", label: "Severe", color: "bg-red-500/15 text-red-400" },
+  // Sprint 110ev — expanded tiers (Phase 5)
+  { key: "low", label: "Low", color: "bg-shGreen/15 text-shGreen" },
+  { key: "medium", label: "Medium", color: "bg-shOrange/15 text-shOrange" },
+  { key: "high", label: "High", color: "bg-red-500/15 text-red-300" },
+  { key: "critical", label: "Critical", color: "bg-red-500/30 text-red-200 ring-1 ring-red-400/40" },
 ];
 
 function todayISO() {
@@ -26,8 +33,11 @@ function todayISO() {
 function nowHHMM() { const d=new Date(); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 
 const emptyForm = {
-  dog_id: "", date: todayISO(), time: nowHHMM(), type: "behavior", severity: "minor",
-  description: "", witnesses: "", action_taken: "", photos: [], vet_required: false, follow_up_required: false,
+  dog_id: "", date: todayISO(), time: nowHHMM(), type: "other", severity: "low",
+  description: "", witnesses: "", action_taken: "", photos: [],
+  vet_required: false, follow_up_required: false,
+  // Sprint 110ev — Phase 5
+  staff_involved: [], manager_reviewed: false, client_notified: false, internal_notes: "",
 };
 
 export default function Incidents() {
@@ -113,12 +123,22 @@ export default function Incidents() {
                   <span className={`text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest ${sevStyle(i.severity)}`}>{i.severity}</span>
                   {i.vet_required && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-purple-500/15 text-purple-400"><i className="fas fa-stethoscope mr-1"/>Vet</span>}
                   {i.follow_up_required && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shOrange/15 text-shOrange"><i className="fas fa-flag mr-1"/>Follow-up</span>}
+                  {i.manager_reviewed && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shGreen/15 text-shGreen"><i className="fas fa-user-check mr-1"/>Reviewed</span>}
+                  {i.client_notified && <span className="text-[14px] font-black uppercase px-2 py-1 rounded tracking-widest bg-shBlue/15 text-shBlue"><i className="fas fa-bell mr-1"/>Client notified</span>}
                 </div>
                 <p className="text-sm text-white font-black uppercase tracking-tight">{i.dog_name} <span className="text-gray-400 font-normal"> · {i.client_name}</span></p>
                 <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">{i.date}{i.time?` · ${i.time}`:""} · reported by {i.reported_by}</p>
                 <p className="text-sm text-gray-300 mt-3 whitespace-pre-wrap">{i.description}</p>
                 {i.action_taken && <p className="text-xs text-gray-400 mt-2"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Action: </span>{i.action_taken}</p>}
                 {i.witnesses && <p className="text-xs text-gray-400 mt-1"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Witnesses: </span>{i.witnesses}</p>}
+                {Array.isArray(i.staff_involved) && i.staff_involved.length > 0 && (
+                  <p className="text-xs text-gray-400 mt-1"><span className="text-shBlue font-black uppercase tracking-widest text-[14px]">Staff involved: </span>{i.staff_involved.join(", ")}</p>
+                )}
+                {i.internal_notes && (
+                  <p className="text-xs text-gray-400 mt-2 bg-bgBase/60 border-l-2 border-shOrange/40 pl-2 py-1">
+                    <span className="text-shOrange font-black uppercase tracking-widest text-[14px]">Internal: </span>{i.internal_notes}
+                  </p>
+                )}
                 {i.photos?.length > 0 && (
                   <div className="flex gap-2 mt-3 flex-wrap">
                     {i.photos.map((p,idx)=><img key={idx} src={p} alt="" loading="lazy" decoding="async" className="h-20 w-20 rounded object-cover border border-bgHover" />)}
@@ -204,7 +224,7 @@ export default function Incidents() {
                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex gap-4 flex-wrap">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!form.vet_required} onChange={(e)=>setForm({...form, vet_required:e.target.checked})} data-testid="incident-vet" className="accent-purple-500 w-4 h-4" />
                   <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Vet required</span>
@@ -213,6 +233,30 @@ export default function Incidents() {
                   <input type="checkbox" checked={!!form.follow_up_required} onChange={(e)=>setForm({...form, follow_up_required:e.target.checked})} data-testid="incident-followup" className="accent-shOrange w-4 h-4" />
                   <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Needs follow-up</span>
                 </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!form.manager_reviewed} onChange={(e)=>setForm({...form, manager_reviewed:e.target.checked})} data-testid="incident-manager-reviewed" className="accent-shGreen w-4 h-4" />
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Manager reviewed</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" checked={!!form.client_notified} onChange={(e)=>setForm({...form, client_notified:e.target.checked})} data-testid="incident-client-notified" className="accent-shBlue w-4 h-4" />
+                  <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Client notified</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Staff involved (comma-separated)</label>
+                <input value={(form.staff_involved || []).join(", ")}
+                       onChange={(e)=>setForm({ ...form, staff_involved: e.target.value.split(",").map(s=>s.trim()).filter(Boolean) })}
+                       placeholder="e.g. Alex, Jamie" data-testid="incident-staff-involved"
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+              </div>
+
+              <div>
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Internal notes (not shown to client)</label>
+                <textarea value={form.internal_notes || ""} onChange={(e)=>setForm({...form, internal_notes: e.target.value})} rows={2}
+                          placeholder="Anything staff should know that doesn't belong in the client-facing description."
+                          data-testid="incident-internal-notes"
+                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
               </div>
 
               <div>

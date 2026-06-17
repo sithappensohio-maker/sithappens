@@ -3453,3 +3453,26 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_kennel_board.py` (2 tests): labels GET/PUT with partial update preserving untouched keys; assignment roundtrip via PATCH /bookings (all four new fields) + safety-flags PUT reflected on the board with `do_not_group` warning firing correctly. Both pass.
+
+## Sprint 110ev — Phase 5: Incident upgrade + Safety flags with auto-suggest (2026-02-17)
+**User ask**: Severity tiers (low/medium/high/critical), expanded incident types, expanded incident fields, and dog safety flags that auto-suggest from intake submissions + incident history.
+
+### Backend (`server.py`)
+- **Expanded `IncidentIn`** with the user's full taxonomy. New canonical type values (`bite, fight, injury, illness, escape_attempt, resource_guarding, reactivity, human_directed_aggression, dog_directed_aggression, property_damage, other`) coexist with legacy values (`escape`, `behavior`) so existing data stays valid. New canonical severities (`low/medium/high/critical`) coexist with legacy (`minor/moderate/severe`). Added fields: `staff_involved: List[str]`, `manager_reviewed: bool`, `client_notified: bool`, `internal_notes: str`. Validation enforced explicitly with 400 on unknown values.
+- **New endpoint** `GET /dogs/{id}/safety-flag-suggestions` — walks the dog's incident history and intake submissions to propose flags with a human-readable reason on each. Suggestions already-set are filtered out. Returns `current_flags`, `suggestions`, `library` (10 canonical labels), and signal counts. Mapping:
+  - bite / human_directed_aggression → "Muzzle required", "Staff only", "Human reactive"
+  - fight / dog_directed_aggression → "Do not group", "Dog reactive"
+  - resource_guarding → "Do not feed near others", "Resource guarding"
+  - escape / escape_attempt → "Escape risk", "Leash only"
+  - reactivity → "Leash only"
+  - illness → "Medical watch"
+  - Intake `bite_aggression_disclosure` with any "Yes" → "Muzzle required", "Do not group"
+  - Intake `behavior_history` with high/severe reactivity → "Leash only", "Dog reactive"
+  - Intake `medication_instructions` exists → "Medical watch"
+
+### Frontend
+- **New reusable component** `components/SafetyFlagsManager.jsx` — embedded on each dog card under the intake section. Shows current flags as removable pills, an orange "Suggested" callout with one-click `+ Flag` accept buttons (tooltips show the reason), the 10-label library for quick adds, and a custom-flag input.
+- **`Incidents.jsx` upgrade** — filter pills now include all 11 new types (Bite/Fight/Injury/Illness/Escape/Resource/Reactivity/Human-aggression/Dog-aggression/Property/Other). Modal exposes new toggles (Manager reviewed, Client notified), a comma-separated "Staff involved" input, and a dedicated "Internal notes" textarea separate from the client-facing description. List cards now render the new pills (Reviewed, Client notified) and a dedicated internal-notes block with an orange-bordered callout so staff-only context can't be mistaken for the client-facing record.
+
+### Regression
+- **New** `tests/test_incidents_phase5.py` (2 tests): creating an incident with new `human_directed_aggression` + `critical` + staff_involved + manager_reviewed (with bad-value 400 checks for both type and severity); safety-flag suggestions empty by default, then populate "Muzzle required" + "Staff only" after a bite is logged, then disappear from suggestions once accepted into `current_flags`. Both pass.

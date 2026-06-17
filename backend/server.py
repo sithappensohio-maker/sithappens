@@ -4212,14 +4212,39 @@ class IncidentIn(BaseModel):
     dog_id: str
     date: str           # YYYY-MM-DD
     time: Optional[str] = ""  # HH:MM
-    type: Literal["bite", "injury", "escape", "illness", "property_damage", "behavior", "other"] = "other"
-    severity: Literal["minor", "moderate", "severe"] = "minor"
+    # Sprint 110ev — expanded type set (old values retained for back-compat
+    # with existing incident rows). New rows should use the granular options.
+    type: str = "other"
+    # Sprint 110ev — expanded severity tiers. Old minor/moderate/severe are
+    # accepted so prior data stays valid; new rows use low/medium/high/critical.
+    severity: str = "low"
     description: str = Field(min_length=3)
     witnesses: Optional[str] = ""
     action_taken: Optional[str] = ""
     photos: List[str] = []
     vet_required: bool = False
     follow_up_required: bool = False
+    # Sprint 110ev — Phase 5 expansion
+    staff_involved: List[str] = []
+    manager_reviewed: bool = False
+    client_notified: bool = False
+    internal_notes: Optional[str] = ""
+
+
+INCIDENT_TYPES = (
+    # New granular options (preferred)
+    "bite", "fight", "injury", "illness", "escape_attempt",
+    "resource_guarding", "reactivity", "human_directed_aggression",
+    "dog_directed_aggression", "property_damage", "other",
+    # Legacy values retained for back-compat
+    "escape", "behavior",
+)
+INCIDENT_SEVERITIES = (
+    # New canonical tiers
+    "low", "medium", "high", "critical",
+    # Legacy tiers
+    "minor", "moderate", "severe",
+)
 
 class IncidentOut(IncidentIn):
     id: str
@@ -4237,6 +4262,10 @@ async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str]
 
 @api.post("/incidents", response_model=IncidentOut)
 async def create_incident(body: IncidentIn, user: dict = Depends(require_admin)):
+    if body.type not in INCIDENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown incident type '{body.type}'. Allowed: {list(INCIDENT_TYPES)}")
+    if body.severity not in INCIDENT_SEVERITIES:
+        raise HTTPException(status_code=400, detail=f"Unknown severity '{body.severity}'. Allowed: {list(INCIDENT_SEVERITIES)}")
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -19228,6 +19257,105 @@ async def set_dog_safety_flags(dog_id: str, body: SafetyFlagsIn, _: dict = Depen
         cleaned.append(v)
     await db.dogs.update_one({"id": dog_id}, {"$set": {"safety_flags": cleaned, "updated_at": now_iso()}})
     return {"id": dog_id, "safety_flags": cleaned}
+
+
+# ── Safety-flag auto-suggestions ──────────────────────────────────────────
+# Sprint 110ev — Walks the dog's intake submissions + incident history and
+# proposes safety flags the operator can one-click apply. Pure read; doesn't
+# mutate state.
+
+SAFETY_FLAG_LABELS = [
+    "Do not group", "Do not feed near others", "Leash only", "Muzzle required",
+    "Staff only", "Escape risk", "Resource guarding", "Human reactive",
+    "Dog reactive", "Medical watch",
+]
+
+
+def _suggestions_from_incidents(incidents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    # Group counts so we suggest the right flags for repeat behaviour
+    counts: Dict[str, int] = {}
+    for i in incidents:
+        t = (i.get("type") or "").lower()
+        counts[t] = counts.get(t, 0) + 1
+    if counts.get("bite") or counts.get("human_directed_aggression"):
+        out.append({"flag": "Muzzle required", "reason": "Prior bite or human-directed aggression on record"})
+        out.append({"flag": "Staff only", "reason": "Prior bite or human-directed aggression on record"})
+        out.append({"flag": "Human reactive", "reason": "Prior human-directed aggression on record"})
+    if counts.get("fight") or counts.get("dog_directed_aggression"):
+        out.append({"flag": "Do not group", "reason": "Prior fight or dog-directed aggression on record"})
+        out.append({"flag": "Dog reactive", "reason": "Prior dog-directed aggression on record"})
+    if counts.get("resource_guarding"):
+        out.append({"flag": "Do not feed near others", "reason": "Resource guarding incident on record"})
+        out.append({"flag": "Resource guarding", "reason": "Resource guarding incident on record"})
+    if counts.get("escape") or counts.get("escape_attempt"):
+        out.append({"flag": "Escape risk", "reason": "Prior escape attempt on record"})
+        out.append({"flag": "Leash only", "reason": "Prior escape attempt on record"})
+    if counts.get("reactivity"):
+        out.append({"flag": "Leash only", "reason": "Reactivity incident on record"})
+    if counts.get("illness"):
+        out.append({"flag": "Medical watch", "reason": "Recent illness on record"})
+    return out
+
+
+def _suggestions_from_intake(submissions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for s in submissions:
+        if s.get("status") not in ("submitted", "reviewed"):
+            continue
+        ftype = s.get("form_type") or ""
+        answers = s.get("answers") or {}
+        # Bite / aggression disclosure — any "Yes" to bite-related questions
+        if ftype == "bite_aggression_disclosure":
+            for v in answers.values():
+                if v is True:
+                    out.append({"flag": "Muzzle required",
+                                "reason": "Owner disclosed prior bite history on intake"})
+                    out.append({"flag": "Do not group",
+                                "reason": "Owner disclosed prior bite history on intake"})
+                    break
+        # Behavior history with "high" or "severe" reactivity in any dropdown
+        elif ftype == "behavior_history":
+            for v in answers.values():
+                if isinstance(v, str) and v.lower() in ("high", "severe"):
+                    out.append({"flag": "Leash only",
+                                "reason": "High/severe reactivity reported on intake"})
+                    out.append({"flag": "Dog reactive",
+                                "reason": "High/severe reactivity reported on intake"})
+                    break
+        # Medication instructions → medical watch
+        elif ftype == "medication_instructions":
+            out.append({"flag": "Medical watch",
+                        "reason": "Active medication instructions on file"})
+    return out
+
+
+@api.get("/dogs/{dog_id}/safety-flag-suggestions")
+async def safety_flag_suggestions(dog_id: str, _: dict = Depends(require_admin)):
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1, "owner_id": 1, "safety_flags": 1})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    incidents = await db.incidents.find({"dog_id": dog_id}, {"_id": 0, "type": 1}).to_list(2000)
+    submissions = await db.intake_submissions.find(
+        {"$or": [{"dog_id": dog_id}, {"client_id": dog.get("owner_id")}]},
+        {"_id": 0, "form_type": 1, "status": 1, "answers": 1},
+    ).to_list(2000)
+    raw = _suggestions_from_incidents(incidents) + _suggestions_from_intake(submissions)
+    # Dedupe by flag, prefer first reason; then exclude flags already set
+    existing = {f.lower() for f in (dog.get("safety_flags") or [])}
+    seen: Dict[str, Dict[str, Any]] = {}
+    for s in raw:
+        k = s["flag"].lower()
+        if k in existing: continue
+        if k not in seen: seen[k] = s
+    return {
+        "dog_id": dog_id,
+        "current_flags": dog.get("safety_flags") or [],
+        "suggestions": list(seen.values()),
+        "library": SAFETY_FLAG_LABELS,
+        "incident_count": len(incidents),
+        "intake_signal_count": len(submissions),
+    }
 
 
 app.include_router(api)
