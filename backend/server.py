@@ -12363,7 +12363,16 @@ async def email_health(_: dict = Depends(require_admin)):
     sender = email_service.SENDER_EMAIL or ""
     admin_email = email_service.ADMIN_NOTIFICATION_EMAIL or ""
     has_key = bool(email_service.RESEND_API_KEY)
-    domain = sender.split("@", 1)[1] if "@" in sender else ""
+    # Sprint 110en — SENDER_EMAIL is sometimes set in RFC 5322 display
+    # format (`"Brand Name <hello@example.com>"`). Strip angle brackets and
+    # trailing punctuation so the DNS check resolves the bare domain.
+    if "<" in sender and ">" in sender:
+        sender_addr = sender.split("<", 1)[1].split(">", 1)[0]
+    else:
+        sender_addr = sender
+    sender_addr = sender_addr.strip().strip('"').strip("'")
+    domain = sender_addr.split("@", 1)[1] if "@" in sender_addr else ""
+    domain = domain.strip().rstrip(">").rstrip(",").rstrip(";")
 
     def _txt_lookup(name: str) -> List[str]:
         try:
