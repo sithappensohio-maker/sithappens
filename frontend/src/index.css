@@ -420,6 +420,23 @@ select:focus {
   outline: none !important;
 }
 
+/* Sprint 110dh-1 — native <option> elements were inheriting the OS default
+   white background, which made the popup look broken on our dark theme
+   (e.g. the staff Role dropdown showed a giant white panel below the
+   selected row). Pin the popup background + text colour to match the
+   form-field treatment. Chrome / Firefox respect this on desktop; iOS
+   uses its native picker so mobile behaviour is unchanged. */
+select option,
+select optgroup {
+  background-color: #0b1220 !important;
+  color: #ffffff !important;
+}
+select option:checked,
+select option:hover {
+  background-color: #00a9e0 !important;  /* shBlue */
+  color: #ffffff !important;
+}
+
 /* Sidebar nav — lime active indicator. Targets the existing data-testid
    nav-link pattern by detecting the active class set in App.js. */
 nav button[data-testid^="nav-"],
