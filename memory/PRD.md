@@ -3380,3 +3380,29 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 ### Regression
 - **New** `tests/test_intake_portal_flow.py` — end-to-end client flow: admin creates template w/ a staff-only field → assigns → client fetches `/portal/intake/assigned` and ONLY sees public fields (staff_only stripped) → submits → status flips to `submitted` + `submitted_at` stamps → form disappears from assigned list → admin token is rejected from the portal submit endpoint (role guard). Passes.
 - All 3 intake tests (`test_intake_forms` × 2 + `test_intake_portal_flow` × 1) pass together.
+
+## Sprint 110es — Phase 2: Feeding & Medication tracker (2026-02-17)
+**User ask**: Operational view with overdue highlighting, status pills, staff initials, missed-med warnings, per-booking schedule with food brought from home + special notes.
+
+### Backend (`server.py`)
+- **New data shape**: every booking now grows a `care_items` array — each item has `id, kind ∈ {feeding, medication}, time, label, amount, food_type, food_from_home, instructions, notes, status, completed_at, completed_by_id/name, completed_initials, completion_note, skip_reason, skip_note`.
+- **Auto-seed from dog defaults**: first time the care board is opened for a booking, items are generated from the dog's `feeding_schedule` + `medications`. Persisted so subsequent completion writes can target stable IDs.
+- **Derived status** (`not_due / due_now / completed / missed / skipped`) is computed at read-time from `time` vs current business-tz minute with a ±30-minute grace window. Each item also returns `due_minutes_delta` so the UI can render "in 22m" / "1h 15m overdue" without recomputing.
+- **6 new endpoints** (all employee-or-admin gated except PUT/reset which are admin-only):
+  - `GET /bookings/{id}/care` — seed + hydrate
+  - `PUT /bookings/{id}/care` — replace schedule; preserves completion state on items that survive the edit (matched by id)
+  - `POST /bookings/{id}/care/{item_id}/complete` — initials required, uppercased and capped at 8 chars; stamps timestamp + actor
+  - `POST /bookings/{id}/care/{item_id}/skip` — initials + reason required
+  - `POST /bookings/{id}/care/{item_id}/reset` — admin undo
+  - `GET /care/today` — operational view: every on-site booking's items grouped by kind, sorted by time, with summary counts
+
+### Frontend
+- **New screen `CareBoard.jsx`**, wired into the sidebar between Run Sheet and Bookings (`fa-bowl-food` icon).
+- **Auto-refresh every 60s** so "due now" rolls into "missed" without an operator hitting refresh.
+- **5 stat tiles** for the live status mix.
+- **Filter pills** for All / Feedings / Medications, combined+resorted across both.
+- **Per-row visuals**: colored left-border (red=missed, orange=due now, green=completed, purple=skipped), inline overdue timer, all per-item metadata (amount/food/instructions/from-home pill), Complete + Skip action buttons.
+- **Action modal** prompts for staff initials (required, autofocus, capped 8 chars), optional note for complete; required reason for skip (6 preset reasons or "Other") plus optional detail.
+
+### Regression
+- **New** `tests/test_care_board.py` (3 tests): board shape + summary keys; full lifecycle (seed → complete with initials → skip with reason → reset → PUT preserves completion state → care board reflects updates); initials are required (422 on empty). All pass.
