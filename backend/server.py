@@ -14892,7 +14892,17 @@ async def today_pnl(_: dict = Depends(require_admin)):
     ) / 100.0
     labor_burden = round(labor_cost * burden_rate, 2)
     labor_total = round(labor_cost + labor_burden, 2)
-    net = round(revenue - labor_total, 2)
+
+    # Sprint 110ep — Out-of-pocket expenses logged for today belong in the
+    # live P&L. Previously today_pnl only subtracted labor, so dropping $50
+    # on dog food kept the tile at $0 even though cash had left the till.
+    today_expenses = await db.expenses.find(
+        {"date": today}, {"_id": 0, "amount": 1, "category": 1},
+    ).to_list(2000)
+    expense_total = round(sum(float(e.get("amount") or 0) for e in today_expenses), 2)
+    expense_count = len(today_expenses)
+
+    net = round(revenue - labor_total - expense_total, 2)
     margin_pct = round((net / revenue * 100.0), 1) if revenue > 0 else None
 
     return {
@@ -14905,6 +14915,8 @@ async def today_pnl(_: dict = Depends(require_admin)):
         "labor_burden": labor_burden,    # employer-side payroll tax + workers comp
         "labor_total": labor_total,      # gross + burden
         "labor_hours": labor_hours,
+        "expense_total": expense_total,  # out-of-pocket expenses logged today
+        "expense_count": expense_count,
         "owner_draw_today": round(owner_draw_today, 2),
         "owner_hours_today": round(owner_hours_today, 2),
         "net": net,

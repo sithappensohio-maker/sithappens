@@ -600,8 +600,16 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
           <p className="text-[13px] text-gray-400 mt-0.5">
             {fmt(data.revenue)} revenue − {fmt(data.labor_total || data.labor_cost)} labor
             {data.labor_burden ? <span className="text-gray-500"> ({fmt(data.labor_cost)} + {fmt(data.labor_burden)} taxes)</span> : null}
+            {Number(data.expense_total || 0) > 0 && (
+              <> − <span className="text-red-300" data-testid="pnl-expense-inline">{fmt(data.expense_total)} expenses</span></>
+            )}
             {data.margin_pct != null && <span className="ml-2 font-black">({data.margin_pct}% margin)</span>}
           </p>
+          {Number(data.expense_total || 0) > 0 && (
+            <p className="text-[12px] text-red-300 font-black uppercase tracking-widest mt-1" data-testid="pnl-expense-chip">
+              <i className="fas fa-receipt mr-1"/>Expenses {fmt(data.expense_total)} ({data.expense_count || 0})
+            </p>
+          )}
           {(data.retail_revenue > 0 || data.retail_count > 0) && (
             <p className="text-[12px] text-purple-300 font-black uppercase tracking-widest mt-1" data-testid="pnl-retail-chip">
               <i className="fas fa-bag-shopping mr-1"/>Retail {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})

@@ -3314,3 +3314,17 @@ Updated `.env` to RFC 5322 format: `SENDER_EMAIL="Sit Happens <hello@mail.sithap
 ### Verified
 - `/api/admin/email-health` → `status: ok`, `sender_domain: mail.sithappens.app` (no trailing `>`).
 - `/api/admin/email-health/test` → `{"ok": true}` to `sithappensohio@gmail.com`. Future emails will show as **From: Sit Happens** in Gmail.
+
+## Sprint 110ep — Today's P&L now subtracts today's expenses (2026-02-17)
+**User ask**: *"Today's P&L doesn't show expenses. It was at zero. I added an expense — it should have gone negative since no income has been made today."*
+
+### Cause
+`/api/admin/today-pnl` computed `net = revenue - labor_total` and ignored the `expenses` collection entirely. So $50 spent on supplies on a $0-revenue day kept the tile at $0 instead of -$50.
+
+### Fix
+- **Backend (`server.py` `today_pnl`)**: query `db.expenses` for today's rows, sum amounts into `expense_total`, return `expense_total` + `expense_count`, and change the net formula to `revenue - labor_total - expense_total`.
+- **Frontend (`Dashboard.jsx` TodayPnlTile)**: inline formula line now shows "− $X expenses" when > 0, plus a dedicated red expense chip with count (mirrors the existing retail-revenue chip pattern).
+
+### Regression
+- **New** `tests/test_today_pnl_expenses.py` — creates a $50 expense and asserts net drops by exactly $50 (and that the response key exists at all). Passes.
+- **Existing** `tests/test_today_pnl_cash_basis.py` — still passes (no revenue path changed).
