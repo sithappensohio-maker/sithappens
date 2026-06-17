@@ -437,36 +437,6 @@ select option:hover {
   color: #ffffff !important;
 }
 
-/* Sprint 110dh-4 — FullCalendar list view (mobile schedule) was using
-   default white-on-light colours which were invisible against our dark
-   panel. Force readable colours that match the design system. */
-.fc .fc-list,
-.fc .fc-list-table,
-.fc .fc-list-day-cushion {
-  background: transparent !important;
-  color: #e5e7eb !important;
-}
-.fc .fc-list-day-cushion {
-  background: rgba(0, 174, 240, 0.08) !important;
-  color: #ffffff !important;
-}
-.fc .fc-list-event {
-  background: transparent !important;
-}
-.fc .fc-list-event:hover td {
-  background: rgba(0, 174, 240, 0.10) !important;
-}
-.fc .fc-list-event-time,
-.fc .fc-list-event-title,
-.fc .fc-list-event-title a {
-  color: #ffffff !important;
-}
-.fc .fc-list-empty {
-  background: transparent !important;
-  color: #9ca3af !important;
-  font-style: italic;
-}
-
 /* Sidebar nav — lime active indicator. Targets the existing data-testid
    nav-link pattern by detecting the active class set in App.js. */
 nav button[data-testid^="nav-"],

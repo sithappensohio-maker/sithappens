@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
-import listPlugin from "@fullcalendar/list";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -171,41 +170,40 @@ export default function Schedule() {
         compact={mobile}
         testid="schedule-hero"
       />
-      <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden min-h-[480px] sm:min-h-[600px]"
+      <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden"
            data-testid="schedule-grid-wrap">
-        <FullCalendar
-          ref={calRef}
-          plugins={[dayGridPlugin, interactionPlugin, listPlugin]}
-          initialView={mobile ? "listWeek" : "dayGridMonth"}
-          height="100%"
-          events={events}
-          editable={true}
-          eventStartEditable={true}
-          eventDurationEditable={true}
-          eventDrop={onDrop}
-          eventResize={onDrop}
-          dateClick={onDateClick}
-          // Clicking an event chip opens the detail modal (notes, payment, etc.).
-          // Stop FullCalendar from also bubbling up to dateClick.
-          eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
-          // Training/grooming/photography events have specific times — display them
-          displayEventTime={true}
-          eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
-          // Force timed events (training/grooming/photography) to render as
-          // solid colored blocks like daycare/boarding, instead of FullCalendar's
-          // default "dot + time text" list-item style which made them look like
-          // plain text rows on the calendar grid.
-          eventDisplay="block"
-          // On mobile we use the listWeek view (vertical list of events for
-          // the current week) — far more usable than a 7-column grid at
-          // 360px width. Allow switching to dayGridMonth for the rare zoom.
-          headerToolbar={mobile
-            ? { left: "prev,next", center: "title", right: "listWeek,dayGridMonth today" }
-            : { left: "prev,next today", center: "title", right: "" }}
-          buttonText={mobile ? { today: "Today", listWeek: "List", dayGridMonth: "Grid" } : undefined}
-          noEventsContent="No bookings this week — tap any date below to add one."
-          titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
-        />
+        {/* Mobile: wrap in a horizontally scrollable container so the full
+            7-column month grid stays usable. min-w-[720px] keeps each day
+            cell wide enough to read; sm:min-w-0 lets desktop fit normally. */}
+        <div className="h-full overflow-x-auto overflow-y-auto -mx-1 sm:mx-0">
+          <div className="min-w-[720px] sm:min-w-0 h-full" style={{ minHeight: mobile ? 620 : undefined }}>
+            <FullCalendar
+              ref={calRef}
+              plugins={[dayGridPlugin, interactionPlugin]}
+              initialView="dayGridMonth"
+              height={mobile ? 620 : "100%"}
+              events={events}
+              editable={true}
+              eventStartEditable={true}
+              eventDurationEditable={true}
+              eventDrop={onDrop}
+              eventResize={onDrop}
+              dateClick={onDateClick}
+              // Clicking an event chip opens the detail modal (notes, payment, etc.).
+              // Stop FullCalendar from also bubbling up to dateClick.
+              eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
+              // Training/grooming/photography events have specific times — display them
+              displayEventTime={true}
+              eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
+              // Force timed events to render as solid colored blocks (matches daycare/boarding).
+              eventDisplay="block"
+              headerToolbar={mobile
+                ? { left: "prev,next", center: "title", right: "today" }
+                : { left: "prev,next today", center: "title", right: "" }}
+              titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
+            />
+          </div>
+        </div>
       </div>
 
       {detailId && (
