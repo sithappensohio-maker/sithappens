@@ -37,7 +37,7 @@ import TextSizePicker from "./components/TextSizePicker";
 import BrandFooter from "./components/BrandFooter";
 
 function AdminShell() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const [tab, setTab] = useState("dashboard");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -79,22 +79,22 @@ function AdminShell() {
     { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
-    { id: "care", label: "Care Board", icon: "fa-bowl-food" },
+    { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
     { id: "kennel", label: "Kennel Board", icon: "fa-paw" },
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
     { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half" },
     { id: "recurring", label: "Recurring", icon: "fa-rotate" },
-    { id: "clients", label: "Clients", icon: "fa-users" },
-    { id: "dogs", label: "Dogs", icon: "fa-paw" },
+    { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
+    { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy" },
-    { id: "income", label: "Income", icon: "fa-dollar-sign" },
-    { id: "staff", label: "Staff", icon: "fa-users-gear" },
-    { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
+    { id: "income", label: "Income", icon: "fa-dollar-sign", perm: "finance_reports" },
+    { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll" },
+    { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list" },
-    { id: "audit", label: "Audit Log", icon: "fa-list-check" },
-    { id: "settings", label: "Settings", icon: "fa-cog" },
+    { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "settings" },
+    { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
   ];
 
@@ -115,7 +115,7 @@ function AdminShell() {
         </p>
       </div>
       <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
-        {navItems.map(n => (
+        {navItems.filter(n => !n.perm || can(n.perm)).map(n => (
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
                   className={`group w-full text-left py-2.5 px-3 rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
             <i className={`fas ${n.icon} mr-3 w-4 ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} /> {n.label}

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
+import RolesPanel from "../components/RolesPanel";
 import { todayISO, daysAgoISO } from "../lib/date";
 
 function fmtTime(iso) {
@@ -66,6 +67,9 @@ export default function Staff() {
         )}
         testid="staff-hero"
       />
+
+      {/* Sprint 110ex — Phase 7: Roles & permissions panel */}
+      <RolesPanel />
 
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-bgHover overflow-x-auto" data-testid="staff-subtabs">

@@ -6,17 +6,24 @@ export const useAuth = () => useContext(AuthCtx);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null = loading, false = guest, obj = logged-in
+  const [permissions, setPermissions] = useState(null); // dict of permission key → bool
   const [error, setError] = useState("");
 
   const loadMe = useCallback(async () => {
     const token = localStorage.getItem("sh_token");
-    if (!token) { setUser(false); return; }
+    if (!token) { setUser(false); setPermissions(null); return; }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
+      // Sprint 110ex — Phase 7: fetch fine-grained permission booleans alongside /me
+      try {
+        const { data: p } = await api.get("/me/permissions");
+        setPermissions(p.permissions || null);
+      } catch { setPermissions(null); }
     } catch {
       localStorage.removeItem("sh_token");
       setUser(false);
+      setPermissions(null);
     }
   }, []);
 
@@ -28,6 +35,12 @@ export function AuthProvider({ children }) {
       const { data } = await api.post("/auth/login", { email, password });
       localStorage.setItem("sh_token", data.token);
       setUser(data.user);
+      // Sprint 110ex — also fetch permissions after login (separate endpoint
+      // so the original /auth/login response stays unchanged).
+      try {
+        const { data: p } = await api.get("/me/permissions");
+        setPermissions(p.permissions || null);
+      } catch { setPermissions(null); }
       return true;
     } catch (e) {
       setError(formatErr(e.response?.data?.detail) || "Login failed");
@@ -53,10 +66,21 @@ export function AuthProvider({ children }) {
   const logout = () => {
     localStorage.removeItem("sh_token");
     setUser(false);
+    setPermissions(null);
+  };
+
+  // Sprint 110ex — Phase 7: easy "can()" predicate for UI gating.
+  // Admins (role=admin) and missing-permission-dict scenarios default to allow
+  // so existing flows keep working while staff role assignments are rolled out.
+  const can = (key) => {
+    if (!user) return false;
+    if ((user.role || "").toLowerCase() === "admin") return true;
+    if (!permissions) return true;        // not yet loaded — let UI render
+    return !!permissions[key];
   };
 
   return (
-    <AuthCtx.Provider value={{ user, login, register, logout, error, setError, reloadUser: loadMe }}>
+    <AuthCtx.Provider value={{ user, permissions, can, login, register, logout, error, setError, reloadUser: loadMe }}>
       {children}
     </AuthCtx.Provider>
   );

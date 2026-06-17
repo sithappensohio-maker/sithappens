@@ -227,6 +227,8 @@ class UserOut(BaseModel):
     name: str
     role: str
     client_id: Optional[str] = None
+    # Sprint 110ex — Phase 7: fine-grained staff role layered on top of `role`
+    staff_role: Optional[str] = None
 
 class AuthOut(BaseModel):
     token: str
@@ -12523,6 +12525,8 @@ class EmployeeOut(EmployeeIn):
     role: str = "employee"
     created_at: Optional[str] = None
     last_login_at: Optional[str] = None
+    # Sprint 110ex — Phase 7
+    staff_role: Optional[str] = None
 
 
 def _employee_doc_to_out(u: dict) -> dict:
@@ -12543,6 +12547,7 @@ def _employee_doc_to_out(u: dict) -> dict:
         "address_state": u.get("address_state", ""),
         "address_zip": u.get("address_zip", ""),
         "role": "employee",
+        "staff_role": u.get("staff_role") or "read_only",
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
     }
@@ -19602,6 +19607,148 @@ async def list_audit_log(
         "groups": list(AUDIT_ACTION_GROUPS.keys()),
         "users": users,
     }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110ex — Phase 7: Roles & permissions
+# ────────────────────────────────────────────────────────────────────────────
+# Layered on top of the existing role tiers (admin/employee/client) — we
+# introduce a `staff_role` field on user docs that gives the operator fine
+# control over what each employee can see and do. role="admin" users always
+# get the full "owner" matrix (so the solo operator's account keeps working
+# unchanged). Owners can switch any staff member's role from the Staff screen.
+#
+# Permission keys (12) — each is a boolean per role:
+#   settings, finance_reports, pricing, clients_view, clients_edit,
+#   dogs_view, dogs_edit, incidents, care_complete, booking_edit,
+#   payroll, data_export, delete_records
+# ────────────────────────────────────────────────────────────────────────────
+
+STAFF_ROLES = ("owner", "manager", "trainer", "daycare_staff", "boarding_staff", "front_desk", "read_only")
+
+PERMISSION_KEYS = (
+    "settings", "finance_reports", "pricing",
+    "clients_view", "clients_edit",
+    "dogs_view", "dogs_edit",
+    "incidents", "care_complete", "booking_edit",
+    "payroll", "data_export", "delete_records",
+)
+
+
+def _full_perms() -> Dict[str, bool]:
+    return {k: True for k in PERMISSION_KEYS}
+
+
+def _empty_perms() -> Dict[str, bool]:
+    return {k: False for k in PERMISSION_KEYS}
+
+
+# Matrix derived from the user's Phase 7 spec. Owners get everything;
+# Read-only sees but never writes; in-between roles get the minimum slice
+# they need to do their actual job.
+ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
+    "owner":           _full_perms(),
+    "manager": {
+        **_full_perms(),
+        "settings": False,           # only the owner touches settings
+        "payroll": True,
+        "delete_records": True,
+    },
+    "trainer": {
+        **_empty_perms(),
+        "clients_view": True,
+        "dogs_view": True, "dogs_edit": True,
+        "incidents": True, "care_complete": True,
+        "booking_edit": True,
+    },
+    "daycare_staff": {
+        **_empty_perms(),
+        "clients_view": True,
+        "dogs_view": True,
+        "incidents": True, "care_complete": True,
+        "booking_edit": True,
+    },
+    "boarding_staff": {
+        **_empty_perms(),
+        "clients_view": True,
+        "dogs_view": True,
+        "incidents": True, "care_complete": True,
+        "booking_edit": True,
+    },
+    "front_desk": {
+        **_empty_perms(),
+        "clients_view": True, "clients_edit": True,
+        "dogs_view": True, "dogs_edit": True,
+        "booking_edit": True,
+    },
+    "read_only": {
+        **_empty_perms(),
+        "clients_view": True,
+        "dogs_view": True,
+    },
+}
+
+
+def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
+    """Owner=admin role always gets full perms; otherwise look up by staff_role."""
+    if (user.get("role") or "").lower() == "admin":
+        return _full_perms()
+    sr = (user.get("staff_role") or "").lower()
+    if sr in ROLE_PERMISSIONS:
+        return ROLE_PERMISSIONS[sr]
+    # Unset employee → default to read_only so unconfigured accounts can't
+    # accidentally do destructive things before the owner sets their role.
+    return ROLE_PERMISSIONS["read_only"]
+
+
+def require_permission(key: str):
+    """Dependency factory for endpoints that should gate beyond just role.
+    Existing endpoints continue to use require_admin/require_employee_or_admin
+    untouched — these are layered checks for high-leverage actions only."""
+    if key not in PERMISSION_KEYS:
+        raise RuntimeError(f"Unknown permission key '{key}'")
+    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+        perms = _perms_for(user)
+        if not perms.get(key):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {key}")
+        return user
+    return _dep
+
+
+@api.get("/me/permissions")
+async def my_permissions(user: dict = Depends(get_current_user)):
+    return {
+        "role": user.get("role"),
+        "staff_role": user.get("staff_role") or ("owner" if user.get("role") == "admin" else None),
+        "permissions": _perms_for(user),
+    }
+
+
+@api.get("/staff/roles")
+async def get_staff_roles_matrix(_: dict = Depends(require_admin)):
+    return {
+        "roles": list(STAFF_ROLES),
+        "permission_keys": list(PERMISSION_KEYS),
+        "matrix": ROLE_PERMISSIONS,
+    }
+
+
+class StaffRoleIn(BaseModel):
+    staff_role: str
+
+
+@api.put("/staff/{user_id}/role")
+async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(require_admin)):
+    sr = (body.staff_role or "").lower()
+    if sr not in STAFF_ROLES:
+        raise HTTPException(status_code=400, detail=f"Unknown role '{body.staff_role}'. Allowed: {list(STAFF_ROLES)}")
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "role": 1})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    if (u.get("role") or "").lower() == "admin":
+        raise HTTPException(status_code=400, detail="Owner accounts always get full permissions — assign a different role to non-admin staff only")
+    await db.users.update_one({"id": user_id}, {"$set": {"staff_role": sr, "updated_at": now_iso()}})
+    return {"id": user_id, "staff_role": sr, "permissions": ROLE_PERMISSIONS[sr]}
 
 
 app.include_router(api)

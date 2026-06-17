@@ -3495,3 +3495,25 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_audit_log.py` (2 tests): writes are captured (dog_created/client_created/safety_flags_changed) with subpath correctly resolving to `safety_flags_changed` over generic `dog_edited`; password fields redacted; group filter only returns matching actions; **GETs do NOT pollute the log** (10 reads → ≤ 2 row growth). Both pass.
+
+## Sprint 110ex — Phase 7: Roles & permissions (2026-02-17)
+**User ask**: 7-role taxonomy (Owner/Admin, Manager, Trainer, Daycare Staff, Boarding Staff, Front Desk, Read-only) with permissions across Settings, Finance, Pricing, Clients, Dogs, Incidents, Care, Booking edits, Payroll, Data export, Deletes.
+
+### Backend (`server.py`)
+- **New `staff_role` field** on user docs, layered on top of the existing `role` (admin/employee/client). Owners (role=admin) always get the full permission set — existing accounts unaffected.
+- **13-key permission matrix** with explicit mapping per role (Owner=all, Manager=all-except-settings, Trainer=clients_view+dogs_full+incidents+care+booking_edit, Daycare/Boarding Staff=read clients+dogs+log incidents/care+booking_edit, Front Desk=clients+dogs edits+booking_edit, Read-only=clients_view+dogs_view).
+- **3 new endpoints**:
+  - `GET /me/permissions` — returns the calling user's role + staff_role + permission booleans (used by the frontend to gate nav/UI)
+  - `GET /staff/roles` (admin) — returns the role list + permission keys + full matrix for the role-management UI
+  - `PUT /staff/{user_id}/role` (admin) — assigns a role; rejects unknown roles + owner accounts (Owner is implicit from role=admin)
+- **`require_permission(key)` dependency factory** for high-leverage endpoints — admins always pass; staff users pass only if their role's permission is true. Plumbed but not blanket-applied to existing endpoints; ready to drop in on specific writes as desired.
+- **EmployeeOut + employee list** now surface `staff_role` so the UI can show & assign roles.
+- **Safe default**: new employees get `staff_role="read_only"` until an owner explicitly upgrades them, so a freshly created account can't accidentally do destructive things.
+
+### Frontend
+- **`AuthProvider` upgrade** (`lib/auth.js`): now fetches `/me/permissions` on login + on mount and exposes a `can(permissionKey)` predicate via the auth context. Admins always pass `can()`. While permissions are loading, `can()` returns true so existing flows don't flash hidden.
+- **Sidebar nav filtered by permission** — Care Board, Clients, Dogs, Income, Staff, Incidents, Audit Log, and Settings now each carry an optional `perm` key; staff users only see nav items they're entitled to access. Owners see everything.
+- **New `RolesPanel.jsx` component** embedded at the top of the Staff screen. Lists each non-owner employee with their current role + a per-row dropdown to change it. Optional "Show permission matrix" expander renders the full 13×7 grid with check/dash icons so the operator can see at a glance what each role unlocks.
+
+### Regression
+- **New** `tests/test_roles_permissions.py` (3 tests): admin role returns full owner permissions; `/staff/roles` matrix is well-shaped (7 roles × 13 keys, owner=all, read_only locked down, trainer-specific mix); assign a role to a real employee via PUT, verify the employee then sees the right permissions via their own `/me/permissions`, with bad-role 400 rejection + default of `read_only` for fresh accounts. All pass.
