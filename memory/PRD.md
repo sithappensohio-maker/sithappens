@@ -3573,3 +3573,24 @@ Total scope shipped in one session of nine phases:
 - **Phase 9:** Review request system (Google/Facebook links + 6 method tracking with auto cross-log)
 
 **18 new pytest tests** across the 9 phases, all passing.
+
+## Sprint 110ez+ — Polish pass (2026-02-17)
+**User ask**: Pure cleanup — no rebuild. Fix stale Settings cards, surface ReviewRequestButton everywhere it makes sense, tighten sidebar permission keys, refresh tutorials.
+
+### Settings
+- Replaced **three stale "Coming soon" cards** with live link cards: Intake Forms → navigates to the Intake Forms screen, Incidents & Safety Flags → navigates to the Incidents screen, Audit Log → navigates to the Audit Log screen, Roles & Permissions → tells the operator the role panel lives at the top of the Staff screen.
+- **New Review Links settings panel** under Marketing & Branding with inputs for Google URL, Facebook URL, Yelp URL, and the default request-message template. Saves via `PUT /settings/review-links`.
+
+### ReviewRequestButton placement
+- Now embedded on **Dog cards** (with `dogId` + `dogName` passed in so the modal pre-fills the personalized message).
+- Embedded in **Pipeline → completed programs** as a "graduation" source button.
+- Embedded in the **Report Card modal** above the fold when the card has photos or has been sent (the natural "client is happy, ask now" moment) with `source="report_card"`.
+- Already on Client cards from Phase 9 — unchanged.
+
+### Sidebar permission keys
+- **Kennel Board** now requires `dogs_view` (Care/Dog perms per request).
+- **Waitlist** now requires `booking_edit`.
+- **Intake Forms** now requires `clients_edit` — which in the permission matrix means Admin / Manager / Front Desk only; Trainer / Daycare / Boarding Staff / Read-only correctly don't see it.
+
+### Tutorials
+- Added a brand-new "Operations Command Center — The New Stack" section to `Tutorials.jsx` covering all 9 phases (Intake Forms, Care Board, Waitlist + Capacity, Kennel Board, Incidents + Safety Flags, Audit Log, Roles & Permissions, Communication Log, Review Requests). Each entry lists where to find it in the sidebar, who can use it (with the new permission labels), and 4-6 concrete how-to steps.

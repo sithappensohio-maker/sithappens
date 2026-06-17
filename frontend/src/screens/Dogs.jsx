@@ -12,6 +12,7 @@ import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
 import CommunicationLog from "../components/CommunicationLog";
+import ReviewRequestButton from "../components/ReviewRequestButton";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {
@@ -370,6 +371,12 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                 <IntakeFormsSection clientId={d.owner_id} dogId={d.id} />
                 <SafetyFlagsManager dogId={d.id} compact={false}/>
                 <CommunicationLog clientId={d.owner_id} dogId={d.id} />
+                <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
+                  <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+                    <i className="fas fa-star mr-1"/>Reviews
+                  </span>
+                  <ReviewRequestButton clientId={d.owner_id} dogId={d.id} dogName={d.name} clientName={d.client_name || ""} compact={true}/>
+                </div>
               </div>
             </div>
           );

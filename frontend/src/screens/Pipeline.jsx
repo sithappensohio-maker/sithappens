@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
+import ReviewRequestButton from "../components/ReviewRequestButton";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 
 const STATUS_META = {
@@ -235,6 +236,12 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
         >
           <i className="fas fa-paw mr-1.5"/>Open dog profile
         </button>
+        {row.status === "completed" && row.client_id && (
+          // Sprint 110ez polish — graduation surface for the review button.
+          <ReviewRequestButton clientId={row.client_id} dogId={row.dog_id}
+                               clientName={row.client_name || ""} dogName={row.dog_name || ""}
+                               source="graduation" />
+        )}
         {row.status === "active" && (
           <>
             <button

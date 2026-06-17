@@ -30,6 +30,121 @@ const ADMIN_QUICK_ACTIONS = [
 
 const ADMIN_SECTIONS = [
   {
+    id: "ops-command-center",
+    title: "Operations Command Center — The New Stack",
+    icon: "fa-tower-broadcast",
+    color: "text-shOrange",
+    overview: "These nine tools turn the app from a booking tracker into a full ops command center. Each one is live and wired into the existing data — open the sidebar to find them.",
+    cards: [
+      {
+        title: "Intake Forms",
+        badges: ["Live", "Admin/Manager/Front Desk"],
+        path: "Sidebar → Intake Forms",
+        steps: [
+          "Eleven starter templates ship out of the box (new client, new dog, daycare temperament, boarding, feeding, medication, training eval, service-dog, behavior history, bite disclosure, emergency/vet).",
+          "Hit New Form to build your own — short text, long text, dropdown, multi-select, yes/no, file-upload placeholder, plus internal-only staff fields that never reach the client.",
+          "From any client or dog card, hit '+ Send' on the Intake Forms section to assign a template — the client sees it in their portal next time they log in.",
+          "Submissions arrive with statuses: Sent / Submitted / Reviewed / Needs Follow-up / Archived. Click any submission to read the answers and leave admin review notes.",
+        ],
+      },
+      {
+        title: "Care Board (Feeding & Medication)",
+        badges: ["Live", "All staff"],
+        path: "Sidebar → Care Board",
+        steps: [
+          "Auto-pulls today's feeding + meds for every on-site dog and sorts by time.",
+          "Each card shows status pills: Not due / Due now / Completed / Missed / Skipped, with a live overdue timer.",
+          "Tap Complete to log staff initials + optional note; tap Skip with one of six preset reasons.",
+          "The schedule auto-seeds from each dog's default feeding/medication plan on the dog profile — edit the dog to update defaults.",
+          "Auto-refreshes every 60 seconds so 'Due now' rolls into 'Missed' without you hitting refresh.",
+        ],
+      },
+      {
+        title: "Waitlist + Capacity Guardrail",
+        badges: ["Live", "All staff"],
+        path: "Sidebar → Waitlist",
+        steps: [
+          "When daycare or boarding is at capacity, drop the client on the waitlist instead of bouncing them off a booking error.",
+          "Each entry carries priority (Low / Normal / High), service type, requested date range, and notes.",
+          "Status flow: Waiting → Offered → Booked / Declined / Expired / Removed.",
+          "Hit Convert on a waiting entry to create the real booking — this bypasses the daily cap (admin override) but still runs every other check (vaccines, waiver, conflicts).",
+          "The Add modal shows a live 'X of Y slots open today' check so staff can decide on the spot whether to book or queue.",
+        ],
+      },
+      {
+        title: "Kennel Board",
+        badges: ["Live", "Care/Dog perms"],
+        path: "Sidebar → Kennel Board",
+        steps: [
+          "One card per on-site dog grouped by service: Daycare / Boarding / Training / Grooming / Photography.",
+          "Each card has 5 assignment slots (Kennel / Room / Crate / Yard group / Training group) — click the card to edit.",
+          "Edit the dropdown options anywhere via the Labels button — one label per line, e.g. 'Kennel A, Kennel B, Suite 1'.",
+          "Warning badges fire automatically: vaccine lapsed, overdue medication, do-not-group flag, open incident, has feeding plan, has med plan.",
+          "Auto-refreshes every 60s.",
+        ],
+      },
+      {
+        title: "Incidents + Safety Flags (with auto-suggest)",
+        badges: ["Live", "Admin/Manager/Trainer/Staff"],
+        path: "Sidebar → Incidents · Per-dog flags on Dogs cards",
+        steps: [
+          "Incidents now support four severity tiers (Low / Medium / High / Critical) and 11 types (Bite, Fight, Injury, Illness, Escape attempt, Resource guarding, Reactivity, Human/Dog aggression, Property damage, Other).",
+          "Each incident captures staff involved, witnesses, action taken, Manager Reviewed and Client Notified toggles, plus internal-only notes that never appear on client-facing surfaces.",
+          "Safety Flags live on every dog card. Suggestions appear in an orange callout based on incident history + intake form answers (e.g. a logged bite auto-suggests Muzzle required + Staff only).",
+          "Click any suggested flag to apply it instantly. Custom flags can also be added manually.",
+        ],
+      },
+      {
+        title: "Audit Log",
+        badges: ["Live", "Admin/Manager"],
+        path: "Sidebar → Audit Log",
+        steps: [
+          "Every staff/admin write (POST/PUT/PATCH/DELETE) is captured automatically — no manual logging required.",
+          "Filter by group (Bookings, Dogs, Clients, Incidents, Intake, Waitlist, Money, Settings, Waivers), user, or free-text search.",
+          "Click any row to expand the payload — passwords, tokens, and card numbers are auto-redacted.",
+          "Date-grouped timeline so you can see exactly what happened on a given day.",
+        ],
+      },
+      {
+        title: "Roles & Permissions",
+        badges: ["Live", "Admin only"],
+        path: "Sidebar → Staff (Roles panel at top)",
+        steps: [
+          "Seven roles: Owner / Manager / Trainer / Daycare Staff / Boarding Staff / Front Desk / Read-only.",
+          "Each role unlocks a specific slice of 13 permissions (Settings, Finance, Pricing, Clients view/edit, Dogs view/edit, Incidents, Care logging, Booking edits, Payroll, Data export, Delete records).",
+          "New staff default to Read-only so a brand-new account can't accidentally do anything destructive — Owner upgrades them in one dropdown.",
+          "The sidebar nav auto-hides items a staffer doesn't have permission to use, so the UI is never confusing.",
+          "Click 'Show permission matrix' inside the Staff Roles panel for the full grid.",
+        ],
+      },
+      {
+        title: "Communication Log",
+        badges: ["Live", "All staff"],
+        path: "Per client card · Per dog card",
+        steps: [
+          "Log every phone call, voicemail, text, email, in-person chat, behavior conversation, schedule change, payment discussion, complaint, follow-up, or general note.",
+          "Each entry stamps the staff member + timestamp automatically.",
+          "Mark 'Follow-up needed' to surface the entry with an orange ring until someone resolves it.",
+          "Filter pills appear once you have more than 3 entries — by type or 'Open follow-ups' only.",
+          "Review requests get auto-logged here too, so the contact history stays cohesive.",
+        ],
+      },
+      {
+        title: "Review Requests",
+        badges: ["Live", "All staff"],
+        path: "Per client/dog card · Pipeline completed · Report Card modal",
+        steps: [
+          "First, drop your Google + Facebook (+ optional Yelp) review URLs into Settings → Marketing → Review Links along with your default request message.",
+          "On every client or dog card, hit Request Review to open a modal with one-click Google / Facebook buttons — clicking opens the link in a new tab AND logs the request.",
+          "Or pick Text / Email / In-person / Other to log a non-link request.",
+          "Copy Message uses your template with {first_name} and {dog_name} substituted in.",
+          "The button also appears in the Pipeline screen on completed training programs and on report cards that have been sent — the natural 'they're happy, ask now' moments.",
+          "Every request auto-logs an entry on the client's communication timeline with a back-link.",
+        ],
+      },
+    ],
+  },
+  {
     id: "start-here",
     title: "Start Here — First-Time Setup",
     icon: "fa-rocket",

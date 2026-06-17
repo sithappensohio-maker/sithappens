@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
 import { useConfirm } from "../lib/useConfirm";
 import ServicesSettings from "../components/ServicesSettings";
@@ -141,12 +142,12 @@ export default function Settings() {
         { id: "commands", label: "Training Commands", icon: "fa-graduation-cap",
           desc: "Standard commands menu for trainers, behavior tags for report cards.",
           badges: ["Live", "Staff-only"] },
-        { id: "_intake_soon", label: "Intake Forms", icon: "fa-clipboard",
-          desc: "Custom new-client intake questionnaires and required fields.",
-          badges: ["Coming soon"], comingSoon: true },
-        { id: "_incidents_soon", label: "Incident Rules", icon: "fa-triangle-exclamation",
-          desc: "Severity tiers, automatic admin alerts, follow-up requirements.",
-          badges: ["Coming soon"], comingSoon: true },
+        { id: "_intake_link", label: "Intake Forms", icon: "fa-clipboard",
+          desc: "Custom new-client intake questionnaires, daycare/boarding temperament forms, bite disclosures, and more. (Opens the Intake Forms screen.)",
+          badges: ["Live", "Client-facing"], externalTab: "intake" },
+        { id: "_incidents_link", label: "Incidents & Safety Flags", icon: "fa-triangle-exclamation",
+          desc: "Severity tiers, full type taxonomy, manager/client review toggles, plus auto-suggested safety flags on every dog. (Opens the Incidents screen.)",
+          badges: ["Live", "Admin-only"], externalTab: "incidents" },
       ],
     },
     {
@@ -195,6 +196,9 @@ export default function Settings() {
         { id: "portal_links", label: "Portal Links", icon: "fa-link",
           desc: "Outbound links shown to clients in the portal (Instagram, Google Reviews, etc).",
           badges: ["Optional", "Client-facing"] },
+        { id: "review_links", label: "Review Links", icon: "fa-star",
+          desc: "Google, Facebook, and Yelp review URLs + your default review-request message template. Drives the 'Request review' button on every client/dog card.",
+          badges: ["Live", "Client-facing"] },
         { id: "marketing_qr", label: "Marketing QR Codes", icon: "fa-qrcode",
           desc: "Generate branded QR codes for flyers, business cards, kennel posters.",
           badges: ["Optional", "Admin-only"] },
@@ -210,9 +214,9 @@ export default function Settings() {
         { id: "_staff_link", label: "Manage Staff", icon: "fa-users",
           desc: "Add, edit, and remove trainers, kennel-techs, and front-desk team. (Opens the Staff screen.)",
           badges: ["Live", "Admin-only"], externalTab: "staff" },
-        { id: "_roles_soon", label: "Roles & Permissions", icon: "fa-lock",
-          desc: "Granular permission matrix per staff role.",
-          badges: ["Coming soon"], comingSoon: true },
+        { id: "_roles_link", label: "Roles & Permissions", icon: "fa-lock",
+          desc: "Owner / Manager / Trainer / Daycare / Boarding / Front Desk / Read-only with a 13-key permission matrix. (Assign roles inside the Staff screen — the role panel sits at the top.)",
+          badges: ["Live", "Admin-only"], externalTab: "staff" },
         { id: "_payroll_soon", label: "Payroll Settings", icon: "fa-money-check",
           desc: "Hourly rates, overtime rules, pay-period boundaries.",
           badges: ["Coming soon"], comingSoon: true },
@@ -276,9 +280,9 @@ export default function Settings() {
         { id: "_export_soon", label: "Data Export", icon: "fa-cloud-arrow-down",
           desc: "On-demand export of clients, dogs, bookings, finances.",
           badges: ["Coming soon"], comingSoon: true },
-        { id: "_audit_soon", label: "Audit Log", icon: "fa-list-check",
-          desc: "Searchable trail of every admin action — who did what when.",
-          badges: ["Coming soon"], comingSoon: true },
+        { id: "_audit_link", label: "Audit Log", icon: "fa-list-check",
+          desc: "Searchable trail of every admin/staff write — who did what when, with redacted payload. (Opens the Audit Log screen.)",
+          badges: ["Live", "Admin-only"], externalTab: "audit" },
       ],
     },
   ];
@@ -463,6 +467,7 @@ export default function Settings() {
               {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
               {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
               {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
+              {tab === "review_links" && <ReviewLinksPanel />}
               {tab === "marketing_qr" && <MarketingQRPanel />}
               {tab === "services" && <ServicesSettings />}
               {tab === "credit_packs" && <CreditPacksSettings />}
@@ -1417,6 +1422,82 @@ function MarketingQRPanel() {
 }
 
 
+
+function ReviewLinksPanel() {
+  /* Sprint 110ez polish — settings panel for the Phase 9 review URLs. */
+  const [links, setLinks] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings/review-links").then(r => setLinks(r.data)).catch(()=>setLinks({}));
+  }, []);
+
+  const setField = (k, v) => setLinks(l => ({ ...l, [k]: v }));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { data } = await api.put("/settings/review-links", {
+        google_url: links.google_url || "",
+        facebook_url: links.facebook_url || "",
+        yelp_url: links.yelp_url || "",
+        default_message: links.default_message || "",
+      });
+      setLinks(data);
+      toast.success("Review links saved");
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail)); }
+    setSaving(false);
+  };
+
+  if (!links) return <p className="text-gray-500 text-sm">Loading…</p>;
+
+  return (
+    <div className="space-y-4" data-testid="review-links-panel">
+      <p className="text-[13px] text-gray-400">
+        These URLs power the &quot;Request Review&quot; button on every client and dog card. The default message has two
+        placeholders you can use: <code className="text-shBlue">{"{first_name}"}</code> and <code className="text-shBlue">{"{dog_name}"}</code>.
+      </p>
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest"><i className="fab fa-google mr-1"/>Google review URL</label>
+        <input value={links.google_url || ""} onChange={(e)=>setField("google_url", e.target.value)} data-testid="rl-google"
+               placeholder="https://g.page/r/yourcode/review"
+               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+      </div>
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest"><i className="fab fa-facebook mr-1"/>Facebook reviews URL</label>
+        <input value={links.facebook_url || ""} onChange={(e)=>setField("facebook_url", e.target.value)} data-testid="rl-facebook"
+               placeholder="https://facebook.com/yourpage/reviews"
+               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+      </div>
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest"><i className="fab fa-yelp mr-1"/>Yelp URL <span className="text-gray-600 normal-case">(optional)</span></label>
+        <input value={links.yelp_url || ""} onChange={(e)=>setField("yelp_url", e.target.value)} data-testid="rl-yelp"
+               placeholder="https://yelp.com/biz/your-business"
+               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+      </div>
+
+      <div>
+        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Default request message</label>
+        <textarea value={links.default_message || ""} onChange={(e)=>setField("default_message", e.target.value)} rows={4}
+                  data-testid="rl-message"
+                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+        <p className="text-[11px] text-gray-500 mt-1">
+          Tip: keep it under 250 characters so it fits in a text. The Copy Message button on each client substitutes {"{first_name}"} and {"{dog_name}"} automatically.
+        </p>
+      </div>
+
+      <div className="flex justify-end">
+        <button onClick={save} disabled={saving} data-testid="rl-save"
+                className="bg-shGreen text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-60">
+          {saving ? "Saving…" : <><i className="fas fa-save mr-1"/>Save links</>}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function PortalLinksPanel({ s, save, saving }) {
   const initial = s.client_portal_links || {};

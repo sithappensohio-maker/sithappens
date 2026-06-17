@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { useEditLock } from "../lib/useLiveRefresh";
+import ReviewRequestButton from "./ReviewRequestButton";
 
 export default function ReportCardModal({ booking, onClose, moodTags: moodTagsProp }) {
   useEditLock(true);
@@ -56,6 +57,18 @@ export default function ReportCardModal({ booking, onClose, moodTags: moodTagsPr
           <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="report-card-close"><i className="fas fa-times" /></button>
         </div>
         <p className="text-[15px] text-shGreen font-black uppercase tracking-widest mb-6">{booking.dog_name} · {booking.client_name} · {booking.date}</p>
+
+        {/* Sprint 110ez polish — review request affordance on a completed report card */}
+        {booking.client_id && (booking.report_card?.sent_at || booking.report_card?.photos?.length) && (
+          <div className="mb-5 p-3 bg-shOrange/10 border border-shOrange/30 rounded flex items-center justify-between flex-wrap gap-2">
+            <span className="text-[12px] font-black uppercase tracking-widest text-shOrange">
+              <i className="fas fa-star mr-1"/>Happy with the card? Now's a great moment to ask for a review.
+            </span>
+            <ReviewRequestButton clientId={booking.client_id} dogId={booking.dog_id}
+                                 clientName={booking.client_name || ""} dogName={booking.dog_name || ""}
+                                 source="report_card" />
+          </div>
+        )}
 
         <div className="space-y-5">
           <div>
