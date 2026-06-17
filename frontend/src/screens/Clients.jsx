@@ -15,6 +15,7 @@ import LegacyPricingModal from "../components/LegacyPricingModal";
 import PackLotsModal from "../components/PackLotsModal";
 import AdminClientPaymentPlans from "../components/AdminClientPaymentPlans";
 import PageHero from "../components/PageHero";
+import IntakeFormsSection from "../components/IntakeFormsSection";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
@@ -364,6 +365,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
               )}
             </div>
+            <IntakeFormsSection clientId={c.id} />
           </div>
         ))}
       </div>

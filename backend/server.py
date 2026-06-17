@@ -17826,6 +17826,605 @@ async def portal_sign_payment_plan(
     return await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110eq — Phase 1: Custom Intake Forms
+# ────────────────────────────────────────────────────────────────────────────
+# Admins build reusable form templates (new client intake, daycare temperament,
+# boarding intake, feeding instructions, behavior modification, etc.). Each
+# template lives in `intake_form_templates` with a stable `id`, a `form_type`
+# enum the UI uses to group/filter, and an ordered list of `fields`. Templates
+# can be activated/deactivated and duplicated — they are never hard-deleted
+# while submissions reference them (a soft `archived=true` flag handles that).
+#
+# Submissions live in their own `intake_submissions` collection so the dog &
+# client documents stay slim. Each submission snapshots the template name +
+# form_type at send-time so renaming a template later doesn't rewrite history,
+# and stores `answers` as a dict keyed by `field_id` (uuid). Status machine:
+#   draft → sent → submitted → reviewed
+#                    └→ needs_follow_up ←┘
+#                              └→ archived
+#
+# Client-portal completion (the public "fill out your form" link) ships in
+# the next phase; for this pass the backend already supports it via the
+# `claim`-style portal endpoints below.
+# ────────────────────────────────────────────────────────────────────────────
+
+INTAKE_FORM_TYPES = [
+    "client_intake",
+    "dog_intake",
+    "daycare_temperament",
+    "boarding_intake",
+    "feeding_instructions",
+    "medication_instructions",
+    "training_evaluation",
+    "service_dog_training",
+    "behavior_history",
+    "bite_aggression_disclosure",
+    "emergency_vet_contact",
+]
+
+INTAKE_FIELD_TYPES = [
+    "short_text", "long_text", "number", "email", "phone", "date",
+    "dropdown", "checkbox", "multi_select", "yes_no",
+    "file_upload",          # placeholder — wired to the existing dog/client files
+                            # uploader; admins can attach the resulting URL by hand
+                            # until the dedicated upload widget lands.
+    "staff_only_note",      # internal-only field; not shown to clients in portal
+]
+
+INTAKE_STATUSES = [
+    "draft", "sent", "submitted", "reviewed", "needs_follow_up", "archived",
+]
+
+
+class IntakeFieldIn(BaseModel):
+    id: Optional[str] = None              # uuid; auto-assigned if missing
+    label: str
+    field_type: str                       # one of INTAKE_FIELD_TYPES
+    required: bool = False
+    placeholder: Optional[str] = None
+    help_text: Optional[str] = None
+    options: List[str] = []               # for dropdown / multi_select / checkbox-group
+    staff_only: bool = False              # hide from client portal even if field_type != staff_only_note
+
+
+class IntakeTemplateIn(BaseModel):
+    name: str
+    form_type: str
+    description: Optional[str] = None
+    active: bool = True
+    fields: List[IntakeFieldIn] = []
+
+
+class IntakeSubmissionIn(BaseModel):
+    template_id: str
+    client_id: Optional[str] = None
+    dog_id: Optional[str] = None
+    status: Optional[str] = "draft"
+    answers: Dict[str, Any] = {}
+    review_notes: Optional[str] = None
+
+
+class IntakeSubmissionPatch(BaseModel):
+    status: Optional[str] = None
+    answers: Optional[Dict[str, Any]] = None
+    review_notes: Optional[str] = None
+    client_id: Optional[str] = None
+    dog_id: Optional[str] = None
+
+
+def _normalize_intake_fields(fields: List[IntakeFieldIn]) -> List[Dict[str, Any]]:
+    """Stamp missing field IDs and coerce field_type to a known value."""
+    out: List[Dict[str, Any]] = []
+    for f in fields:
+        ft = (f.field_type or "").strip().lower()
+        if ft not in INTAKE_FIELD_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown field_type '{f.field_type}'. Allowed: {INTAKE_FIELD_TYPES}",
+            )
+        out.append({
+            "id": (f.id or str(uuid.uuid4())),
+            "label": f.label.strip() or "Untitled field",
+            "field_type": ft,
+            "required": bool(f.required),
+            "placeholder": (f.placeholder or "").strip() or None,
+            "help_text": (f.help_text or "").strip() or None,
+            "options": [o.strip() for o in (f.options or []) if o and o.strip()],
+            "staff_only": bool(f.staff_only) or ft == "staff_only_note",
+        })
+    return out
+
+
+# ── Starter template library — first call to GET /intake/templates with an
+# empty collection seeds these so the admin isn't staring at a blank slate.
+_INTAKE_STARTER_TEMPLATES: List[Dict[str, Any]] = [
+    {
+        "name": "New Client Intake",
+        "form_type": "client_intake",
+        "description": "Basic info we collect before scheduling a new client's first visit.",
+        "fields": [
+            {"label": "Full name", "field_type": "short_text", "required": True},
+            {"label": "Email", "field_type": "email", "required": True},
+            {"label": "Phone", "field_type": "phone", "required": True},
+            {"label": "Home address", "field_type": "long_text"},
+            {"label": "How did you hear about us?", "field_type": "dropdown",
+             "options": ["Google", "Facebook", "Referral", "Drive-by", "Other"]},
+        ],
+    },
+    {
+        "name": "New Dog Intake",
+        "form_type": "dog_intake",
+        "description": "Core info we need before a new dog can be scheduled.",
+        "fields": [
+            {"label": "Dog's name", "field_type": "short_text", "required": True},
+            {"label": "Breed", "field_type": "short_text", "required": True},
+            {"label": "Age (years)", "field_type": "number"},
+            {"label": "Spayed/Neutered?", "field_type": "yes_no", "required": True},
+            {"label": "Rabies expiry date", "field_type": "date", "required": True},
+            {"label": "Known allergies / medical conditions", "field_type": "long_text"},
+        ],
+    },
+    {
+        "name": "Daycare Temperament Intake",
+        "form_type": "daycare_temperament",
+        "description": "Behavior screening so we can group dogs safely on day one.",
+        "fields": [
+            {"label": "How does your dog react to new dogs?", "field_type": "long_text", "required": True},
+            {"label": "Has your dog ever been to daycare before?", "field_type": "yes_no"},
+            {"label": "Play style", "field_type": "multi_select",
+             "options": ["Wrestler", "Chaser", "Ball-driven", "Tug player", "Mouthy", "Independent"]},
+            {"label": "Any known triggers?", "field_type": "long_text"},
+            {"label": "Internal — initial group assignment notes", "field_type": "staff_only_note"},
+        ],
+    },
+    {
+        "name": "Boarding Intake",
+        "form_type": "boarding_intake",
+        "description": "Stay-specific info: drop-off/pickup, contact-while-away, comforts.",
+        "fields": [
+            {"label": "Drop-off date", "field_type": "date", "required": True},
+            {"label": "Pickup date", "field_type": "date", "required": True},
+            {"label": "Best phone while you're away", "field_type": "phone", "required": True},
+            {"label": "Crate trained?", "field_type": "yes_no"},
+            {"label": "Items brought with dog", "field_type": "long_text",
+             "placeholder": "Bed, blanket, food, toys…"},
+            {"label": "Daily updates preference", "field_type": "dropdown",
+             "options": ["Daily photo + note", "Photo only", "Note only", "Only if there's an issue"]},
+        ],
+    },
+    {
+        "name": "Feeding Instructions",
+        "form_type": "feeding_instructions",
+        "description": "What, when, and how much to feed.",
+        "fields": [
+            {"label": "Food brand & variety", "field_type": "short_text", "required": True},
+            {"label": "Amount per meal", "field_type": "short_text", "required": True},
+            {"label": "Meals per day", "field_type": "dropdown", "options": ["1", "2", "3", "Free-feed"]},
+            {"label": "Food brought from home?", "field_type": "yes_no"},
+            {"label": "Special instructions", "field_type": "long_text"},
+        ],
+    },
+    {
+        "name": "Medication Instructions",
+        "form_type": "medication_instructions",
+        "description": "Capture every medication, dose, and timing.",
+        "fields": [
+            {"label": "Medication name", "field_type": "short_text", "required": True},
+            {"label": "Dosage", "field_type": "short_text", "required": True},
+            {"label": "Time(s) due", "field_type": "short_text",
+             "placeholder": "e.g. 8 AM, 6 PM"},
+            {"label": "Hidden in food?", "field_type": "yes_no"},
+            {"label": "Special instructions", "field_type": "long_text"},
+        ],
+    },
+    {
+        "name": "Training Evaluation",
+        "form_type": "training_evaluation",
+        "description": "First-session evaluation snapshot — goals, baseline, history.",
+        "fields": [
+            {"label": "Top 3 training goals", "field_type": "long_text", "required": True},
+            {"label": "Previous training (programs, classes, private)?", "field_type": "long_text"},
+            {"label": "Known commands", "field_type": "multi_select",
+             "options": ["Sit", "Down", "Stay", "Come", "Heel", "Place", "Leave it", "Drop it"]},
+            {"label": "Reactivity level", "field_type": "dropdown",
+             "options": ["None", "Mild", "Moderate", "High", "Severe"]},
+            {"label": "Internal — trainer baseline notes", "field_type": "staff_only_note"},
+        ],
+    },
+    {
+        "name": "Service Dog Training Intake",
+        "form_type": "service_dog_training",
+        "description": "Service-dog-specific intake covering tasks and handler needs.",
+        "fields": [
+            {"label": "Disability category (handler will define tasks)", "field_type": "long_text", "required": True},
+            {"label": "Tasks the dog will be trained to perform", "field_type": "long_text", "required": True},
+            {"label": "Public-access training already started?", "field_type": "yes_no"},
+            {"label": "Handler's training availability per week (hours)", "field_type": "number"},
+            {"label": "Acknowledgement: Sit Happens does not certify service dogs; we train task work only", "field_type": "yes_no", "required": True},
+        ],
+    },
+    {
+        "name": "Behavior Modification / Reactivity History",
+        "form_type": "behavior_history",
+        "description": "Detailed reactivity & behavior history for B-Mod cases.",
+        "fields": [
+            {"label": "Describe the behavior you want to change", "field_type": "long_text", "required": True},
+            {"label": "When did it start?", "field_type": "short_text"},
+            {"label": "Frequency", "field_type": "dropdown",
+             "options": ["Daily", "A few times a week", "Weekly", "Monthly", "Sporadic"]},
+            {"label": "Triggers", "field_type": "long_text"},
+            {"label": "What's been tried already?", "field_type": "long_text"},
+            {"label": "Internal — protocol assigned", "field_type": "staff_only_note"},
+        ],
+    },
+    {
+        "name": "Bite / Aggression Disclosure",
+        "form_type": "bite_aggression_disclosure",
+        "description": "Legally important: disclose any prior bite or aggression incidents.",
+        "fields": [
+            {"label": "Has your dog ever bitten a person?", "field_type": "yes_no", "required": True},
+            {"label": "Has your dog ever bitten another dog?", "field_type": "yes_no", "required": True},
+            {"label": "Has your dog ever broken skin?", "field_type": "yes_no"},
+            {"label": "Describe each incident (date, target, severity, vet/medical care)", "field_type": "long_text"},
+            {"label": "Acknowledgement: incomplete disclosure may result in immediate dismissal from the program", "field_type": "yes_no", "required": True},
+            {"label": "Internal — flag review", "field_type": "staff_only_note"},
+        ],
+    },
+    {
+        "name": "Emergency Contact & Vet Information",
+        "form_type": "emergency_vet_contact",
+        "description": "Who to call and which vet to use when you can't be reached.",
+        "fields": [
+            {"label": "Emergency contact name", "field_type": "short_text", "required": True},
+            {"label": "Emergency contact phone", "field_type": "phone", "required": True},
+            {"label": "Relationship", "field_type": "short_text"},
+            {"label": "Primary vet clinic", "field_type": "short_text", "required": True},
+            {"label": "Primary vet phone", "field_type": "phone", "required": True},
+            {"label": "After-hours emergency vet", "field_type": "short_text"},
+            {"label": "Authorize emergency medical care up to ($)", "field_type": "number"},
+        ],
+    },
+]
+
+
+async def _seed_intake_templates_if_empty():
+    """Idempotent — only seeds when the collection has zero rows."""
+    existing = await db.intake_form_templates.count_documents({})
+    if existing > 0:
+        return 0
+    now = now_iso()
+    docs = []
+    for tpl in _INTAKE_STARTER_TEMPLATES:
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "name": tpl["name"],
+            "form_type": tpl["form_type"],
+            "description": tpl.get("description") or "",
+            "active": True,
+            "is_starter": True,         # so the UI can show a "starter" pill
+            "fields": _normalize_intake_fields(
+                [IntakeFieldIn(**f) for f in tpl["fields"]]
+            ),
+            "created_at": now,
+            "updated_at": now,
+        })
+    if docs:
+        await db.intake_form_templates.insert_many(docs)
+    return len(docs)
+
+
+@api.get("/intake/templates")
+async def list_intake_templates(
+    form_type: Optional[str] = None,
+    active: Optional[bool] = None,
+    user: dict = Depends(require_admin),
+):
+    await _seed_intake_templates_if_empty()
+    q: Dict[str, Any] = {}
+    if form_type:
+        q["form_type"] = form_type
+    if active is not None:
+        q["active"] = active
+    rows = await db.intake_form_templates.find(q, {"_id": 0}).sort("name", 1).to_list(500)
+    return {"templates": rows, "form_types": INTAKE_FORM_TYPES, "field_types": INTAKE_FIELD_TYPES}
+
+
+@api.get("/intake/templates/{template_id}")
+async def get_intake_template(template_id: str, user: dict = Depends(get_current_user)):
+    # Clients can fetch an active template only when it's been assigned to them
+    # via a submission with status `sent`. Admins always see everything.
+    doc = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if user.get("role") != "admin":
+        if not doc.get("active"):
+            raise HTTPException(status_code=403, detail="Template not active")
+        sub = await db.intake_submissions.find_one(
+            {"template_id": template_id, "client_id": user.get("client_id"), "status": "sent"},
+            {"_id": 0, "id": 1},
+        )
+        if not sub:
+            raise HTTPException(status_code=403, detail="Template not assigned")
+    return doc
+
+
+@api.post("/intake/templates")
+async def create_intake_template(body: IntakeTemplateIn, _: dict = Depends(require_admin)):
+    if body.form_type not in INTAKE_FORM_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown form_type '{body.form_type}'. Allowed: {INTAKE_FORM_TYPES}",
+        )
+    now = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip() or "Untitled form",
+        "form_type": body.form_type,
+        "description": (body.description or "").strip(),
+        "active": bool(body.active),
+        "is_starter": False,
+        "fields": _normalize_intake_fields(body.fields),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.intake_form_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/intake/templates/{template_id}")
+async def update_intake_template(template_id: str, body: IntakeTemplateIn, _: dict = Depends(require_admin)):
+    existing = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if body.form_type not in INTAKE_FORM_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown form_type '{body.form_type}'. Allowed: {INTAKE_FORM_TYPES}",
+        )
+    patch = {
+        "name": body.name.strip() or existing.get("name") or "Untitled form",
+        "form_type": body.form_type,
+        "description": (body.description or "").strip(),
+        "active": bool(body.active),
+        "fields": _normalize_intake_fields(body.fields),
+        "updated_at": now_iso(),
+    }
+    await db.intake_form_templates.update_one({"id": template_id}, {"$set": patch})
+    return await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
+
+
+@api.delete("/intake/templates/{template_id}")
+async def delete_intake_template(template_id: str, _: dict = Depends(require_admin)):
+    # If there are submissions, soft-archive instead of hard-delete (preserves
+    # history). Otherwise we can safely remove.
+    sub_count = await db.intake_submissions.count_documents({"template_id": template_id})
+    if sub_count > 0:
+        await db.intake_form_templates.update_one(
+            {"id": template_id},
+            {"$set": {"active": False, "archived": True, "updated_at": now_iso()}},
+        )
+        return {"ok": True, "soft_archived": True, "submissions": sub_count}
+    res = await db.intake_form_templates.delete_one({"id": template_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {"ok": True, "soft_archived": False}
+
+
+@api.post("/intake/templates/{template_id}/duplicate")
+async def duplicate_intake_template(template_id: str, _: dict = Depends(require_admin)):
+    existing = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Template not found")
+    now = now_iso()
+    # Re-stamp field IDs so the clone's fields are distinct from the original's.
+    cloned_fields = []
+    for f in existing.get("fields") or []:
+        cloned_fields.append({**f, "id": str(uuid.uuid4())})
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": f"{existing.get('name') or 'Untitled form'} (copy)",
+        "form_type": existing.get("form_type"),
+        "description": existing.get("description") or "",
+        "active": False,                  # new copy starts inactive so it isn't
+                                          # accidentally sent before review
+        "is_starter": False,
+        "fields": cloned_fields,
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.intake_form_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.post("/intake/templates/{template_id}/toggle-active")
+async def toggle_intake_template_active(template_id: str, _: dict = Depends(require_admin)):
+    doc = await db.intake_form_templates.find_one({"id": template_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Template not found")
+    new_active = not bool(doc.get("active"))
+    await db.intake_form_templates.update_one(
+        {"id": template_id}, {"$set": {"active": new_active, "updated_at": now_iso()}},
+    )
+    return {"id": template_id, "active": new_active}
+
+
+# ── Submissions ──────────────────────────────────────────────────────────
+
+@api.get("/intake/submissions")
+async def list_intake_submissions(
+    client_id: Optional[str] = None,
+    dog_id: Optional[str] = None,
+    template_id: Optional[str] = None,
+    status: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {}
+    if client_id:
+        q["client_id"] = client_id
+    if dog_id:
+        q["dog_id"] = dog_id
+    if template_id:
+        q["template_id"] = template_id
+    if status:
+        q["status"] = status
+    rows = await db.intake_submissions.find(q, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    return {"submissions": rows, "statuses": INTAKE_STATUSES}
+
+
+@api.post("/intake/submissions")
+async def create_intake_submission(body: IntakeSubmissionIn, user: dict = Depends(require_admin)):
+    tpl = await db.intake_form_templates.find_one({"id": body.template_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if body.client_id:
+        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "id": 1})
+        if not c:
+            raise HTTPException(status_code=404, detail="Client not found")
+    if body.dog_id:
+        d = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "id": 1})
+        if not d:
+            raise HTTPException(status_code=404, detail="Dog not found")
+    status = (body.status or "draft").lower()
+    if status not in INTAKE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Bad status. Allowed: {INTAKE_STATUSES}")
+    now = now_iso()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "template_id": body.template_id,
+        "template_name": tpl.get("name"),
+        "form_type": tpl.get("form_type"),
+        "client_id": body.client_id,
+        "dog_id": body.dog_id,
+        "status": status,
+        "answers": body.answers or {},
+        "review_notes": (body.review_notes or "").strip() or None,
+        "sent_at": now if status == "sent" else None,
+        "submitted_at": now if status == "submitted" else None,
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "created_at": now,
+        "created_by": user.get("id"),
+    }
+    doc = {k: v for k, v in doc.items() if v is not None}
+    await db.intake_submissions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/intake/submissions/{submission_id}")
+async def get_intake_submission(submission_id: str, _: dict = Depends(require_admin)):
+    doc = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return doc
+
+
+@api.put("/intake/submissions/{submission_id}")
+async def update_intake_submission(submission_id: str, body: IntakeSubmissionPatch, user: dict = Depends(require_admin)):
+    existing = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    patch: Dict[str, Any] = {}
+    now = now_iso()
+    if body.status is not None:
+        s = body.status.lower()
+        if s not in INTAKE_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Bad status. Allowed: {INTAKE_STATUSES}")
+        patch["status"] = s
+        if s == "sent" and not existing.get("sent_at"):
+            patch["sent_at"] = now
+        if s == "submitted" and not existing.get("submitted_at"):
+            patch["submitted_at"] = now
+        if s == "reviewed":
+            patch["reviewed_at"] = now
+            patch["reviewed_by"] = user.get("id")
+    if body.answers is not None:
+        patch["answers"] = body.answers
+    if body.review_notes is not None:
+        patch["review_notes"] = body.review_notes.strip() or None
+    if body.client_id is not None:
+        patch["client_id"] = body.client_id or None
+    if body.dog_id is not None:
+        patch["dog_id"] = body.dog_id or None
+    if not patch:
+        return existing
+    patch["updated_at"] = now
+    await db.intake_submissions.update_one({"id": submission_id}, {"$set": patch})
+    return await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
+
+
+@api.delete("/intake/submissions/{submission_id}")
+async def delete_intake_submission(submission_id: str, _: dict = Depends(require_admin)):
+    res = await db.intake_submissions.delete_one({"id": submission_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    return {"ok": True}
+
+
+# ── Client-portal completion (placeholder for next phase) ────────────────
+# When a submission is in `sent` status and tied to the calling client, they
+# can fetch the template+blank answers here and POST their completion.
+
+@api.get("/portal/intake/assigned")
+async def portal_list_assigned_intake(user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("client",):
+        raise HTTPException(status_code=403, detail="Client portal only")
+    rows = await db.intake_submissions.find(
+        {"client_id": user.get("client_id"), "status": "sent"},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(200)
+    # Hydrate with the template's client-facing fields (omit staff_only)
+    out = []
+    for r in rows:
+        tpl = await db.intake_form_templates.find_one(
+            {"id": r.get("template_id")}, {"_id": 0, "name": 1, "form_type": 1, "fields": 1, "description": 1},
+        )
+        if not tpl:
+            continue
+        public_fields = [f for f in (tpl.get("fields") or []) if not f.get("staff_only")]
+        out.append({
+            **r,
+            "template": {
+                "name": tpl.get("name"),
+                "form_type": tpl.get("form_type"),
+                "description": tpl.get("description") or "",
+                "fields": public_fields,
+            },
+        })
+    return {"assigned": out}
+
+
+class PortalIntakeSubmitIn(BaseModel):
+    answers: Dict[str, Any]
+
+
+@api.post("/portal/intake/submissions/{submission_id}/submit")
+async def portal_submit_intake(submission_id: str, body: PortalIntakeSubmitIn, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("client",):
+        raise HTTPException(status_code=403, detail="Client portal only")
+    doc = await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if doc.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not yours to submit")
+    if doc.get("status") not in ("sent", "needs_follow_up"):
+        raise HTTPException(status_code=400, detail="This form isn't open for completion")
+    now = now_iso()
+    await db.intake_submissions.update_one(
+        {"id": submission_id},
+        {"$set": {
+            "answers": body.answers or {},
+            "status": "submitted",
+            "submitted_at": now,
+            "updated_at": now,
+        }},
+    )
+    return await db.intake_submissions.find_one({"id": submission_id}, {"_id": 0})
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,

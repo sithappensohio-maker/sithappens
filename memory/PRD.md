@@ -3328,3 +3328,31 @@ Updated `.env` to RFC 5322 format: `SENDER_EMAIL="Sit Happens <hello@mail.sithap
 ### Regression
 - **New** `tests/test_today_pnl_expenses.py` — creates a $50 expense and asserts net drops by exactly $50 (and that the response key exists at all). Passes.
 - **Existing** `tests/test_today_pnl_cash_basis.py` — still passes (no revenue path changed).
+
+## Sprint 110eq — Phase 1: Custom Intake Forms (2026-02-17)
+**User ask**: 9-phase ops-command-center roadmap. Phase 1 = admin form builder, submissions storage, display on client/dog pages.
+
+### Backend (`server.py`)
+Two new collections — `intake_form_templates` and `intake_submissions`. 13 endpoints, all admin-gated except the client-portal completion stubs:
+
+- **Templates**: `GET/POST /intake/templates`, `GET/PUT/DELETE /intake/templates/{id}`, `POST /intake/templates/{id}/duplicate`, `POST /intake/templates/{id}/toggle-active`
+- **Submissions**: `GET/POST /intake/submissions`, `GET/PUT/DELETE /intake/submissions/{id}`
+- **Portal stubs (Phase 1.5)**: `GET /portal/intake/assigned`, `POST /portal/intake/submissions/{id}/submit`
+
+Key behaviors baked in:
+- **Auto-seed of 11 starter templates** on first list — covers all 11 form types from the spec (client intake, dog intake, daycare temperament, boarding, feeding, medication, training eval, service dog, behavior history, bite disclosure, emergency/vet).
+- **Soft-archive on delete** — if a template has any submissions, DELETE flips `active=false, archived=true` instead of hard-deleting, preserving history.
+- **Status transitions auto-stamp timestamps** — `status=sent` → `sent_at`, `status=submitted` → `submitted_at`, `status=reviewed` → `reviewed_at` + `reviewed_by`.
+- **Field-type + form-type validation** at the boundary — unknown values return 400.
+- **Duplicate re-stamps field IDs** so the clone is truly independent.
+
+### Frontend
+- **New screen** `screens/IntakeForms.jsx` — full admin builder. Two tabs (Templates / Submissions), filter pills, template editor modal with inline field builder (add/reorder/configure each field, including options for dropdown/multi-select), submission reviewer modal with status pills + admin review notes, send-to-client modal.
+- **New reusable component** `components/IntakeFormsSection.jsx` — drop-in card embedded on every client card (below trophies) and every dog card. Lists this entity's recent submissions with status pills, a "+ Send" quick assignment, and a "Manage" jump to the full screen via the existing `sh:nav` event bus.
+- **Nav entry** added to the sidebar as `INTAKE FORMS` (`fa-clipboard-list`), routed in `App.js`.
+
+### Regression
+- **New** `tests/test_intake_forms.py` — full CRUD lifecycle, status-stamp behavior, validation, soft-archive on delete, duplicate-with-new-field-IDs, list+filter. 2/2 pass.
+
+### Deferred to next phase
+- **Client-portal "fill out your assigned form" UX** — endpoints exist (`/portal/intake/assigned`, `/portal/intake/submissions/{id}/submit`) so the portal screen just needs to render and POST. Send modal shows a clear "lands in next phase" notice so the operator isn't confused.

@@ -9,6 +9,7 @@ import DogTrainingTab from "../components/DogTrainingTab";
 import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
+import IntakeFormsSection from "../components/IntakeFormsSection";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {
@@ -364,6 +365,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                     <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
                   )}
                 </div>
+                <IntakeFormsSection clientId={d.owner_id} dogId={d.id} />
               </div>
             </div>
           );

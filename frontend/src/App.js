@@ -20,6 +20,7 @@ import Trophies from "./screens/Trophies";
 import Staff from "./screens/Staff";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
+import IntakeForms from "./screens/IntakeForms";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
@@ -84,6 +85,7 @@ function AdminShell() {
     { id: "income", label: "Income", icon: "fa-dollar-sign" },
     { id: "staff", label: "Staff", icon: "fa-users-gear" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation" },
+    { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list" },
     { id: "settings", label: "Settings", icon: "fa-cog" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
   ];
@@ -191,6 +193,7 @@ function AdminShell() {
           {tab === "income" && <Income />}
           {tab === "staff" && <Staff />}
           {tab === "incidents" && <Incidents />}
+          {tab === "intake" && <IntakeForms />}
           {tab === "settings" && <Settings />}
           {tab === "tutorials" && <Tutorials role="admin" />}
         </div>
