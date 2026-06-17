@@ -18,6 +18,7 @@ import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
+import SendClientEmailModal from "../components/SendClientEmailModal";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
@@ -27,6 +28,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [emailClient, setEmailClient] = useState(null);  // Sprint 110dh-2 — single-client email modal
   const [form, setForm] = useState(empty);
   // Quick-add dog inside the "New Client" modal so the admin doesn't have to
   // bounce over to the Dogs screen for every new sign-up. Only relevant when
@@ -254,6 +256,11 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
         {clients.map(c => (
           <div key={c.id} className="bg-bgPanel p-5 sm:p-6 rounded-xl border-l-4 border-shBlue group relative shadow-lg" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
+              {c.email && (
+                <button onClick={()=>setEmailClient(c)} className="text-gray-400 hover:text-shGreen p-2 -m-1"
+                        title="Email this client"
+                        data-testid={`email-client-${c.id}`}><i className="fas fa-paper-plane" /></button>
+              )}
               <button onClick={()=>openEditClient(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
               <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
             </div>
@@ -386,6 +393,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
           onClose={()=>setAwardPicker(null)}
           onAwarded={()=>{ loadTrophies(clients); }}
         />
+      )}
+
+      {emailClient && (
+        <SendClientEmailModal client={emailClient} onClose={()=>setEmailClient(null)} />
       )}
 
       {open && (

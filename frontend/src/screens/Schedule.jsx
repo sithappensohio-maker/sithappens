@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import interactionPlugin from "@fullcalendar/interaction";
+import listPlugin from "@fullcalendar/list";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
@@ -167,13 +168,15 @@ export default function Schedule() {
         highlight="Every pup. Every day."
         subtitle="Drag any event to reschedule. Click a day to see the full roster."
         right={msg ? (<span className="bg-shGreen/15 text-shGreen border border-shGreen/30 text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded">{msg}</span>) : null}
+        compact={mobile}
         testid="schedule-hero"
       />
-      <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden">
+      <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden min-h-[480px] sm:min-h-[600px]"
+           data-testid="schedule-grid-wrap">
         <FullCalendar
           ref={calRef}
-          plugins={[dayGridPlugin, interactionPlugin]}
-          initialView={mobile ? "dayGridWeek" : "dayGridMonth"}
+          plugins={[dayGridPlugin, interactionPlugin, listPlugin]}
+          initialView={mobile ? "listWeek" : "dayGridMonth"}
           height="100%"
           events={events}
           editable={true}
@@ -193,9 +196,14 @@ export default function Schedule() {
           // default "dot + time text" list-item style which made them look like
           // plain text rows on the calendar grid.
           eventDisplay="block"
+          // On mobile we use the listWeek view (vertical list of events for
+          // the current week) — far more usable than a 7-column grid at
+          // 360px width. Allow switching to dayGridMonth for the rare zoom.
           headerToolbar={mobile
-            ? { left: "prev,next", center: "title", right: "today" }
+            ? { left: "prev,next", center: "title", right: "listWeek,dayGridMonth today" }
             : { left: "prev,next today", center: "title", right: "" }}
+          buttonText={mobile ? { today: "Today", listWeek: "List", dayGridMonth: "Grid" } : undefined}
+          noEventsContent="No bookings this week — tap any date below to add one."
           titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
         />
       </div>

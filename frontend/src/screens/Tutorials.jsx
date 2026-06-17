@@ -73,6 +73,19 @@ const ADMIN_SECTIONS = [
         tip: "Set 'Pending' when you're waiting on info from the client — it gets it out of your Open list without resolving it prematurely.",
       },
       {
+        title: "Single-client email (one-off)",
+        badges: ["Live", "Admin Only"],
+        path: "Clients screen → Hover a client card → Paper-plane icon",
+        steps: [
+          "Open the Clients screen and hover (or tap on mobile) any client card.",
+          "Tap the green paper-plane icon next to Edit/Delete — only shown when the client has an email on file.",
+          "Pick a template (optional), write your subject + body, hit Send.",
+          "Merge tags {{client_first_name}} and {{dog_names}} work exactly like the bulk tool, with a live preview right in the modal.",
+          "The send is logged on the client's Communications timeline and listed in Bulk Email → History (recipient_count = 1, manual_selection = true) so you have one place to audit every email leaving the system.",
+        ],
+        tip: "Use this for one-off follow-ups (a quick thank-you, a custom quote, a missed-call recap). For groups of clients, stick with Bulk Email so the filter chips do the heavy lifting.",
+      },
+      {
         title: "Roles & permissions for messaging",
         badges: ["Live", "Reference"],
         steps: [

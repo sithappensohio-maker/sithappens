@@ -53,8 +53,11 @@ def test_bulk_email_templates_seed_six_system():
     assert r.status_code == 200
     rows = r.json()
     sys_slugs = {t["slug"] for t in rows if t["kind"] == "system"}
+    # Original 6 + 6 single-client templates added in Sprint 110dh-3
     for slug in ("welcome_new_app", "app_switch_reminder", "vaccine_reminder",
-                 "booking_reminder", "policy_update", "general_announcement"):
+                 "booking_reminder", "policy_update", "general_announcement",
+                 "thank_you_visit", "quote_followup", "missed_call_followup",
+                 "personal_welcome", "payment_followup", "waiver_followup"):
         assert slug in sys_slugs, f"system template {slug} missing"
 
 
@@ -112,6 +115,7 @@ def test_bulk_email_send_logs_to_communications():
     assert r.status_code == 200, r.text
     res = r.json()
     assert res["recipient_count"] == 1
+    assert res["manual_selection"] is True
     # history endpoint should now contain this send
     hr = requests.get(f"{BASE_URL}/api/admin/bulk-email/history", headers=h, timeout=15)
     assert hr.status_code == 200
@@ -124,6 +128,26 @@ def test_bulk_email_send_logs_to_communications():
         cr = requests.get(f"{BASE_URL}/api/communications?client_id={cid}", headers=h, timeout=15)
         assert cr.status_code == 200
         assert any("[Bulk]" in (row.get("summary") or "") for row in cr.json())
+
+
+def test_single_client_email_via_manual_selection():
+    """Send to a single client using client_ids (Sprint 110dh-2 — Send Email button)."""
+    h = _admin_headers()
+    cid, _ = _make_client_and_login("single_email")
+    r = requests.post(f"{BASE_URL}/api/admin/bulk-email/send",
+                      json={"subject": "Hi {{client_first_name}}",
+                            "body": "Quick one-off email body.",
+                            "client_ids": [cid]},
+                      headers=h, timeout=30)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["recipient_count"] == 1
+    assert res["manual_selection"] is True
+    # also rejects empty client_ids
+    bad = requests.post(f"{BASE_URL}/api/admin/bulk-email/send",
+                       json={"subject": "x", "body": "y", "client_ids": []},
+                       headers=h, timeout=15)
+    assert bad.status_code == 400
 
 
 def test_bulk_email_send_requires_subject_and_body():

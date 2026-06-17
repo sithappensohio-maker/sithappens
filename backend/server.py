@@ -20213,6 +20213,39 @@ BULK_EMAIL_SYSTEM_TEMPLATES = [
     {"slug": "general_announcement",  "name": "General Announcement",
      "subject": "An update from Sit Happens",
      "body": ("Hi {{client_first_name}},\n\n[Write your announcement here.]\n\nThanks!\nSit Happens")},
+    # ---- Single-client / one-off templates (Sprint 110dh-3) ----------------
+    {"slug": "thank_you_visit",       "name": "Thank You for Visiting",
+     "subject": "Thank you, {{client_first_name}}!",
+     "body": ("Hi {{client_first_name}},\n\nThank you for bringing {{dog_names}} in to see us — it was a pleasure "
+              "having them! If you have any feedback or questions, just reply to this email.\n\n"
+              "Looking forward to seeing you again soon.\n\nTail wags,\nSit Happens")},
+    {"slug": "quote_followup",        "name": "Custom Quote Follow-up",
+     "subject": "Your custom quote, {{client_first_name}}",
+     "body": ("Hi {{client_first_name}},\n\nHere's the quote we discussed for {{dog_names}}:\n\n"
+              "[Service / dates / price]\n\nLet me know if this works and I'll get you on the calendar.\n\n"
+              "Thanks,\nSit Happens")},
+    {"slug": "missed_call_followup",  "name": "Missed Call Follow-up",
+     "subject": "Tried calling — here's a recap",
+     "body": ("Hi {{client_first_name}},\n\nI tried giving you a quick call but couldn't catch you. "
+              "[Recap of what I wanted to discuss.]\n\nFeel free to reply to this email or call us back when convenient.\n\n"
+              "Thanks,\nSit Happens")},
+    {"slug": "personal_welcome",      "name": "Personal Welcome (New Client)",
+     "subject": "Welcome to Sit Happens, {{client_first_name}}!",
+     "body": ("Hi {{client_first_name}},\n\nIt's so nice to meet you and {{dog_names}}! Here's a quick rundown of what to expect:\n\n"
+              "• Daycare drop-off is 7:00am – 9:00am, pickup by 6:30pm\n"
+              "• You can manage everything from your portal — booking, vaccines, photos\n"
+              "• If you ever need anything, just reply to this email or message us through the app\n\n"
+              "Welcome to the family!\nSit Happens")},
+    {"slug": "payment_followup",      "name": "Outstanding Balance Follow-up",
+     "subject": "Quick note about your account, {{client_first_name}}",
+     "body": ("Hi {{client_first_name}},\n\nA quick heads-up — we have an outstanding balance on your account for "
+              "{{dog_names}}. You can pay any time through the portal, or reply if you'd like a payment plan.\n\n"
+              "Thanks,\nSit Happens")},
+    {"slug": "waiver_followup",       "name": "Waiver / Paperwork Request",
+     "subject": "Quick paperwork request for {{dog_names}}",
+     "body": ("Hi {{client_first_name}},\n\nBefore we can confirm the next visit for {{dog_names}}, we still need "
+              "[waiver / vaccine cert / intake form]. The fastest way is right inside your portal — should only take "
+              "a couple of minutes.\n\nThanks,\nSit Happens")},
 ]
 
 
