@@ -22,6 +22,7 @@ import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import IntakeForms from "./screens/IntakeForms";
 import CareBoard from "./screens/CareBoard";
+import Waitlist from "./screens/Waitlist";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
@@ -78,6 +79,7 @@ function AdminShell() {
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
     { id: "care", label: "Care Board", icon: "fa-bowl-food" },
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
+    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half" },
     { id: "recurring", label: "Recurring", icon: "fa-rotate" },
     { id: "clients", label: "Clients", icon: "fa-users" },
     { id: "dogs", label: "Dogs", icon: "fa-paw" },
@@ -187,6 +189,7 @@ function AdminShell() {
           {tab === "runsheet" && <RunSheet />}
           {tab === "care" && <CareBoard />}
           {tab === "bookings" && <Bookings />}
+          {tab === "waitlist" && <Waitlist />}
           {tab === "recurring" && <RecurringTemplates />}
           {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} />}

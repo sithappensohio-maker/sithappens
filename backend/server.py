@@ -18792,6 +18792,216 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
     }
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110et — Phase 3: Waitlist + capacity guardrail combo
+# ────────────────────────────────────────────────────────────────────────────
+# When daycare or boarding is at capacity, staff can drop a client into the
+# waitlist instead of booking. Waitlist entries carry priority (low/normal/
+# high), a requested date range, notes, and a state machine:
+#   waiting → offered → booked
+#                   ↘ declined / expired / removed
+#
+# `GET /availability` gives the booking modal a cheap up-front capacity check
+# so the frontend can offer "Add to waitlist" when full — no need to attempt
+# the booking POST first.
+#
+# Converting a waitlist entry to a booking uses the existing booking API with
+# `override_capacity=true` (admin-only), so all the existing
+# vaccine/waiver/conflict checks still run.
+# ────────────────────────────────────────────────────────────────────────────
+
+WAITLIST_STATUSES = ("waiting", "offered", "booked", "declined", "expired", "removed")
+WAITLIST_PRIORITIES = ("low", "normal", "high")
+
+
+class WaitlistIn(BaseModel):
+    dog_id: str
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
+    requested_date: str                                     # YYYY-MM-DD (start)
+    requested_end_date: Optional[str] = None                # YYYY-MM-DD (boarding range)
+    priority: Literal["low", "normal", "high"] = "normal"
+    notes: Optional[str] = ""
+
+
+class WaitlistPatch(BaseModel):
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    notes: Optional[str] = None
+    requested_date: Optional[str] = None
+    requested_end_date: Optional[str] = None
+
+
+@api.get("/availability")
+async def get_availability(
+    date_str: str = Query(..., alias="date"),
+    service_type: str = Query("daycare"),
+    user: dict = Depends(get_current_user),
+):
+    """Cheap capacity check used by the booking modal + waitlist UI before
+    attempting a POST. Returns the configured capacity, current count, and an
+    `is_full` boolean. Only daycare and boarding have capacity limits."""
+    settings = await get_settings()
+    daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
+    boarding_cap = int(settings.get("boarding_capacity", 10))
+    cap = None
+    if service_type == "daycare":
+        cap = daycare_cap
+        count = await _booking_days_count_filtered(date_str, "daycare")
+    elif service_type == "boarding":
+        cap = boarding_cap
+        count = await _booking_days_count_filtered(date_str, "boarding")
+    else:
+        # Time-slotted services don't have a daily capacity, just slot conflicts.
+        return {"service_type": service_type, "date": date_str, "capacity": None,
+                "count": None, "available": None, "is_full": False, "has_limit": False}
+    available = max(cap - count, 0)
+    return {
+        "service_type": service_type,
+        "date": date_str,
+        "capacity": cap,
+        "count": count,
+        "available": available,
+        "is_full": count >= cap,
+        "has_limit": True,
+    }
+
+
+@api.get("/waitlist")
+async def list_waitlist(
+    status: Optional[str] = None,
+    service_type: Optional[str] = None,
+    client_id: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {}
+    if status: q["status"] = status
+    if service_type: q["service_type"] = service_type
+    if client_id: q["client_id"] = client_id
+    # Default sort: priority (high first) then requested_date ascending
+    rows = await db.waitlist.find(q, {"_id": 0}).to_list(2000)
+    priority_rank = {"high": 0, "normal": 1, "low": 2}
+    rows.sort(key=lambda r: (priority_rank.get(r.get("priority", "normal"), 1),
+                             r.get("requested_date", "9999")))
+    return {"entries": rows, "statuses": list(WAITLIST_STATUSES), "priorities": list(WAITLIST_PRIORITIES)}
+
+
+@api.post("/waitlist")
+async def add_to_waitlist(body: WaitlistIn, user: dict = Depends(get_current_user)):
+    dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
+    if not dog:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    # Client can only add their own dog
+    if user.get("role") != "admin" and dog.get("owner_id") != user.get("client_id"):
+        raise HTTPException(status_code=403, detail="Not your dog")
+    client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "dog_id": dog["id"],
+        "dog_name": dog["name"],
+        "client_id": client["id"],
+        "client_name": client["name"],
+        "service_type": body.service_type,
+        "requested_date": body.requested_date,
+        "requested_end_date": (body.requested_end_date or body.requested_date),
+        "priority": body.priority,
+        "notes": (body.notes or "").strip(),
+        "status": "waiting",
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+    }
+    await db.waitlist.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/waitlist/{entry_id}")
+async def get_waitlist_entry(entry_id: str, _: dict = Depends(require_admin)):
+    doc = await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    return doc
+
+
+@api.put("/waitlist/{entry_id}")
+async def update_waitlist_entry(entry_id: str, body: WaitlistPatch, user: dict = Depends(require_admin)):
+    existing = await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    patch: Dict[str, Any] = {}
+    now = now_iso()
+    if body.status is not None:
+        s = body.status.lower()
+        if s not in WAITLIST_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Bad status. Allowed: {list(WAITLIST_STATUSES)}")
+        patch["status"] = s
+        if s == "offered" and not existing.get("offered_at"):
+            patch["offered_at"] = now
+            patch["offered_by"] = user.get("id")
+    if body.priority is not None:
+        if body.priority not in WAITLIST_PRIORITIES:
+            raise HTTPException(status_code=400, detail=f"Bad priority. Allowed: {list(WAITLIST_PRIORITIES)}")
+        patch["priority"] = body.priority
+    if body.notes is not None:
+        patch["notes"] = body.notes.strip()
+    if body.requested_date is not None:
+        patch["requested_date"] = body.requested_date
+    if body.requested_end_date is not None:
+        patch["requested_end_date"] = body.requested_end_date
+    if not patch:
+        return existing
+    patch["updated_at"] = now
+    await db.waitlist.update_one({"id": entry_id}, {"$set": patch})
+    return await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
+
+
+@api.delete("/waitlist/{entry_id}")
+async def delete_waitlist_entry(entry_id: str, _: dict = Depends(require_admin)):
+    res = await db.waitlist.delete_one({"id": entry_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    return {"ok": True}
+
+
+@api.post("/waitlist/{entry_id}/convert-to-booking")
+async def convert_waitlist_to_booking(entry_id: str, user: dict = Depends(require_admin)):
+    """Create a real booking from a waitlist entry. Uses
+    `override_capacity=true` so the existing vaccine/waiver/conflict pipeline
+    still runs, but the daily capacity gate is bypassed (since the operator
+    has explicitly decided to make room)."""
+    entry = await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
+    if not entry:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    if entry.get("status") in ("booked", "expired", "removed"):
+        raise HTTPException(status_code=400, detail=f"Entry is {entry.get('status')} — cannot convert")
+    # Build a minimal BookingIn payload. We hand it to create_booking() so all
+    # the existing guardrails (vaccines, waivers, time slots) still apply.
+    body = BookingIn(
+        dog_id=entry["dog_id"],
+        date=entry["requested_date"],
+        end_date=entry.get("requested_end_date") or entry["requested_date"],
+        service_type=entry["service_type"],
+        notes=(entry.get("notes") or "") + " · converted from waitlist",
+        override_capacity=True,           # admin-decided override
+        override_vaccines=False,
+    )
+    booking = await create_booking(body=body, user=user)   # may raise on vaccine/waiver
+    # Flip the waitlist entry to "booked" and stamp the booking id
+    booking_id = booking["id"] if isinstance(booking, dict) else getattr(booking, "id", None)
+    await db.waitlist.update_one(
+        {"id": entry_id},
+        {"$set": {
+            "status": "booked",
+            "booked_at": now_iso(),
+            "booked_by": user.get("id"),
+            "booking_id": booking_id,
+            "updated_at": now_iso(),
+        }},
+    )
+    return {"booking": booking, "waitlist_entry_id": entry_id}
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,

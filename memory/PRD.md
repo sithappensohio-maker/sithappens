@@ -3406,3 +3406,27 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_care_board.py` (3 tests): board shape + summary keys; full lifecycle (seed → complete with initials → skip with reason → reset → PUT preserves completion state → care board reflects updates); initials are required (422 on empty). All pass.
+
+## Sprint 110et — Phase 3: Waitlist + capacity-aware guardrail (2026-02-17)
+**User ask**: Phase 3 of the roadmap — plus this also addresses the original P0 "daycare capacity guardrail" the operator asked for in msg 95.
+
+### Backend (`server.py`)
+- **New collection** `waitlist` with state machine `waiting → offered → booked / declined / expired / removed`. Each entry stores client/dog/service_type/requested_date/requested_end_date/priority(high|normal|low)/notes/status with `offered_at`/`offered_by`/`booked_at`/`booked_by`/`booking_id` audit stamps.
+- **7 new endpoints**:
+  - `GET /availability?date&service_type` — cheap capacity check (capacity, count, available, is_full, has_limit). Time-slotted services return `has_limit=false`. Open to any authenticated user so the booking modal can call it pre-emptively.
+  - `GET /waitlist` (admin) — filters by status/service_type/client_id, sorted by priority then requested_date
+  - `POST /waitlist` — admins for any client, clients for their own dogs only
+  - `GET /waitlist/{id}` (admin)
+  - `PUT /waitlist/{id}` — status/priority/notes/dates; "offered" auto-stamps `offered_at`/`offered_by`
+  - `DELETE /waitlist/{id}` (admin) — hard delete
+  - `POST /waitlist/{id}/convert-to-booking` (admin) — calls existing `create_booking()` with `override_capacity=true` so vaccine/waiver/conflict checks still run but daily capacity is bypassed; flips entry to `booked` with booking id linked. Already-booked entries return 400.
+
+### Frontend
+- **New screen `Waitlist.jsx`**, wired into the sidebar between Bookings and Recurring (`fa-hourglass-half` icon).
+- **Filter pills** for All / Waiting / Offered / Booked / Declined / Expired / Removed with counts.
+- **Per-row actions**: Convert (for waiting), Offer (for waiting), "They accepted — book" (for offered), Decline (for offered), priority selector, status selector, delete.
+- **Add modal** includes a **live capacity check** that calls `/availability` as the operator picks date+service: red banner "Full — Waitlist is the right call" when capacity hit, green "X of Y slots still open today" otherwise. Same widget can be lifted into the booking modal in a follow-up.
+- **Color coding**: high priority = red ring, offered = orange ring, missed states use neutral gray.
+
+### Regression
+- **New** `tests/test_waitlist.py` (2 tests): availability shape for daycare + training (has_limit=false for time-slotted); full lifecycle including bad-status rejection, offered auto-stamp, convert-to-booking happy path, double-convert rejection. Both pass.
