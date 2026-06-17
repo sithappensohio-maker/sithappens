@@ -3194,3 +3194,38 @@ When the operator updates the SPF record and hits Re-check, the pill flips to gr
 - **P2** Admin "App Update" button via host trigger file (Bazzite Docker workaround)
 - **P3** SMS reminders (Twilio)
 - **Refactor** Split `server.py` (~17k lines) into route modules — deprioritised by user
+
+
+## Sprint 110ei — Day-to-Day mega-panel split into true-home sub-panels (2026-02-16) · Pass 2
+**User rule**: *"Each setting has one true home category. Day-to-Day may show shortcuts or summaries, but it should not be the only place unrelated settings live."*
+
+### Refactored `DayToDayControls.jsx`
+Component now accepts a `section` prop. When set to one of `money / seasonal / guardrails / comms / loyalty / compliance / services / finance / ui`, it renders ONLY that subsection's controls (no collapsible header, no other sections). When omitted, it renders the **brand-new `OperatorQuickControls`** hub — purely read-only summary cards + "Configure ↗" deep-link buttons. The old all-sections collapsible mega-page is gone.
+
+### Each subsection now has exactly one home
+| `day_to_day.X`  | True home category                                        |
+|-----------------|-----------------------------------------------------------|
+| money           | **Services & Pricing** → "Money Rules"                    |
+| seasonal        | **Services & Pricing** → "Holiday & Peak-Season Pricing"  |
+| guardrails      | **Business Operations** → "Booking Guardrails"            |
+| comms           | **Email & Notifications** → "Email Timing & Quiet Hours"  |
+| loyalty         | **Rewards & Referrals** → "Loyalty Tiers, Streaks & Referrals" |
+| compliance      | **Clients/Dogs & Compliance** → "Compliance Rules"        |
+| services        | **Business Operations** → "Service Operational Defaults"  |
+| finance         | **Finance & Bookkeeping** → "Finance Defaults"            |
+| ui              | **Marketing & Branding** → "Portal & UI Polish"           |
+
+Editable controls are no longer duplicated — every full editor lives in exactly one card. Operator Quick Controls (under Business Operations) only shows read-only summaries.
+
+### Quick Controls hub
+New `OperatorQuickControls` component renders 7 summary cards (Today's Operating Rules · Holiday & Peak Pricing · Money & Checkout · Email Quiet Hours · Vaccine & Waiver Compliance · Loyalty & Referrals · Finance Defaults). Each card shows 3 status lines pulled from `day_to_day` state and a "Configure ↗" button that dispatches a `sh:settings-jump` event. Settings.jsx listens to that event, switches category + tab, and the operator lands directly on the editable home for that setting.
+
+### Wiring
+- `Settings.jsx` renders `<DayToDayPanel section={tab.replace("_d2d_","")} />` whenever the active tab starts with `_d2d_`.
+- A new `sh:settings-jump` window-event listener in Settings.jsx flips both `category` and `tab` in one shot.
+- Breadcrumbs reflect the jump: e.g. `Settings > Services & Pricing > Money Rules`.
+
+### Behavior preserved
+- The `day_to_day` JSON blob in `settings` is unchanged (no backend schema rework).
+- Per-section save uses the same `PUT /settings { day_to_day }` path — each split card has its own SaveBar.
+- 13/13 cash-basis + P&L pytests still pass.

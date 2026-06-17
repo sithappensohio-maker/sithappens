@@ -75,8 +75,8 @@ export default function Settings() {
       accent: "shBlue",
       blurb: "Hours, capacity, kennels, booking rules, and recurring schedules.",
       subsections: [
-        { id: "day_to_day", label: "Day-to-Day Controls", icon: "fa-sliders",
-          desc: "Master switchboard for money rules, capacity guardrails, defaults, and operational behavior.",
+        { id: "day_to_day", label: "Operator Quick Controls", icon: "fa-bolt",
+          desc: "At-a-glance status of the rules you tweak most often, with deep links to each setting's true home.",
           badges: ["Live", "Admin-only"] },
         { id: "hours", label: "Hours & Closures", icon: "fa-clock",
           desc: "Weekly business hours, holiday closures, blackout dates.",
@@ -84,12 +84,15 @@ export default function Settings() {
         { id: "capacity", label: "Capacity & Kennels", icon: "fa-warehouse",
           desc: "Daily daycare cap, kennel slots, room labels.",
           badges: ["Live", "Admin-only"] },
-        { id: "rules", label: "Booking Rules", icon: "fa-clipboard-list",
+        { id: "_d2d_guardrails", label: "Booking Guardrails", icon: "fa-shield",
+          desc: "Lead times, max bookings/client, kennel limits, same-day rules, check-in/out windows.",
+          badges: ["Live", "Admin-only"], d2dSection: "guardrails" },
+        { id: "rules", label: "Booking Rules (legacy)", icon: "fa-clipboard-list",
           desc: "Lead times, advance windows, reschedule limits, deposit thresholds.",
           badges: ["Live", "Client-facing"] },
-        { id: "_recurring_soon", label: "Recurring Booking Rules", icon: "fa-rotate",
-          desc: "Templated weekly recurring bookings, auto-renewal cadence.",
-          badges: ["Coming soon"], comingSoon: true },
+        { id: "_d2d_services", label: "Service Operational Defaults", icon: "fa-paw",
+          desc: "Training session length, graduation thresholds, photography SLA, grooming durations.",
+          badges: ["Live", "Staff-only"], d2dSection: "services" },
       ],
     },
     {
@@ -108,15 +111,15 @@ export default function Settings() {
         { id: "payment_plans", label: "Payment Plans", icon: "fa-file-invoice-dollar",
           desc: "Big-ticket installments — terms, default thresholds, reversal flow.",
           badges: ["Live", "Admin-only"] },
+        { id: "_d2d_money", label: "Money Rules", icon: "fa-dollar-sign",
+          desc: "Tipping, late-pickup fees, cancellation tiers, deposits, no-show fee, rounding.",
+          badges: ["Live", "Client-facing"], d2dSection: "money" },
+        { id: "_d2d_seasonal", label: "Holiday & Peak-Season Pricing", icon: "fa-calendar-star",
+          desc: "Holiday surcharges, peak-season ranges, holiday lockouts, vacation auto-message.",
+          badges: ["Live", "Client-facing"], d2dSection: "seasonal" },
         { id: "_discounts_soon", label: "Discounts & Coupons", icon: "fa-percent",
           desc: "Multi-dog discounts, promo codes, seasonal sales.",
           badges: ["Coming soon"], comingSoon: true },
-        { id: "_taxes_soon", label: "Taxes & Add-on Fees", icon: "fa-receipt",
-          desc: "Sales-tax rate, late-pickup fee schedule, surcharge rules.",
-          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
-        { id: "_cancel_soon", label: "Deposits & Cancellation", icon: "fa-ban",
-          desc: "Required deposits, 3-tier cancellation fee schedule, no-show penalties.",
-          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
       ],
     },
     {
@@ -132,6 +135,9 @@ export default function Settings() {
         { id: "waiver", label: "Waiver", icon: "fa-file-signature",
           desc: "Liability waiver content and acceptance settings.",
           badges: ["Live", "Client-facing"] },
+        { id: "_d2d_compliance", label: "Compliance Rules", icon: "fa-syringe",
+          desc: "Per-service vaccine matrix, block-on-expiry behavior, waiver re-sign frequency & scope.",
+          badges: ["Live", "Admin-only"], d2dSection: "compliance" },
         { id: "commands", label: "Training Commands", icon: "fa-graduation-cap",
           desc: "Standard commands menu for trainers, behavior tags for report cards.",
           badges: ["Live", "Staff-only"] },
@@ -140,9 +146,6 @@ export default function Settings() {
           badges: ["Coming soon"], comingSoon: true },
         { id: "_incidents_soon", label: "Incident Rules", icon: "fa-triangle-exclamation",
           desc: "Severity tiers, automatic admin alerts, follow-up requirements.",
-          badges: ["Coming soon"], comingSoon: true },
-        { id: "_risk_soon", label: "Behavior Risk Flags", icon: "fa-paw",
-          desc: "Standard risk-flag library shown on dog profiles.",
           badges: ["Coming soon"], comingSoon: true },
       ],
     },
@@ -156,18 +159,18 @@ export default function Settings() {
         { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text",
           desc: "Branding, signature, and per-template subject + body overrides for all 32 emails.",
           badges: ["Live", "Client-facing"] },
-        { id: "automation", label: "Email Automation & Timing", icon: "fa-paper-plane",
-          desc: "Reminder schedules, quiet hours, and which automations fire when.",
+        { id: "automation", label: "Email Automation", icon: "fa-paper-plane",
+          desc: "Which automations fire and when — controlled at the global automation level.",
           badges: ["Live", "Admin-only"] },
+        { id: "_d2d_comms", label: "Email Timing & Quiet Hours", icon: "fa-clock",
+          desc: "Reminder lead time, review-request delay, quiet hours, reply-to address, footer signature.",
+          badges: ["Live", "Client-facing"], d2dSection: "comms" },
         { id: "_sms_soon", label: "Text Message Settings", icon: "fa-mobile-screen",
           desc: "SMS reminders for tomorrow's appointments (Twilio).",
           badges: ["Coming soon"], comingSoon: true },
         { id: "_marketing_emails_soon", label: "Marketing Emails", icon: "fa-bullhorn",
           desc: "Newsletter cadence, segmentation, broadcast composer.",
           badges: ["Coming soon"], comingSoon: true },
-        { id: "_staff_alerts_soon", label: "Staff Alerts", icon: "fa-bell",
-          desc: "Alert routing for new bookings, incidents, low credits.",
-          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Automation for now." },
       ],
     },
     {
@@ -180,6 +183,9 @@ export default function Settings() {
         { id: "brand", label: "Brand & Theme", icon: "fa-palette",
           desc: "Logo, colors, fonts, splatter intensity, UI polish knobs.",
           badges: ["Live", "Client-facing"] },
+        { id: "_d2d_ui", label: "Portal & UI Polish", icon: "fa-sparkles",
+          desc: "Splatter intensity, primary CTA copy, PWA name/tagline, time/date format, week start, show prices/waitlist in portal.",
+          badges: ["Live", "Client-facing"], d2dSection: "ui" },
         { id: "service_info", label: "Public Service Info", icon: "fa-circle-info",
           desc: "Public-facing service descriptions shown on the booking page and confirmations.",
           badges: ["Live", "Client-facing"] },
@@ -203,15 +209,12 @@ export default function Settings() {
       subsections: [
         { id: "_staff_link", label: "Manage Staff", icon: "fa-users",
           desc: "Add, edit, and remove trainers, kennel-techs, and front-desk team. (Opens the Staff screen.)",
-          badges: ["Live", "Admin-only"], coming: false, externalTab: "staff" },
+          badges: ["Live", "Admin-only"], externalTab: "staff" },
         { id: "_roles_soon", label: "Roles & Permissions", icon: "fa-lock",
           desc: "Granular permission matrix per staff role.",
           badges: ["Coming soon"], comingSoon: true },
         { id: "_payroll_soon", label: "Payroll Settings", icon: "fa-money-check",
           desc: "Hourly rates, overtime rules, pay-period boundaries.",
-          badges: ["Coming soon"], comingSoon: true },
-        { id: "_schedule_vis_soon", label: "Schedule Visibility", icon: "fa-eye",
-          desc: "Which staff can see/edit which days of the schedule.",
           badges: ["Coming soon"], comingSoon: true },
       ],
     },
@@ -225,14 +228,14 @@ export default function Settings() {
         { id: "_income_link", label: "Income Dashboard", icon: "fa-chart-line",
           desc: "Live P&L, weekly tallies, transaction log, and exports. (Opens the Income screen.)",
           badges: ["Live", "Admin-only"], externalTab: "income" },
+        { id: "_d2d_finance", label: "Finance Defaults", icon: "fa-chart-pie",
+          desc: "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
+          badges: ["Live", "Admin-only"], d2dSection: "finance" },
         { id: "_processors_soon", label: "Payment Processors", icon: "fa-credit-card",
           desc: "Stripe / processor keys, webhook health, payout schedule.",
           badges: ["Coming soon"], comingSoon: true },
         { id: "_refunds_soon", label: "Refund Rules", icon: "fa-rotate-left",
           desc: "Refund windows, partial refund logic, reason codes.",
-          badges: ["Coming soon"], comingSoon: true },
-        { id: "_exports_soon", label: "Bookkeeping Exports", icon: "fa-file-export",
-          desc: "QuickBooks / Xero export profiles, CPA-ready PDF presets.",
           badges: ["Coming soon"], comingSoon: true },
       ],
     },
@@ -246,14 +249,11 @@ export default function Settings() {
         { id: "_trophies_link", label: "Trophy Wall", icon: "fa-trophy",
           desc: "Browse, award, and revoke trophies for dogs and clients. (Opens the Trophies screen.)",
           badges: ["Live", "Client-facing"], externalTab: "trophies" },
-        { id: "_loyalty_soon", label: "Loyalty Tiers", icon: "fa-medal",
-          desc: "Bronze / Silver / Gold thresholds and perks per tier.",
-          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
-        { id: "_referrals_soon", label: "Referral Rules", icon: "fa-share-nodes",
-          desc: "Referral reward amounts, redemption rules, expiry.",
-          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
-        { id: "_streaks_soon", label: "Streak Milestones", icon: "fa-fire",
-          desc: "Visit-streak thresholds that auto-award trophies.",
+        { id: "_d2d_loyalty", label: "Loyalty Tiers, Streaks & Referrals", icon: "fa-medal",
+          desc: "Bronze/Silver/Gold/Platinum visit thresholds, streak targets, trophy reward value, referral reward type & amount.",
+          badges: ["Live", "Client-facing"], d2dSection: "loyalty" },
+        { id: "_streaks_soon", label: "Streak Auto-Awards", icon: "fa-fire",
+          desc: "Auto-grant a trophy when a streak crosses N consecutive visits.",
           badges: ["Coming soon"], comingSoon: true },
       ],
     },
@@ -279,9 +279,6 @@ export default function Settings() {
         { id: "_audit_soon", label: "Audit Log", icon: "fa-list-check",
           desc: "Searchable trail of every admin action — who did what when.",
           badges: ["Coming soon"], comingSoon: true },
-        { id: "_pwa_soon", label: "App Install / PWA", icon: "fa-mobile",
-          desc: "PWA install prompts, branded splash screen, offline mode.",
-          badges: ["Coming soon"], comingSoon: true },
       ],
     },
   ];
@@ -306,6 +303,22 @@ export default function Settings() {
     setTab(sub.id);
     setMobileNavOpen(false);
   };
+
+  // Sprint 110ei — Listen for `sh:settings-jump` events fired by the
+  // Operator Quick Controls hub. Lets a quick card deep-link to its
+  // setting's true home (e.g. Money Rules → Services & Pricing).
+  useEffect(() => {
+    const onJump = (e) => {
+      const { cat, sub } = e?.detail || {};
+      if (cat) setCategory(cat);
+      if (sub) {
+        setTab(sub);
+        setMobileNavOpen(false);
+      }
+    };
+    window.addEventListener("sh:settings-jump", onJump);
+    return () => window.removeEventListener("sh:settings-jump", onJump);
+  }, []);
 
   const goCategoryOverview = (catId) => {
     setCategory(catId);
@@ -440,6 +453,7 @@ export default function Settings() {
                 <i className="fas fa-chevron-left"/> Back to {activeCategory.label}
               </button>
               {tab === "day_to_day" && <DayToDayPanel s={s} save={save} saving={saving} />}
+              {tab.startsWith("_d2d_") && <DayToDayPanel s={s} save={save} saving={saving} section={tab.replace("_d2d_", "")} />}
               {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
               {tab === "brand" && <BrandPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
@@ -1083,22 +1097,53 @@ function RulesPanel({ s, save, saving }) {
 
 // Sprint 110dm — Dedicated tab for the day-to-day operator controls so
 // admins don't have to scroll past Booking Rules to reach them.
-function DayToDayPanel({ s, save, saving }) {
+function DayToDayPanel({ s, save, saving, section }) {
   const [d2d, setD2d] = useState(s.day_to_day || {});
+  // Sprint 110ei — When section is given, this card is just a slice of the
+  // mega-panel (single-owner home for that group). When undefined, it's
+  // the Operator Quick Controls hub which is purely read-only summaries +
+  // deep-link CTAs, so the save bar should hide.
+  const isQuickHub = !section;
   return (
-    <div className="space-y-6" data-testid="day-to-day-panel">
-      <div className="bg-bgPanel/40 border border-bgHover rounded-lg p-4">
-        <h3 className="text-[18px] font-black text-shGreen uppercase tracking-widest mb-1">Day-to-day operator controls</h3>
-        <p className="text-[13px] text-gray-400 leading-relaxed">
-          Absolute control over money rules, holiday pricing, capacity guardrails, email timing, loyalty/referrals, vaccine compliance, service defaults, finance, and branding —
-          flip switches as the business evolves, no code edits required. Every setting defaults to current behavior; changes are opt-in.
-        </p>
-      </div>
-      <DayToDayControls d2d={d2d} setD2d={setD2d} />
-      <SaveBar onSave={()=>save({ day_to_day: d2d })} saving={saving} />
+    <div className="space-y-6" data-testid={section ? `day-to-day-section-${section}` : "operator-quick-controls-panel"}>
+      {!isQuickHub && (
+        <div className="bg-bgPanel/40 border border-bgHover rounded-lg p-4">
+          <h3 className="text-[18px] font-black text-shGreen uppercase tracking-widest mb-1">
+            {SECTION_TITLES[section] || "Settings"}
+          </h3>
+          <p className="text-[13px] text-gray-400 leading-relaxed">
+            {SECTION_BLURBS[section] || ""}
+          </p>
+        </div>
+      )}
+      <DayToDayControls d2d={d2d} setD2d={setD2d} section={section} />
+      {!isQuickHub && <SaveBar onSave={()=>save({ day_to_day: d2d })} saving={saving} />}
     </div>
   );
 }
+
+const SECTION_TITLES = {
+  money:       "Money Rules",
+  seasonal:    "Holiday & Peak-Season Pricing",
+  guardrails:  "Booking Guardrails",
+  comms:       "Email Timing & Quiet Hours",
+  loyalty:     "Loyalty, Streaks & Referrals",
+  compliance:  "Vaccine & Waiver Compliance",
+  services:    "Service Operational Defaults",
+  finance:     "Finance Defaults",
+  ui:          "Portal & UI Polish",
+};
+const SECTION_BLURBS = {
+  money:       "Tipping, late-pickup fees, deposits, three-tier cancellation fees, no-show penalties, expiry windows, rounding.",
+  seasonal:    "Holiday surcharges, peak-season ranges, holiday lockouts, vacation auto-responder.",
+  guardrails:  "Lead times, max bookings per client, kennel limits, same-day rules, check-in/out windows.",
+  comms:       "Reminder lead time, review-request delay, quiet hours, reply-to address, footer signature.",
+  loyalty:     "Bronze/Silver/Gold/Platinum visit thresholds, streak targets, trophy reward value, referral reward type & amount.",
+  compliance:  "Per-service vaccine matrix, block-on-expiry behavior, waiver re-sign frequency & scope, doc upload requirements.",
+  services:    "Training session length, graduation thresholds, photography SLA, grooming durations.",
+  finance:     "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
+  ui:          "Splatter intensity, primary CTA copy, PWA name/tagline, time/date format, week start, portal toggles.",
+};
 
 function VaccinesPanel({ s, save, saving }) {
   const [req, setReq] = useState(s.required_vaccines || []);

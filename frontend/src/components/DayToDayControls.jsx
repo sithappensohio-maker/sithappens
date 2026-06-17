@@ -52,28 +52,42 @@ const Field = ({ label, type = "text", value, onChange, hint, testId, options, p
   );
 };
 
-const Sub = ({ id, title, icon, color, open, onToggle, children }) => (
+const Sub = ({ id, title, icon, color, open, onToggle, children, hideHeader }) => (
   <div className="bg-bgBase/40 border border-bgHover rounded-lg overflow-hidden" data-testid={`d2d-sub-${id}`}>
-    <button type="button" onClick={onToggle}
-            className="w-full flex items-center justify-between px-4 py-3 hover:bg-bgBase/70 transition">
-      <span className="flex items-center gap-3">
-        <i className={`fas ${icon} ${color} text-base`} />
-        <span className={`text-[15px] font-black uppercase tracking-widest ${color}`}>{title}</span>
-      </span>
-      <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] text-gray-500`} />
-    </button>
-    {open && <div className="p-4 border-t border-bgHover space-y-4">{children}</div>}
+    {!hideHeader && (
+      <button type="button" onClick={onToggle}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-bgBase/70 transition">
+        <span className="flex items-center gap-3">
+          <i className={`fas ${icon} ${color} text-base`} />
+          <span className={`text-[15px] font-black uppercase tracking-widest ${color}`}>{title}</span>
+        </span>
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] text-gray-500`} />
+      </button>
+    )}
+    {open && <div className={`p-4 space-y-4 ${hideHeader ? "" : "border-t border-bgHover"}`}>{children}</div>}
   </div>
 );
 
-export default function DayToDayControls({ d2d, setD2d }) {
-  const [openIds, setOpenIds] = useState(new Set(["money"]));
+export default function DayToDayControls({ d2d, setD2d, section }) {
+  // Sprint 110ei — Day-to-Day mega-panel split into per-category sub-panels.
+  //
+  // - When `section` is one of {"money", "seasonal", "guardrails", "comms",
+  //   "loyalty", "compliance", "services", "finance", "ui"}, render ONLY
+  //   that subsection's body (no collapsible header, no other sections).
+  //   Each Settings category card mounts the slice that belongs to it as
+  //   its single source of truth.
+  // - When `section` is undefined, render the new "Operator Quick Controls"
+  //   hub — summary cards + shortcuts that link to each setting's true
+  //   home. No editable controls live here anymore; the hub is read-only
+  //   pulse-checks plus deep-link buttons.
+  const [openIds, setOpenIds] = useState(new Set(section ? [section] : ["money"]));
   const toggle = (id) => setOpenIds(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const isOpen = (id) => openIds.has(id);
+  const isOpen = (id) => section ? id === section : openIds.has(id);
+  const showHeader = !section;  // hide the collapsible header on split-view
 
   const v = d2d || {};
-  const set = (section, key, val) =>
-    setD2d({ ...v, [section]: { ...(v[section] || {}), [key]: val } });
+  const set = (sec, key, val) =>
+    setD2d({ ...v, [sec]: { ...(v[sec] || {}), [key]: val } });
 
   const m = v.money || {};
   const s = v.seasonal || {};
@@ -99,10 +113,25 @@ export default function DayToDayControls({ d2d, setD2d }) {
   const updatePeak = (idx, key, val) => set("seasonal", "peak_season_ranges", (s.peak_season_ranges || []).map((p, i) => i === idx ? { ...p, [key]: val } : p));
   const removePeak = (idx) => set("seasonal", "peak_season_ranges", (s.peak_season_ranges || []).filter((_, i) => i !== idx));
 
+  // When rendering as a section slice, the wrapping `<Sub>` shows ONLY the
+  // requested section's body (no collapsible header, no other sections).
+  const subProps = (id) => ({
+    open: isOpen(id),
+    onToggle: () => toggle(id),
+    hideHeader: !showHeader,
+  });
+  const showSec = (id) => !section || section === id;
+
+  // Operator Quick Controls hub (when `section` is not specified).
+  if (!section) {
+    return <OperatorQuickControls d2d={v} />;
+  }
+
   return (
     <div className="space-y-3" data-testid="day-to-day-controls">
       {/* MONEY ───────────────────────────────────────────────── */}
-      <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shGreen" open={isOpen("money")} onToggle={() => toggle("money")}>
+      {showSec("money") && (
+      <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shGreen" {...subProps("money")}>
         <Field label="Show tipping prompt at checkout" type="toggle" value={m.tipping_enabled}
                onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled"
                hint="Adds a tip step in the check-out flow with quick-pick percentages." />
@@ -147,9 +176,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
         <Field label="Round receipt totals to whole dollar" type="toggle" value={m.round_to_dollar}
                onChange={(v) => set("money", "round_to_dollar", v)} testId="d2d-round" />
       </Sub>
+      )}
 
       {/* SEASONAL ─────────────────────────────────────────────── */}
-      <Sub id="seasonal" title="Holiday & peak-season pricing" icon="fa-calendar-star" color="text-shOrange" open={isOpen("seasonal")} onToggle={() => toggle("seasonal")}>
+      {showSec("seasonal") && (
+      <Sub id="seasonal" title="Holiday & peak-season pricing" icon="fa-calendar-star" color="text-shOrange" {...subProps("seasonal")}>
         <div>
           <div className="flex items-center justify-between mb-2">
             <span className="text-[13px] font-black uppercase tracking-widest text-gray-300">Holiday surcharges</span>
@@ -216,9 +247,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
           </div>
         </div>
       </Sub>
+      )}
 
       {/* GUARDRAILS ─────────────────────────────────────────── */}
-      <Sub id="guardrails" title="Booking & capacity guardrails" icon="fa-shield" color="text-shBlue" open={isOpen("guardrails")} onToggle={() => toggle("guardrails")}>
+      {showSec("guardrails") && (
+      <Sub id="guardrails" title="Booking & capacity guardrails" icon="fa-shield" color="text-shBlue" {...subProps("guardrails")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Min advance booking (hours)" type="number" value={g.min_advance_booking_hours}
                  onChange={(v) => set("guardrails", "min_advance_booking_hours", v)} testId="d2d-min-adv" />
@@ -254,9 +287,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                  onChange={(v) => set("guardrails", "check_out_window_end", v)} testId="d2d-co-end" placeholder="19:00" />
         </div>
       </Sub>
+      )}
 
       {/* COMMS ──────────────────────────────────────────────── */}
-      <Sub id="comms" title="Email automation timing" icon="fa-envelope" color="text-purple-300" open={isOpen("comms")} onToggle={() => toggle("comms")}>
+      {showSec("comms") && (
+      <Sub id="comms" title="Email automation timing" icon="fa-envelope" color="text-purple-300" {...subProps("comms")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Reminder email — hours before" type="number" value={c.reminder_email_hours_before}
                  onChange={(v) => set("comms", "reminder_email_hours_before", v)} testId="d2d-rmd-hours" />
@@ -290,9 +325,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm h-20" />
         </div>
       </Sub>
+      )}
 
       {/* LOYALTY ────────────────────────────────────────────── */}
-      <Sub id="loyalty" title="Trophies, streaks & referrals" icon="fa-trophy" color="text-amber-400" open={isOpen("loyalty")} onToggle={() => toggle("loyalty")}>
+      {showSec("loyalty") && (
+      <Sub id="loyalty" title="Trophies, streaks & referrals" icon="fa-trophy" color="text-amber-400" {...subProps("loyalty")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Streak target — daycare (days)" type="number" value={l.streak_target_daycare}
                  onChange={(v) => set("loyalty", "streak_target_daycare", v)} testId="d2d-streak-d" />
@@ -323,9 +360,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                  options={[{value:"daycare",label:"Daycare"},{value:"boarding",label:"Boarding"},{value:"training",label:"Training"}]} />
         </div>
       </Sub>
+      )}
 
       {/* COMPLIANCE ─────────────────────────────────────────── */}
-      <Sub id="compliance" title="Vaccines & waiver compliance" icon="fa-syringe" color="text-red-400" open={isOpen("compliance")} onToggle={() => toggle("compliance")}>
+      {showSec("compliance") && (
+      <Sub id="compliance" title="Vaccines & waiver compliance" icon="fa-syringe" color="text-red-400" {...subProps("compliance")}>
         <div>
           <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">
             Vaccines required PER service (comma-separated; blank = use global required-vaccines list)
@@ -360,9 +399,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                  options={[{value:"first_visit",label:"First visit only"},{value:"every_visit",label:"Every visit"},{value:"bookings_only",label:"Bookings only"}]} />
         </div>
       </Sub>
+      )}
 
       {/* SERVICES ──────────────────────────────────────────── */}
-      <Sub id="services" title="Service-specific defaults" icon="fa-paw" color="text-shGreen" open={isOpen("services")} onToggle={() => toggle("services")}>
+      {showSec("services") && (
+      <Sub id="services" title="Service-specific defaults" icon="fa-paw" color="text-shGreen" {...subProps("services")}>
         <Field label="Boarding price includes daycare hours" type="toggle" value={sv.boarding_includes_daycare}
                onChange={(v) => set("services", "boarding_includes_daycare", v)} testId="d2d-b-inc-d"
                hint="When ON, a boarding night covers daytime daycare too." />
@@ -385,9 +426,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                  onChange={(v) => set("services", "grooming_nailtrim_duration_min", v)} testId="d2d-nail-dur" />
         </div>
       </Sub>
+      )}
 
       {/* FINANCE ────────────────────────────────────────────── */}
-      <Sub id="finance" title="Finance & bookkeeping" icon="fa-chart-pie" color="text-shBlue" open={isOpen("finance")} onToggle={() => toggle("finance")}>
+      {showSec("finance") && (
+      <Sub id="finance" title="Finance & bookkeeping" icon="fa-chart-pie" color="text-shBlue" {...subProps("finance")}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Fiscal year start month (1-12)" type="number" value={f.fiscal_year_start_month}
                  onChange={(v) => set("finance", "fiscal_year_start_month", v)} testId="d2d-fy" />
@@ -401,9 +444,11 @@ export default function DayToDayControls({ d2d, setD2d }) {
                  onChange={(v) => set("finance", "form_1099_threshold_usd", v)} testId="d2d-1099" />
         </div>
       </Sub>
+      )}
 
       {/* UI ─────────────────────────────────────────────────── */}
-      <Sub id="ui" title="Branding & UI polish" icon="fa-palette" color="text-shOrange" open={isOpen("ui")} onToggle={() => toggle("ui")}>
+      {showSec("ui") && (
+      <Sub id="ui" title="Branding & UI polish" icon="fa-palette" color="text-shOrange" {...subProps("ui")}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Splatter intensity" type="select" value={u.splatter_intensity}
                  onChange={(v) => set("ui", "splatter_intensity", v)} testId="d2d-splatter"
@@ -435,12 +480,153 @@ export default function DayToDayControls({ d2d, setD2d }) {
         <Field label="Show waitlist signup in client portal" type="toggle" value={u.show_waitlist_signup_in_portal}
                onChange={(v) => set("ui", "show_waitlist_signup_in_portal", v)} testId="d2d-waitlist" />
       </Sub>
+      )}
 
       <div className="text-[12px] text-gray-500 italic pt-2 px-1">
         <i className="fas fa-info-circle mr-1" />
         Every setting above defaults to current behavior — flipping a toggle is opt-in.
         High-impact rules (money, guardrails, holidays, vaccines, quiet hours) are wired live;
         cosmetic UI knobs will apply gradually as we polish each screen.
+      </div>
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Sprint 110ei — Operator Quick Controls hub.
+// Replaces the old "Day-to-Day Controls" mega-page. Shows read-only pulse
+// cards summarising the most-frequently-touched rules (today's hours, quiet
+// hours, holiday surcharges loaded, capacity cap, loyalty thresholds, etc.)
+// plus "Configure ↗" shortcuts that deep-link to each setting's true home
+// category. NO editable controls live on this page anymore — every edit
+// happens in its single-owner home (Business Operations, Services &
+// Pricing, Email & Notifications, etc.). This honours the rule:
+//   "Each setting has one true home category."
+// ───────────────────────────────────────────────────────────────────────
+function OperatorQuickControls({ d2d }) {
+  const v = d2d || {};
+  const m = v.money || {};
+  const s = v.seasonal || {};
+  const g = v.guardrails || {};
+  const c = v.comms || {};
+  const l = v.loyalty || {};
+  const co = v.compliance || {};
+  const f = v.finance || {};
+
+  const goto = (cat, sub) => {
+    window.dispatchEvent(new CustomEvent("sh:settings-jump", { detail: { cat, sub } }));
+  };
+
+  const cards = [
+    {
+      label: "Today's Operating Rules",
+      lines: [
+        ["Same-day bookings", g.same_day_booking_allowed ? "Allowed" : "Blocked", g.same_day_booking_allowed ? "shGreen" : "shOrange"],
+        ["Min advance", `${g.min_advance_booking_hours ?? "—"} h`],
+        ["Block on expired vaccines", g.block_bookings_if_vaccines_expired ? "Yes" : "No", g.block_bookings_if_vaccines_expired ? "shGreen" : "shOrange"],
+      ],
+      cta: { label: "Configure booking rules", cat: "ops", sub: "_d2d_guardrails" },
+      icon: "fa-shield", color: "shBlue",
+    },
+    {
+      label: "Holiday & Peak Pricing",
+      lines: [
+        ["Holidays loaded", `${(s.holiday_surcharges || []).length}`],
+        ["Peak ranges", `${(s.peak_season_ranges || []).length}`],
+        ["Vacation mode", s.vacation_start && s.vacation_end ? `${s.vacation_start} → ${s.vacation_end}` : "Off", s.vacation_start ? "shOrange" : null],
+      ],
+      cta: { label: "Configure pricing seasons", cat: "pricing", sub: "_d2d_seasonal" },
+      icon: "fa-calendar-star", color: "shOrange",
+    },
+    {
+      label: "Money & Checkout",
+      lines: [
+        ["Tipping at checkout", m.tipping_enabled ? "On" : "Off", m.tipping_enabled ? "shGreen" : "shOrange"],
+        ["Late pickup fee", m.late_pickup_fee_per_15min ? `$${m.late_pickup_fee_per_15min}/15min` : "Off"],
+        ["No-show fee", m.no_show_fee_pct ? `${m.no_show_fee_pct}%` : "Off"],
+      ],
+      cta: { label: "Configure money rules", cat: "pricing", sub: "_d2d_money" },
+      icon: "fa-dollar-sign", color: "shGreen",
+    },
+    {
+      label: "Email Quiet Hours",
+      lines: [
+        ["Quiet hours", c.quiet_hours_enabled ? `${c.quiet_hours_start || "?"} → ${c.quiet_hours_end || "?"}` : "Off", c.quiet_hours_enabled ? "shGreen" : "shOrange"],
+        ["Reminder lead", `${c.reminder_email_hours_before ?? "—"} h before`],
+        ["Birthday emails", c.birthday_email_enabled ? "On" : "Off"],
+      ],
+      cta: { label: "Configure email timing", cat: "comms", sub: "_d2d_comms" },
+      icon: "fa-moon", color: "purple-300",
+    },
+    {
+      label: "Vaccine & Waiver Compliance",
+      lines: [
+        ["Block on expiry day", co.block_on_expiry_day ? "Yes" : "After"],
+        ["Doc upload required", co.vaccine_doc_upload_required ? "Yes" : "No"],
+        ["Waiver re-sign", co.waiver_resign_frequency || "never"],
+      ],
+      cta: { label: "Configure compliance", cat: "compliance", sub: "_d2d_compliance" },
+      icon: "fa-syringe", color: "red-400",
+    },
+    {
+      label: "Loyalty & Referrals",
+      lines: [
+        ["Tiers", `${l.loyalty_tier_bronze_visits || "—"}/${l.loyalty_tier_silver_visits || "—"}/${l.loyalty_tier_gold_visits || "—"}/${l.loyalty_tier_platinum_visits || "—"}`],
+        ["Referral reward", l.referral_reward_type ? `${l.referral_reward_amount || 0} ${l.referral_reward_type}` : "Off"],
+        ["Trophy value", l.trophy_reward_value_usd ? `$${l.trophy_reward_value_usd}` : "Symbolic"],
+      ],
+      cta: { label: "Configure rewards", cat: "rewards", sub: "_d2d_loyalty" },
+      icon: "fa-trophy", color: "amber-400",
+    },
+    {
+      label: "Finance Defaults",
+      lines: [
+        ["Fiscal year start", `Month ${f.fiscal_year_start_month || 1}`],
+        ["Export format", f.bookkeeping_export_format || "csv"],
+        ["Mileage rate", f.mileage_rate_per_mile ? `$${f.mileage_rate_per_mile}/mi` : "—"],
+      ],
+      cta: { label: "Configure finance", cat: "finance", sub: "_d2d_finance" },
+      icon: "fa-chart-pie", color: "shBlue",
+    },
+  ];
+
+  return (
+    <div className="space-y-5" data-testid="operator-quick-controls">
+      <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3">
+        <p className="text-[12px] font-black uppercase tracking-[0.25em] text-shGreen mb-1">
+          <i className="fas fa-bolt mr-1.5"/>Operator Quick Controls
+        </p>
+        <p className="text-[13px] text-gray-300 normal-case leading-snug">
+          One-glance status of the rules you tweak most often. <strong className="text-white">Every editable control lives in its true home category</strong> — tap &ldquo;Configure&rdquo; on any card to jump there.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {cards.map((card, i) => (
+          <div key={i} className="bg-bgBase/50 border border-bgHover rounded-xl p-4 flex flex-col gap-3" data-testid={`qc-card-${card.cta.sub}`}>
+            <div className="flex items-start gap-3">
+              <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-[16px] shrink-0 bg-${card.color}/15 text-${card.color}`}>
+                <i className={`fas ${card.icon}`}/>
+              </div>
+              <h3 className="text-[14px] font-black uppercase tracking-widest text-white">{card.label}</h3>
+            </div>
+            <dl className="space-y-1 text-[13px] pl-1">
+              {card.lines.map(([k, val, accent], j) => (
+                <div key={j} className="flex items-baseline justify-between gap-3 normal-case">
+                  <dt className="text-gray-400">{k}</dt>
+                  <dd className={`font-bold ${accent === "shGreen" ? "text-shGreen" : accent === "shOrange" ? "text-shOrange" : "text-white"}`}>{val}</dd>
+                </div>
+              ))}
+            </dl>
+            <button
+              type="button"
+              onClick={() => goto(card.cta.cat, card.cta.sub)}
+              data-testid={`qc-goto-${card.cta.sub}`}
+              className="self-start text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-shGreen transition inline-flex items-center gap-1"
+            >
+              {card.cta.label} <i className="fas fa-arrow-right text-[10px]"/>
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );
