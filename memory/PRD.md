@@ -3229,3 +3229,28 @@ New `OperatorQuickControls` component renders 7 summary cards (Today's Operating
 - The `day_to_day` JSON blob in `settings` is unchanged (no backend schema rework).
 - Per-section save uses the same `PUT /settings { day_to_day }` path — each split card has its own SaveBar.
 - 13/13 cash-basis + P&L pytests still pass.
+
+
+## Sprint 110ej — Tutorial Center rewrite (2026-02-16)
+**User ask**: Make Tutorials a real tutorial center with guided step-by-step walkthroughs, paths, badges, mistakes, pro tips, and updated wording matching the new Settings layout. No fake functionality.
+
+### Admin playbook — 11 sections
+**How To Use Sit Happens** · *Operator tutorial center — learn the daily workflow step by step*. Start Here → Daily Workflow → Clients & Dogs → Bookings & Schedule → Training Programs & Pipeline → Homework & Daily Plans → Payments, Income & Services → Vaccines, Waivers & Compliance → Email & Notifications → Branding & Client Portal → Backups, Self-Hosting & Data.
+
+### Client portal tutorial — 9 sections
+**Client Portal Tutorial** · *How clients book, manage dogs, view homework, and keep records updated*. Getting Started → Profile → Dog Profile → Booking Services → Vaccines & Waivers → Homework & Training → Payments & Packages → Notifications → Install on Your Phone.
+
+### New card schema
+`title`, `badges[]` (Beginner / Daily Use / Admin Only / Client-Facing / Setup Only / Staff-Only / Optional / Coming Soon / Only shown if enabled), `path` (blue "Where to find it" pill), `steps[]`, `tip` (orange Pro Tip box), `mistake` (red Common Mistake box — NEW), `related[]` (NEW).
+
+### Layout additions
+- **Quick Jumps** row — 9 admin shortcuts + 7 client shortcuts
+- **Section overview** paragraph on every section
+- **Search** now matches titles, steps, tips, mistakes, paths, badges, related links
+- Print Page / Print All preserved + Mistake box rendered correctly in print
+
+### Updated wording
+Every "Where to find it" string rewritten against the new 9-category Settings layout (Sprint 110eh). E.g. *Settings → Services & Pricing → Money Rules* instead of the old "Money & Sales" tab.
+
+### No fake functionality
+Client features dependent on operator-enabled toggles carry the "Only shown if enabled" badge (notes, homework, packages, plans, receipts, vaccine uploads). Roadmap items (SMS, on-demand data export) carry the "Coming Soon" badge with a one-line explanation.
