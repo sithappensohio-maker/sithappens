@@ -80,16 +80,22 @@ def test_today_pnl_uses_legacy_price_before_checkout(admin_headers):
         booking = b.json()
         bid = booking["id"]
         requests.post(f"{BASE}/api/bookings/{bid}/approve", headers=admin_headers, timeout=15)
-        # P&L AFTER — must rise by approximately the override price, not the list
+        # Sprint 110ek — Under the universal cash-basis rule, an APPROVED
+        # (not-yet-completed) booking contributes $0 to today's REVENUE
+        # gauge — money only counts at checkout. The legacy-pricing engine
+        # still feeds the `catalog_forecast` + `legacy_delta` fields (those
+        # drive the "$X above/below catalog" UI chip), so this test now
+        # checks those instead of `revenue`.
         pnl_after = requests.get(f"{BASE}/api/admin/today-pnl", headers=admin_headers, timeout=15).json()
         rev_after = float(pnl_after.get("revenue") or 0)
-        delta = rev_after - rev_before
-        # Allow small fuzz for concurrent activity in test DB
-        assert abs(delta - override_price) < 1.0, (
-            f"P&L delta should be ~{override_price} (legacy price), got {delta:.2f}"
-            f"\n— catalog list_price was {list_price}, override was {override_price}"
+        delta_revenue = rev_after - rev_before
+        assert abs(delta_revenue) < 1.0, (
+            f"Approved booking should NOT bump REVENUE under cash-basis rule "
+            f"(got delta=${delta_revenue:.2f}). Cash only counts at checkout."
         )
-        # Sprint 110az — new chip fields surface the catalog comparison
+        # Sprint 110az — chip fields surface the catalog comparison.
+        # The forecast/legacy-delta math runs against the override price
+        # even though it doesn't hit revenue yet.
         assert "legacy_delta" in pnl_after
         assert "legacy_client_count" in pnl_after
         assert "catalog_forecast" in pnl_after

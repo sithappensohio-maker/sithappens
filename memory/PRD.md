@@ -3254,3 +3254,27 @@ Every "Where to find it" string rewritten against the new 9-category Settings la
 
 ### No fake functionality
 Client features dependent on operator-enabled toggles carry the "Only shown if enabled" badge (notes, homework, packages, plans, receipts, vaccine uploads). Roadmap items (SMS, on-demand data export) carry the "Coming Soon" badge with a one-line explanation.
+
+
+## Sprint 110ek — Today's P&L now strictly cash-basis (2026-02-16)
+**User report**: *"Today's P&L is still counting dogs on check-in. It shouldn't be doing this till check out or I sell packs or services."*
+
+### Root cause
+The `today_pnl` endpoint had two leaks where APPROVED (not-yet-completed) bookings were adding their forecast price into the live `revenue` figure:
+- Line 14721: `revenue += price` for any approved booking with a price falling through the catalog-fallback chain
+- Line 14685: `revenue += cash_forecast` for approved credit-paid bookings (the cash slice above credit value)
+
+Both pre-dated the Sprint 110eg universal cash-basis pass for the weekly/monthly aggregators.
+
+### Fix
+Removed both `revenue +=` lines for not-yet-completed bookings. The catalog-forecast math beneath them stays (it still feeds the `catalog_forecast` + `legacy_delta` chips), so the legacy-pricing "$29 below catalog" badge keeps working.
+
+Today's `revenue` now contains exactly three things:
+1. Completed bookings' cash slice via `_cash_revenue` (line 14676)
+2. Cancellation fees that were actually charged (line 14665)
+3. All of today's `retail_sales` rows — which already include credit-pack sales, training-program sales, payment-plan installments marked paid, and retail-item sales (line 14759)
+
+### Regression
+- **New** `tests/test_today_pnl_cash_basis.py` — mirrors the user's exact scenario (4 approved bookings, 0 checkouts, 0 sales → revenue stays at $0). Passes.
+- **Updated** `tests/test_today_pnl_legacy_pricing.py` — flipped its assertion from "approved booking bumps revenue by override price" to "approved booking does NOT bump revenue; legacy delta still surfaces in `catalog_forecast`/`legacy_delta`/`legacy_client_count`". Passes.
+- All 13 cash-basis / P&L / cash-flow tests pass.

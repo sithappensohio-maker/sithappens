@@ -14677,12 +14677,13 @@ async def today_pnl(_: dict = Depends(require_admin)):
             catalog_forecast += cash_today
             continue
         # ── For not-yet-completed bookings, estimate the forecast price.
-        # Sprint 110eg — If the booking is already pinned to credits as the
-        # payment method, the cash forecast is whatever cash is owed ABOVE
-        # credit value (almost always $0). Skip the catalog fallback chain.
+        # Sprint 110eg/110ek — If the booking is already pinned to credits
+        # as the payment method, the cash forecast is whatever cash is
+        # owed ABOVE credit value (almost always $0). Skip the catalog
+        # fallback chain. Revenue is NOT incremented here — cash counts
+        # only at checkout, not at approval.
         if b.get("payment_method") == "credits":
             cash_forecast = _cash_revenue(b)
-            revenue += cash_forecast
             catalog_forecast += cash_forecast
             continue
         price = float(b.get("actual_price") or 0)
@@ -14718,7 +14719,13 @@ async def today_pnl(_: dict = Depends(require_admin)):
             price = default_by_type.get(b["service_type"], 0)
             if price and b.get("service_type") == "boarding":
                 price = price * nights
-        revenue += price
+        # Sprint 110ek — Universal cash-basis: approved-but-not-yet-completed
+        # bookings are NOT revenue. They're forecast only. The screen still
+        # shows them via the `booked_count` tile, and `catalog_forecast`
+        # below still drives the legacy-delta badge — but cash counts ONLY
+        # at checkout (and at credit-pack / training-program sale, and at
+        # retail-sale time, both of which feed `revenue` via separate paths).
+        # Revenue line intentionally NOT incremented here.
         # ── Catalog-equivalent forecast (what we WOULD make at the public
         # rate) — for the legacy-delta UI badge. Mirrors the same fallback
         # chain but skips the override.
