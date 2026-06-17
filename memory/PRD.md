@@ -3277,4 +3277,27 @@ Today's `revenue` now contains exactly three things:
 ### Regression
 - **New** `tests/test_today_pnl_cash_basis.py` — mirrors the user's exact scenario (4 approved bookings, 0 checkouts, 0 sales → revenue stays at $0). Passes.
 - **Updated** `tests/test_today_pnl_legacy_pricing.py` — flipped its assertion from "approved booking bumps revenue by override price" to "approved booking does NOT bump revenue; legacy delta still surfaces in `catalog_forecast`/`legacy_delta`/`legacy_client_count`". Passes.
+
+## Sprint 110el — "Send Test" button on the Email Health pill (2026-02-16)
+**User ask**: *"I also want a send test email button here that I can send to whoever to make sure emails are working from the app."*
+
+### Backend
+- New `POST /api/admin/email-health/test` accepts `{ to, note? }`. Sends a single branded HTML diagnostic ("If you can read this, Resend + SPF + DKIM are working end-to-end") through the normal `email_service._send` path so it touches every layer the operator cares about. No template lookup — pure deliverability check.
+- Returns `{ok: true, sent_to}` on success or `{ok: false, sent_to, reason}` with the exact Resend error verbatim (re-uses the captured `last_send_error` flow from Sprint 110eg-4 and the same DNS-aware reason mapping).
+
+### Frontend (`EmailHealthPill`)
+- New "Send Test" toggle button next to "Re-check" on the pill.
+- Opens an inline composer beneath the status row with:
+  - **Recipient input** — pre-fills with the configured `ADMIN_NOTIFICATION_EMAIL` so the most common case is one-click
+  - **Optional note input** — gets embedded in the diagnostic email body (handy for "staff onboarding check" / "post-DNS-fix verification")
+  - **Send button** with spinner + disabled state during dispatch
+  - Inline result: green tick + "Sent to ... — check that inbox in a minute" on success; red X + the exact Resend reason on failure (so operator sees DNS issues without leaving the page)
+- After every send the pill auto-refreshes its health status so `last_send_error` updates show immediately.
+
+### Verified live
+Clicking Send currently surfaces:
+> *"Send failed · The sithappensohiodogtraining.com domain is not verified. Please add and verify your domain on https://resend.com/domains. Open https://resend.com/domains and confirm the SPF + DKIM TXT records on your sender domain. This is the most common cause when Cloudflare nameservers have changed."*
+
+The moment the user restores their SPF record at Resend and re-checks, the same Send button will return "Sent to sithappensohio@gmail.com — check that inbox in a minute" — and the rest of the app's email pipeline (P&L cron, booking confirmations, password resets) lights up at the same time.
+
 - All 13 cash-basis / P&L / cash-flow tests pass.

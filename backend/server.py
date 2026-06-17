@@ -12301,6 +12301,62 @@ async def pl_monthly_status(_: dict = Depends(require_admin)):
 # state by directly resolving the SPF + DKIM TXT records the operator's
 # DNS must publish for Resend to accept the sender. Green when both are
 # present AND `email_service.last_send_error` is clean; red otherwise.
+
+class EmailHealthTestReq(BaseModel):
+    to: str
+    note: Optional[str] = None
+
+
+# Sprint 110el — Send-test endpoint sitting on the Email Health pill.
+# Operator types any recipient (their own inbox, a staff member, a client)
+# and we ping a plain-text "Sit Happens email is working" message via the
+# normal send path. Surfaces the exact Resend error on failure (same logic
+# as the template test-send) so DNS / domain-verification issues are
+# obvious without digging through logs.
+@api.post("/admin/email-health/test")
+async def email_health_test(body: EmailHealthTestReq, _: dict = Depends(require_admin)):
+    to = (body.to or "").strip()
+    if not to or "@" not in to:
+        raise HTTPException(status_code=400, detail="Please enter a valid email address")
+    note = (body.note or "").strip()
+    settings = await get_settings()
+    brand_name = settings.get("brand_name") or "Sit Happens"
+    extra = f"<p style='color:#475569;font-size:14px;margin:16px 0;'>{note}</p>" if note else ""
+    html = (
+        f"<div style='font-family:system-ui,Helvetica,Arial,sans-serif;background:#0a1929;"
+        f"color:#e2e8f0;padding:32px;border-radius:12px;max-width:560px;margin:0 auto;'>"
+        f"<h2 style='color:#8cc63f;margin:0 0 12px;text-transform:uppercase;letter-spacing:2px;font-size:18px;'>"
+        f"{brand_name} · Email Test</h2>"
+        f"<p style='color:#cbd5e1;font-size:15px;line-height:1.5;'>"
+        f"If you can read this, the outgoing email pipeline (Resend + SPF + DKIM) is working end-to-end. "
+        f"Sender domain, signature, and template rendering are all healthy."
+        f"</p>"
+        f"{extra}"
+        f"<p style='color:#64748b;font-size:12px;margin-top:24px;text-transform:uppercase;letter-spacing:1px;'>"
+        f"Sent from the Email Health panel · this is a one-off diagnostic, no template was used."
+        f"</p></div>"
+    )
+    ok = await email_service._send(to, f"{brand_name} · Email Test", html)
+    if ok:
+        return {"ok": True, "sent_to": to}
+    detail = email_service.last_send_error or ""
+    if not email_service.RESEND_API_KEY:
+        reason = "Resend isn't configured (RESEND_API_KEY missing)."
+    elif await email_service._is_in_quiet_hours():
+        reason = "Quiet-hours window is active — non-critical emails are paused. Adjust in Settings → Email & Notifications → Email Timing."
+    elif "not verified" in detail.lower():
+        reason = (
+            f"{detail.strip()}. Open https://resend.com/domains and confirm "
+            f"the SPF + DKIM TXT records on your sender domain. This is the "
+            f"most common cause when Cloudflare nameservers have changed."
+        )
+    elif detail:
+        reason = f"Resend rejected the send: {detail}"
+    else:
+        reason = "Resend rejected the send. Check Settings → Email Health for diagnostics."
+    return {"ok": False, "sent_to": to, "reason": reason}
+
+
 @api.get("/admin/email-health")
 async def email_health(_: dict = Depends(require_admin)):
     import dns.resolver

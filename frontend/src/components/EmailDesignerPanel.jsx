@@ -31,18 +31,50 @@ export default function EmailDesignerPanel() {
 function EmailHealthPill() {
   const [health, setHealth] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Sprint 110el — inline "Send Test" composer on the pill.
+  const [testOpen, setTestOpen] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [testNote, setTestNote] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+  const [testMsg, setTestMsg] = useState("");
 
   const load = async () => {
     setLoading(true);
     try {
       const { data } = await api.get("/admin/email-health");
       setHealth(data);
+      if (!testTo) setTestTo(data?.admin_email || "");
     } catch (e) {
       setHealth({ status: "down", message: formatErr(e?.response?.data?.detail) || "Couldn't fetch health" });
     }
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, []);  // eslint-disable-line
+
+  const sendTest = async () => {
+    if (!testTo.trim() || !testTo.includes("@")) {
+      setTestMsg("Please enter a valid email address.");
+      return;
+    }
+    setTestBusy(true);
+    setTestMsg("");
+    try {
+      const { data } = await api.post("/admin/email-health/test", {
+        to: testTo.trim(),
+        note: testNote.trim() || undefined,
+      });
+      if (data?.ok) {
+        setTestMsg(`Sent to ${data.sent_to} — check that inbox in a minute.`);
+        // Re-fetch health afterwards in case the send updated `last_send_error`.
+        setTimeout(load, 800);
+      } else {
+        setTestMsg(`Send failed · ${data?.reason || "unknown error"}`);
+      }
+    } catch (e) {
+      setTestMsg(formatErr(e?.response?.data?.detail) || "Send test failed.");
+    }
+    setTestBusy(false);
+  };
 
   if (loading && !health) {
     return (
@@ -61,7 +93,8 @@ function EmailHealthPill() {
   }[health.status] || { bg: "bg-bgHover/40", border: "border-bgHover", text: "text-gray-400", icon: "fa-circle-question", label: "Unknown" };
 
   return (
-    <div className={`border ${palette.border} ${palette.bg} rounded-xl px-4 py-3 flex items-start gap-3`} data-testid="email-health-pill">
+    <div className={`border ${palette.border} ${palette.bg} rounded-xl px-4 py-3 flex flex-col gap-3`} data-testid="email-health-pill">
+      <div className="flex items-start gap-3">
       <i className={`fas ${palette.icon} ${palette.text} text-xl pt-0.5`}/>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 flex-wrap">
@@ -99,6 +132,58 @@ function EmailHealthPill() {
       >
         <i className={`fas fa-rotate ${loading ? "fa-spin" : ""} mr-1`}/>Re-check
       </button>
+      <button
+        onClick={() => setTestOpen(o => !o)}
+        data-testid="email-health-toggle-test"
+        className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border border-shGreen/40 text-shGreen hover:bg-shGreen/10"
+      >
+        <i className={`fas ${testOpen ? "fa-xmark" : "fa-paper-plane"} mr-1`}/>{testOpen ? "Close" : "Send test"}
+      </button>
+    </div>
+    {testOpen && (
+      <div className="border-t border-bgHover mt-1 pt-3 flex flex-col gap-2" data-testid="email-health-test-composer">
+        <p className="text-[11px] uppercase tracking-widest font-black text-gray-400 normal-case tracking-normal">
+          Send a one-off diagnostic email to any address — useful for spot-checking that your sender domain is actually delivering.
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <input
+            type="email"
+            value={testTo}
+            onChange={e => setTestTo(e.target.value)}
+            placeholder="recipient@example.com"
+            data-testid="email-health-test-to"
+            className="flex-1 bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-[14px] text-white focus:border-shBlue/60 outline-none"
+          />
+          <button
+            onClick={sendTest}
+            disabled={testBusy}
+            data-testid="email-health-test-send"
+            className="bg-shGreen text-bgBase font-black text-[12px] uppercase tracking-widest px-4 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {testBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Sending…</> : <><i className="fas fa-paper-plane mr-1"/>Send</>}
+          </button>
+        </div>
+        <input
+          type="text"
+          value={testNote}
+          onChange={e => setTestNote(e.target.value)}
+          placeholder="Optional note to include in the test email (e.g. 'staff onboarding check')"
+          data-testid="email-health-test-note"
+          className="bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-[13px] text-white focus:border-shBlue/60 outline-none"
+        />
+        {testMsg && (
+          <p
+            data-testid="email-health-test-msg"
+            className={`text-[12px] font-bold normal-case ${
+              testMsg.startsWith("Sent to") ? "text-shGreen" : "text-red-400"
+            }`}
+          >
+            <i className={`fas ${testMsg.startsWith("Sent to") ? "fa-circle-check" : "fa-circle-xmark"} mr-1`}/>
+            {testMsg}
+          </p>
+        )}
+      </div>
+    )}
     </div>
   );
 }
@@ -234,7 +319,7 @@ function BrandingCard() {
           <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">
             Pre-filled share message
           </label>
-          <p className="text-[11px] text-gray-500 mb-1">Shown when clients tap "Share on Facebook" or "Share on X". Leave blank for the default ("My dog had the best day at &lt;brand&gt;! 🐾").</p>
+          <p className="text-[11px] text-gray-500 mb-1">Shown when clients tap &ldquo;Share on Facebook&rdquo; or &ldquo;Share on X&rdquo;. Leave blank for the default (&ldquo;My dog had the best day at &lt;brand&gt;! 🐾&rdquo;).</p>
           <input value={draft.report_card_share_message || ""}
                  onChange={(e) => update("report_card_share_message", e.target.value)}
                  data-testid="report-card-share-message"
