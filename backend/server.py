@@ -20047,6 +20047,115 @@ async def delete_review_request(entry_id: str, _: dict = Depends(require_admin))
     return {"ok": True}
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Final ops polish — Data export + Operational readiness
+# ────────────────────────────────────────────────────────────────────────────
+
+EXPORT_ENTITIES = {
+    "clients":            ("clients",               ["id","name","email","phone","city","state","zip","notes","created_at"]),
+    "dogs":               ("dogs",                  ["id","name","breed","age_y","owner_id","spayed_neutered","safety_flags","notes","created_at"]),
+    "bookings":           ("bookings",              ["id","dog_id","dog_name","client_id","client_name","service_type","date","end_date","status","kennel","room","crate","yard_group","training_group","price","created_at"]),
+    "waitlist":           ("waitlist",              ["id","client_name","dog_name","service_type","requested_date","requested_end_date","priority","status","notes","created_at","booking_id"]),
+    "intake_templates":   ("intake_form_templates", ["id","name","form_type","active","is_starter","description","created_at"]),
+    "intake_submissions": ("intake_submissions",    ["id","template_name","form_type","client_id","dog_id","status","review_notes","sent_at","submitted_at","reviewed_at","reviewed_by"]),
+    "incidents":          ("incidents",             ["id","dog_id","dog_name","client_id","client_name","date","time","type","severity","description","action_taken","follow_up_required","manager_reviewed","client_notified","internal_notes","reported_by","created_at"]),
+    "safety_flags":       ("dogs",                  ["id","name","safety_flags"]),
+    "vaccines":           ("dogs",                  ["id","name","vaccines"]),
+    "income":             ("retail_sales",          ["id","ts","total","method","source_kind","client_id","client_name","dog_id","notes"]),
+    "communications":     ("client_communications", ["id","client_name","type","summary","occurred_at","follow_up_required","follow_up_date","created_by_name"]),
+    "timeclock":          ("timeclock_entries",     ["id","employee_id","employee_name","clock_in","clock_out","hours","note"]),
+}
+
+
+@api.get("/export/{entity}")
+async def export_csv(entity: str, _: dict = Depends(require_admin)):
+    import csv as _csv, io as _io
+    if entity not in EXPORT_ENTITIES:
+        raise HTTPException(status_code=400, detail=f"Unknown entity '{entity}'. Allowed: {list(EXPORT_ENTITIES.keys())}")
+    coll, cols = EXPORT_ENTITIES[entity]
+    rows = await db[coll].find({}, {"_id": 0}).to_list(50000)
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(cols)
+    for r in rows:
+        out = []
+        for c in cols:
+            v = r.get(c, "")
+            if isinstance(v, (list, dict)):
+                v = json.dumps(v, default=str)
+            out.append(v)
+        w.writerow(out)
+    csv_data = buf.getvalue()
+    return Response(
+        content=csv_data, media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="sithappens-{entity}-{business_today().isoformat()}.csv"',
+                 "X-Row-Count": str(len(rows))},
+    )
+
+
+@api.get("/export-index")
+async def export_index(_: dict = Depends(require_admin)):
+    """Counts per entity so the UI can show empty-state badges."""
+    out = {}
+    for k, (coll, _cols) in EXPORT_ENTITIES.items():
+        out[k] = await db[coll].count_documents({})
+    return out
+
+
+@api.get("/admin/readiness")
+async def operational_readiness(_: dict = Depends(require_admin)):
+    """Nine-step setup checklist — each step returns `done` + a `goto` route."""
+    s = await get_settings()
+    checks = []
+
+    hours = (s.get("hours") or s.get("business_hours") or {})
+    has_hours = bool(hours and any(hours.get(d) for d in ("monday","tuesday","wednesday","thursday","friday")))
+    checks.append({"id": "hours", "label": "Business hours set", "done": has_hours,
+                   "goto": "settings", "fix": "Settings → Business Operations → Hours & Closures"})
+
+    services_n = await db.services.count_documents({}) if "services" in await db.list_collection_names() else 0
+    checks.append({"id": "services", "label": "Services & pricing configured",
+                   "done": services_n > 0 or bool(s.get("services")),
+                   "goto": "settings", "fix": "Settings → Services & Pricing"})
+
+    req_vax = s.get("required_vaccines") or []
+    checks.append({"id": "vaccines", "label": "Vaccine rules configured", "done": len(req_vax) > 0,
+                   "goto": "settings", "fix": "Settings → Clients, Dogs & Compliance → Vaccines"})
+
+    has_waiver = bool((s.get("waiver_text") or "").strip()) or bool(s.get("waiver_url"))
+    checks.append({"id": "waiver", "label": "Waiver configured", "done": has_waiver,
+                   "goto": "settings", "fix": "Settings → Clients, Dogs & Compliance → Waiver"})
+
+    intake_active = await db.intake_form_templates.count_documents({"active": True})
+    checks.append({"id": "intake", "label": "Intake templates active", "done": intake_active > 0,
+                   "goto": "intake", "fix": "Open the Intake Forms screen"})
+
+    rl = s.get("review_links") or {}
+    has_review = bool(rl.get("google_url") or rl.get("facebook_url"))
+    checks.append({"id": "reviews", "label": "Review links configured", "done": has_review,
+                   "goto": "settings", "fix": "Settings → Marketing & Branding → Review Links"})
+
+    staff_with_roles = await db.users.count_documents({"role": "employee", "staff_role": {"$exists": True}})
+    checks.append({"id": "roles", "label": "Staff roles assigned", "done": staff_with_roles > 0 or
+                   await db.users.count_documents({"role": "employee"}) == 0,
+                   "goto": "staff", "fix": "Staff → Roles panel at the top"})
+
+    kb = s.get("kennel_board") or {}
+    has_kennels = bool(kb.get("kennels") or kb.get("rooms") or kb.get("crates"))
+    checks.append({"id": "kennels", "label": "Kennel labels configured", "done": has_kennels,
+                   "goto": "kennel", "fix": "Kennel Board → Labels button"})
+
+    backups = await db.backups.count_documents({}) if "backups" in await db.list_collection_names() else 0
+    checks.append({"id": "backup", "label": "Backup created", "done": backups > 0,
+                   "goto": "settings", "fix": "Settings → Staff & Admin → Backups"})
+
+    return {
+        "checks": checks,
+        "completed": sum(1 for c in checks if c["done"]),
+        "total": len(checks),
+    }
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,
