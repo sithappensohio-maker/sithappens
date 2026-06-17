@@ -160,7 +160,7 @@ export default function Schedule() {
   };
 
   return (
-    <div className="h-full flex flex-col gap-4 animate-slide-in" data-testid="schedule-calendar">
+    <div className={`${mobile ? "flex flex-col gap-3" : "h-full flex flex-col gap-4"} animate-slide-in`} data-testid="schedule-calendar">
       <PageHero
         eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shBlue" }}
         title="The Calendar."
@@ -170,18 +170,19 @@ export default function Schedule() {
         compact={mobile}
         testid="schedule-hero"
       />
-      <div className="flex-1 bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover overflow-hidden"
+      <div className={`bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover ${mobile ? "" : "flex-1 overflow-hidden"}`}
            data-testid="schedule-grid-wrap">
-        {/* Mobile: wrap in a horizontally scrollable container so the full
-            7-column month grid stays usable. min-w-[720px] keeps each day
-            cell wide enough to read; sm:min-w-0 lets desktop fit normally. */}
-        <div className="h-full overflow-x-auto overflow-y-auto -mx-1 sm:mx-0">
-          <div className="min-w-[720px] sm:min-w-0 h-full" style={{ minHeight: mobile ? 620 : undefined }}>
+        {/* Mobile: explicit width + height so FullCalendar can lay out, then
+            wrap in a horizontally scrollable container so the user can pan
+            across the whole month. Desktop is untouched. */}
+        <div className={mobile ? "overflow-x-auto -mx-1" : "h-full"}
+             style={mobile ? { WebkitOverflowScrolling: "touch" } : undefined}>
+          <div style={mobile ? { width: 780, height: 720 } : { height: "100%" }}>
             <FullCalendar
               ref={calRef}
               plugins={[dayGridPlugin, interactionPlugin]}
               initialView="dayGridMonth"
-              height={mobile ? 620 : "100%"}
+              height={mobile ? 720 : "100%"}
               events={events}
               editable={true}
               eventStartEditable={true}
@@ -189,13 +190,9 @@ export default function Schedule() {
               eventDrop={onDrop}
               eventResize={onDrop}
               dateClick={onDateClick}
-              // Clicking an event chip opens the detail modal (notes, payment, etc.).
-              // Stop FullCalendar from also bubbling up to dateClick.
               eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
-              // Training/grooming/photography events have specific times — display them
               displayEventTime={true}
               eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
-              // Force timed events to render as solid colored blocks (matches daycare/boarding).
               eventDisplay="block"
               headerToolbar={mobile
                 ? { left: "prev,next", center: "title", right: "today" }
@@ -204,6 +201,11 @@ export default function Schedule() {
             />
           </div>
         </div>
+        {mobile && (
+          <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
+            <i className="fas fa-arrows-left-right mr-1"/>Swipe sideways to pan · tap any day to see the full roster
+          </p>
+        )}
       </div>
 
       {detailId && (
