@@ -3356,3 +3356,27 @@ Key behaviors baked in:
 
 ### Deferred to next phase
 - **Client-portal "fill out your assigned form" UX** — endpoints exist (`/portal/intake/assigned`, `/portal/intake/submissions/{id}/submit`) so the portal screen just needs to render and POST. Send modal shows a clear "lands in next phase" notice so the operator isn't confused.
+
+## Sprint 110er — Phase 1.5: Client-portal intake completion UX (2026-02-17)
+**User ask**: Complete the Phase 1 deferral — let clients actually fill out the forms admins send them.
+
+### Frontend
+- **New** `components/IntakePortalSection.jsx` — drop-in section rendered between Payment Plans and the Homework block on the client portal. Hides itself when there are no pending forms so it never clutters the portal.
+- **Per-field renderers** for every supported type:
+  - `short_text` / `email` / `phone` / `number` → typed `<input>`
+  - `long_text` → `<textarea>` (4 rows)
+  - `date` → date input with `colorScheme:dark`
+  - `dropdown` → `<select>` with options
+  - `yes_no` → two pill buttons with green/red active states
+  - `multi_select` / `checkbox` → checkbox grid (1col mobile / 2col desktop)
+  - `file_upload` → friendly placeholder ("File uploads coming soon — email or bring at drop-off") + optional note input
+  - `staff_only_note` → not rendered (backend strips it; defensive `return null` on the frontend too)
+- **Required-field validation** runs client-side before POST; surfaces the first missing field's label in a red error banner.
+- **Submit loading state** + sonner toast on success, then refetches the assigned list so the just-completed form disappears.
+
+### Portal embed
+Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-line import + component drop-in, zero changes to existing portal sections.
+
+### Regression
+- **New** `tests/test_intake_portal_flow.py` — end-to-end client flow: admin creates template w/ a staff-only field → assigns → client fetches `/portal/intake/assigned` and ONLY sees public fields (staff_only stripped) → submits → status flips to `submitted` + `submitted_at` stamps → form disappears from assigned list → admin token is rejected from the portal submit endpoint (role guard). Passes.
+- All 3 intake tests (`test_intake_forms` × 2 + `test_intake_portal_flow` × 1) pass together.

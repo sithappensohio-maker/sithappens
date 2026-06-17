@@ -7,6 +7,7 @@ import PortalDogModal from "../components/PortalDogModal";
 import PortalProfileModal from "../components/PortalProfileModal";
 import PortalTrainingCard from "../components/PortalTrainingCard";
 import PortalFilesSection from "../components/PortalFilesSection";
+import IntakePortalSection from "../components/IntakePortalSection";
 import PortalBookWizard from "../components/PortalBookWizard";
 import HomeworkSectionLogger from "../components/HomeworkSectionLogger";
 import DailyCheckInCard from "../components/DailyCheckInCard";
@@ -1116,6 +1117,10 @@ export default function Portal() {
           {/* Sprint 110ch — Payment plans (renders only when there's at least
               one plan tied to this client). Includes sign-agreement flow. */}
           <PortalPaymentPlans />
+
+          {/* Sprint 110er — Phase 1.5: pending intake forms assigned by admin.
+              Renders only when the client has at least one sent submission. */}
+          <IntakePortalSection />
 
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old
