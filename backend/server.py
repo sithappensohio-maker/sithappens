@@ -19902,6 +19902,151 @@ async def delete_communication(entry_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110ez — Phase 9: Review request system
+# ────────────────────────────────────────────────────────────────────────────
+# Settings hold the operator's Google + Facebook review URLs and a default
+# message template. The "Request Review" button on a client/dog opens those
+# links and logs that the request happened (date, staff, method, notes).
+# No outbound messaging — manual tracking only, per the user's spec.
+# ────────────────────────────────────────────────────────────────────────────
+
+REVIEW_METHODS = ("google", "facebook", "text", "email", "in_person", "other")
+REVIEW_SOURCES = ("manual", "graduation", "report_card", "checkout")
+
+
+class ReviewLinksIn(BaseModel):
+    google_url: Optional[str] = None
+    facebook_url: Optional[str] = None
+    yelp_url: Optional[str] = None
+    default_message: Optional[str] = None
+
+
+class ReviewRequestIn(BaseModel):
+    client_id: str
+    dog_id: Optional[str] = None
+    method: str = "google"
+    source: str = "manual"
+    notes: Optional[str] = ""
+
+
+@api.get("/settings/review-links")
+async def get_review_links(_: dict = Depends(require_employee_or_admin)):
+    s = await get_settings()
+    rl = s.get("review_links") or {}
+    return {
+        "google_url": rl.get("google_url", ""),
+        "facebook_url": rl.get("facebook_url", ""),
+        "yelp_url": rl.get("yelp_url", ""),
+        "default_message": rl.get("default_message",
+            "Hi {first_name}! If {dog_name} has had a great experience with us at Sit Happens, "
+            "would you mind leaving us a quick review? It helps so much — thank you!"),
+    }
+
+
+@api.put("/settings/review-links")
+async def set_review_links(body: ReviewLinksIn, _: dict = Depends(require_admin)):
+    patch = {k: v.strip() for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    s = await get_settings()
+    current = s.get("review_links") or {}
+    current.update(patch)
+    await db.settings.update_one(
+        {"id": "global"},
+        {"$set": {"review_links": current, "updated_at": now_iso()}},
+        upsert=True,
+    )
+    s2 = await get_settings()
+    rl2 = s2.get("review_links") or {}
+    return {
+        "google_url": rl2.get("google_url", ""),
+        "facebook_url": rl2.get("facebook_url", ""),
+        "yelp_url": rl2.get("yelp_url", ""),
+        "default_message": rl2.get("default_message", ""),
+    }
+
+
+@api.get("/review-requests")
+async def list_review_requests(
+    client_id: Optional[str] = None,
+    dog_id: Optional[str] = None,
+    limit: int = 200,
+    _: dict = Depends(require_employee_or_admin),
+):
+    q: Dict[str, Any] = {}
+    if client_id: q["client_id"] = client_id
+    if dog_id: q["dog_id"] = dog_id
+    rows = await db.review_requests.find(q, {"_id": 0}).sort("requested_at", -1).to_list(min(max(limit, 1), 1000))
+    # Aggregate counts by method (for the dashboard chip)
+    by_method: Dict[str, int] = {}
+    for r in rows:
+        m = r.get("method") or "other"
+        by_method[m] = by_method.get(m, 0) + 1
+    return {
+        "entries": rows,
+        "methods": list(REVIEW_METHODS),
+        "sources": list(REVIEW_SOURCES),
+        "by_method": by_method,
+    }
+
+
+@api.post("/review-requests")
+async def create_review_request(body: ReviewRequestIn, user: dict = Depends(require_employee_or_admin)):
+    if body.method not in REVIEW_METHODS:
+        raise HTTPException(status_code=400, detail=f"Unknown method '{body.method}'. Allowed: {list(REVIEW_METHODS)}")
+    if body.source not in REVIEW_SOURCES:
+        raise HTTPException(status_code=400, detail=f"Unknown source '{body.source}'. Allowed: {list(REVIEW_SOURCES)}")
+    client = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "id": 1, "name": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    dog_name = ""
+    if body.dog_id:
+        dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1})
+        if not dog:
+            raise HTTPException(status_code=404, detail="Dog not found")
+        if dog.get("owner_id") != body.client_id:
+            raise HTTPException(status_code=400, detail="Dog doesn't belong to this client")
+        dog_name = dog.get("name", "")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": body.client_id,
+        "client_name": client.get("name", ""),
+        "dog_id": body.dog_id,
+        "dog_name": dog_name,
+        "method": body.method,
+        "source": body.source,
+        "notes": (body.notes or "").strip(),
+        "requested_at": now_iso(),
+        "requested_by_id": user.get("id"),
+        "requested_by_name": user.get("name") or user.get("email"),
+    }
+    await db.review_requests.insert_one(doc)
+    doc.pop("_id", None)
+    # Also drop a row in the communication log so the contact history stays cohesive
+    await db.client_communications.insert_one({
+        "id": str(uuid.uuid4()),
+        "client_id": body.client_id,
+        "client_name": client.get("name", ""),
+        "dog_id": body.dog_id,
+        "type": "general",
+        "summary": f"Review requested via {body.method.replace('_',' ').title()}" + (f" ({body.notes.strip()})" if body.notes else ""),
+        "occurred_at": doc["requested_at"],
+        "follow_up_required": False,
+        "created_at": now_iso(),
+        "created_by_id": user.get("id"),
+        "created_by_name": doc["requested_by_name"],
+        "review_request_id": doc["id"],     # back-link
+    })
+    return doc
+
+
+@api.delete("/review-requests/{entry_id}")
+async def delete_review_request(entry_id: str, _: dict = Depends(require_admin)):
+    res = await db.review_requests.delete_one({"id": entry_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Request not found")
+    return {"ok": True}
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,

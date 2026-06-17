@@ -3541,3 +3541,35 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_communications.py` (2 tests): full CRUD lifecycle (create + bad-type 400 + filter by `follow_up_open` + edit + resolve auto-stamp + type filter + delete returns 404 on re-fetch); cross-validation that a dog_id must belong to the client_id (400 if not). Both pass.
+
+## Sprint 110ez — Phase 9 (FINAL): Review request system (2026-02-17)
+**User ask**: Settings-saved Google/Facebook review links + a "Request Review" button on client/dog/training/report card profiles that manually tracks date/staff/method/notes. No automatic messaging — the operator copies the link or message.
+
+### Backend (`server.py`)
+- **Settings** `review_links` saved under the global settings doc: `google_url, facebook_url, yelp_url, default_message` (with `{first_name}` and `{dog_name}` placeholders). `GET /settings/review-links` (employee/admin), `PUT /settings/review-links` (admin) — partial updates preserve other keys.
+- **New collection** `review_requests` with 6 method values (google/facebook/text/email/in_person/other) and 4 source values (manual/graduation/report_card/checkout). Each entry stamps client snapshot + actor + timestamp.
+- **3 new endpoints**:
+  - `GET /review-requests?client_id&dog_id` (employee/admin) — list + `by_method` count aggregation for dashboard chips
+  - `POST /review-requests` — validates method + source + dog-belongs-to-client; also **auto-creates a `client_communications` row** with back-link `review_request_id` so the contact timeline stays cohesive
+  - `DELETE /review-requests/{id}` (admin only)
+
+### Frontend
+- **New reusable component** `ReviewRequestButton.jsx` embedded on every client card under a new "Reviews" line. Tracks per-client count badge.
+- **Modal layout**: big "Open Google review" + "Open Facebook reviews" buttons that both open the saved URL in a new tab AND log the request. Disabled state with a friendly "drop links into Settings" nudge when the URL isn't configured. Below that, a 4-method pill grid (Text/Email/In-person/Other) for non-link logging. Default message preview with `{first_name}` / `{dog_name}` substituted in, plus a one-click "Copy message" button so you can paste straight into your texting app.
+
+### Regression
+- **New** `tests/test_review_requests.py` (2 tests): link GET/PUT with partial-update preservation; full request creation with method/source validation + bad-method 400 + by_method aggregation + **automatic cross-log to `client_communications` with back-link**. Both pass.
+
+## 🏁 Phase 1–9 Roadmap COMPLETE (2026-02-17)
+Total scope shipped in one session of nine phases:
+- **Phase 1:** Custom Intake Forms (admin builder + portal completion)
+- **Phase 2:** Feeding & Medication tracker (Care Board with overdue highlighting + staff initials)
+- **Phase 3:** Waitlist + capacity-aware guardrail
+- **Phase 4:** Visual Kennel/Daycare Board (assignment slots + warning badges)
+- **Phase 5:** Incident upgrade (4 severity tiers, 11 types, expanded fields) + Safety Flags with auto-suggest from incident history + intake
+- **Phase 6:** Audit log (middleware captures all writes, redacts secrets, filterable timeline UI)
+- **Phase 7:** 7-role + 13-permission system (Owner/Manager/Trainer/Daycare/Boarding/Front Desk/Read-only) with sidebar nav filtering
+- **Phase 8:** Client communication log (11 types, follow-up tracking, dog-belongs-to-client validation)
+- **Phase 9:** Review request system (Google/Facebook links + 6 method tracking with auto cross-log)
+
+**18 new pytest tests** across the 9 phases, all passing.
