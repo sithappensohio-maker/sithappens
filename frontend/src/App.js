@@ -25,6 +25,8 @@ import CareBoard from "./screens/CareBoard";
 import Waitlist from "./screens/Waitlist";
 import KennelBoard from "./screens/KennelBoard";
 import AuditLog from "./screens/AuditLog";
+import BulkEmail from "./screens/BulkEmail";
+import ClientMessages from "./screens/ClientMessages";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
@@ -35,6 +37,7 @@ import { ConfirmProvider } from "./lib/useConfirm";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import TextSizePicker from "./components/TextSizePicker";
 import BrandFooter from "./components/BrandFooter";
+import { api } from "./lib/api";
 
 function AdminShell() {
   const { user, logout, can } = useAuth();
@@ -42,6 +45,23 @@ function AdminShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState(null);
+  const [messagesUnread, setMessagesUnread] = useState(0);
+
+  // Poll the admin messages-unread badge every 60s and on tab change so
+  // the sidebar dot stays roughly fresh without hammering the API.
+  useEffect(() => {
+    if (!can || !can("messages")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data } = await api.get("/admin/messages/unread-count");
+        if (alive) setMessagesUnread(data?.unread || 0);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const h = setInterval(tick, 60000);
+    return () => { alive = false; clearInterval(h); };
+  }, [can, tab]);
 
   // Cmd/Ctrl+K to open global search
   useEffect(() => {
@@ -93,6 +113,8 @@ function AdminShell() {
     { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
+    { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages" },
+    { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "settings" },
     { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "settings" },
     { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
@@ -119,6 +141,10 @@ function AdminShell() {
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
                   className={`group w-full text-left py-2.5 px-3 rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
             <i className={`fas ${n.icon} mr-3 w-4 ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} /> {n.label}
+            {n.id === "messages" && messagesUnread > 0 && (
+              <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                    data-testid={`${prefix}nav-messages-badge`}>{messagesUnread}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -206,6 +232,8 @@ function AdminShell() {
           {tab === "staff" && <Staff />}
           {tab === "incidents" && <Incidents />}
           {tab === "intake" && <IntakeForms />}
+          {tab === "messages" && <ClientMessages />}
+          {tab === "bulkemail" && <BulkEmail />}
           {tab === "audit" && <AuditLog />}
           {tab === "settings" && <Settings />}
           {tab === "tutorials" && <Tutorials role="admin" />}

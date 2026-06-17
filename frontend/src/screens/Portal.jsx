@@ -23,6 +23,7 @@ import CareLogStrip from "../components/CareLogStrip";
 import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
+import PortalMessages from "../components/PortalMessages";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -635,6 +636,23 @@ export default function Portal() {
   const [dogModal, setDogModal] = useState({ open: false, dog: null });
   const [profileOpen, setProfileOpen] = useState(false);
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
+  const [messagesOpen, setMessagesOpen] = useState(false);
+  const [messagesUnread, setMessagesUnread] = useState(0);
+
+  // Poll the client portal unread badge so the header button shows a count.
+  useEffect(() => {
+    if (!user || user.role !== "client") return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data } = await api.get("/me/messages-unread-count");
+        if (alive) setMessagesUnread(data?.unread || 0);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const h = setInterval(tick, 60000);
+    return () => { alive = false; clearInterval(h); };
+  }, [user]);
   const [publicServices, setPublicServices] = useState([]);
   const [publicPrograms, setPublicPrograms] = useState([]);
   const [showServicesModal, setShowServicesModal] = useState(false);
@@ -850,6 +868,15 @@ export default function Portal() {
                   className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
             <i className="fas fa-circle-question"/>
             <span className="hidden sm:inline">How to Use</span>
+          </button>
+          <button onClick={()=>setMessagesOpen(true)} data-testid="portal-messages-button"
+                  className="relative text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2">
+            <i className="fas fa-comments"/>
+            <span className="hidden sm:inline">Messages</span>
+            {messagesUnread > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-shOrange text-bgHeader text-[10px] font-black rounded-full grid place-items-center"
+                    data-testid="portal-messages-badge">{messagesUnread}</span>
+            )}
           </button>
           <InstallAppButton
             testid="portal-install-app"
@@ -1702,6 +1729,13 @@ export default function Portal() {
           </div>
         </div>
       )}
+
+      <PortalMessages
+        dogs={dogs}
+        open={messagesOpen}
+        onClose={() => setMessagesOpen(false)}
+        onUnreadChange={setMessagesUnread}
+      />
 
       <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}

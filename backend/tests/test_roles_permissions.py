@@ -34,8 +34,9 @@ def test_roles_matrix_endpoint(admin_headers):
     r = requests.get(f"{BASE}/api/staff/roles", headers=admin_headers, timeout=15).json()
     assert set(r["roles"]) == {"owner", "manager", "trainer", "daycare_staff",
                                 "boarding_staff", "front_desk", "read_only"}
-    # 13 permission keys as documented
-    assert len(r["permission_keys"]) == 13
+    # 14 permission keys as documented (added `messages` in Sprint 110dh)
+    assert len(r["permission_keys"]) == 14
+    assert "messages" in r["permission_keys"]
     # Owner gets everything; read_only is locked down
     assert all(r["matrix"]["owner"].values())
     assert r["matrix"]["read_only"]["delete_records"] is False

@@ -27,9 +27,63 @@ const ADMIN_QUICK_ACTIONS = [
   { id: "_qa_portal",   label: "Client Portal Setup",     icon: "fa-mobile",          target: "branding" },
   { id: "_qa_backup",   label: "Backup Data",             icon: "fa-database",        target: "system" },
   { id: "_qa_export",   label: "Export CSVs",             icon: "fa-cloud-arrow-down", target: "system" },
+  { id: "_qa_bulkemail",label: "Send Bulk Email",         icon: "fa-paper-plane",     target: "bulkemail" },
+  { id: "_qa_messages", label: "Client Messages",         icon: "fa-comments",        target: "messages" },
 ];
 
 const ADMIN_SECTIONS = [
+  {
+    id: "communications",
+    title: "Communication Tools",
+    icon: "fa-comments",
+    color: "text-shGreen",
+    overview: "Two tools for keeping clients in the loop: Bulk Email for one-to-many announcements, and Client Messages for one-to-one back-and-forth. Both feed the existing per-client communication timeline so nothing falls through the cracks.",
+    cards: [
+      {
+        title: "Bulk Client Email",
+        badges: ["Live", "Admin Only"],
+        path: "Sidebar → Bulk Email",
+        steps: [
+          "Pick a recipient slice using filter chips: Active clients, Daycare/Boarding/Training clients, Has upcoming bookings, Has missing vaccines, Has NOT switched to the new app, or any combination (filters are AND-combined).",
+          "Watch the live recipient counter on the right — it updates the moment you change a chip, and shows the first 50 names so you can sanity-check before hitting send.",
+          "Pick a starter template from the Templates tab (Welcome to New App / Switch Reminder / Vaccine / Booking / Policy Update / General) or write your own from scratch.",
+          "Use merge tags {{client_first_name}} and {{dog_names}} for personalisation — the live preview shows what your first recipient will actually see.",
+          "Hit Send Test to fire a single email to the first matching client and confirm formatting end-to-end before doing the full blast.",
+          "Hit Send to {N} clients — a confirmation modal shows the count + subject before anything goes out.",
+          "Save any composition as a custom Template for reuse. System templates cannot be deleted; custom ones can.",
+          "Every successful send is logged once per recipient in that client's Communications timeline (Type = email · Summary = [Bulk] <subject>) so you have a full audit trail.",
+          "The History tab shows every blast: subject, sender, date/time, total recipients, success and failure counts.",
+        ],
+        tip: "Use the 'Has not switched to the new app' filter to gently nudge old-system clients without spamming the ones who already migrated.",
+      },
+      {
+        title: "Client Messages (Direct Inbox)",
+        badges: ["Live", "Permission-gated"],
+        path: "Sidebar → Client Messages",
+        steps: [
+          "A unified inbox of every conversation started by a client from their portal — filter by Status (All / Open / Pending / Resolved) and toggle 'Unread only' to focus.",
+          "Search by client name, dog name, or subject from the search box at the top.",
+          "Click any thread to open the conversation. Each message bubble shows sender, role and timestamp.",
+          "Type your reply and hit Reply — by default it also fires a transactional email to the client (uncheck 'Also email the client' to keep it in-app only).",
+          "Change a thread's status (Open / Pending / Resolved) from the top-right of the conversation. Resolved threads automatically reopen if the client replies again.",
+          "Internal Notes (bottom of every thread) are visible to all staff with the messages permission but NEVER to the client. Use them for handoff context like 'told her to bring vaccine paperwork on Tuesday'.",
+          "Sidebar shows an orange unread badge so you always know when something needs attention. The badge refreshes every 60 seconds.",
+          "Every visible message and reply is also logged on the client's Communications timeline (Type = message) so the full history lives in one place.",
+        ],
+        tip: "Set 'Pending' when you're waiting on info from the client — it gets it out of your Open list without resolving it prematurely.",
+      },
+      {
+        title: "Roles & permissions for messaging",
+        badges: ["Live", "Reference"],
+        steps: [
+          "Permission key: messages.",
+          "Granted automatically to: Owner (admin), Manager, Trainer, Daycare staff, Boarding staff, Front desk.",
+          "Read-only role does NOT get messages access by default — flip them up to Front Desk if they need to reply.",
+          "Internal Notes are visible to anyone with the messages permission, so brief staff that the notes are private from clients but visible to teammates.",
+        ],
+      },
+    ],
+  },
   {
     id: "ops-command-center",
     title: "Operations Command Center — The New Stack",
@@ -913,6 +967,38 @@ const CLIENT_QUICK_ACTIONS = [
 ];
 
 const CLIENT_SECTIONS = [
+  {
+    id: "messages",
+    title: "Send a message to the team",
+    icon: "fa-comments",
+    color: "text-shGreen",
+    overview: "Need to ask something? Use the Messages button at the top of the portal — it's like a mini inbox between you and the Sit Happens team.",
+    cards: [
+      {
+        title: "Send a new message",
+        badges: ["Beginner"],
+        steps: [
+          "Tap the green 'Messages' button at the top-right of the portal header.",
+          "Hit 'New Message'.",
+          "Pick what it's about (Booking / Daycare / Boarding / Training / Vaccines / Forms / Payments / Dog Records / Other) and which dog (optional).",
+          "Add a short subject and type your message — same as texting.",
+          "Tap Send. You'll see your message right away inside the app.",
+        ],
+        tip: "If you'd rather not pick a category, just leave it on 'Something else' and write what's on your mind.",
+      },
+      {
+        title: "Read replies + reply back",
+        badges: ["Beginner"],
+        steps: [
+          "When the team replies, the Messages button in the header shows an orange unread count.",
+          "Tap the button to open your inbox, then tap the thread to read the full conversation.",
+          "Type a reply at the bottom and hit Reply — the team is notified instantly.",
+          "If your business has email notifications on, you'll also get a copy in your inbox.",
+        ],
+        tip: "Resolved threads automatically re-open if you reply — you don't have to start a new conversation if something comes up later.",
+      },
+    ],
+  },
   {
     id: "getting-started",
     title: "Getting Started",

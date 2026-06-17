@@ -19632,6 +19632,7 @@ PERMISSION_KEYS = (
     "dogs_view", "dogs_edit",
     "incidents", "care_complete", "booking_edit",
     "payroll", "data_export", "delete_records",
+    "messages",
 )
 
 
@@ -19660,6 +19661,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "dogs_view": True, "dogs_edit": True,
         "incidents": True, "care_complete": True,
         "booking_edit": True,
+        "messages": True,
     },
     "daycare_staff": {
         **_empty_perms(),
@@ -19667,6 +19669,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "dogs_view": True,
         "incidents": True, "care_complete": True,
         "booking_edit": True,
+        "messages": True,
     },
     "boarding_staff": {
         **_empty_perms(),
@@ -19674,12 +19677,14 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "dogs_view": True,
         "incidents": True, "care_complete": True,
         "booking_edit": True,
+        "messages": True,
     },
     "front_desk": {
         **_empty_perms(),
         "clients_view": True, "clients_edit": True,
         "dogs_view": True, "dogs_edit": True,
         "booking_edit": True,
+        "messages": True,
     },
     "read_only": {
         **_empty_perms(),
@@ -20156,6 +20161,764 @@ async def operational_readiness(_: dict = Depends(require_admin)):
         "completed": sum(1 for c in checks if c["done"]),
         "total": len(checks),
     }
+
+
+# ============================================================================
+# Sprint 110dh — Communication system: Bulk client email + Direct client↔admin
+# messaging. Two cleanly-separated feature blocks that both feed the existing
+# client_communications log so the per-client timeline stays the source of
+# truth. See PRD.md Sprint 110dh section for the full spec.
+# ============================================================================
+
+# ---- Bulk client email ----------------------------------------------------
+BULK_EMAIL_FILTERS = (
+    "active", "daycare", "boarding", "training",
+    "upcoming_bookings", "missing_vaccines", "not_switched",
+)
+
+# 6 system templates seeded the first time the templates endpoint is called.
+# Stored in DB so admins can tweak them once and changes persist. `kind=system`
+# templates are immutable from the UI (no delete), but a customised copy can
+# be saved with kind=custom.
+BULK_EMAIL_SYSTEM_TEMPLATES = [
+    {"slug": "welcome_new_app",       "name": "Welcome to the New App",
+     "subject": "Welcome to the new Sit Happens app, {{client_first_name}}!",
+     "body": ("Hi {{client_first_name}},\n\nWe're excited to welcome you to the brand-new Sit Happens client app! "
+              "Everything is in one place now — bookings, vaccine records, daily reports, photos and payments.\n\n"
+              "Log in any time at your portal link.\n\n"
+              "Tail wags,\nThe Sit Happens Team")},
+    {"slug": "app_switch_reminder",   "name": "App Switch Reminder",
+     "subject": "Quick reminder: switch to the new Sit Happens app",
+     "body": ("Hi {{client_first_name}},\n\nA friendly heads-up — we've moved to a brand-new client app and we don't "
+              "see your account active there yet. It only takes a minute to set up and you'll be able to book, "
+              "see vaccine status, and get daily updates faster.\n\n"
+              "If you need a fresh password reset link, just reply to this email.\n\n"
+              "Thanks,\nSit Happens")},
+    {"slug": "vaccine_reminder",      "name": "Vaccine Reminder",
+     "subject": "Vaccine record needs an update — {{client_first_name}}",
+     "body": ("Hi {{client_first_name}},\n\nOur records show {{dog_names}} is due (or close to due) on one or more "
+              "vaccines. We can't accept bookings without up-to-date records, so please upload the latest paperwork "
+              "in your portal at your earliest convenience.\n\n"
+              "Thank you!\nSit Happens")},
+    {"slug": "booking_reminder",      "name": "Booking Reminder",
+     "subject": "Upcoming visit reminder",
+     "body": ("Hi {{client_first_name}},\n\nJust a heads-up — {{dog_names}} has an upcoming booking with us. "
+              "If anything has changed (drop-off time, meds, special instructions), please update the booking in "
+              "your portal or reply to this email.\n\nSee you soon!\nSit Happens")},
+    {"slug": "policy_update",         "name": "Policy Update",
+     "subject": "A small update to our policies",
+     "body": ("Hi {{client_first_name}},\n\nWe wanted to let you know about a small update to our policies. "
+              "[Add the policy change here.]\n\n"
+              "Please reach out if you have any questions.\n\nThanks,\nSit Happens")},
+    {"slug": "general_announcement",  "name": "General Announcement",
+     "subject": "An update from Sit Happens",
+     "body": ("Hi {{client_first_name}},\n\n[Write your announcement here.]\n\nThanks!\nSit Happens")},
+]
+
+
+async def _seed_bulk_email_templates_once() -> None:
+    """Idempotently seed the 6 system templates if missing."""
+    existing = {t["slug"] async for t in db.bulk_email_templates.find({"kind": "system"}, {"slug": 1})}
+    for tpl in BULK_EMAIL_SYSTEM_TEMPLATES:
+        if tpl["slug"] in existing:
+            continue
+        await db.bulk_email_templates.insert_one({
+            "id": str(uuid.uuid4()),
+            "kind": "system",
+            "slug": tpl["slug"],
+            "name": tpl["name"],
+            "subject": tpl["subject"],
+            "body": tpl["body"],
+            "created_at": now_iso(),
+            "created_by": "system",
+        })
+
+
+async def _bulk_email_resolve_recipients(filters: List[str]) -> List[Dict[str, Any]]:
+    """Resolve a list of {id, name, email, dog_names} dicts matching ALL of the filters.
+
+    Filters are AND-combined. An empty list = "all clients with an email"."""
+    filt = {k for k in filters if k in BULK_EMAIL_FILTERS}
+    base_q: Dict[str, Any] = {"email": {"$nin": [None, ""]}}
+    if "active" in filt:
+        base_q["status"] = {"$ne": "inactive"}
+    clients = await db.clients.find(base_q, {"_id": 0}).to_list(10000)
+
+    # Pull all dogs once (indexed by owner_id) for missing_vaccine + dog_names.
+    dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
+    async for d in db.dogs.find({}, {"_id": 0}):
+        dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
+
+    needs_booking_filter = bool(filt & {"daycare", "boarding", "training", "upcoming_bookings"})
+    bookings_by_client: Dict[str, List[Dict[str, Any]]] = {}
+    if needs_booking_filter:
+        async for b in db.bookings.find({"status": {"$nin": ["cancelled", "rejected"]}},
+                                        {"_id": 0, "client_id": 1, "service_type": 1, "date": 1, "end_date": 1, "status": 1}):
+            bookings_by_client.setdefault(b.get("client_id") or "", []).append(b)
+
+    not_switched_set: set = set()
+    if "not_switched" in filt:
+        async for u in db.users.find({"role": "client"}, {"client_id": 1}):
+            cid = u.get("client_id")
+            if cid:
+                not_switched_set.add(cid)
+
+    today = business_today().isoformat()
+    out: List[Dict[str, Any]] = []
+    for c in clients:
+        cid = c.get("id")
+        # filter: not_switched = client with NO user record
+        if "not_switched" in filt and cid in not_switched_set:
+            continue
+        bks = bookings_by_client.get(cid or "", [])
+        if "daycare" in filt and not any(b.get("service_type") == "daycare" for b in bks):
+            continue
+        if "boarding" in filt and not any(b.get("service_type") == "boarding" for b in bks):
+            continue
+        if "training" in filt and not any(b.get("service_type") == "training" for b in bks):
+            continue
+        if "upcoming_bookings" in filt and not any(
+            (b.get("date") or "") >= today and b.get("status") not in ("cancelled", "rejected", "completed")
+            for b in bks
+        ):
+            continue
+        client_dogs = dogs_by_owner.get(cid or "", [])
+        if "missing_vaccines" in filt:
+            has_missing = False
+            for d in client_dogs:
+                vacs = d.get("vaccines") or []
+                if not vacs:
+                    has_missing = True; break
+                for v in vacs:
+                    if not isinstance(v, dict):
+                        continue
+                    exp = v.get("expires_on") or v.get("expiration") or ""
+                    if not exp or str(exp)[:10] < today:
+                        has_missing = True; break
+                if has_missing:
+                    break
+            if not has_missing:
+                continue
+        dog_names = ", ".join(d.get("name", "") for d in client_dogs if d.get("name"))
+        out.append({
+            "id": cid,
+            "name": c.get("name") or "",
+            "email": c.get("email") or "",
+            "first_name": (c.get("name") or "").strip().split(" ")[0],
+            "dog_names": dog_names or "your pup",
+        })
+    # dedupe by email
+    seen: set = set()
+    deduped: List[Dict[str, Any]] = []
+    for r in out:
+        key = (r["email"] or "").lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(r)
+    return deduped
+
+
+class BulkEmailFiltersIn(BaseModel):
+    filters: List[str] = []
+    client_ids: Optional[List[str]] = None  # if provided, takes precedence over filters
+
+
+class BulkEmailSendIn(BaseModel):
+    subject: str
+    body: str
+    filters: List[str] = []
+    client_ids: Optional[List[str]] = None
+    test_only: bool = False  # if True, only send to first recipient (preview)
+
+
+class BulkEmailTemplateIn(BaseModel):
+    name: str
+    subject: str
+    body: str
+
+
+@api.get("/admin/bulk-email/filters")
+async def bulk_email_filters_meta(_: dict = Depends(require_admin)):
+    return {
+        "available": [
+            {"id": "active",            "label": "Active clients only"},
+            {"id": "daycare",           "label": "Has at least one daycare booking"},
+            {"id": "boarding",          "label": "Has at least one boarding booking"},
+            {"id": "training",          "label": "Has at least one training booking"},
+            {"id": "upcoming_bookings", "label": "Has upcoming bookings"},
+            {"id": "missing_vaccines",  "label": "Has a dog with missing/expired vaccines"},
+            {"id": "not_switched",      "label": "Has not switched to the new app (no portal account)"},
+        ],
+    }
+
+
+@api.post("/admin/bulk-email/recipients")
+async def bulk_email_recipients(body: BulkEmailFiltersIn, _: dict = Depends(require_admin)):
+    if body.client_ids is not None:
+        ids = [c for c in (body.client_ids or []) if c]
+        if not ids:
+            return {"count": 0, "recipients": []}
+        cur = db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0})
+        rows = []
+        async for c in cur:
+            rows.append({
+                "id": c.get("id"),
+                "name": c.get("name") or "",
+                "email": c.get("email") or "",
+                "first_name": (c.get("name") or "").strip().split(" ")[0],
+                "dog_names": "",
+            })
+        return {"count": len(rows), "recipients": rows}
+    recipients = await _bulk_email_resolve_recipients(body.filters or [])
+    return {"count": len(recipients), "recipients": recipients}
+
+
+def _bulk_email_render(body: str, ctx: Dict[str, str]) -> str:
+    """Replace {{client_first_name}} and {{dog_names}} merge tags."""
+    out = body or ""
+    for k, v in ctx.items():
+        out = out.replace("{{" + k + "}}", v or "")
+    return out
+
+
+@api.post("/admin/bulk-email/send")
+async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_admin)):
+    subj = (body.subject or "").strip()
+    if not subj:
+        raise HTTPException(status_code=400, detail="Subject is required")
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Body is required")
+
+    if body.client_ids is not None:
+        ids = [c for c in (body.client_ids or []) if c]
+        recipients: List[Dict[str, Any]] = []
+        async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0}):
+            recipients.append({
+                "id": c.get("id"),
+                "name": c.get("name") or "",
+                "email": c.get("email") or "",
+                "first_name": (c.get("name") or "").strip().split(" ")[0],
+                "dog_names": "",
+            })
+    else:
+        recipients = await _bulk_email_resolve_recipients(body.filters or [])
+
+    if not recipients:
+        raise HTTPException(status_code=400, detail="No recipients matched the chosen filters")
+
+    if body.test_only:
+        recipients = recipients[:1]
+
+    # Build a sent record up front so the UI can show "Sending…" history.
+    history_id = str(uuid.uuid4())
+    started_at = now_iso()
+
+    success = 0
+    failures: List[Dict[str, str]] = []
+    for r in recipients:
+        ctx = {
+            "client_first_name": r.get("first_name") or "there",
+            "client_name": r.get("name") or "",
+            "dog_names": r.get("dog_names") or "your pup",
+        }
+        rendered_subj = _bulk_email_render(subj, ctx)
+        rendered_body = _bulk_email_render(body.body, ctx)
+        # Lightweight HTML body — wrap rendered text in the existing brand wrapper.
+        text_paragraphs = "".join(f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{p}</p>"
+                                  for p in rendered_body.split("\n") if p.strip())
+        try:
+            html = email_service._wrap(  # type: ignore
+                title=rendered_subj,
+                intro="",
+                rows=[],
+                show_install=False,
+                body_html=text_paragraphs or f"<p>{rendered_body}</p>",
+            )
+        except Exception:
+            html = f"<html><body>{text_paragraphs or rendered_body}</body></html>"
+        try:
+            ok = await email_service._send(r["email"], rendered_subj, html)  # type: ignore
+        except Exception as e:
+            ok = False
+            failures.append({"client_id": r.get("id") or "", "email": r["email"], "error": str(e)[:200]})
+            continue
+        if ok:
+            success += 1
+            # Log into client_communications so it appears on the client's timeline.
+            try:
+                await db.client_communications.insert_one({
+                    "id": str(uuid.uuid4()),
+                    "client_id": r.get("id"),
+                    "client_name": r.get("name") or "",
+                    "type": "email",
+                    "summary": f"[Bulk] {rendered_subj}",
+                    "details": rendered_body,
+                    "occurred_at": now_iso(),
+                    "follow_up_required": False,
+                    "follow_up_date": None,
+                    "created_by_id": user.get("id"),
+                    "created_by_name": user.get("name") or user.get("email"),
+                    "bulk_email_id": history_id,
+                })
+            except Exception:
+                pass
+        else:
+            failures.append({"client_id": r.get("id") or "", "email": r["email"], "error": email_service.last_send_error or "unknown"})
+
+    record = {
+        "id": history_id,
+        "subject": subj,
+        "body": body.body,
+        "filters": body.filters or [],
+        "manual_selection": body.client_ids is not None,
+        "recipient_count": len(recipients),
+        "success_count": success,
+        "fail_count": len(failures),
+        "failed": failures[:50],
+        "test_only": bool(body.test_only),
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or user.get("email"),
+        "started_at": started_at,
+        "finished_at": now_iso(),
+    }
+    await db.bulk_email_history.insert_one(record)
+    record.pop("_id", None)
+    return record
+
+
+@api.get("/admin/bulk-email/history")
+async def bulk_email_history(limit: int = 50, _: dict = Depends(require_admin)):
+    rows = await db.bulk_email_history.find({}, {"_id": 0}).sort("started_at", -1).to_list(min(max(limit, 1), 200))
+    return rows
+
+
+@api.get("/admin/bulk-email/templates")
+async def bulk_email_templates_list(_: dict = Depends(require_admin)):
+    await _seed_bulk_email_templates_once()
+    rows = await db.bulk_email_templates.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # system first, then custom
+    rows.sort(key=lambda t: (0 if t.get("kind") == "system" else 1, t.get("name") or ""))
+    return rows
+
+
+@api.post("/admin/bulk-email/templates")
+async def bulk_email_templates_create(body: BulkEmailTemplateIn, user: dict = Depends(require_admin)):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Template name is required")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "kind": "custom",
+        "slug": None,
+        "name": name,
+        "subject": body.subject or "",
+        "body": body.body or "",
+        "created_at": now_iso(),
+        "created_by": user.get("name") or user.get("email"),
+    }
+    await db.bulk_email_templates.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/admin/bulk-email/templates/{template_id}")
+async def bulk_email_templates_delete(template_id: str, _: dict = Depends(require_admin)):
+    tpl = await db.bulk_email_templates.find_one({"id": template_id}, {"_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    if tpl.get("kind") == "system":
+        raise HTTPException(status_code=400, detail="System templates cannot be deleted")
+    await db.bulk_email_templates.delete_one({"id": template_id})
+    return {"ok": True, "id": template_id}
+
+
+# ---- Direct client/admin messaging ---------------------------------------
+MESSAGE_CATEGORIES = (
+    "booking", "daycare", "boarding", "training",
+    "vaccines", "forms", "payments", "dog_records", "other",
+)
+MESSAGE_STATUSES = ("open", "pending", "resolved")
+
+
+def _thread_preview(text: str, n: int = 140) -> str:
+    text = (text or "").strip().replace("\n", " ")
+    return text[:n] + ("…" if len(text) > n else "")
+
+
+async def _send_message_notification_email(thread: Dict[str, Any], to_email: str, body: str, is_admin_reply: bool) -> bool:
+    """Best-effort transactional notification when a message lands."""
+    if not to_email:
+        return False
+    subj = (f"New reply from Sit Happens · {thread.get('subject') or 'Your message'}"
+            if is_admin_reply else
+            f"New client message · {thread.get('client_name') or 'Client'}")
+    paragraphs = "".join(
+        f"<p style='margin:0 0 12px;font-size:15px;line-height:1.55;'>{p}</p>"
+        for p in (body or "").split("\n") if p.strip()
+    )
+    try:
+        html = email_service._wrap(  # type: ignore
+            title=subj, intro="", rows=[], show_install=False,
+            body_html=(paragraphs or f"<p>{body}</p>")
+                     + "<p style='margin-top:18px;font-size:13px;color:#6b7280;'>You can reply directly inside the Sit Happens app.</p>",
+        )
+    except Exception:
+        html = f"<html><body>{paragraphs or body}</body></html>"
+    try:
+        return await email_service._send(to_email, subj, html)  # type: ignore
+    except Exception:
+        return False
+
+
+async def _log_message_to_comm(thread: Dict[str, Any], item: Dict[str, Any]) -> None:
+    """Push every visible message to the client_communications timeline."""
+    try:
+        await db.client_communications.insert_one({
+            "id": str(uuid.uuid4()),
+            "client_id": thread.get("client_id"),
+            "client_name": thread.get("client_name") or "",
+            "type": "message",
+            "summary": f"[{item.get('sender_role','msg').title()}] {thread.get('subject') or 'Message'}",
+            "details": item.get("body") or "",
+            "occurred_at": item.get("created_at") or now_iso(),
+            "follow_up_required": False,
+            "follow_up_date": None,
+            "created_by_id": item.get("sender_id"),
+            "created_by_name": item.get("sender_name"),
+            "message_thread_id": thread.get("id"),
+        })
+    except Exception:
+        pass
+
+
+async def _admin_notify_emails() -> List[str]:
+    """Distinct admin user emails for in-app notifications. Best-effort."""
+    emails: set = set()
+    async for u in db.users.find({"role": "admin"}, {"email": 1}):
+        e = (u.get("email") or "").strip()
+        if e:
+            emails.add(e)
+    if email_service.ADMIN_NOTIFICATION_EMAIL:
+        emails.add(email_service.ADMIN_NOTIFICATION_EMAIL)
+    return list(emails)
+
+
+class ClientThreadCreateIn(BaseModel):
+    category: str = "other"
+    subject: str = ""
+    body: str
+    dog_id: Optional[str] = None
+    booking_id: Optional[str] = None
+
+
+class ClientReplyIn(BaseModel):
+    body: str
+
+
+class AdminReplyIn(BaseModel):
+    body: str
+    email_notify: bool = True
+    set_status: Optional[str] = None  # optional status change after reply
+
+
+class AdminNoteIn(BaseModel):
+    body: str
+
+
+class AdminStatusIn(BaseModel):
+    status: str
+
+
+def _thread_shape(t: Dict[str, Any], for_role: str = "admin") -> Dict[str, Any]:
+    """Strip internal_notes for client viewers."""
+    out = {k: v for k, v in t.items() if k != "_id"}
+    if for_role == "client":
+        out.pop("internal_notes", None)
+    return out
+
+
+# ---- Client-side endpoints ----
+@api.get("/me/messages")
+async def my_messages(user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    if not cid:
+        return []
+    rows = await db.client_message_threads.find({"client_id": cid}, {"_id": 0}).sort("last_message_at", -1).to_list(200)
+    return [_thread_shape(t, "client") for t in rows]
+
+
+@api.get("/me/messages/{thread_id}")
+async def my_message_thread(thread_id: str, user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t or t.get("client_id") != cid:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return _thread_shape(t, "client")
+
+
+@api.post("/me/messages")
+async def my_create_message(body: ClientThreadCreateIn, user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=403, detail="Only clients can start a message thread")
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Message body is required")
+    cat = body.category if body.category in MESSAGE_CATEGORIES else "other"
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    dog_name = None
+    if body.dog_id:
+        d = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "name": 1, "owner_id": 1})
+        if d and d.get("owner_id") == cid:
+            dog_name = d.get("name")
+    item = {
+        "id": str(uuid.uuid4()),
+        "sender_role": "client",
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or (client or {}).get("name") or "Client",
+        "body": body.body.strip(),
+        "created_at": now_iso(),
+    }
+    thread = {
+        "id": str(uuid.uuid4()),
+        "client_id": cid,
+        "client_name": (client or {}).get("name") or user.get("name") or "Client",
+        "client_email": (client or {}).get("email") or user.get("email"),
+        "dog_id": body.dog_id if dog_name else None,
+        "dog_name": dog_name,
+        "booking_id": body.booking_id,
+        "category": cat,
+        "subject": (body.subject or "").strip() or _thread_preview(body.body, 60),
+        "status": "open",
+        "messages": [item],
+        "internal_notes": [],
+        "created_at": item["created_at"],
+        "updated_at": item["created_at"],
+        "last_message_at": item["created_at"],
+        "last_message_preview": _thread_preview(body.body),
+        "last_message_role": "client",
+        "unread_admin": True,
+        "unread_client": False,
+    }
+    await db.client_message_threads.insert_one(thread)
+    await _log_message_to_comm(thread, item)
+
+    # Notify admin emails (best-effort, fire-and-forget so the client gets a snappy response).
+    async def _notify_admins_create():
+        try:
+            admin_emails = await _admin_notify_emails()
+            preview = _thread_preview(body.body)
+            for ae in admin_emails:
+                await _send_message_notification_email(
+                    thread, ae,
+                    f"From {thread['client_name']}: {preview}\n\nCategory: {cat}\nSubject: {thread['subject']}",
+                    is_admin_reply=False,
+                )
+        except Exception:
+            pass
+    asyncio.create_task(_notify_admins_create())
+    return _thread_shape(thread, "client")
+
+
+@api.post("/me/messages/{thread_id}/reply")
+async def my_reply_message(thread_id: str, body: ClientReplyIn, user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t or t.get("client_id") != cid:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Message body is required")
+    item = {
+        "id": str(uuid.uuid4()),
+        "sender_role": "client",
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or t.get("client_name"),
+        "body": body.body.strip(),
+        "created_at": now_iso(),
+    }
+    await db.client_message_threads.update_one(
+        {"id": thread_id},
+        {"$push": {"messages": item},
+         "$set": {
+             "last_message_at": item["created_at"], "updated_at": item["created_at"],
+             "last_message_preview": _thread_preview(body.body),
+             "last_message_role": "client",
+             "unread_admin": True,
+             # If the thread was resolved and the client replies, reopen it.
+             "status": "open" if t.get("status") == "resolved" else t.get("status"),
+         }},
+    )
+    t["messages"] = (t.get("messages") or []) + [item]
+    await _log_message_to_comm(t, item)
+    async def _notify_admins_reply():
+        try:
+            admin_emails = await _admin_notify_emails()
+            for ae in admin_emails:
+                await _send_message_notification_email(
+                    t, ae, f"Reply from {t['client_name']}: {_thread_preview(body.body)}", is_admin_reply=False,
+                )
+        except Exception:
+            pass
+    asyncio.create_task(_notify_admins_reply())
+    fresh = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    return _thread_shape(fresh, "client")
+
+
+@api.post("/me/messages/{thread_id}/read")
+async def my_mark_read(thread_id: str, user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t or t.get("client_id") != cid:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    await db.client_message_threads.update_one({"id": thread_id}, {"$set": {"unread_client": False}})
+    return {"ok": True}
+
+
+@api.get("/me/messages-unread-count")
+async def my_unread_message_count(user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    if not cid:
+        return {"unread": 0}
+    n = await db.client_message_threads.count_documents({"client_id": cid, "unread_client": True})
+    return {"unread": n}
+
+
+# ---- Admin/staff endpoints ----
+@api.get("/admin/messages")
+async def admin_list_messages(
+    status: Optional[str] = None,
+    unread_only: bool = False,
+    search: Optional[str] = None,
+    limit: int = 200,
+    _: dict = Depends(require_permission("messages")),
+):
+    q: Dict[str, Any] = {}
+    if status and status in MESSAGE_STATUSES:
+        q["status"] = status
+    if unread_only:
+        q["unread_admin"] = True
+    if search:
+        s = search.strip()
+        if s:
+            q["$or"] = [
+                {"client_name": {"$regex": s, "$options": "i"}},
+                {"dog_name":    {"$regex": s, "$options": "i"}},
+                {"subject":     {"$regex": s, "$options": "i"}},
+            ]
+    rows = await db.client_message_threads.find(q, {"_id": 0}).sort("last_message_at", -1).to_list(min(max(limit, 1), 500))
+    return rows
+
+
+@api.get("/admin/messages/unread-count")
+async def admin_unread_count(_: dict = Depends(require_permission("messages"))):
+    n = await db.client_message_threads.count_documents({"unread_admin": True})
+    open_n = await db.client_message_threads.count_documents({"status": "open"})
+    return {"unread": n, "open": open_n}
+
+
+@api.get("/admin/messages/{thread_id}")
+async def admin_get_thread(thread_id: str, _: dict = Depends(require_permission("messages"))):
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return t
+
+
+@api.post("/admin/messages/{thread_id}/read")
+async def admin_mark_read(thread_id: str, _: dict = Depends(require_permission("messages"))):
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    await db.client_message_threads.update_one({"id": thread_id}, {"$set": {"unread_admin": False}})
+    return {"ok": True}
+
+
+@api.post("/admin/messages/{thread_id}/reply")
+async def admin_reply_thread(thread_id: str, body: AdminReplyIn, user: dict = Depends(require_permission("messages"))):
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Reply body is required")
+    role = "admin" if (user.get("role") or "").lower() == "admin" else "staff"
+    item = {
+        "id": str(uuid.uuid4()),
+        "sender_role": role,
+        "sender_id": user.get("id"),
+        "sender_name": user.get("name") or user.get("email"),
+        "body": body.body.strip(),
+        "created_at": now_iso(),
+    }
+    set_doc: Dict[str, Any] = {
+        "last_message_at": item["created_at"], "updated_at": item["created_at"],
+        "last_message_preview": _thread_preview(body.body),
+        "last_message_role": role,
+        "unread_client": True,
+        "unread_admin": False,
+    }
+    if body.set_status and body.set_status in MESSAGE_STATUSES:
+        set_doc["status"] = body.set_status
+    await db.client_message_threads.update_one(
+        {"id": thread_id},
+        {"$push": {"messages": item}, "$set": set_doc},
+    )
+    t["messages"] = (t.get("messages") or []) + [item]
+    await _log_message_to_comm(t, item)
+    if body.email_notify and t.get("client_email"):
+        async def _notify_client_reply():
+            try:
+                await _send_message_notification_email(t, t["client_email"], body.body, is_admin_reply=True)
+            except Exception:
+                pass
+        asyncio.create_task(_notify_client_reply())
+    fresh = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    return fresh
+
+
+@api.post("/admin/messages/{thread_id}/note")
+async def admin_add_note(thread_id: str, body: AdminNoteIn, user: dict = Depends(require_permission("messages"))):
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    if not (body.body or "").strip():
+        raise HTTPException(status_code=400, detail="Note body is required")
+    note = {
+        "id": str(uuid.uuid4()),
+        "body": body.body.strip(),
+        "author_id": user.get("id"),
+        "author_name": user.get("name") or user.get("email"),
+        "created_at": now_iso(),
+    }
+    await db.client_message_threads.update_one(
+        {"id": thread_id},
+        {"$push": {"internal_notes": note}, "$set": {"updated_at": note["created_at"]}},
+    )
+    return note
+
+
+@api.delete("/admin/messages/{thread_id}/note/{note_id}")
+async def admin_delete_note(thread_id: str, note_id: str, _: dict = Depends(require_permission("messages"))):
+    res = await db.client_message_threads.update_one(
+        {"id": thread_id},
+        {"$pull": {"internal_notes": {"id": note_id}}},
+    )
+    if res.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return {"ok": True}
+
+
+@api.patch("/admin/messages/{thread_id}")
+async def admin_set_status(thread_id: str, body: AdminStatusIn, _: dict = Depends(require_permission("messages"))):
+    if body.status not in MESSAGE_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Allowed: {list(MESSAGE_STATUSES)}")
+    res = await db.client_message_threads.update_one(
+        {"id": thread_id},
+        {"$set": {"status": body.status, "updated_at": now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
+    return t
 
 
 app.include_router(api)

@@ -32,6 +32,61 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+## Sprint 110dh — Communication System (Bulk Email + Direct Messaging) (2026-02-17)
+**User ask**: A focused communication update with two connected features — admin bulk email to clients, and a direct client↔admin messaging system. Must feed the existing client_communications log, must NOT become a marketing platform.
+
+### Backend (server.py — appended cleanly, no refactor)
+- ✅ **New permission key** `messages` added to PERMISSION_KEYS (14 total now). Auto-granted to Owner/Manager/Trainer/Daycare staff/Boarding staff/Front desk. Read-only excluded.
+- ✅ **Bulk Email**:
+  - `GET /api/admin/bulk-email/filters` — recipe of 7 AND-combined filters: active, daycare, boarding, training, upcoming_bookings, missing_vaccines, not_switched (no portal account).
+  - `POST /api/admin/bulk-email/recipients` — live recipient resolver. Accepts `{filters: []}` or `{client_ids: []}` (manual mode).
+  - `POST /api/admin/bulk-email/send` — fires per-recipient through Resend, with `{{client_first_name}}` and `{{dog_names}}` merge tags. Each successful send writes a row into `client_communications` (type=email, summary="[Bulk] …") so it shows on the client's timeline. Supports `test_only=true` to fire only the first recipient.
+  - `GET /api/admin/bulk-email/history` — last 50 sends with success/fail counts + failure detail.
+  - `GET/POST/DELETE /api/admin/bulk-email/templates` — idempotently seeds 6 system templates (Welcome to New App / App Switch Reminder / Vaccine Reminder / Booking Reminder / Policy Update / General Announcement) + admin can save custom templates. System templates cannot be deleted.
+- ✅ **Direct Messaging**:
+  - Collection: `client_message_threads` with embedded `messages[]` and admin-only `internal_notes[]`.
+  - Categories: booking / daycare / boarding / training / vaccines / forms / payments / dog_records / other.
+  - Status flow: open → pending → resolved (+ auto-reopen when client replies to a resolved thread).
+  - Client endpoints (auth-gated by client_id): `GET /me/messages`, `GET /me/messages/{id}`, `POST /me/messages`, `POST /me/messages/{id}/reply`, `POST /me/messages/{id}/read`, `GET /me/messages-unread-count`. Internal notes are stripped from responses.
+  - Admin endpoints (require `messages` perm): `GET /admin/messages` (filters: status, unread_only, search), `GET /admin/messages/{id}`, `POST /admin/messages/{id}/reply` (with optional `email_notify`), `POST /admin/messages/{id}/read`, `POST /admin/messages/{id}/note`, `DELETE /admin/messages/{id}/note/{note_id}`, `PATCH /admin/messages/{id}` (set_status), `GET /admin/messages/unread-count`.
+  - Every visible message + reply is also logged into `client_communications` (type=message) so the per-client timeline stays the source of truth.
+  - **Email notifications fire-and-forget via `asyncio.create_task`** so client UX stays snappy. New client message → all admin emails get notified. Admin reply → client gets notified (toggleable per-reply via `email_notify` flag).
+
+### Frontend
+- ✅ **`screens/BulkEmail.jsx`** (NEW, admin) — filter chips, live recipient count + name preview list, subject/body composer with merge-tag hints, live merge-tag preview pane, Templates tab (6 system + custom save/delete), History tab with success/fail badges, Send Test (first recipient only), typed Confirm modal before bulk send.
+- ✅ **`screens/ClientMessages.jsx`** (NEW, admin) — split-pane inbox. Left: thread list with unread orange dots + last-message previews. Right: conversation bubbles (client bubbles bg-bgBase, admin bubbles bg-shGreen/15), status pills, reply composer with "Also email the client" toggle, and a separate Internal Notes pane in shOrange (staff-only · client cannot see).
+- ✅ **`components/PortalMessages.jsx`** (NEW, client portal) — modal opened from a new "Messages" button in the portal header. New-thread composer with category + dog selector; threads list + chat view with right-aligned client bubbles vs left-aligned admin bubbles.
+- ✅ **Admin sidebar nav** — two new items: "Client Messages" (perm: messages, with live orange unread-count badge that refreshes every 60s) and "Bulk Email" (perm: settings).
+- ✅ **Client portal header** — new green "Messages" button with orange unread-count badge.
+- ✅ **Tutorials** — added a full "Communication Tools" section to the admin tutorial (Bulk Email + Client Messages + role reference card) and a "Send a message to the team" section to the client tutorial. Quick Action shortcuts added.
+
+### Tests
+- ✅ `tests/test_communication_system.py` (14/14 passing): bulk-email filters/templates/recipients/send/history + history audit-trail to client_communications; client thread create/reply/read; permission gates; internal notes hidden from clients; status transitions + auto-reopen on client reply after resolve; client cross-thread isolation; unread counts; invalid status rejection.
+- ✅ `tests/test_roles_permissions.py` updated to assert 14 permission keys (was 13) including the new `messages` key.
+- ✅ Regression: 38/38 across communication + data export + readiness + audit log + comm log + care board + waitlist + kennel board + roles & permissions + intake forms.
+
+### Smoke (live UI)
+- `/api/admin/bulk-email/recipients {"filters":["active"]}` returns 942 recipients with live counts.
+- "Not switched to new app" filter returns 723 (legacy clients without portal accounts).
+- Sending a real bulk email to a single test client persists a "[Bulk] …" row in `client_communications`.
+- Admin Client Messages inbox shows the 14 test threads with correct unread counts, status pills, reply UI, and internal-notes pane.
+- Client portal Messages modal opens from header, lists threads, opens conversation with client-right / admin-left bubble layout.
+
+### Files touched
+- `backend/server.py` (+ ~480 lines appended; PERMISSION_KEYS expanded; role matrix updated)
+- `frontend/src/App.js` (2 new nav items, unread badge polling, screen imports)
+- `frontend/src/screens/BulkEmail.jsx` (NEW)
+- `frontend/src/screens/ClientMessages.jsx` (NEW)
+- `frontend/src/components/PortalMessages.jsx` (NEW)
+- `frontend/src/screens/Portal.jsx` (Messages header button + polling + modal mount)
+- `frontend/src/screens/Tutorials.jsx` (Communication Tools admin section + client section + Quick Actions)
+- `backend/tests/test_communication_system.py` (NEW, 14 tests)
+- `backend/tests/test_roles_permissions.py` (updated permission count assertion)
+
+
+
+
+
 ## Sprint 110dg — Final Operations Polish Pass (2026-02-17)
 **User ask**: Wrap the 9-phase operational expansion with: (a) on-demand CSV data export, (b) Operational Readiness checklist on the dashboard, (c) Dashboard Quick Links to the new ops screens, (d) Settings copy cleanup (Live vs Coming Soon), (e) Tutorial updates.
 
