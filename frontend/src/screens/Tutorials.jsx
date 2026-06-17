@@ -26,6 +26,7 @@ const ADMIN_QUICK_ACTIONS = [
   { id: "_qa_pricing",  label: "Update Services & Pricing", icon: "fa-dollar-sign",   target: "payments" },
   { id: "_qa_portal",   label: "Client Portal Setup",     icon: "fa-mobile",          target: "branding" },
   { id: "_qa_backup",   label: "Backup Data",             icon: "fa-database",        target: "system" },
+  { id: "_qa_export",   label: "Export CSVs",             icon: "fa-cloud-arrow-down", target: "system" },
 ];
 
 const ADMIN_SECTIONS = [
@@ -875,12 +876,27 @@ const ADMIN_SECTIONS = [
         ],
       },
       {
-        title: "Data export",
-        badges: ["Coming Soon"],
+        title: "Data export (CSV)",
+        badges: ["Live", "Admin Only"],
+        path: "Settings → System & Data → Data Export",
         steps: [
-          "On-demand export of clients, dogs, bookings, finances as CSV is on the roadmap.",
-          "For now, the P&L PDF and the manual backup .gz cover most accounting needs.",
+          "Twelve one-click downloads: Clients, Dogs, Bookings, Waitlist, Intake Templates, Intake Submissions, Incidents, Safety Flags, Vaccines, Income, Communications, Staff Time-Clock.",
+          "Each row shows the current count so you know exactly what'll land in the file.",
+          "Click Download CSV — your browser saves a date-stamped file (e.g. sithappens-clients-2026-02-15.csv).",
+          "Nested data (vaccines, safety flags) is stored as JSON inside the cell so the spreadsheet stays a single tidy row per record.",
         ],
+        tip: "Hand these straight to your bookkeeper, run pivot tables in Google Sheets, or use them as a paper trail before any major data migration.",
+      },
+      {
+        title: "Operational Readiness Checklist",
+        badges: ["Live", "Admin Only"],
+        path: "Dashboard (top of screen)",
+        steps: [
+          "Nine setup checks that confirm your app is ready to run hands-free: business hours, services & pricing, vaccine rules, waiver, intake templates, review links, staff roles, kennel labels, first backup.",
+          "Each unfinished item shows a one-tap Fix button that jumps straight to the right Settings page.",
+          "Collapses into a single chip once everything is done so it doesn't clutter the dashboard.",
+        ],
+        tip: "If you're handing the dashboard off to a new staffer, this checklist is the fastest way to spot what's missing.",
       },
     ],
   },

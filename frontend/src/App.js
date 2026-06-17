@@ -188,6 +188,7 @@ function AdminShell() {
             onNavigate={(t)=>setTab(t)}
             onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
             onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
+            can={can}
           />}
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}

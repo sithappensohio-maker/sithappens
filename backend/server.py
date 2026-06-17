@@ -20063,13 +20063,15 @@ EXPORT_ENTITIES = {
     "vaccines":           ("dogs",                  ["id","name","vaccines"]),
     "income":             ("retail_sales",          ["id","ts","total","method","source_kind","client_id","client_name","dog_id","notes"]),
     "communications":     ("client_communications", ["id","client_name","type","summary","occurred_at","follow_up_required","follow_up_date","created_by_name"]),
-    "timeclock":          ("timeclock_entries",     ["id","employee_id","employee_name","clock_in","clock_out","hours","note"]),
+    "timeclock":          ("time_clock_entries",    ["id","user_id","user_name","clock_in_at","clock_out_at","hours","break_minutes","clock_in_note","clock_out_note"]),
 }
 
 
 @api.get("/export/{entity}")
 async def export_csv(entity: str, _: dict = Depends(require_admin)):
-    import csv as _csv, io as _io
+    import csv as _csv
+    import io as _io
+    import json as __json
     if entity not in EXPORT_ENTITIES:
         raise HTTPException(status_code=400, detail=f"Unknown entity '{entity}'. Allowed: {list(EXPORT_ENTITIES.keys())}")
     coll, cols = EXPORT_ENTITIES[entity]
@@ -20082,7 +20084,7 @@ async def export_csv(entity: str, _: dict = Depends(require_admin)):
         for c in cols:
             v = r.get(c, "")
             if isinstance(v, (list, dict)):
-                v = json.dumps(v, default=str)
+                v = __json.dumps(v, default=str)
             out.append(v)
         w.writerow(out)
     csv_data = buf.getvalue()

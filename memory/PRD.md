@@ -30,6 +30,57 @@ Build a full-stack dog daycare/boarding CRM ("Sit Happens") starting from an HTM
 
 
 
+
+
+## Sprint 110dg — Final Operations Polish Pass (2026-02-17)
+**User ask**: Wrap the 9-phase operational expansion with: (a) on-demand CSV data export, (b) Operational Readiness checklist on the dashboard, (c) Dashboard Quick Links to the new ops screens, (d) Settings copy cleanup (Live vs Coming Soon), (e) Tutorial updates.
+
+### Backend
+- ✅ **`GET /api/export/{entity}`** — admin-only CSV download for **12 entities**: clients, dogs, bookings, waitlist, intake_templates, intake_submissions, incidents, safety_flags, vaccines, income (retail_sales), communications (client_communications), timeclock (time_clock_entries).
+  - Streams a clean CSV with the right column header, JSON-encodes nested fields (vaccines, safety_flags) so spreadsheets stay one row per record.
+  - Response headers include `Content-Disposition` with a date-stamped filename + `X-Row-Count` so empty exports never go unnoticed.
+  - Rejects unknown entity names with a 400 + a list of allowed values.
+- ✅ **`GET /api/export-index`** — admin-only counts for each entity so the UI can render row counts + disable empty exports.
+- ✅ **`GET /api/admin/readiness`** — admin-only 9-step checklist returning `{checks, completed, total}` covering: business hours, services & pricing, vaccine rules, waiver, intake templates, review links, staff roles, kennel labels, first backup. Each row carries `goto` + `fix` so the UI can jump straight to the right Settings page.
+- ✅ Fixed collection-name bug from a previous pass: `timeclock_entries` → `time_clock_entries` (and corrected the column header set).
+
+### Frontend
+- ✅ **`DataExportPanel.jsx`** (Settings → System & Data → Data Export) — grid of 12 cards. Each shows the entity icon, current row count, plain-English description, and a Download CSV button. Empty entities render "Nothing to export" in a disabled state. Browser download uses Blob/URL.createObjectURL so files save with the right name.
+- ✅ **`ReadinessChecklist.jsx`** (Dashboard) — collapsible tile showing `X/9 (XX%)` with a colored progress bar. Each unfinished row exposes a one-tap "Fix →" button that calls `onNavigate(goto)`. Completed items are struck through and dimmed. Auto-collapses to a single chip when all 9 are done.
+- ✅ **`DashboardQuickLinks.jsx`** (Dashboard) — 6 large pill buttons jumping to Care Board, Waitlist, Kennel Board, Intake Forms, Incidents, Audit Log. Each button is permission-gated identically to the sidebar (`care_complete`, `booking_edit`, `dogs_view`, `clients_edit`, `incidents`, `settings`) so staff only see the boards they can access.
+- ✅ **Settings copy cleanup**: the old "Data Export — Coming soon" placeholder is now live with proper Live/Admin-only badges. Other "Coming soon" entries (SMS, Marketing emails, Payroll, Payment processors, Refund rules, Streak auto-awards, Discounts/Coupons) intentionally remain — they're real roadmap items, not stale copy.
+- ✅ **Tutorials**: replaced the Data Export "Coming Soon" card with a full "Live" walkthrough + added an Operational Readiness Checklist card to the Backups/Self-Hosting section. Added an "Export CSVs" entry to the Admin Quick Actions strip.
+
+### Tests
+- ✅ `tests/test_data_export_and_readiness.py` (8/8 passing):
+  1. `export-index` lists all 12 entities with integer counts.
+  2. `export-index` rejects unauthenticated calls (401).
+  3. `/export/clients` returns valid CSV with header, content-type, content-disposition, X-Row-Count.
+  4. Every one of the 12 entities returns a valid CSV (even when empty).
+  5. Unknown entity returns 400 with the list of allowed values.
+  6. `/export/{entity}` rejects unauthenticated calls.
+  7. `/admin/readiness` returns the 9 documented checks with the right shape (`done` boolean, `goto`, `fix`).
+  8. `/admin/readiness` rejects unauthenticated calls.
+- ✅ Regression: 24/24 across data_export + audit_log + communications + care_board + waitlist + kennel_board + roles_permissions + intake_forms (the full 9-phase + polish suite).
+
+### Smoke (live UI)
+- Dashboard now renders the new "Operations Quick Links" tile + "Operational Readiness · 8/9 · 89%" checklist with completed items struck through and an orange progress bar.
+- Settings → System & Data → Data Export shows all 12 entity cards with live row counts (Clients 958, Dogs 643, Bookings 2066, Waitlist 0 → "Nothing to export", Intake Templates 13, Income 232, etc.).
+- Clicking Download CSV on Incidents successfully triggers a browser download named `sithappens-incidents-2026-06-17.csv`.
+
+### Files touched
+- `backend/server.py` (timeclock collection-name fix + json import scope fix inside `/export/{entity}`)
+- `frontend/src/components/DataExportPanel.jsx` (NEW)
+- `frontend/src/components/ReadinessChecklist.jsx` (NEW)
+- `frontend/src/components/DashboardQuickLinks.jsx` (NEW)
+- `frontend/src/screens/Dashboard.jsx` (mounted new tiles; accepts `can` prop)
+- `frontend/src/screens/Settings.jsx` (imports `DataExportPanel`, renders on `tab === "data_export"`, flipped placeholder badge to Live)
+- `frontend/src/screens/Tutorials.jsx` (Data Export Live card + Readiness Checklist card + Quick Action shortcut)
+- `frontend/src/App.js` (passes `can` to Dashboard)
+- `backend/tests/test_data_export_and_readiness.py` (NEW, 8 tests)
+
+
+
 ## Sprint 110df — Full neon dog-training brand overhaul (2026-06-10)
 **User ask**: Comprehensive UI restyle to match the website — dark navy/black grunge, electric blue accents, lime green highlights, orange splashes, athletic typography, neon glow borders, paw energy. Don't change functionality / routing / data.
 

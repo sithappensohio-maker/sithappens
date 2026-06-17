@@ -12,6 +12,7 @@ import CsvImportRow from "../components/CsvImportRow";
 import EmailDesignerPanel from "../components/EmailDesignerPanel";
 import PaymentPlanSettingsPanel from "../components/PaymentPlanSettingsPanel";
 import DayToDayControls from "../components/DayToDayControls";
+import DataExportPanel from "../components/DataExportPanel";
 
 const DAYS = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"];
 const VAX_OPTIONS = [
@@ -277,9 +278,9 @@ export default function Settings() {
         { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation",
           desc: "Recent server-side error log — useful for support.",
           badges: ["Live", "Admin-only"] },
-        { id: "_export_soon", label: "Data Export", icon: "fa-cloud-arrow-down",
-          desc: "On-demand export of clients, dogs, bookings, finances.",
-          badges: ["Coming soon"], comingSoon: true },
+        { id: "data_export", label: "Data Export", icon: "fa-cloud-arrow-down",
+          desc: "On-demand CSV exports of clients, dogs, bookings, finances, intake submissions, comms, time-clock and more.",
+          badges: ["Live", "Admin-only"] },
         { id: "_audit_link", label: "Audit Log", icon: "fa-list-check",
           desc: "Searchable trail of every admin/staff write — who did what when, with redacted payload. (Opens the Audit Log screen.)",
           badges: ["Live", "Admin-only"], externalTab: "audit" },
@@ -473,6 +474,7 @@ export default function Settings() {
               {tab === "credit_packs" && <CreditPacksSettings />}
               {tab === "commands" && <CommandsPanel />}
               {tab === "backup" && <BackupPanel />}
+              {tab === "data_export" && <DataExportPanel />}
               {tab === "errors" && <ErrorsPanel />}
               {tab === "automation" && <AutomationPanel />}
               {tab === "email_designer" && <EmailDesignerPanel />}

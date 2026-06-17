@@ -12,6 +12,8 @@ import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
+import ReadinessChecklist from "../components/ReadinessChecklist";
+import DashboardQuickLinks from "../components/DashboardQuickLinks";
 import { toast } from "sonner";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
@@ -24,7 +26,7 @@ function fmtTime(iso) {
   } catch { return iso; }
 }
 
-export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
+export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, can = () => true }) {
   const [stats, setStats] = useState(null);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
@@ -199,11 +201,15 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         </div>
       </div>
 
-      {/* Sprint 110cr — Solo-operator owner clock + end-of-day wrap-up */}
+      {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="owner-tools-row">
         <OwnerClock/>
         <EndOfDayPanel onJump={(bid)=>setDetailFor({ id: bid })}/>
       </div>
+
+      {/* Operations polish — Quick links to new ops screens + readiness checklist */}
+      <DashboardQuickLinks onNavigate={onNavigate} can={can} />
+      <ReadinessChecklist onNavigate={onNavigate} />
 
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
