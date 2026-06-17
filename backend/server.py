@@ -19751,6 +19751,157 @@ async def set_staff_role(user_id: str, body: StaffRoleIn, _: dict = Depends(requ
     return {"id": user_id, "staff_role": sr, "permissions": ROLE_PERMISSIONS[sr]}
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# Sprint 110ey — Phase 8: Client communication log
+# ────────────────────────────────────────────────────────────────────────────
+# Timeline of every interaction with a client — phone calls, voicemails,
+# texts, emails, in-person conversations, behavior discussions, payment
+# convos, complaints, follow-ups. Manually logged for now (no SMS/email
+# infrastructure trigger yet — Phase 9+ may add that).
+# ────────────────────────────────────────────────────────────────────────────
+
+COMM_TYPES = (
+    "phone_call", "voicemail", "text", "email", "in_person",
+    "behavior", "schedule_change", "payment", "complaint",
+    "follow_up", "general",
+)
+
+
+class CommLogIn(BaseModel):
+    client_id: str
+    dog_id: Optional[str] = None
+    occurred_at: Optional[str] = None         # ISO; defaults to now
+    type: str = "general"
+    summary: str = Field(min_length=1)
+    follow_up_required: bool = False
+    follow_up_date: Optional[str] = None      # YYYY-MM-DD
+
+
+class CommLogPatch(BaseModel):
+    occurred_at: Optional[str] = None
+    type: Optional[str] = None
+    summary: Optional[str] = None
+    follow_up_required: Optional[bool] = None
+    follow_up_date: Optional[str] = None
+    dog_id: Optional[str] = None
+
+
+@api.get("/communications")
+async def list_communications(
+    client_id: Optional[str] = None,
+    dog_id: Optional[str] = None,
+    type: Optional[str] = None,
+    follow_up_open: Optional[bool] = None,
+    limit: int = 200,
+    _: dict = Depends(require_employee_or_admin),
+):
+    q: Dict[str, Any] = {}
+    if client_id: q["client_id"] = client_id
+    if dog_id: q["dog_id"] = dog_id
+    if type: q["type"] = type
+    if follow_up_open is True:
+        q["follow_up_required"] = True
+        q["follow_up_resolved_at"] = {"$exists": False}
+    rows = await db.client_communications.find(q, {"_id": 0}).sort("occurred_at", -1).to_list(min(max(limit, 1), 1000))
+    return {"entries": rows, "types": list(COMM_TYPES)}
+
+
+@api.post("/communications")
+async def create_communication(body: CommLogIn, user: dict = Depends(require_employee_or_admin)):
+    if body.type not in COMM_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unknown type '{body.type}'. Allowed: {list(COMM_TYPES)}")
+    client = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "id": 1, "name": 1})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if body.dog_id:
+        dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1})
+        if not dog:
+            raise HTTPException(status_code=404, detail="Dog not found")
+        if dog.get("owner_id") != body.client_id:
+            raise HTTPException(status_code=400, detail="Dog doesn't belong to this client")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": body.client_id,
+        "client_name": client.get("name", ""),
+        "dog_id": body.dog_id,
+        "type": body.type,
+        "summary": body.summary.strip(),
+        "occurred_at": body.occurred_at or now_iso(),
+        "follow_up_required": bool(body.follow_up_required),
+        "follow_up_date": body.follow_up_date,
+        "created_at": now_iso(),
+        "created_by_id": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email"),
+    }
+    await db.client_communications.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/communications/{entry_id}")
+async def get_communication(entry_id: str, _: dict = Depends(require_employee_or_admin)):
+    doc = await db.client_communications.find_one({"id": entry_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return doc
+
+
+@api.put("/communications/{entry_id}")
+async def update_communication(entry_id: str, body: CommLogPatch, user: dict = Depends(require_employee_or_admin)):
+    existing = await db.client_communications.find_one({"id": entry_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    patch: Dict[str, Any] = {}
+    if body.type is not None:
+        if body.type not in COMM_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown type '{body.type}'")
+        patch["type"] = body.type
+    if body.summary is not None:
+        patch["summary"] = body.summary.strip()
+    if body.occurred_at is not None:
+        patch["occurred_at"] = body.occurred_at
+    if body.follow_up_required is not None:
+        patch["follow_up_required"] = bool(body.follow_up_required)
+        if not body.follow_up_required:
+            patch["follow_up_resolved_at"] = now_iso()
+            patch["follow_up_resolved_by_id"] = user.get("id")
+    if body.follow_up_date is not None:
+        patch["follow_up_date"] = body.follow_up_date
+    if body.dog_id is not None:
+        patch["dog_id"] = body.dog_id or None
+    if not patch:
+        return existing
+    patch["updated_at"] = now_iso()
+    await db.client_communications.update_one({"id": entry_id}, {"$set": patch})
+    return await db.client_communications.find_one({"id": entry_id}, {"_id": 0})
+
+
+@api.post("/communications/{entry_id}/resolve")
+async def resolve_followup(entry_id: str, user: dict = Depends(require_employee_or_admin)):
+    """Convenience: marks a follow-up as resolved without touching other fields."""
+    existing = await db.client_communications.find_one({"id": entry_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    await db.client_communications.update_one(
+        {"id": entry_id},
+        {"$set": {
+            "follow_up_required": False,
+            "follow_up_resolved_at": now_iso(),
+            "follow_up_resolved_by_id": user.get("id"),
+            "updated_at": now_iso(),
+        }},
+    )
+    return await db.client_communications.find_one({"id": entry_id}, {"_id": 0})
+
+
+@api.delete("/communications/{entry_id}")
+async def delete_communication(entry_id: str, _: dict = Depends(require_admin)):
+    res = await db.client_communications.delete_one({"id": entry_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"ok": True}
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,

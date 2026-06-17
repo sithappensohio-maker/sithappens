@@ -11,6 +11,7 @@ import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
+import CommunicationLog from "../components/CommunicationLog";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {
@@ -367,6 +368,8 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                   )}
                 </div>
                 <IntakeFormsSection clientId={d.owner_id} dogId={d.id} />
+                <SafetyFlagsManager dogId={d.id} compact={false}/>
+                <CommunicationLog clientId={d.owner_id} dogId={d.id} />
               </div>
             </div>
           );

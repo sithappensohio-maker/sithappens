@@ -3517,3 +3517,27 @@ Added under the existing `PortalPaymentPlans` block in `Portal.jsx` — single-l
 
 ### Regression
 - **New** `tests/test_roles_permissions.py` (3 tests): admin role returns full owner permissions; `/staff/roles` matrix is well-shaped (7 roles × 13 keys, owner=all, read_only locked down, trainer-specific mix); assign a role to a real employee via PUT, verify the employee then sees the right permissions via their own `/me/permissions`, with bad-role 400 rejection + default of `read_only` for fresh accounts. All pass.
+
+## Sprint 110ey — Phase 8: Client communication log (2026-02-17)
+**User ask**: Timeline on client + dog profiles capturing phone/voicemail/text/email/in-person/behavior/schedule/payment/complaint/follow-up/general notes with date, staff, summary, optional follow-up date.
+
+### Backend (`server.py`)
+- **New collection** `client_communications` with full CRUD + a convenience resolve endpoint:
+  - `GET /communications?client_id&dog_id&type&follow_up_open&limit` (employee/admin)
+  - `POST /communications` (employee/admin) — validates type ∈ 11 values, validates dog belongs to client
+  - `GET /communications/{id}`
+  - `PUT /communications/{id}` — auto-stamps `follow_up_resolved_at` when toggling `follow_up_required` off
+  - `POST /communications/{id}/resolve` — one-call follow-up resolution
+  - `DELETE /communications/{id}` (admin only)
+- **Captured fields**: client_id, client_name (snapshot), dog_id, type, summary, occurred_at (defaults to now), follow_up_required, follow_up_date, follow_up_resolved_at, follow_up_resolved_by_id, created_by_id, created_by_name (actor stamp).
+- **Cross-validation**: 400 if the dog_id doesn't belong to the client_id.
+
+### Frontend
+- **New reusable `CommunicationLog.jsx`** component dropped into both the client cards (in `Clients.jsx`) and the dog cards (in `Dogs.jsx`, with the same client_id + dog_id).
+- **Inline timeline** with the 11 type pills (color-coded — green for outbound calls/text/payment, orange for behavior/follow-up, red for complaint, blue for email/schedule, purple for in-person), summary line, date, "by X" actor stamp, and an orange left-border for open follow-ups.
+- **Filter pills** appear automatically when there are >3 entries (All / Open follow-ups / per-type counts).
+- **Quick-add modal** with the 11 types arranged in a 3-col grid, auto-focused summary textarea, follow-up checkbox that reveals a date picker pre-filled with today.
+- **One-click "Mark resolved"** for open follow-ups; trash icon for closed entries (admin-only DELETE on the backend so non-admin staff can't accidentally wipe history).
+
+### Regression
+- **New** `tests/test_communications.py` (2 tests): full CRUD lifecycle (create + bad-type 400 + filter by `follow_up_open` + edit + resolve auto-stamp + type filter + delete returns 404 on re-fetch); cross-validation that a dog_id must belong to the client_id (400 if not). Both pass.
