@@ -3159,6 +3159,32 @@ Live endpoint exposed the user's REAL DNS state:
 - ✅ DKIM TXT record present at `resend._domainkey.sithappensohiodogtraining.com`
 - ❌ SPF record exists but doesn't include `_spf.resend.com` ← **this is the exact fix needed**
 
+
+## Sprint 110eh — Settings hub restructure (2026-02-16) · Pass 1
+**User ask**: Reorganize the Settings area into 9 logical master categories with a clean card-grid overview, search, breadcrumbs, and access badges. Don't change any underlying setting behavior — pure navigation reshuffle.
+
+### Implementation (Settings.jsx — nav shell only; all panels untouched)
+- **9 master categories** matching the user's text spec: Business Operations, Services & Pricing, Clients/Dogs & Compliance, Email & Notifications, Marketing & Branding, Staff & Admin, Finance & Bookkeeping, Rewards & Referrals, System & Data
+- Each category has a `blurb` + per-subsection `desc` + `badges` (Live · Optional · Client-facing · Staff-only · Admin-only · Coming soon)
+- **Card-grid overview** when a category is selected — 2-column responsive grid, badges, icons, description, optional "lives inside Day-to-Day for now" notes on placeholder subsections
+- **Search bar** filters all subsections by label + description as a dropdown
+- **Breadcrumbs** at the top: `Settings > {Category} > {Subsection?}`
+- **"Back to overview"** link inside drilled-in panel views
+- **External-link cards** (Manage Staff → /staff, Income Dashboard → /income, Trophy Wall → /trophies) dispatch a `sh:nav` window event; new listener in `App.js` AdminShell flips the top-level tab
+- **Mobile**: collapsible category drawer with hamburger toggle; cards stack to one column
+
+### Coming-soon stubs (no fake controls)
+Placeholder cards for: Recurring Booking Rules, Discounts & Coupons, Taxes & Add-on Fees, Deposits & Cancellation, Intake Forms, Incident Rules, Behavior Risk Flags, Text Message Settings, Marketing Emails, Staff Alerts, Roles & Permissions, Payroll, Schedule Visibility, Payment Processors, Refund Rules, Bookkeeping Exports, Loyalty Tiers, Referral Rules, Streak Milestones, Data Export, Audit Log, App Install / PWA. Each marked "Coming soon" + dimmed + disabled. Where the setting CURRENTLY lives inside Day-to-Day, the card carries an italic note ("Lives inside Day-to-Day for now.") so the operator can find it.
+
+### Preserved behavior
+- Every existing panel (DayToDayControls, ServicesSettings, CreditPacksSettings, PaymentPlanSettingsPanel, EmailDesignerPanel, AutomationPanel, BrandPanel, ServiceInfoPanel, TagsPanel, PortalLinksPanel, MarketingQRPanel, VaccinesPanel, WaiverPanel, CommandsPanel, BackupPanel, ErrorsPanel, account + password) mounts identically when its card is clicked
+- Per-panel save buttons untouched
+- No backend schema changes
+- 11/11 cash-basis + P&L regressions still pass
+
+### Follow-up pass (deferred per user)
+Split the Day-to-Day mega-panel into category-specific sub-panels: Quiet Hours → Email & Notifications, Holiday Pricing → Services & Pricing, Capacity Rules → Business Operations, Loyalty/Referrals → Rewards & Referrals, Vaccine/Waiver compliance → Clients/Dogs & Compliance, Finance defaults → Finance & Bookkeeping.
+
 The pill on screen reads:
 > 🔴 **EMAIL · DOWN** — DNS for `sithappensohiodogtraining.com` is missing: SPF record (`v=spf1 include:_spf.resend.com`). Add these in your DNS provider's TXT records — they're shown on https://resend.com/domains for your sender domain.
 

@@ -50,6 +50,18 @@ function AdminShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Sprint 110eh — Settings card-grid links to external screens (Staff,
+  // Income, Trophies) dispatch a `sh:nav` event so the shell can flip the
+  // active tab without prop-drilling setTab into every panel.
+  useEffect(() => {
+    const onNav = (e) => {
+      const dest = e?.detail;
+      if (typeof dest === "string" && dest) setTab(dest);
+    };
+    window.addEventListener("sh:nav", onNav);
+    return () => window.removeEventListener("sh:nav", onNav);
+  }, []);
+
   const navigateTo = (item) => {
     setSearchOpen(false);
     // Sprint 110cm — search results scroll-and-flash (don't auto-open the

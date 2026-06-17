@@ -25,7 +25,7 @@ const VAX_OPTIONS = [
 export default function Settings() {
   const { user } = useAuth();
   const [s, setS] = useState(null);
-  const [tab, setTab] = useState("day_to_day");
+  const [tab, setTab] = useState("__overview__ops");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -56,73 +56,281 @@ export default function Settings() {
     } catch (e) { setPwMsg(formatErr(e.response?.data?.detail)); }
   };
 
-  // Sprint 110dn — Hooks must come BEFORE the early-return guard. The group
-  // metadata is plain const data and lives below the return guard.
-  const tabGroups = [
+  // ──────────────────────────────────────────────────────────────────────
+  // Sprint 110eh — Settings hub restructure.
+  // 9 master categories. Each subsection carries a description + access
+  // badges so the overview cards explain themselves. Subsections without a
+  // built panel render as "Coming soon" cards (no fake controls).
+  //
+  // IMPORTANT: This is a NAVIGATION reshuffle only. Underlying panels stay
+  // intact — `DayToDayControls` is still one mega-panel under Business
+  // Operations. The follow-up pass will split it into per-category
+  // sub-panels (Quiet Hours, Holiday Pricing, etc.).
+  // ──────────────────────────────────────────────────────────────────────
+  const CATEGORIES = [
     {
-      id: "operations", label: "Operations", icon: "fa-clipboard-check",
-      tabs: ["day_to_day", "hours", "capacity", "rules", "vaccines", "waiver"],
+      id: "ops",
+      label: "Business Operations",
+      icon: "fa-clipboard-check",
+      accent: "shBlue",
+      blurb: "Hours, capacity, kennels, booking rules, and recurring schedules.",
+      subsections: [
+        { id: "day_to_day", label: "Day-to-Day Controls", icon: "fa-sliders",
+          desc: "Master switchboard for money rules, capacity guardrails, defaults, and operational behavior.",
+          badges: ["Live", "Admin-only"] },
+        { id: "hours", label: "Hours & Closures", icon: "fa-clock",
+          desc: "Weekly business hours, holiday closures, blackout dates.",
+          badges: ["Live", "Client-facing"] },
+        { id: "capacity", label: "Capacity & Kennels", icon: "fa-warehouse",
+          desc: "Daily daycare cap, kennel slots, room labels.",
+          badges: ["Live", "Admin-only"] },
+        { id: "rules", label: "Booking Rules", icon: "fa-clipboard-list",
+          desc: "Lead times, advance windows, reschedule limits, deposit thresholds.",
+          badges: ["Live", "Client-facing"] },
+        { id: "_recurring_soon", label: "Recurring Booking Rules", icon: "fa-rotate",
+          desc: "Templated weekly recurring bookings, auto-renewal cadence.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
     },
     {
-      id: "money", label: "Money & Sales", icon: "fa-dollar-sign",
-      tabs: ["services", "credit_packs", "payment_plans"],
+      id: "pricing",
+      label: "Services & Pricing",
+      icon: "fa-dollar-sign",
+      accent: "shGreen",
+      blurb: "Services, programs, packs, plans, taxes, and discounts.",
+      subsections: [
+        { id: "services", label: "Services & Programs", icon: "fa-paw",
+          desc: "Daycare, boarding, grooming, training services, programs, and base prices.",
+          badges: ["Live", "Client-facing"] },
+        { id: "credit_packs", label: "Credit Packs", icon: "fa-coins",
+          desc: "Pre-paid pack catalog for daycare, training, grooming.",
+          badges: ["Live", "Client-facing"] },
+        { id: "payment_plans", label: "Payment Plans", icon: "fa-file-invoice-dollar",
+          desc: "Big-ticket installments — terms, default thresholds, reversal flow.",
+          badges: ["Live", "Admin-only"] },
+        { id: "_discounts_soon", label: "Discounts & Coupons", icon: "fa-percent",
+          desc: "Multi-dog discounts, promo codes, seasonal sales.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_taxes_soon", label: "Taxes & Add-on Fees", icon: "fa-receipt",
+          desc: "Sales-tax rate, late-pickup fee schedule, surcharge rules.",
+          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
+        { id: "_cancel_soon", label: "Deposits & Cancellation", icon: "fa-ban",
+          desc: "Required deposits, 3-tier cancellation fee schedule, no-show penalties.",
+          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
+      ],
     },
     {
-      id: "comms", label: "Communication", icon: "fa-paper-plane",
-      tabs: ["automation", "email_designer", "portal_links", "marketing_qr"],
+      id: "compliance",
+      label: "Clients, Dogs & Compliance",
+      icon: "fa-shield-heart",
+      accent: "shOrange",
+      blurb: "Profile defaults, vaccines, waivers, behavior notes, and intake paperwork.",
+      subsections: [
+        { id: "vaccines", label: "Vaccine Requirements", icon: "fa-shield-virus",
+          desc: "Which vaccines are required, grace periods, expiry warnings.",
+          badges: ["Live", "Client-facing"] },
+        { id: "waiver", label: "Waiver", icon: "fa-file-signature",
+          desc: "Liability waiver content and acceptance settings.",
+          badges: ["Live", "Client-facing"] },
+        { id: "commands", label: "Training Commands", icon: "fa-graduation-cap",
+          desc: "Standard commands menu for trainers, behavior tags for report cards.",
+          badges: ["Live", "Staff-only"] },
+        { id: "_intake_soon", label: "Intake Forms", icon: "fa-clipboard",
+          desc: "Custom new-client intake questionnaires and required fields.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_incidents_soon", label: "Incident Rules", icon: "fa-triangle-exclamation",
+          desc: "Severity tiers, automatic admin alerts, follow-up requirements.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_risk_soon", label: "Behavior Risk Flags", icon: "fa-paw",
+          desc: "Standard risk-flag library shown on dog profiles.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
     },
     {
-      id: "branding", label: "Branding & Content", icon: "fa-palette",
-      tabs: ["brand", "service_info", "tags"],
+      id: "comms",
+      label: "Email & Notifications",
+      icon: "fa-paper-plane",
+      accent: "shGreen",
+      blurb: "Every email path, template, schedule, and deliverability check.",
+      subsections: [
+        { id: "email_designer", label: "Email Designer", icon: "fa-envelope-open-text",
+          desc: "Branding, signature, and per-template subject + body overrides for all 32 emails.",
+          badges: ["Live", "Client-facing"] },
+        { id: "automation", label: "Email Automation & Timing", icon: "fa-paper-plane",
+          desc: "Reminder schedules, quiet hours, and which automations fire when.",
+          badges: ["Live", "Admin-only"] },
+        { id: "_sms_soon", label: "Text Message Settings", icon: "fa-mobile-screen",
+          desc: "SMS reminders for tomorrow's appointments (Twilio).",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_marketing_emails_soon", label: "Marketing Emails", icon: "fa-bullhorn",
+          desc: "Newsletter cadence, segmentation, broadcast composer.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_staff_alerts_soon", label: "Staff Alerts", icon: "fa-bell",
+          desc: "Alert routing for new bookings, incidents, low credits.",
+          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Automation for now." },
+      ],
     },
     {
-      id: "training", label: "Training & Care", icon: "fa-graduation-cap",
-      tabs: ["commands"],
+      id: "branding",
+      label: "Marketing & Branding",
+      icon: "fa-palette",
+      accent: "shBlue",
+      blurb: "Logo, brand colors, public copy, QR codes, and portal content.",
+      subsections: [
+        { id: "brand", label: "Brand & Theme", icon: "fa-palette",
+          desc: "Logo, colors, fonts, splatter intensity, UI polish knobs.",
+          badges: ["Live", "Client-facing"] },
+        { id: "service_info", label: "Public Service Info", icon: "fa-circle-info",
+          desc: "Public-facing service descriptions shown on the booking page and confirmations.",
+          badges: ["Live", "Client-facing"] },
+        { id: "tags", label: "Mood Tags", icon: "fa-tags",
+          desc: "Daily mood / personality tags trainers can stick on report cards.",
+          badges: ["Live", "Staff-only"] },
+        { id: "portal_links", label: "Portal Links", icon: "fa-link",
+          desc: "Outbound links shown to clients in the portal (Instagram, Google Reviews, etc).",
+          badges: ["Optional", "Client-facing"] },
+        { id: "marketing_qr", label: "Marketing QR Codes", icon: "fa-qrcode",
+          desc: "Generate branded QR codes for flyers, business cards, kennel posters.",
+          badges: ["Optional", "Admin-only"] },
+      ],
     },
     {
-      id: "system", label: "System & Admin", icon: "fa-shield-halved",
-      tabs: ["account", "backup", "errors"],
+      id: "staff",
+      label: "Staff & Admin",
+      icon: "fa-users-gear",
+      accent: "shBlue",
+      blurb: "Team accounts, roles, permissions, schedule visibility.",
+      subsections: [
+        { id: "_staff_link", label: "Manage Staff", icon: "fa-users",
+          desc: "Add, edit, and remove trainers, kennel-techs, and front-desk team. (Opens the Staff screen.)",
+          badges: ["Live", "Admin-only"], coming: false, externalTab: "staff" },
+        { id: "_roles_soon", label: "Roles & Permissions", icon: "fa-lock",
+          desc: "Granular permission matrix per staff role.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_payroll_soon", label: "Payroll Settings", icon: "fa-money-check",
+          desc: "Hourly rates, overtime rules, pay-period boundaries.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_schedule_vis_soon", label: "Schedule Visibility", icon: "fa-eye",
+          desc: "Which staff can see/edit which days of the schedule.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
+    },
+    {
+      id: "finance",
+      label: "Finance & Bookkeeping",
+      icon: "fa-chart-pie",
+      accent: "shGreen",
+      blurb: "Income reports, payment processors, refunds, and bookkeeping exports.",
+      subsections: [
+        { id: "_income_link", label: "Income Dashboard", icon: "fa-chart-line",
+          desc: "Live P&L, weekly tallies, transaction log, and exports. (Opens the Income screen.)",
+          badges: ["Live", "Admin-only"], externalTab: "income" },
+        { id: "_processors_soon", label: "Payment Processors", icon: "fa-credit-card",
+          desc: "Stripe / processor keys, webhook health, payout schedule.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_refunds_soon", label: "Refund Rules", icon: "fa-rotate-left",
+          desc: "Refund windows, partial refund logic, reason codes.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_exports_soon", label: "Bookkeeping Exports", icon: "fa-file-export",
+          desc: "QuickBooks / Xero export profiles, CPA-ready PDF presets.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
+    },
+    {
+      id: "rewards",
+      label: "Rewards & Referrals",
+      icon: "fa-trophy",
+      accent: "shOrange",
+      blurb: "Trophies, streaks, loyalty tiers, referral rules, and badges.",
+      subsections: [
+        { id: "_trophies_link", label: "Trophy Wall", icon: "fa-trophy",
+          desc: "Browse, award, and revoke trophies for dogs and clients. (Opens the Trophies screen.)",
+          badges: ["Live", "Client-facing"], externalTab: "trophies" },
+        { id: "_loyalty_soon", label: "Loyalty Tiers", icon: "fa-medal",
+          desc: "Bronze / Silver / Gold thresholds and perks per tier.",
+          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
+        { id: "_referrals_soon", label: "Referral Rules", icon: "fa-share-nodes",
+          desc: "Referral reward amounts, redemption rules, expiry.",
+          badges: ["Coming soon"], comingSoon: true, note: "Lives inside Day-to-Day for now." },
+        { id: "_streaks_soon", label: "Streak Milestones", icon: "fa-fire",
+          desc: "Visit-streak thresholds that auto-award trophies.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
+    },
+    {
+      id: "system",
+      label: "System & Data",
+      icon: "fa-shield-halved",
+      accent: "shBlue",
+      blurb: "Account, backups, error logs, data export, and security.",
+      subsections: [
+        { id: "account", label: "My Account", icon: "fa-user-shield",
+          desc: "Your signed-in admin profile and password.",
+          badges: ["Live", "Admin-only"] },
+        { id: "backup", label: "Backup & Restore", icon: "fa-database",
+          desc: "Snapshot the database, restore from a backup, or download a copy.",
+          badges: ["Live", "Admin-only"] },
+        { id: "errors", label: "Server Errors", icon: "fa-triangle-exclamation",
+          desc: "Recent server-side error log — useful for support.",
+          badges: ["Live", "Admin-only"] },
+        { id: "_export_soon", label: "Data Export", icon: "fa-cloud-arrow-down",
+          desc: "On-demand export of clients, dogs, bookings, finances.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_audit_soon", label: "Audit Log", icon: "fa-list-check",
+          desc: "Searchable trail of every admin action — who did what when.",
+          badges: ["Coming soon"], comingSoon: true },
+        { id: "_pwa_soon", label: "App Install / PWA", icon: "fa-mobile",
+          desc: "PWA install prompts, branded splash screen, offline mode.",
+          badges: ["Coming soon"], comingSoon: true },
+      ],
     },
   ];
-  const groupOf = (tabId) => tabGroups.find(g => g.tabs.includes(tabId))?.id;
-  const [openGroups, setOpenGroups] = useState(() => new Set([groupOf(tab) || "operations"]));
-  const toggleGroup = (gid) => setOpenGroups(s => { const n = new Set(s); n.has(gid) ? n.delete(gid) : n.add(gid); return n; });
-  useEffect(() => {
-    const g = groupOf(tab);
-    if (g && !openGroups.has(g)) setOpenGroups(prev => new Set([...prev, g]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab]);
+  const allSubs = CATEGORIES.flatMap(c => c.subsections.map(s => ({ ...s, _cat: c })));
+  const findCategoryOf = (tabId) =>
+    CATEGORIES.find(c => c.subsections.some(s => s.id === tabId))?.id || "ops";
+
+  const [category, setCategory] = useState(() => findCategoryOf(tab));
+  const [search, setSearch] = useState("");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const openSub = (sub) => {
+    if (sub.comingSoon) return;
+    if (sub.externalTab) {
+      window.dispatchEvent(new CustomEvent("sh:nav", { detail: sub.externalTab }));
+      return;
+    }
+    // Sprint 110eh — sync the sidebar category whenever a sub is opened
+    // (search jumps can target a sub in a different category).
+    const catId = findCategoryOf(sub.id);
+    if (catId) setCategory(catId);
+    setTab(sub.id);
+    setMobileNavOpen(false);
+  };
+
+  const goCategoryOverview = (catId) => {
+    setCategory(catId);
+    // Reset tab to a sentinel value so the right column shows the overview.
+    setTab(`__overview__${catId}`);
+    setMobileNavOpen(false);
+  };
+
+  const isOverview = tab.startsWith("__overview__");
+  const activeCategory = CATEGORIES.find(c => c.id === category) || CATEGORIES[0];
+  const activeSub = !isOverview ? allSubs.find(s => s.id === tab) : null;
+
+  // Search matches subsections by label + description (case-insensitive).
+  const q = search.trim().toLowerCase();
+  const searchHits = q.length >= 2
+    ? allSubs.filter(s =>
+        !s.comingSoon &&
+        (s.label.toLowerCase().includes(q) || (s.desc || "").toLowerCase().includes(q)),
+      )
+    : [];
 
   if (!s) return <div className="text-gray-400 text-sm">Loading settings…</div>;
 
-  // Tab metadata lookup: maps tab id → label/icon (id keys match the panel
-  // mounts below; the label/icon are what shows in the sidebar).
-  const tabsById = {
-    day_to_day:     { label: "Day-to-Day Controls", icon: "fa-sliders" },
-    hours:          { label: "Hours",               icon: "fa-clock" },
-    capacity:       { label: "Capacity & Kennels",  icon: "fa-warehouse" },
-    rules:          { label: "Booking Rules",       icon: "fa-clipboard-list" },
-    vaccines:       { label: "Vaccines",            icon: "fa-shield-virus" },
-    waiver:         { label: "Waiver",              icon: "fa-file-signature" },
-    services:       { label: "Services & Programs", icon: "fa-dollar-sign" },
-    credit_packs:   { label: "Credit Packs",        icon: "fa-coins" },
-    payment_plans:  { label: "Payment Plans",       icon: "fa-file-invoice-dollar" },
-    automation:     { label: "Email Automation",    icon: "fa-paper-plane" },
-    email_designer: { label: "Email Designer",      icon: "fa-envelope-open-text" },
-    portal_links:   { label: "Portal Links",        icon: "fa-link" },
-    marketing_qr:   { label: "Marketing QR",        icon: "fa-qrcode" },
-    brand:          { label: "Brand & Theme",       icon: "fa-palette" },
-    service_info:   { label: "Service Info",        icon: "fa-circle-info" },
-    tags:           { label: "Mood Tags",           icon: "fa-tags" },
-    commands:       { label: "Training Commands",   icon: "fa-graduation-cap" },
-    account:        { label: "Account",             icon: "fa-user-shield" },
-    backup:         { label: "Backup & Restore",    icon: "fa-database" },
-    errors:         { label: "Server Errors",       icon: "fa-triangle-exclamation" },
-  };
-  const tabs = Object.entries(tabsById).map(([id, meta]) => ({ id, ...meta }));
-
   return (
-    <div className="animate-slide-in space-y-6" data-testid="settings-screen">
+    <div className="animate-slide-in space-y-5" data-testid="settings-screen">
       <PageHero
         eyebrow={{ icon: "fa-sliders", text: "Configuration", color: "text-shBlue" }}
         title="Settings."
@@ -132,80 +340,217 @@ export default function Settings() {
         testid="settings-hero"
       />
 
-      <div className="flex flex-col md:flex-row gap-4 md:gap-6">
-        <nav className="w-full md:w-60 md:shrink-0 md:block flex md:flex-col overflow-x-auto md:overflow-visible gap-1 md:gap-2 pb-2 md:pb-0" data-testid="settings-sidebar">
-          {tabGroups.map(group => {
-            const open = openGroups.has(group.id);
-            return (
-              <div key={group.id} className="md:block flex-shrink-0">
-                <button type="button" onClick={() => toggleGroup(group.id)}
-                        data-testid={`settings-group-${group.id}`}
-                        className="hidden md:flex w-full items-center justify-between py-2 px-3 rounded text-[11px] font-black uppercase tracking-[0.18em] text-gray-500 hover:text-shGreen transition">
-                  <span className="flex items-center gap-2">
-                    <i className={`fas ${group.icon} text-shBlue/70 text-[12px] w-3`} />
-                    {group.label}
-                  </span>
-                  <i className={`fas fa-chevron-${open ? "down" : "right"} text-[10px] text-gray-600`} />
+      {/* Search + breadcrumb row */}
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-3 md:p-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+        <div className="flex items-center gap-2 text-[13px] font-black uppercase tracking-widest min-w-0 flex-wrap" data-testid="settings-breadcrumb">
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(o => !o)}
+            data-testid="settings-mobile-toggle"
+            className="md:hidden bg-bgHover/60 border border-bgHover rounded px-3 py-1.5 text-shBlue"
+            aria-label="Toggle settings nav"
+          >
+            <i className={`fas ${mobileNavOpen ? "fa-xmark" : "fa-bars"}`}/>
+          </button>
+          <i className="fas fa-sliders text-shBlue text-[11px]"/>
+          <span className="text-gray-400">Settings</span>
+          <i className="fas fa-chevron-right text-[9px] text-gray-600"/>
+          <span className="text-white">{activeCategory.label}</span>
+          {activeSub && (
+            <>
+              <i className="fas fa-chevron-right text-[9px] text-gray-600"/>
+              <span className="text-shBlue">{activeSub.label}</span>
+            </>
+          )}
+        </div>
+        <div className="flex-1 md:max-w-md md:ml-auto relative">
+          <i className="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[12px]"/>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search every setting…"
+            data-testid="settings-search"
+            className="w-full bg-bgBase border border-bgHover rounded-lg pl-9 pr-3 py-2 text-[14px] text-white focus:border-shBlue/60 outline-none"
+          />
+          {searchHits.length > 0 && (
+            <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-bgPanel border border-bgHover rounded-lg shadow-2xl max-h-80 overflow-y-auto" data-testid="settings-search-results">
+              {searchHits.slice(0, 12).map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => { openSub(s); setSearch(""); }}
+                  data-testid={`settings-search-hit-${s.id}`}
+                  className="w-full text-left px-3 py-2 hover:bg-bgHover/60 border-b border-bgHover/30 last:border-b-0"
+                >
+                  <div className="flex items-center gap-2">
+                    <i className={`fas ${s.icon} text-shBlue text-[12px] w-4`}/>
+                    <span className="text-[14px] font-black uppercase tracking-widest text-white">{s.label}</span>
+                    <span className="text-[11px] text-gray-500 normal-case tracking-normal ml-auto">{s._cat.label}</span>
+                  </div>
+                  <p className="text-[12px] text-gray-400 normal-case mt-0.5 ml-6">{s.desc}</p>
                 </button>
-                <div className={`${open ? "block" : "hidden md:hidden"} md:block`}>
-                  {open && group.tabs.map(tabId => {
-                    const meta = tabsById[tabId];
-                    if (!meta) return null;
-                    const active = tab === tabId;
-                    return (
-                      <button key={tabId} onClick={() => setTab(tabId)} data-testid={`settings-tab-${tabId}`}
-                              className={`shrink-0 md:w-full text-left py-2.5 px-3 md:pl-7 rounded-lg text-[14px] font-black uppercase tracking-widest transition whitespace-nowrap ${
-                                active ? "bg-bgPanel border-l-4 border-shBlue text-shBlue" : "hover:bg-bgHover text-gray-400 hover:text-white"
-                              }`}>
-                        <i className={`fas ${meta.icon} mr-3 w-4 text-[13px]`} /> {meta.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
-        </nav>
-
-        <div className="flex-1 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
-          {tab === "day_to_day" && <DayToDayPanel s={s} save={save} saving={saving} />}
-          {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
-          {tab === "brand" && <BrandPanel />}
-          {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
-          {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
-          {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
-          {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
-          {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
-          {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
-          {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
-          {tab === "marketing_qr" && <MarketingQRPanel />}
-          {tab === "services" && <ServicesSettings />}
-          {tab === "credit_packs" && <CreditPacksSettings />}
-          {tab === "commands" && <CommandsPanel />}
-          {tab === "backup" && <BackupPanel />}
-          {tab === "errors" && <ErrorsPanel />}
-          {tab === "automation" && <AutomationPanel />}
-          {tab === "email_designer" && <EmailDesignerPanel />}
-          {tab === "payment_plans" && <PaymentPlanSettingsPanel />}
-          {tab === "account" && (
-            <div className="space-y-5 max-w-md" data-testid="account-panel">
-              <div>
-                <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Signed in as</p>
-                <p className="text-sm text-white font-black mt-1">{user.name} · {user.email}</p>
-              </div>
-              <div className="border-t border-bgHover pt-5 space-y-3">
-                <h4 className="text-xs font-black text-shBlue uppercase tracking-widest mb-2">Change Password</h4>
-                <Field label="Current Password" type="password" value={pw.current} onChange={(v)=>setPw({...pw,current:v})} testId="current-pw" />
-                <Field label="New Password" type="password" value={pw.next} onChange={(v)=>setPw({...pw,next:v})} testId="new-pw" />
-                <Field label="Confirm New Password" type="password" value={pw.confirm} onChange={(v)=>setPw({...pw,confirm:v})} testId="confirm-pw" />
-                {pwMsg && <div className={`text-[14px] font-black uppercase tracking-widest p-2 rounded ${pwMsg==="Password updated"?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>{pwMsg}</div>}
-                <button onClick={changePw} data-testid="save-password" className="bg-shBlue text-white px-6 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow">Update Password</button>
-              </div>
+              ))}
             </div>
           )}
         </div>
       </div>
+
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6 relative">
+        {/* Category sidebar */}
+        <nav
+          className={`${mobileNavOpen ? "block" : "hidden"} md:block md:w-64 md:shrink-0 space-y-1.5`}
+          data-testid="settings-sidebar"
+        >
+          {CATEGORIES.map(cat => {
+            const isActive = category === cat.id;
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => goCategoryOverview(cat.id)}
+                data-testid={`settings-category-${cat.id}`}
+                className={`w-full text-left rounded-xl px-3 py-2.5 transition border-l-4 ${
+                  isActive
+                    ? "bg-bgPanel border-shBlue shadow-md"
+                    : "bg-bgPanel/40 border-transparent hover:bg-bgPanel/70 hover:border-shBlue/40"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <i className={`fas ${cat.icon} text-[14px] ${isActive ? "text-shGreen" : "text-shBlue/70"}`}/>
+                  <span className={`text-[13px] font-black uppercase tracking-[0.18em] ${isActive ? "text-white" : "text-gray-300"}`}>{cat.label}</span>
+                </div>
+                <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 ml-6 leading-snug">{cat.blurb}</p>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Main content */}
+        <div className="flex-1 min-w-0 bg-bgPanel border border-bgHover rounded-xl p-4 md:p-6 shadow-2xl overflow-x-auto">
+          {isOverview ? (
+            <CategoryOverview category={activeCategory} onOpen={openSub} />
+          ) : (
+            <>
+              {/* Inline back link to the parent category overview */}
+              <button
+                type="button"
+                onClick={() => goCategoryOverview(category)}
+                data-testid="settings-back-to-overview"
+                className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-shGreen transition mb-4 inline-flex items-center gap-1"
+              >
+                <i className="fas fa-chevron-left"/> Back to {activeCategory.label}
+              </button>
+              {tab === "day_to_day" && <DayToDayPanel s={s} save={save} saving={saving} />}
+              {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
+              {tab === "brand" && <BrandPanel />}
+              {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
+              {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
+              {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
+              {tab === "tags" && <TagsPanel s={s} save={save} saving={saving} />}
+              {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
+              {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
+              {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
+              {tab === "marketing_qr" && <MarketingQRPanel />}
+              {tab === "services" && <ServicesSettings />}
+              {tab === "credit_packs" && <CreditPacksSettings />}
+              {tab === "commands" && <CommandsPanel />}
+              {tab === "backup" && <BackupPanel />}
+              {tab === "errors" && <ErrorsPanel />}
+              {tab === "automation" && <AutomationPanel />}
+              {tab === "email_designer" && <EmailDesignerPanel />}
+              {tab === "payment_plans" && <PaymentPlanSettingsPanel />}
+              {tab === "account" && (
+                <div className="space-y-5 max-w-md" data-testid="account-panel">
+                  <div>
+                    <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Signed in as</p>
+                    <p className="text-sm text-white font-black mt-1">{user.name} · {user.email}</p>
+                  </div>
+                  <div className="border-t border-bgHover pt-5 space-y-3">
+                    <h4 className="text-xs font-black text-shBlue uppercase tracking-widest mb-2">Change Password</h4>
+                    <Field label="Current Password" type="password" value={pw.current} onChange={(v)=>setPw({...pw,current:v})} testId="current-pw" />
+                    <Field label="New Password" type="password" value={pw.next} onChange={(v)=>setPw({...pw,next:v})} testId="new-pw" />
+                    <Field label="Confirm New Password" type="password" value={pw.confirm} onChange={(v)=>setPw({...pw,confirm:v})} testId="confirm-pw" />
+                    {pwMsg && <div className={`text-[14px] font-black uppercase tracking-widest p-2 rounded ${pwMsg==="Password updated"?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>{pwMsg}</div>}
+                    <button onClick={changePw} data-testid="save-password" className="bg-shBlue text-white px-6 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow">Update Password</button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+// ─────────────── Category overview (card grid) ─────────────────
+function CategoryOverview({ category, onOpen }) {
+  return (
+    <div className="space-y-5" data-testid={`category-overview-${category.id}`}>
+      <div>
+        <h2 className="text-2xl font-black text-white uppercase tracking-wider">{category.label}</h2>
+        <p className="text-[14px] text-gray-400 mt-1 normal-case">{category.blurb}</p>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {category.subsections.map(sub => (
+          <SubsectionCard key={sub.id} sub={sub} onOpen={() => onOpen(sub)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SubsectionCard({ sub, onOpen }) {
+  const isComing = !!sub.comingSoon;
+  return (
+    <button
+      onClick={onOpen}
+      disabled={isComing}
+      data-testid={`settings-card-${sub.id}`}
+      className={`text-left rounded-xl border p-4 transition flex flex-col gap-2 ${
+        isComing
+          ? "bg-bgBase/30 border-bgHover/40 cursor-not-allowed opacity-60"
+          : "bg-bgBase/50 border-bgHover hover:border-shBlue hover:bg-bgBase/80 hover:shadow-lg hover:-translate-y-0.5"
+      }`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-[16px] shrink-0 ${
+          isComing ? "bg-bgHover/40 text-gray-500" : "bg-shBlue/15 text-shBlue"
+        }`}>
+          <i className={`fas ${sub.icon}`}/>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className={`text-[15px] font-black uppercase tracking-widest ${isComing ? "text-gray-400" : "text-white"}`}>{sub.label}</h3>
+            {(sub.badges || []).map(b => <Badge key={b} label={b} />)}
+          </div>
+          <p className="text-[13px] text-gray-400 mt-1 normal-case leading-snug">{sub.desc}</p>
+          {sub.note && (
+            <p className="text-[11px] text-shOrange mt-1.5 normal-case italic">
+              <i className="fas fa-circle-info mr-1"/>{sub.note}
+            </p>
+          )}
+        </div>
+        {!isComing && (
+          <i className="fas fa-chevron-right text-gray-500 self-center"/>
+        )}
+      </div>
+    </button>
+  );
+}
+
+function Badge({ label }) {
+  const palette = {
+    "Live":          "bg-shGreen/15  text-shGreen  border-shGreen/30",
+    "Optional":      "bg-shBlue/15   text-shBlue   border-shBlue/30",
+    "Client-facing": "bg-purple-500/15 text-purple-300 border-purple-500/30",
+    "Staff-only":    "bg-shOrange/15 text-shOrange border-shOrange/30",
+    "Admin-only":    "bg-red-500/15  text-red-400  border-red-500/30",
+    "Coming soon":   "bg-bgHover/60  text-gray-400 border-bgHover",
+  }[label] || "bg-bgHover/60 text-gray-400 border-bgHover";
+  return (
+    <span className={`text-[9px] font-black uppercase tracking-[0.2em] px-1.5 py-0.5 rounded border ${palette}`}>
+      {label}
+    </span>
   );
 }
 
