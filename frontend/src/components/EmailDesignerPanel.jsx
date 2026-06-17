@@ -14,8 +14,91 @@ import RichTextEditor from "./RichTextEditor";
 export default function EmailDesignerPanel() {
   return (
     <div className="space-y-6" data-testid="email-designer-panel">
+      <EmailHealthPill />
       <BrandingCard />
       <TemplatesCard />
+    </div>
+  );
+}
+
+// ----------------------------- Health pill -----------------------------
+
+// Sprint 110eg-5 — Live deliverability indicator at the top of the panel.
+// Pings `/admin/email-health` which resolves the sender domain's SPF +
+// DKIM TXT records and combines them with the most-recent send-error to
+// decide green / amber / red. Clicking "Re-check" forces a fresh fetch
+// — useful once the operator updates their DNS and wants to confirm.
+function EmailHealthPill() {
+  const [health, setHealth] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/email-health");
+      setHealth(data);
+    } catch (e) {
+      setHealth({ status: "down", message: formatErr(e?.response?.data?.detail) || "Couldn't fetch health" });
+    }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  if (loading && !health) {
+    return (
+      <div className="bg-bgPanel border border-bgHover rounded-xl px-4 py-3 text-[12px] text-gray-400 uppercase tracking-widest font-black">
+        Checking deliverability…
+      </div>
+    );
+  }
+  if (!health) return null;
+
+  const palette = {
+    ok:   { bg: "bg-shGreen/10",  border: "border-shGreen/40",  text: "text-shGreen",  icon: "fa-circle-check",      label: "Healthy" },
+    warn: { bg: "bg-shOrange/10", border: "border-shOrange/40", text: "text-shOrange", icon: "fa-triangle-exclamation", label: "Warning" },
+    down: { bg: "bg-red-500/10",  border: "border-red-500/40",  text: "text-red-400",  icon: "fa-circle-xmark",      label: "Down" },
+    off:  { bg: "bg-bgHover/40",  border: "border-bgHover",     text: "text-gray-400", icon: "fa-power-off",         label: "Off" },
+  }[health.status] || { bg: "bg-bgHover/40", border: "border-bgHover", text: "text-gray-400", icon: "fa-circle-question", label: "Unknown" };
+
+  return (
+    <div className={`border ${palette.border} ${palette.bg} rounded-xl px-4 py-3 flex items-start gap-3`} data-testid="email-health-pill">
+      <i className={`fas ${palette.icon} ${palette.text} text-xl pt-0.5`}/>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className={`text-[12px] font-black uppercase tracking-[0.3em] ${palette.text}`}>Email · {palette.label}</span>
+          {health.sender_domain && (
+            <span className="text-[11px] font-mono text-gray-400 normal-case">{health.sender_domain}</span>
+          )}
+        </div>
+        <p className="text-[13px] text-gray-300 mt-1 normal-case leading-snug" data-testid="email-health-message">{health.message}</p>
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-widest font-black text-gray-500">
+          <span className={health.has_api_key ? "text-shGreen" : "text-red-400"}>
+            <i className={`fas ${health.has_api_key ? "fa-check" : "fa-xmark"} mr-1`}/>Resend Key
+          </span>
+          <span className={health.spf_includes_resend ? "text-shGreen" : "text-red-400"}>
+            <i className={`fas ${health.spf_includes_resend ? "fa-check" : "fa-xmark"} mr-1`}/>SPF
+          </span>
+          <span className={health.dkim_record_found ? "text-shGreen" : "text-red-400"}>
+            <i className={`fas ${health.dkim_record_found ? "fa-check" : "fa-xmark"} mr-1`}/>DKIM
+          </span>
+          {health.quiet_hours_active && (
+            <span className="text-shOrange">
+              <i className="fas fa-moon mr-1"/>Quiet hours
+            </span>
+          )}
+          {health.admin_email && (
+            <span className="normal-case text-gray-400 tracking-normal">Sends to <span className="text-white font-bold">{health.admin_email}</span></span>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={load}
+        disabled={loading}
+        data-testid="email-health-recheck"
+        className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border ${palette.border} ${palette.text} hover:bg-bgBase/60 disabled:opacity-50`}
+      >
+        <i className={`fas fa-rotate ${loading ? "fa-spin" : ""} mr-1`}/>Re-check
+      </button>
     </div>
   );
 }

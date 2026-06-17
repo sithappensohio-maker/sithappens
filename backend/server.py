@@ -12296,6 +12296,90 @@ async def pl_monthly_status(_: dict = Depends(require_admin)):
     }
 
 
+# Sprint 110eg-5 — Email deliverability "health" pill. The Resend API key
+# is send-only (can't list domains), so we approximate the verification
+# state by directly resolving the SPF + DKIM TXT records the operator's
+# DNS must publish for Resend to accept the sender. Green when both are
+# present AND `email_service.last_send_error` is clean; red otherwise.
+@api.get("/admin/email-health")
+async def email_health(_: dict = Depends(require_admin)):
+    import dns.resolver
+    sender = email_service.SENDER_EMAIL or ""
+    admin_email = email_service.ADMIN_NOTIFICATION_EMAIL or ""
+    has_key = bool(email_service.RESEND_API_KEY)
+    domain = sender.split("@", 1)[1] if "@" in sender else ""
+
+    def _txt_lookup(name: str) -> List[str]:
+        try:
+            # Short timeout — we don't want the UI hanging on a slow DNS.
+            resolver = dns.resolver.Resolver(configure=True)
+            resolver.lifetime = 3.5
+            resolver.timeout = 3.5
+            answers = resolver.resolve(name, "TXT")
+            out: List[str] = []
+            for rdata in answers:
+                parts = [b.decode("utf-8", errors="ignore") if isinstance(b, bytes) else str(b) for b in rdata.strings]
+                out.append("".join(parts))
+            return out
+        except Exception:
+            return []
+
+    spf_records: List[str] = []
+    dkim_records: List[str] = []
+    if domain:
+        spf_records = [r for r in await asyncio.to_thread(_txt_lookup, domain) if "v=spf1" in r.lower()]
+        # Resend's DKIM selector is published as `resend._domainkey.<domain>`.
+        dkim_records = await asyncio.to_thread(_txt_lookup, f"resend._domainkey.{domain}")
+
+    spf_includes_resend = any("resend" in r.lower() for r in spf_records)
+    dkim_present = any("p=" in r.lower() for r in dkim_records)
+
+    last_err = email_service.last_send_error
+    quiet = await email_service._is_in_quiet_hours()
+
+    if not has_key:
+        status = "off"
+        message = "Resend API key not configured."
+    elif not domain:
+        status = "off"
+        message = "Sender email not configured (SENDER_EMAIL)."
+    elif not spf_includes_resend or not dkim_present:
+        status = "down"
+        missing = []
+        if not spf_includes_resend:
+            missing.append("SPF record (v=spf1 include:_spf.resend.com)")
+        if not dkim_present:
+            missing.append(f"DKIM record at resend._domainkey.{domain}")
+        message = (
+            f"DNS for {domain} is missing: {' + '.join(missing)}. "
+            f"Add these in your DNS provider's TXT records — they're "
+            f"shown on https://resend.com/domains for your sender domain."
+        )
+    elif last_err and "not verified" in last_err.lower():
+        status = "down"
+        message = f"DNS looks right but Resend still rejects sends: {last_err}"
+    elif last_err and not quiet:
+        status = "warn"
+        message = f"Last send failed: {last_err}"
+    else:
+        status = "ok"
+        message = "Sender domain verified · ready to send."
+
+    return {
+        "status": status,  # one of: ok / warn / down / off
+        "message": message,
+        "sender_email": sender,
+        "sender_domain": domain,
+        "admin_email": admin_email,
+        "has_api_key": has_key,
+        "spf_record_found": bool(spf_records),
+        "spf_includes_resend": spf_includes_resend,
+        "dkim_record_found": dkim_present,
+        "quiet_hours_active": quiet,
+        "last_send_error": last_err,
+    }
+
+
 # ────────────────────────── Employees + Time Clock (Sprint 92) ──────────────────────────
 # Employees are stored in the same `users` collection (role="employee") so
 # auth/JWT logic stays consistent. Extra employee-only profile fields live

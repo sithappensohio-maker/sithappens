@@ -3135,6 +3135,35 @@ Once the user restores their Cloudflare nameservers and Resend re-verifies the d
 - **P1** Daycare capacity guardrail (prevent overbooking without admin override)
 - **P2** "Currently on premises" kiosk wall view
 - **P2** Holiday / closure calendar
+
+## Sprint 110eg-5 — Email Health pill (2026-02-16)
+**User ask**: Add a small green/red pill on the Email Designer page so the operator knows instantly when their DNS fix lands at Resend.
+
+### Implementation
+- **Backend**: new `GET /api/admin/email-health` endpoint. Since the Resend API key is send-only (can't list domains via `resend.Domains.list()` — returns *"This API key is restricted to only send emails"*), the endpoint approximates Resend's verification state by directly resolving TXT records via `dnspython`:
+  - SPF on `{sender_domain}` — must contain `resend` (i.e. `_spf.resend.com`)
+  - DKIM on `resend._domainkey.{sender_domain}` — must contain `p=`
+  - Combined with `email_service.last_send_error` and quiet-hours state to pick a final status: `ok / warn / down / off`.
+  - 3.5 s DNS timeout so the UI never hangs.
+
+- **Frontend**: new `EmailHealthPill` component at the top of the Email Designer panel.
+  - Color: green (ok), amber (warn), red (down), neutral (off)
+  - Headline: status + sender domain
+  - Sub-line: the exact actionable message from the backend
+  - Inline chips show each individual check (Resend Key ✓ · SPF ✓/✗ · DKIM ✓/✗ · Quiet hours · "Sends to {admin_email}")
+  - **Re-check** button forces a fresh DNS lookup — useful right after the operator updates their TXT records.
+
+### Verified
+Live endpoint exposed the user's REAL DNS state:
+- ✅ Resend key configured
+- ✅ DKIM TXT record present at `resend._domainkey.sithappensohiodogtraining.com`
+- ❌ SPF record exists but doesn't include `_spf.resend.com` ← **this is the exact fix needed**
+
+The pill on screen reads:
+> 🔴 **EMAIL · DOWN** — DNS for `sithappensohiodogtraining.com` is missing: SPF record (`v=spf1 include:_spf.resend.com`). Add these in your DNS provider's TXT records — they're shown on https://resend.com/domains for your sender domain.
+
+When the operator updates the SPF record and hits Re-check, the pill flips to green and every email path (test sends, monthly P&L cron, booking confirmations, password resets, etc.) starts working again.
+
 - **P2** Tipping at checkout / Gift cards
 - **P2** Admin "App Update" button via host trigger file (Bazzite Docker workaround)
 - **P3** SMS reminders (Twilio)
