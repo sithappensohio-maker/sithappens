@@ -3301,3 +3301,16 @@ Clicking Send currently surfaces:
 The moment the user restores their SPF record at Resend and re-checks, the same Send button will return "Sent to sithappensohio@gmail.com — check that inbox in a minute" — and the rest of the app's email pipeline (P&L cron, booking confirmations, password resets) lights up at the same time.
 
 - All 13 cash-basis / P&L / cash-flow tests pass.
+
+## Sprint 110eo — Gmail From-line display name fix (2026-02-17)
+**User ask**: *"this part should say Sit Happens not hello"* — Gmail inbox was showing every email's sender column as "hello" instead of the brand name.
+
+### Cause
+`backend/.env` had `SENDER_EMAIL="hello@mail.sithappens.app"` — just the bare address, no RFC 5322 display name. Gmail falls back to the local-part ("hello") when no display name is provided.
+
+### Fix
+Updated `.env` to RFC 5322 format: `SENDER_EMAIL="Sit Happens <hello@mail.sithappens.app>"`. The existing `<>`-stripping logic in `/api/admin/email-health` (Sprint 110en) already handles this format for DNS checks, so SPF/DKIM verification continues to pass cleanly.
+
+### Verified
+- `/api/admin/email-health` → `status: ok`, `sender_domain: mail.sithappens.app` (no trailing `>`).
+- `/api/admin/email-health/test` → `{"ok": true}` to `sithappensohio@gmail.com`. Future emails will show as **From: Sit Happens** in Gmail.
