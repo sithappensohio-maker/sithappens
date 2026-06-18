@@ -130,6 +130,67 @@ def test_announcement_unpublished_hidden_but_admin_sees_it():
         requests.delete(f"{BASE_URL}/api/admin/announcements/{aid}", headers=h_admin, timeout=15)
 
 
+def test_create_announcement_returns_email_broadcast_summary():
+    """Posting a published announcement should return an `email_broadcast`
+    summary with a `queued` recipient count so the admin UI can show feedback
+    immediately. The actual send happens in a background task (so we don't
+    block on Resend)."""
+    h_admin = _admin_h()
+    r = requests.post(f"{BASE_URL}/api/admin/announcements",
+                      json={"title": f"broadcast {uuid.uuid4().hex[:6]}",
+                            "body": "auto-broadcast test", "published": True},
+                      headers=h_admin, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    aid = body["id"]
+    try:
+        assert "email_broadcast" in body
+        eb = body["email_broadcast"]
+        assert isinstance(eb, dict)
+        # Published posts always include a `queued` count (could be 0 if no
+        # clients have email yet — still expected to be numeric).
+        assert "queued" in eb
+        assert isinstance(eb["queued"], int)
+    finally:
+        requests.delete(f"{BASE_URL}/api/admin/announcements/{aid}", headers=h_admin, timeout=15)
+
+
+def test_draft_announcement_does_not_broadcast():
+    h_admin = _admin_h()
+    r = requests.post(f"{BASE_URL}/api/admin/announcements",
+                      json={"title": f"draft {uuid.uuid4().hex[:6]}",
+                            "body": "silent draft", "published": False},
+                      headers=h_admin, timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    aid = body["id"]
+    try:
+        # Drafts get an empty broadcast summary — no `queued` key.
+        eb = body.get("email_broadcast") or {}
+        assert "queued" not in eb, f"draft accidentally queued emails: {eb}"
+    finally:
+        requests.delete(f"{BASE_URL}/api/admin/announcements/{aid}", headers=h_admin, timeout=15)
+
+
+def test_edit_announcement_does_not_rebroadcast():
+    h_admin = _admin_h()
+    create = requests.post(f"{BASE_URL}/api/admin/announcements",
+                           json={"title": f"edit-test {uuid.uuid4().hex[:6]}",
+                                 "body": "original"},
+                           headers=h_admin, timeout=20)
+    aid = create.json()["id"]
+    try:
+        updated = requests.put(f"{BASE_URL}/api/admin/announcements/{aid}",
+                               json={"title": "edited title",
+                                     "body": "fixed a typo"},
+                               headers=h_admin, timeout=15)
+        assert updated.status_code == 200
+        # PUT response should NOT contain `email_broadcast` (edits stay silent).
+        assert "email_broadcast" not in updated.json()
+    finally:
+        requests.delete(f"{BASE_URL}/api/admin/announcements/{aid}", headers=h_admin, timeout=15)
+
+
 def test_settings_persists_portal_first_visit_content():
     h_admin = _admin_h()
     # Save custom content

@@ -1757,3 +1757,61 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
                     result.get("id") if isinstance(result, dict) else result)
     except Exception as e:
         logger.warning("P&L email send failed: %s", e)
+
+
+
+# Sprint 110di-5 — Broadcast a new portal announcement to every client with
+# an email on file. Best-effort, fire-and-forget: failures per-recipient just
+# log and move on so one bad address can't choke the whole blast.
+async def broadcast_announcement_email(announcement: dict) -> dict:
+    """Email every client (with `email` set) about a freshly-published portal
+    announcement. Returns `{sent, skipped}` counts so callers can surface a
+    quick summary."""
+    title = (announcement.get("title") or "").strip() or "Update from Sit Happens"
+    body  = (announcement.get("body") or "").strip()
+    image = announcement.get("image") or ""
+    portal_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+
+    # Convert plain-text linebreaks to HTML.
+    body_html_safe = (
+        body.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br/>")
+    )
+
+    image_html = (
+        f"<div style='margin:12px 0;'><img src='{image}' alt='' "
+        f"style='max-width:100%;border-radius:10px;border:1px solid #e2e8f0;'/></div>"
+        if image else ""
+    )
+    body_html = (
+        f"<div style='font-size:15px;line-height:1.55;color:#0f172a;'>"
+        f"{image_html}{body_html_safe}</div>"
+    )
+
+    sent = skipped = 0
+    if _db is None:
+        return {"sent": 0, "skipped": 0, "reason": "db not bound"}
+    cursor = _db.clients.find({"email": {"$exists": True, "$ne": ""}}, {"_id": 0, "name": 1, "email": 1})
+    async for c in cursor:
+        addr = (c.get("email") or "").strip()
+        if not addr:
+            skipped += 1
+            continue
+        first = (c.get("name") or "there").split(" ")[0]
+        ok = await _dispatch(
+            slug="announcement_broadcast",
+            to_email=addr,
+            ctx={"first_name": first, "client_name": c.get("name", ""), "title": title},
+            rows=[],
+            cta_url=portal_url,
+            body_html=body_html,
+            fallback_subject=f"📣 {title}",
+            fallback_title=f"📣 {title}",
+            fallback_intro=f"Hi {first} — quick update from the Sit Happens team:",
+            fallback_cta_text="Open Portal" if portal_url else "",
+        )
+        if ok:
+            sent += 1
+        else:
+            skipped += 1
+    logger.info("Announcement '%s' broadcast — sent=%s skipped=%s", title, sent, skipped)
+    return {"sent": sent, "skipped": skipped}

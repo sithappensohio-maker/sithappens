@@ -4,8 +4,8 @@ import { api } from "../lib/api";
 /**
  * Sprint 110di-4 — Client portal Announcements card.
  *
- * Lives pinned at the very top of the portal so anything the studio posts is
- * the first thing a client sees. Tracks read state per-client via
+ * Lives pinned at the very top of the portal so anything the Sit Happens team
+ * posts is the first thing a client sees. Tracks read state per-client via
  * `POST /api/portal/announcements/{id}/read` so we can show an unread badge
  * + dim already-seen entries.
  *
@@ -60,7 +60,7 @@ export default function PortalAnnouncementsCard({ refreshKey = 0 }) {
           </span>
           <div className="min-w-0 text-left">
             <p className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">
-              From the Studio
+              From the Sit Happens Team
             </p>
             <p className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight truncate">
               Announcements <span className="text-gray-400 normal-case font-normal tracking-normal text-sm">({items.length})</span>

@@ -4271,6 +4271,20 @@ async def create_announcement(body: AnnouncementIn, admin: dict = Depends(requir
     doc["updated_at"] = doc["created_at"]
     await db.announcements.insert_one(doc.copy())
     doc.pop("_id", None)
+    # Sprint 110di-5 — every PUBLISHED announcement also fires an email
+    # broadcast to every client with an email on file. Drafts (published=False)
+    # stay silent. Edits never re-broadcast (see PUT endpoint).
+    #
+    # We kick the broadcast off as a background task so the admin doesn't have
+    # to wait for Resend to fan out across hundreds of recipients. The composer
+    # UI sees the recipient *count* immediately and a toast confirms the post.
+    summary: Dict[str, Any] = {"sent": 0, "skipped": 0}
+    if doc.get("published", True):
+        # Cheap pre-count — only clients with a non-empty email get the blast.
+        recipient_count = await db.clients.count_documents({"email": {"$exists": True, "$nin": ["", None]}})
+        summary["queued"] = recipient_count
+        asyncio.create_task(email_service.broadcast_announcement_email(doc))
+    doc["email_broadcast"] = summary
     return doc
 
 

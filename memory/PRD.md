@@ -3824,3 +3824,26 @@ records its still saying the records are needed"
 ### Tests
 - ✅ NEW `backend/tests/test_announcements_and_first_visit.py` — 4 tests all passing (CRUD + read tracking + expiry hide + unpublished hide + first-visit content persistence).
 - Playwright smoke confirmed portal pinned announcements (3 NEW badge) + admin composer screen.
+
+
+## Sprint 110di-5 — Announcement email broadcast + "Sit Happens Team" rebrand (2026-02-18)
+
+**User asks**: every published announcement emails all clients (edits stay silent); rename "Studio" → "Sit Happens Team" everywhere clients see it.
+
+### Backend
+- ✅ NEW `email_service.broadcast_announcement_email(announcement)` — loops `db.clients` (where `email` set + non-empty) and dispatches via `_dispatch` slug `announcement_broadcast`.
+- ✅ `POST /api/admin/announcements` — when `published=True`, pre-counts recipients via `db.clients.count_documents(...)` and returns `email_broadcast.queued`. Actual send fires via `asyncio.create_task` so admin gets an instant response.
+- ✅ PUT (edit) stays silent. Drafts (`published=False`) skip the broadcast entirely.
+
+### Frontend
+- ✅ Toast on post: "Posted — emailing N clients in the background." Drafts: "Saved as draft." Edits: "Saved — clients won't be re-emailed for edits."
+- ✅ Composer hint explains broadcast behavior before posting.
+- ✅ Rebrand: portal header, admin screen header, email fallback intro, default subject all swapped from "Studio" → "Sit Happens Team".
+- ✅ Service worker bumped to `sh-v12-110di-team-rebrand-and-bg-broadcast`.
+
+### Tests
+- ✅ 7/7 pytest cases pass in `test_announcements_and_first_visit.py` (CRUD, read tracking, expiry hide, unpublished hide, broadcast-queued summary, draft-silent, edit-silent, first-visit settings).
+- Playwright smoke confirms "From the Sit Happens Team" label live on portal; 0 "Studio" leftovers.
+
+### Notes
+- Background broadcast tasks during heavy pytest hammering briefly starved the backend worker (Resend SDK is sync). Real-world usage (one admin posting one announcement at a time) is unaffected.

@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { toast } from "sonner";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 
@@ -68,8 +69,20 @@ export default function Announcements() {
     if (!form.title.trim()) { setErr("Title is required"); return; }
     setSaving(true);
     try {
-      if (editing === "new") await api.post("/admin/announcements", form);
-      else await api.put(`/admin/announcements/${editing}`, form);
+      if (editing === "new") {
+        const { data } = await api.post("/admin/announcements", form);
+        const eb = data?.email_broadcast || {};
+        if (form.published && typeof eb.queued === "number") {
+          toast.success(`Posted — emailing ${eb.queued} client${eb.queued === 1 ? "" : "s"} in the background.`);
+        } else if (form.published === false) {
+          toast.success("Saved as draft (not visible to clients yet).");
+        } else {
+          toast.success("Announcement posted.");
+        }
+      } else {
+        await api.put(`/admin/announcements/${editing}`, form);
+        toast.success("Saved — clients won't be re-emailed for edits.");
+      }
       await load();
       cancel();
     } catch (e) { setErr(e?.response?.data?.detail || "Save failed"); }
@@ -90,7 +103,7 @@ export default function Announcements() {
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
-            <i className="fas fa-bullhorn mr-1.5"/>Studio Broadcast
+            <i className="fas fa-bullhorn mr-1.5"/>From the Sit Happens Team
           </p>
           <h2 className="text-3xl sm:text-4xl font-black italic text-white uppercase tracking-tight">Announcements</h2>
           <p className="text-[13px] text-gray-400 mt-1">Anything you post here lands on every active client&apos;s portal home page.</p>
@@ -171,6 +184,27 @@ export default function Announcements() {
           </div>
 
           {err && <p className="text-[12px] text-red-400" data-testid="ann-error"><i className="fas fa-circle-exclamation mr-1"/>{err}</p>}
+
+          {/* Sprint 110di-5 — show what will happen when they hit Post */}
+          {editing === "new" && form.published && (
+            <p className="text-[11px] text-shGreen bg-shGreen/10 border border-shGreen/30 rounded px-3 py-2"
+               data-testid="ann-broadcast-hint">
+              <i className="fas fa-paper-plane mr-1.5"/>
+              On post, this is also emailed to every client with an email on file. Sends happen in the background, edits won&apos;t re-send.
+            </p>
+          )}
+          {editing === "new" && !form.published && (
+            <p className="text-[11px] text-gray-400 bg-bgBase/60 border border-bgHover rounded px-3 py-2">
+              <i className="fas fa-eye-slash mr-1.5"/>
+              Draft mode — not visible to clients and no emails sent.
+            </p>
+          )}
+          {editing !== "new" && editing !== null && (
+            <p className="text-[11px] text-gray-400 bg-bgBase/60 border border-bgHover rounded px-3 py-2">
+              <i className="fas fa-circle-info mr-1.5"/>
+              Editing an existing announcement — clients will see updates instantly in their portal, but no fresh email goes out.
+            </p>
+          )}
 
           <div className="flex justify-end gap-2 pt-2 border-t border-bgHover">
             <button onClick={cancel} disabled={saving}
