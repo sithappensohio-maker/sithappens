@@ -644,8 +644,19 @@ export default function Portal() {
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupRefresh, setSetupRefresh] = useState(0);
   const [vaccineWizard, setVaccineWizard] = useState(null); // [{dog, vaccine}, ...]
+  // Sprint 110dh-9 — once the client has seen the "Setup Complete" hero and
+  // clicked through (or dismissed) it, remember that locally so it doesn't
+  // permanently sit at the top of the portal.
+  const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(() => {
+    try { return localStorage.getItem("sh_setup_success_dismissed") === "1"; } catch { return false; }
+  });
   const bookingLocked = setupStatus?.booking_locked === true;
   const readyToBook = setupStatus?.ready_to_book === true;
+  const showSetupSuccess = readyToBook && !setupSuccessDismissed;
+  const dismissSetupSuccess = () => {
+    try { localStorage.setItem("sh_setup_success_dismissed", "1"); } catch {}
+    setSetupSuccessDismissed(true);
+  };
   const bumpSetupRefresh = () => setSetupRefresh(n => n + 1);
 
   // Poll the client portal unread badge so the header button shows a count.
@@ -923,7 +934,17 @@ export default function Portal() {
 
         {/* Sprint 110dh-6 — First-time setup checklist. Renders at the very top
             whenever booking is locked; auto-hides once the client is fully
-            ready to book. */}
+            ready to book. Sprint 110dh-9 — Replaced by the success card the
+            first time setup completes (until dismissed). */}
+        {showSetupSuccess && (
+          <PortalSetupSuccess
+            onBook={() => {
+              dismissSetupSuccess();
+              setShowBookWizard(true);
+            }}
+            onDismiss={dismissSetupSuccess}
+          />
+        )}
         <PortalSetupChecklist
           refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}
@@ -1625,14 +1646,6 @@ export default function Portal() {
           <PortalFilesSection dogs={dogs} />
 
           <div id="portal-bookings-anchor">
-            {/* Sprint 110dh-6 — Show the celebratory success card the very
-                first time all gates clear; the inline checklist auto-hides. */}
-            {readyToBook && (
-              <PortalSetupSuccess onBook={() => {
-                const el = document.querySelector('[data-testid="book-service-cta"]') || document.querySelector('[data-testid="portal-add-booking"]');
-                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-              }} />
-            )}
             {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (
               <div className="bg-shGreen/10 border border-shGreen/30 rounded-xl p-5 mb-4" data-testid="first-time-tutorial">
                 <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-paw mr-1"/>What to expect on your first visit</p>

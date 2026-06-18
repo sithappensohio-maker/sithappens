@@ -228,12 +228,19 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
  * Compact success card shown inside the bookings section once everything's
  * unlocked. Rendered only when `ready_to_book` is true.
  */
-export function PortalSetupSuccess({ onBook }) {
+export function PortalSetupSuccess({ onBook, onDismiss, dismissable = true }) {
   return (
     <div className="relative overflow-hidden bg-shGreen/10 border border-shGreen/40 rounded-2xl p-5 mb-4 shadow-2xl"
          data-testid="portal-setup-success">
       <div className="absolute inset-0 pointer-events-none opacity-20"
            style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.6) 0%, transparent 60%)" }}/>
+      {dismissable && onDismiss && (
+        <button onClick={onDismiss} data-testid="portal-setup-success-dismiss"
+                className="absolute top-2 right-2 text-gray-400 hover:text-white text-lg p-2 z-10"
+                aria-label="Dismiss">
+          <i className="fas fa-xmark"/>
+        </button>
+      )}
       <div className="relative flex items-center justify-between gap-3 flex-wrap">
         <div>
           <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
