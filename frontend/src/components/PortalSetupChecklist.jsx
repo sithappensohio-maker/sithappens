@@ -80,6 +80,39 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
     const sel = TARGET_SELECTOR[target];
     if (sel) {
       const el = document.querySelector(sel);
+      // Sprint 110di-9 — for `intake` we ALWAYS try to find + click the first
+      // pending "Fill out" button, even if the section element isn't yet
+      // mounted (IntakePortalSection returns null until its async load
+      // completes). Without this, the button on the checklist looked broken
+      // on first paint.
+      if (target === "intake") {
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        let tries = 0;
+        const attempt = () => {
+          // Pick the FIRST visible "Fill out" button — there are two
+          // IntakePortalSection mounts (mobile + desktop) and we want to
+          // click the one the user can actually see, not a hidden duplicate
+          // sitting in the DOM behind `display:none` / `hidden md:block`.
+          const btns = document.querySelectorAll('[data-testid^="portal-intake-fill-"]');
+          let fillBtn = null;
+          btns.forEach((b) => {
+            if (fillBtn) return;
+            const rect = b.getBoundingClientRect();
+            const style = window.getComputedStyle(b);
+            const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+            if (visible) fillBtn = b;
+          });
+          if (fillBtn) {
+            fillBtn.scrollIntoView({ behavior: "smooth", block: "center" });
+            fillBtn.click();
+            return;
+          }
+          tries += 1;
+          if (tries < 6) setTimeout(attempt, 300);
+        };
+        setTimeout(attempt, 150);
+        return;
+      }
       if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     }
     const anchor = TARGET_ANCHOR[target];
