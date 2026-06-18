@@ -69,7 +69,7 @@ export function TextSizePicker({ testid = "text-size", compact = false }) {
           }`}
         >
           <i className="fas fa-text-height" />
-          <span>Text · {current}</span>
+          <span><span className="lowercase">Aa</span> Text Size · {current}</span>
         </button>
         {open && (
           <div

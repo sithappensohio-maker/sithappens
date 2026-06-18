@@ -39,7 +39,9 @@ export default function PortalTrainingCard({ dog }) {
           <i className="fas fa-graduation-cap text-gray-600 text-2xl"/>
           <div>
             <p className="text-sm font-black text-white uppercase italic tracking-tight">{dog.name}</p>
-            <p className="text-[15px] text-gray-500">Not currently enrolled in a training program.</p>
+            <p className="text-[14px] text-gray-400 mt-1 leading-snug">
+              No active training program yet. When {dog.name} starts a program, you&apos;ll see goals, homework, progress notes, and completed skills here.
+            </p>
           </div>
         </div>
       </div>
@@ -51,7 +53,9 @@ export default function PortalTrainingCard({ dog }) {
       {live.length === 0 && (
         <div className="px-5 py-4 border-b border-bgHover">
           <p className="text-sm font-black text-white">{dog.name}</p>
-          <p className="text-[15px] text-gray-500">No active programs — see completed programs below.</p>
+          <p className="text-[14px] text-gray-400 mt-1 leading-snug">
+            No active training program yet. When {dog.name} starts a program, you&apos;ll see goals, homework, progress notes, and completed skills here.
+          </p>
         </div>
       )}
 

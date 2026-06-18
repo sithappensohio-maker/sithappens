@@ -38,6 +38,11 @@ export default function IntakePortalSection() {
 
   if (assigned.length === 0) return null;
 
+  const n = assigned.length;
+  const summary = n === 1
+    ? "You have 1 item that needs attention."
+    : `You have ${n} items that need attention.`;
+
   return (
     <div data-testid="portal-intake-section">
       <div className="mb-4">
@@ -45,8 +50,11 @@ export default function IntakePortalSection() {
           <i className="fas fa-clipboard-list mr-1.5"/>Action needed
         </p>
         <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">Intake Forms.</h2>
+        <p className="text-[14px] text-shOrange font-black mt-1" data-testid="portal-intake-summary">
+          <i className="fas fa-circle-exclamation mr-1.5"/>{summary}
+        </p>
         <p className="text-[13px] text-gray-400 mt-1">
-          We sent you {assigned.length} form{assigned.length===1?"":"s"} to fill out. Takes a couple of minutes each.
+          We sent you {n} form{n===1?"":"s"} to fill out. Takes a couple of minutes each.
         </p>
       </div>
       <div className="space-y-3">

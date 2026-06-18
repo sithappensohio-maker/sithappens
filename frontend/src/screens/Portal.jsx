@@ -915,6 +915,13 @@ export default function Portal() {
         {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game) */}
         <div className="mb-6"><DailyTriviaCard /></div>
 
+        {/* Sprint 110dh-5 — Mobile-only hoist: Action Needed (intake forms) is
+            the most important item so it should be the first thing visible on
+            a phone. Desktop version lives inside the right column below. */}
+        <div className="md:hidden mb-6" data-testid="portal-mobile-action-needed">
+          <IntakePortalSection />
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
           {/* Sprint 110x — credits card upgraded with brand-color glow halos
@@ -959,6 +966,29 @@ export default function Portal() {
               <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
                 <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
               </p>
+              {(() => {
+                const totalCredits = (credits || 0) + (client?.training_credits || 0) + (client?.boarding_credits || 0);
+                if (totalCredits > 2) return null;
+                return (
+                  <div className="mt-3 bg-shOrange/10 border border-shOrange/30 rounded-lg p-3 text-center"
+                       data-testid="portal-low-credits-helper">
+                    <p className="text-[12px] text-shOrange font-black uppercase tracking-widest">
+                      <i className="fas fa-circle-info mr-1"/>Need more credits?
+                    </p>
+                    <p className="text-[12px] text-gray-300 mt-1">
+                      Contact us or book your next service.
+                    </p>
+                    <button onClick={()=>{
+                              const el = document.getElementById("portal-bookings-anchor");
+                              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                            }}
+                            data-testid="portal-low-credits-book"
+                            className="mt-2 inline-block text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
+                      Book a service <i className="fas fa-arrow-right ml-1"/>
+                    </button>
+                  </div>
+                );
+              })()}
               <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
                       className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
                 <i className="fas fa-user-pen mr-2"/>My Profile
@@ -1062,6 +1092,47 @@ export default function Portal() {
                 </p>
                 <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">Quick Links.</h3>
                 <div className="grid grid-cols-2 gap-2.5">
+                  {/* Sprint 110dh-5 — Reordered to prioritise the most useful
+                      client actions first: Book → My Bookings → Vaccines →
+                      Pricing → Training files → Refer. External convenience
+                      links (Website, Photo Gallery) sit at the end. */}
+                  {dogs.length > 0 && !waiverNeeded && (
+                    <QuickLinkTile
+                      onClick={()=>{
+                        const el = document.getElementById("portal-bookings-anchor");
+                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      testid="portal-ql-book-service"
+                      icon="fa-calendar-plus"
+                      color="#8cc63f"
+                      title="Book a Service"
+                      subtitle="Daycare · Boarding · Training"
+                    />
+                  )}
+                  <QuickLinkTile
+                    onClick={()=>{
+                      const el = document.getElementById("portal-bookings-anchor");
+                      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }}
+                    testid="portal-ql-my-bookings"
+                    icon="fa-calendar-day"
+                    color="#00a9e0"
+                    title="My Bookings"
+                    subtitle={`${bookings.length} on file`}
+                  />
+                  {dogs.length > 0 && (
+                    <QuickLinkTile
+                      onClick={()=>{
+                        const el = document.getElementById("portal-dogs-anchor");
+                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      testid="portal-ql-upload-vaccines"
+                      icon="fa-shield-virus"
+                      color="#f26522"
+                      title="Upload Vaccine Records"
+                      subtitle="Keep records current"
+                    />
+                  )}
                   {(publicServices.length > 0 || publicPrograms.length > 0) && (
                     <QuickLinkTile
                       onClick={()=>setShowServicesModal(true)}
@@ -1070,6 +1141,30 @@ export default function Portal() {
                       color="#8cc63f"
                       title="Services & Pricing"
                       subtitle={`${publicServices.length + publicPrograms.length} offered · quote`}
+                    />
+                  )}
+                  {(homework.length > 0 || dogs.length > 0) && (
+                    <QuickLinkTile
+                      onClick={()=>{
+                        const el = document.getElementById("portal-homework-anchor")
+                                || document.getElementById("portal-training-section");
+                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                      testid="portal-ql-training-files"
+                      icon="fa-graduation-cap"
+                      color="#a855f7"
+                      title="Training Files & Homework"
+                      subtitle={homework.length > 0 ? `${homework.length} active plan${homework.length===1?"":"s"}` : "Progress · files"}
+                    />
+                  )}
+                  {referralCode && (
+                    <QuickLinkTile
+                      onClick={()=>setShowReferModal(true)}
+                      testid="portal-refer-friend"
+                      icon="fa-gift"
+                      color="#f97316"
+                      title="Refer a Friend"
+                      subtitle="Earn a free daycare day"
                     />
                   )}
                   {dogs.length > 0 && (
@@ -1112,16 +1207,6 @@ export default function Portal() {
                       badge={client?.photo_gallery_has_new ? "NEW" : null}
                     />
                   )}
-                  {referralCode && (
-                    <QuickLinkTile
-                      onClick={()=>setShowReferModal(true)}
-                      testid="portal-refer-friend"
-                      icon="fa-gift"
-                      color="#f26522"
-                      title="Refer a Friend"
-                      subtitle="Earn a free daycare day"
-                    />
-                  )}
                 </div>
                 {/* Gallery pin (if present, render below tiles in compact form) */}
                 {(client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url) && client?.photo_gallery_pin && (
@@ -1146,14 +1231,19 @@ export default function Portal() {
           <PortalPaymentPlans />
 
           {/* Sprint 110er — Phase 1.5: pending intake forms assigned by admin.
-              Renders only when the client has at least one sent submission. */}
-          <IntakePortalSection />
+              Renders only when the client has at least one sent submission.
+              Sprint 110dh-5 — Desktop-only here; a mobile copy is hoisted to
+              the top of the page so "Action Needed" is the first thing the
+              client sees on a phone. */}
+          <div className="hidden md:block">
+            <IntakePortalSection />
+          </div>
 
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old
               referral feed has been removed (client uses a separate system). */}
           {homework.length > 0 && (
-            <div data-testid="portal-homework">
+            <div id="portal-homework-anchor" data-testid="portal-homework">
               {/* Sprint 110y — Homework section gets matching eyebrow + italic
                   headline treatment. */}
               <div className="mb-4">
@@ -1284,7 +1374,7 @@ export default function Portal() {
 
           <HomeworkIncentivesPanel />
 
-          <div>
+          <div id="portal-dogs-anchor">
             {/* Sprint 110y — My Dogs section header gets the eyebrow + italic
                 headline treatment matching the rest of the polished portal. */}
             <div className="flex items-end justify-between flex-wrap gap-3 mb-4">
@@ -1355,8 +1445,8 @@ export default function Portal() {
                       </p>
                       <button onClick={()=>setVaccineModal({ dog: d, vaccine: expiringVaccines[0] })}
                               data-testid={`vaccine-upload-btn-${d.id}`}
-                              className="shrink-0 text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline">
-                        Upload <i className="fas fa-arrow-right ml-1"/>
+                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline">
+                        Upload <span className="hidden sm:inline">Vaccine Records</span> <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
                   )}
