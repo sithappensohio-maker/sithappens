@@ -267,6 +267,9 @@ class ClientOut(ClientIn):
     # fired, so the idempotency guard can avoid spamming and the UI can show
     # "client was notified".
     low_credit_emailed_at: Optional[Dict[str, Any]] = None
+    # Sprint 110dh-6 — admin-side label for first-time setup completion.
+    setup_badge: Optional[str] = None       # "Ready to Book" | "Pending Vaccine Review" | "Setup Incomplete"
+    setup_overall: Optional[str] = None     # "complete" | "pending_review" | "in_progress" | "not_started"
     created_at: str
 
 class PortalAccountIn(BaseModel):
@@ -665,6 +668,75 @@ async def list_clients(_: dict = Depends(require_admin)):
         c["last_login_at"] = u.get("last_login_at") if u else None
         c["login_count"] = int(u.get("login_count") or 0) if u else 0
         c["dogs"] = sorted(dogs_by_owner.get(c["id"], []), key=lambda x: (x.get("name") or "").lower())
+
+    # Sprint 110dh-6 — Decorate every client with a tiny setup_badge so the
+    # admin Clients screen can show "Setup Incomplete / Pending Vaccine Review
+    # / Ready to Book" at a glance without an extra request per card.
+    try:
+        settings = await get_settings()
+        required_vax = settings.get("required_vaccines", ["rabies"]) or []
+        current_waiver_version = settings.get("waiver_version") or (settings.get("waiver_settings") or {}).get("version") or 1
+        # Batch loads
+        dogs_full = await db.dogs.find({}, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "dob": 1, "age": 1, "vaccines": 1}).to_list(5000)
+        dogs_full_by_owner: Dict[str, List[Dict[str, Any]]] = {}
+        for d in dogs_full:
+            dogs_full_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
+        waivers_list = await db.waivers.find({}, {"_id": 0, "client_id": 1, "signed": 1, "waiver_version": 1}).to_list(5000)
+        waivers_by_client = {w.get("client_id"): w for w in waivers_list}
+        pending_vac_dog_ids = set()
+        async for vu in db.vaccine_uploads.find({"status": "pending"}, {"_id": 0, "dog_id": 1}):
+            if vu.get("dog_id"):
+                pending_vac_dog_ids.add(vu["dog_id"])
+        intake_pending_clients: Dict[str, int] = {}
+        async for s in db.intake_submissions.find({"status": {"$in": ["sent", "in_progress"]}}, {"_id": 0, "client_id": 1}):
+            cid = s.get("client_id")
+            if cid:
+                intake_pending_clients[cid] = intake_pending_clients.get(cid, 0) + 1
+        today_iso = business_today().isoformat()
+
+        def _has_vac(dog_vaccines, key: str) -> bool:
+            if isinstance(dog_vaccines, dict):
+                v = dog_vaccines.get(key) or ""
+                return bool(v) and str(v)[:10] >= today_iso
+            if isinstance(dog_vaccines, list):
+                for entry in dog_vaccines:
+                    if isinstance(entry, dict) and (entry.get("type") == key or entry.get("name") == key):
+                        exp = entry.get("expires_on") or entry.get("expiration") or ""
+                        return bool(exp) and str(exp)[:10] >= today_iso
+            return False
+
+        for c in items:
+            cid = c.get("id")
+            owner_dogs = dogs_full_by_owner.get(cid, [])
+            info_ok = bool((c.get("name") or "").strip() and (c.get("phone") or "").strip() and (c.get("email") or "").strip())
+            dog_ok = bool(owner_dogs) and all(
+                (d.get("name") or "").strip() and (d.get("breed") or "").strip() and ((d.get("dob") or "").strip() or d.get("age"))
+                for d in owner_dogs
+            )
+            emerg_ok = bool((c.get("emerg") or "").strip())
+            vac_ok = bool(owner_dogs) and all(all(_has_vac(d.get("vaccines"), r) for r in required_vax) for d in owner_dogs)
+            vac_pending = any(d.get("id") in pending_vac_dog_ids for d in owner_dogs)
+            w = waivers_by_client.get(cid)
+            waiver_ok = bool(w and w.get("signed") and (w.get("waiver_version") in (None, current_waiver_version)))
+            intake_pending = intake_pending_clients.get(cid, 0)
+
+            hard_complete = info_ok and dog_ok and emerg_ok and vac_ok and waiver_ok and intake_pending == 0
+            if hard_complete:
+                c["setup_overall"] = "complete"
+                c["setup_badge"] = "Ready to Book"
+            elif vac_pending and info_ok and dog_ok and emerg_ok and waiver_ok and intake_pending == 0:
+                c["setup_overall"] = "pending_review"
+                c["setup_badge"] = "Pending Vaccine Review"
+            elif info_ok or dog_ok or emerg_ok or waiver_ok or vac_pending:
+                c["setup_overall"] = "in_progress"
+                c["setup_badge"] = "Setup Incomplete"
+            else:
+                c["setup_overall"] = "not_started"
+                c["setup_badge"] = "Setup Incomplete"
+    except Exception:
+        # Never block the clients list on a decoration error.
+        pass
+
     return items
 
 @api.post("/clients", response_model=ClientOut)
@@ -20952,6 +21024,262 @@ async def admin_set_status(thread_id: str, body: AdminStatusIn, _: dict = Depend
         raise HTTPException(status_code=404, detail="Thread not found")
     t = await db.client_message_threads.find_one({"id": thread_id}, {"_id": 0})
     return t
+
+
+# ============================================================================
+# Sprint 110dh-6 — First-time client setup checklist.
+# Read-only aggregation: pulls from existing collections (clients, dogs,
+# waivers, intake_submissions) and the active settings doc. No schema
+# changes — every check derives from data the rest of the app already owns.
+# ============================================================================
+
+SETUP_STATUS_NOT_STARTED = "not_started"
+SETUP_STATUS_IN_PROGRESS = "in_progress"
+SETUP_STATUS_PENDING     = "pending_review"
+SETUP_STATUS_COMPLETE    = "complete"
+
+
+async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute the 6-step setup checklist for one client.
+
+    Returns: {steps: [...], overall, booking_locked, ready_to_book}.
+    Steps are emitted even when complete so the UI can render the full grid.
+    """
+    if not client:
+        return {"steps": [], "overall": SETUP_STATUS_NOT_STARTED,
+                "booking_locked": True, "ready_to_book": False}
+
+    settings = await get_settings()
+    required_vax: List[str] = settings.get("required_vaccines", ["rabies"]) or []
+
+    # ---- Step 1: client info -------------------------------------------------
+    missing_info: List[str] = []
+    if not (client.get("name") or "").strip():    missing_info.append("name")
+    if not (client.get("phone") or "").strip():   missing_info.append("phone")
+    if not (client.get("email") or "").strip():   missing_info.append("email")
+    if missing_info:
+        client_step_status = SETUP_STATUS_IN_PROGRESS if (client.get("name") and (client.get("phone") or client.get("email"))) else SETUP_STATUS_NOT_STARTED
+    else:
+        client_step_status = SETUP_STATUS_COMPLETE
+
+    # ---- Step 2: dog info ----------------------------------------------------
+    dogs = await db.dogs.find({"owner_id": client.get("id")}, {"_id": 0}).to_list(50)
+    dogs_missing_basics: List[str] = []
+    if not dogs:
+        dog_step_status = SETUP_STATUS_NOT_STARTED
+    else:
+        for d in dogs:
+            missing = []
+            if not (d.get("name") or "").strip():
+                missing.append("name")
+            if not (d.get("breed") or "").strip():
+                missing.append("breed")
+            # dob OR age (we ship dob only — admins may leave it blank)
+            if not (d.get("dob") or "").strip() and not d.get("age"):
+                missing.append("age/dob")
+            if missing:
+                dogs_missing_basics.append(f"{d.get('name') or 'Unnamed dog'} ({', '.join(missing)})")
+        if dogs_missing_basics:
+            dog_step_status = SETUP_STATUS_IN_PROGRESS
+        else:
+            dog_step_status = SETUP_STATUS_COMPLETE
+
+    # ---- Step 3: emergency contact ------------------------------------------
+    # `client.emerg` is a single free-text field today. Treat any non-empty
+    # value as "has at least one emergency contact". A future schema change
+    # could split it into structured (name, phone, relationship) without
+    # changing this endpoint's contract.
+    emerg_step_status = (SETUP_STATUS_COMPLETE
+                         if (client.get("emerg") or "").strip()
+                         else SETUP_STATUS_NOT_STARTED)
+
+    # ---- Step 4: vaccines ----------------------------------------------------
+    today = business_today().isoformat()
+    vac_missing: List[str] = []
+    vac_pending_review = False
+    if not dogs:
+        vac_step_status = SETUP_STATUS_NOT_STARTED
+    else:
+        for d in dogs:
+            vacs = d.get("vaccines") or {}
+            # vaccines historically stored two shapes: dict (legacy) and list of dicts.
+            def _vac_expiry(key: str):
+                if isinstance(vacs, dict):
+                    return vacs.get(key) or ""
+                if isinstance(vacs, list):
+                    for v in vacs:
+                        if isinstance(v, dict) and (v.get("type") == key or v.get("name") == key):
+                            return v.get("expires_on") or v.get("expiration") or ""
+                return ""
+            for r in required_vax:
+                expiry = str(_vac_expiry(r) or "")[:10]
+                if not expiry:
+                    vac_missing.append(f"{d.get('name')}: {r}")
+                elif expiry < today:
+                    vac_missing.append(f"{d.get('name')}: {r} (expired)")
+            # Pending review = vaccine_uploads collection has un-approved row for this dog.
+            pending = await db.vaccine_uploads.count_documents({"dog_id": d.get("id"), "status": "pending"})
+            if pending:
+                vac_pending_review = True
+        if vac_missing:
+            vac_step_status = SETUP_STATUS_NOT_STARTED if len(vac_missing) == len(required_vax) * len(dogs) else SETUP_STATUS_IN_PROGRESS
+        elif vac_pending_review:
+            vac_step_status = SETUP_STATUS_PENDING
+        else:
+            vac_step_status = SETUP_STATUS_COMPLETE
+
+    # ---- Step 5: waiver ------------------------------------------------------
+    waiver_doc = await db.waivers.find_one({"client_id": client.get("id")}, {"_id": 0})
+    current_version = settings.get("waiver_version") or settings.get("waiver_settings", {}).get("version") or 1
+    if waiver_doc and waiver_doc.get("signed") and (waiver_doc.get("waiver_version") in (None, current_version)):
+        waiver_step_status = SETUP_STATUS_COMPLETE
+    elif waiver_doc and waiver_doc.get("signed"):
+        waiver_step_status = SETUP_STATUS_IN_PROGRESS   # needs re-sign for updated version
+    else:
+        waiver_step_status = SETUP_STATUS_NOT_STARTED
+
+    # ---- Step 6: intake forms (only if admin has assigned any) ---------------
+    pending_intake = await db.intake_submissions.count_documents({
+        "client_id": client.get("id"),
+        "status": {"$in": ["sent", "in_progress"]},
+    })
+    completed_intake = await db.intake_submissions.count_documents({
+        "client_id": client.get("id"),
+        "status": "submitted",
+    })
+    if pending_intake > 0:
+        intake_step_status = SETUP_STATUS_IN_PROGRESS
+        intake_missing_count = pending_intake
+    elif completed_intake > 0:
+        intake_step_status = SETUP_STATUS_COMPLETE
+        intake_missing_count = 0
+    else:
+        # No forms assigned by admin → step is informational only / not required.
+        intake_step_status = SETUP_STATUS_COMPLETE
+        intake_missing_count = 0
+
+    # ---- Overall + booking lock ---------------------------------------------
+    # Booking is locked if any of the "hard gates" are not complete:
+    #   client_info, dog_info, emergency_contact, vaccines, waiver.
+    # Intake forms only matter when admin has explicitly assigned at least one
+    # — if assigned + pending, the booking stays locked.
+    hard_gate_statuses = {
+        "client_info": client_step_status,
+        "dog_info": dog_step_status,
+        "emergency": emerg_step_status,
+        "vaccines": vac_step_status,
+        "waiver": waiver_step_status,
+    }
+    any_pending_review = vac_step_status == SETUP_STATUS_PENDING
+    booking_locked = (
+        any(s != SETUP_STATUS_COMPLETE for s in hard_gate_statuses.values())
+        or pending_intake > 0
+    )
+    ready_to_book = not booking_locked
+
+    if ready_to_book:
+        overall = SETUP_STATUS_COMPLETE
+    elif any_pending_review:
+        overall = SETUP_STATUS_PENDING
+    elif any(s in (SETUP_STATUS_IN_PROGRESS, SETUP_STATUS_COMPLETE) for s in hard_gate_statuses.values()):
+        overall = SETUP_STATUS_IN_PROGRESS
+    else:
+        overall = SETUP_STATUS_NOT_STARTED
+
+    steps = [
+        {
+            "id": "client_info",
+            "label": "Your Information",
+            "blurb": "Your name, phone, and email so we can reach you.",
+            "status": client_step_status,
+            "action_label": "Complete My Info",
+            "action_target": "profile",
+            "missing": missing_info,
+        },
+        {
+            "id": "dog_info",
+            "label": "Dog Information",
+            "blurb": "Your pup's name, breed, age and any important notes.",
+            "status": dog_step_status,
+            "action_label": "Add / Update Dog Info",
+            "action_target": "dogs",
+            "missing": dogs_missing_basics if dogs else ["No dogs added yet"],
+        },
+        {
+            "id": "emergency",
+            "label": "Emergency Contact",
+            "blurb": "Someone we can reach if we can't reach you.",
+            "status": emerg_step_status,
+            "action_label": "Add Emergency Contact",
+            "action_target": "profile",
+            "missing": [] if (client.get("emerg") or "").strip() else ["Emergency contact"],
+        },
+        {
+            "id": "vaccines",
+            "label": "Vaccine Records",
+            "blurb": "Up-to-date proof of required vaccines for every dog.",
+            "status": vac_step_status,
+            "action_label": "Upload Vaccine Records",
+            "action_target": "vaccines",
+            "missing": vac_missing,
+            "pending_review": vac_pending_review,
+        },
+        {
+            "id": "waiver",
+            "label": "Client Waiver",
+            "blurb": "Our standard liability waiver — quick e-signature.",
+            "status": waiver_step_status,
+            "action_label": "Review & Sign Waiver",
+            "action_target": "waiver",
+            "missing": [] if waiver_step_status == SETUP_STATUS_COMPLETE else ["Waiver not signed"],
+        },
+        {
+            "id": "intake_forms",
+            "label": "Service Intake Forms",
+            "blurb": ("We've assigned you a form to fill out before booking."
+                      if pending_intake > 0 else
+                      "No forms required right now — we'll send any when needed."),
+            "status": intake_step_status,
+            "action_label": "Complete Required Forms",
+            "action_target": "intake",
+            "missing": [f"{pending_intake} pending"] if pending_intake > 0 else [],
+            "count": pending_intake,
+            "optional": pending_intake == 0,
+        },
+    ]
+    return {
+        "steps": steps,
+        "overall": overall,
+        "booking_locked": booking_locked,
+        "ready_to_book": ready_to_book,
+        "completed_count": sum(1 for s in steps if s["status"] == SETUP_STATUS_COMPLETE),
+        "total_count": len(steps),
+    }
+
+
+@api.get("/portal/setup-status")
+async def portal_setup_status(user: dict = Depends(get_current_user)):
+    cid = user.get("client_id")
+    if not cid:
+        raise HTTPException(status_code=403, detail="Only clients have a setup checklist")
+    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    return await _compute_setup_status_for_client(client)
+
+
+@api.get("/admin/clients/{client_id}/setup-status")
+async def admin_client_setup_status(client_id: str, _: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    full = await _compute_setup_status_for_client(client)
+    # Admin-facing summary label
+    if full["ready_to_book"]:
+        full["badge"] = "Ready to Book"
+    elif full["overall"] == SETUP_STATUS_PENDING:
+        full["badge"] = "Pending Vaccine Review"
+    else:
+        full["badge"] = "Setup Incomplete"
+    return full
 
 
 app.include_router(api)

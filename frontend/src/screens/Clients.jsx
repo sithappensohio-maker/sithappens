@@ -268,9 +268,31 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shBlue/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
               <div className="min-w-0 flex-1">
                 <h4 className="text-lg font-black text-white uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
-                {c.client_status && c.client_status !== "active" && (
-                  <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
-                )}
+                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                  {c.client_status && c.client_status !== "active" && (
+                    <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
+                  )}
+                  {c.setup_badge && c.setup_overall !== "complete" && (
+                    <span
+                      data-testid={`client-setup-badge-${c.id}`}
+                      className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${
+                        c.setup_overall === "pending_review"
+                          ? "bg-shBlue/15 text-shBlue border-shBlue/40"
+                          : "bg-shOrange/15 text-shOrange border-shOrange/40"
+                      }`}
+                      title="First-time client setup completion"
+                    >
+                      <i className={`fas ${c.setup_overall === "pending_review" ? "fa-hourglass-half" : "fa-clipboard-list"} mr-1`}/>{c.setup_badge}
+                    </span>
+                  )}
+                  {c.setup_badge && c.setup_overall === "complete" && (
+                    <span data-testid={`client-setup-badge-${c.id}`}
+                          className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border bg-shGreen/15 text-shGreen border-shGreen/40"
+                          title="First-time client setup completion">
+                      <i className="fas fa-circle-check mr-1"/>Ready to Book
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             <div className="mt-2 space-y-1 text-xs text-gray-400">

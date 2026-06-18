@@ -127,7 +127,8 @@ def test_bulk_email_send_logs_to_communications():
     if res["success_count"] >= 1:
         cr = requests.get(f"{BASE_URL}/api/communications?client_id={cid}", headers=h, timeout=15)
         assert cr.status_code == 200
-        assert any("[Bulk]" in (row.get("summary") or "") for row in cr.json())
+        entries = cr.json().get("entries", cr.json() if isinstance(cr.json(), list) else [])
+        assert any("[Bulk]" in (row.get("summary") or "") for row in entries)
 
 
 def test_single_client_email_via_manual_selection():

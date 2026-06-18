@@ -24,6 +24,7 @@ import HomeworkStreakTile from "../components/HomeworkStreakTile";
 import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
+import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -638,6 +639,10 @@ export default function Portal() {
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messagesUnread, setMessagesUnread] = useState(0);
+  // Sprint 110dh-6 — first-time client setup gate.
+  const [setupStatus, setSetupStatus] = useState(null);
+  const bookingLocked = setupStatus?.booking_locked === true;
+  const readyToBook = setupStatus?.ready_to_book === true;
 
   // Poll the client portal unread badge so the header button shows a count.
   useEffect(() => {
@@ -912,6 +917,11 @@ export default function Portal() {
         {/* Sprint 110ax — Daily dog fact, pinned above the main content */}
         <div className="mb-6"><DogFactCard variant="big" /></div>
 
+        {/* Sprint 110dh-6 — First-time setup checklist. Renders at the very top
+            whenever booking is locked; auto-hides once the client is fully
+            ready to book. */}
+        <PortalSetupChecklist onStatusChange={setSetupStatus} />
+
         {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game) */}
         <div className="mb-6"><DailyTriviaCard /></div>
 
@@ -1051,22 +1061,39 @@ export default function Portal() {
                 </div>
               </div>
               <p className="text-[14px] text-gray-200 leading-relaxed mb-4">
-                {dogs.length === 0 ? "Add a dog first to book a service." :
+                {bookingLocked ? "Complete your setup checklist above before booking." :
+                 dogs.length === 0 ? "Add a dog first to book a service." :
                  waiverNeeded ? "Sign the waiver before booking your first service." :
                  "Daycare, boarding, training & more — pick a service and a date."}
               </p>
               <button
-                onClick={() => setShowBookWizard(true)}
-                disabled={dogs.length === 0 || waiverNeeded}
+                onClick={() => {
+                  if (bookingLocked) {
+                    const el = document.querySelector('[data-testid="portal-setup-checklist"]');
+                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    return;
+                  }
+                  setShowBookWizard(true);
+                }}
+                disabled={!bookingLocked && (dogs.length === 0 || waiverNeeded)}
                 data-testid="portal-book-button"
                 className={`w-full py-4 rounded-lg font-black uppercase text-[14px] tracking-widest shadow-xl flex items-center justify-center gap-2 transition ${
-                  (dogs.length === 0 || waiverNeeded)
-                    ? "bg-bgBase/60 text-gray-500 cursor-not-allowed border border-bgHover"
-                    : "bg-shGreen text-bgHeader hover:bg-white hover:scale-[1.02] active:scale-[0.98]"
+                  bookingLocked
+                    ? "bg-shOrange/20 text-shOrange border border-shOrange/40 hover:bg-shOrange/30 cursor-pointer"
+                    : (dogs.length === 0 || waiverNeeded)
+                      ? "bg-bgBase/60 text-gray-500 cursor-not-allowed border border-bgHover"
+                      : "bg-shGreen text-bgHeader hover:bg-white hover:scale-[1.02] active:scale-[0.98]"
                 }`}>
-                <i className="fas fa-calendar-plus"/>{dogs.length === 0 || waiverNeeded ? "Book Service" : "Book Now"}
-                {!(dogs.length === 0 || waiverNeeded) && <i className="fas fa-arrow-right ml-1"/>}
+                {bookingLocked
+                  ? <><i className="fas fa-lock"/>Setup required — open checklist</>
+                  : <><i className="fas fa-calendar-plus"/>{dogs.length === 0 || waiverNeeded ? "Book Service" : "Book Now"}{!(dogs.length === 0 || waiverNeeded) && <i className="fas fa-arrow-right ml-1"/>}</>
+                }
               </button>
+              {bookingLocked && (
+                <p className="text-[11px] text-shOrange mt-2 text-center font-black uppercase tracking-widest">
+                  <i className="fas fa-circle-info mr-1"/>Booking unlocks once your setup checklist is complete.
+                </p>
+              )}
               {waiverNeeded && (
                 <button onClick={()=>setShowWaiver(true)} data-testid="portal-book-waiver-link"
                         className="w-full mt-2 text-[14px] text-shOrange underline decoration-dotted text-center font-black uppercase tracking-widest">
@@ -1490,6 +1517,14 @@ export default function Portal() {
           <PortalFilesSection dogs={dogs} />
 
           <div id="portal-bookings-anchor">
+            {/* Sprint 110dh-6 — Show the celebratory success card the very
+                first time all gates clear; the inline checklist auto-hides. */}
+            {readyToBook && (
+              <PortalSetupSuccess onBook={() => {
+                const el = document.querySelector('[data-testid="book-service-cta"]') || document.querySelector('[data-testid="portal-add-booking"]');
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+              }} />
+            )}
             {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (
               <div className="bg-shGreen/10 border border-shGreen/30 rounded-xl p-5 mb-4" data-testid="first-time-tutorial">
                 <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-paw mr-1"/>What to expect on your first visit</p>
