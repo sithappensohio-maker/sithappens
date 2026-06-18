@@ -65,14 +65,20 @@ const DEFAULT_BRANDING = {
   theme_calendar_active:      "#8cc63f",
   theme_table_hover:          "#1a225a",
   theme_row_border:           "#1a225a",
-  // Sprint 110di-10 — Card border + glow controls so the dark cards/panels
-  // don't blend into the background. Applied app-wide via a ::after pseudo
-  // on .bg-bgPanel / .bg-bgBase so we don't have to retag every component.
-  card_border_color:    "#1B4D7A",
-  card_border_opacity:  0.65,
-  card_border_width:    1,        // px
+  // Sprint 110di-10 — Card border + glow controls. App-wide via ::after.
+  // Sprint 110di-11 — Stronger defaults + separate opacity/blur + inset
+  // highlight so the edge actually reads on dark cards.
+  card_border_color:    "#008CFF",
+  card_border_opacity:  0.85,
+  card_border_width:    2,        // px
   card_glow_color:      "#008CFF",
-  card_glow_strength:   0.5,      // 0 = none, 1 = strong (multiplier on shadow blur/spread)
+  card_glow_opacity:    0.35,
+  card_glow_blur:       14,       // px
+  card_inner_highlight_color:   "#FFFFFF",
+  card_inner_highlight_opacity: 0.08,
+  // Legacy — left around so older settings don't error out, no longer used
+  // to compute the new visuals.
+  card_glow_strength:   0.5,
 };
 
 // Convert "#RRGGBB" → "r, g, b" string for CSS rgba() composition.
@@ -87,6 +93,14 @@ function applyBranding(b) {
   const root = document.documentElement;
   const get = (k) => b[k] || DEFAULT_BRANDING[k];
   root.style.setProperty("--sh-green",  get("brand_primary"));
+
+// Clamp a 0-1 value with a graceful fallback when undefined / NaN.
+function clamp01(v, fallback) {
+  const n = parseFloat(v);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(Math.max(n, 0), 1);
+}
+
   root.style.setProperty("--sh-blue",   get("brand_accent"));
   root.style.setProperty("--sh-orange", get("brand_warning"));
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
@@ -124,14 +138,17 @@ function applyBranding(b) {
   root.style.setProperty("--calendar-active",      get("theme_calendar_active"));
   root.style.setProperty("--table-hover",          get("theme_table_hover"));
   root.style.setProperty("--row-border",           get("theme_row_border"));
-  // Sprint 110di-10 — Cards & Panels (border + glow). We expose the raw hex
-  // for components that need a sharp edge AND a pre-computed rgba so the
-  // ::after overlay can lay down a translucent ring without extra math.
+  // Sprint 110di-10/11 — Cards & Panels (border + glow + inner highlight).
+  // Each value is exposed as both the raw hex AND a pre-built rgba so the
+  // ::after overlay in index.css can lay them down without extra math.
   const cbHex   = get("card_border_color");
-  const cbAlpha = Math.min(Math.max(parseFloat(b.card_border_opacity ?? DEFAULT_BRANDING.card_border_opacity), 0), 1);
+  const cbAlpha = clamp01(b.card_border_opacity, DEFAULT_BRANDING.card_border_opacity);
   const cbWidth = Math.max(0, parseFloat(b.card_border_width ?? DEFAULT_BRANDING.card_border_width));
   const cgHex   = get("card_glow_color");
-  const cgStrength = Math.min(Math.max(parseFloat(b.card_glow_strength ?? DEFAULT_BRANDING.card_glow_strength), 0), 2);
+  const cgAlpha = clamp01(b.card_glow_opacity, DEFAULT_BRANDING.card_glow_opacity);
+  const cgBlur  = Math.max(0, parseFloat(b.card_glow_blur ?? DEFAULT_BRANDING.card_glow_blur));
+  const ihHex   = get("card_inner_highlight_color");
+  const ihAlpha = clamp01(b.card_inner_highlight_opacity, DEFAULT_BRANDING.card_inner_highlight_opacity);
   root.style.setProperty("--card-border-color",   cbHex);
   root.style.setProperty("--card-border-rgb",     hexToRgb(cbHex));
   root.style.setProperty("--card-border-rgba",    `rgba(${hexToRgb(cbHex)}, ${cbAlpha})`);
@@ -139,9 +156,17 @@ function applyBranding(b) {
   root.style.setProperty("--card-border-width",   `${cbWidth}px`);
   root.style.setProperty("--card-glow-color",     cgHex);
   root.style.setProperty("--card-glow-rgb",       hexToRgb(cgHex));
-  // Subtle by default: glow tints the rgba alpha by strength so 0 = invisible.
-  root.style.setProperty("--card-glow-rgba",      `rgba(${hexToRgb(cgHex)}, ${0.35 * cgStrength})`);
-  root.style.setProperty("--card-glow-strength",  String(cgStrength));
+  root.style.setProperty("--card-glow-rgba",      `rgba(${hexToRgb(cgHex)}, ${cgAlpha})`);
+  root.style.setProperty("--card-glow-opacity",   String(cgAlpha));
+  root.style.setProperty("--card-glow-blur",      `${cgBlur}px`);
+  root.style.setProperty("--card-inner-highlight-color",   ihHex);
+  root.style.setProperty("--card-inner-highlight-rgb",     hexToRgb(ihHex));
+  root.style.setProperty("--card-inner-highlight-rgba",    `rgba(${hexToRgb(ihHex)}, ${ihAlpha})`);
+  root.style.setProperty("--card-inner-highlight-opacity", String(ihAlpha));
+  // Legacy strength var kept around so any older CSS rule that referenced it
+  // still resolves. New rule in index.css ignores it.
+  root.style.setProperty("--card-glow-strength",
+    String(clamp01(b.card_glow_strength, DEFAULT_BRANDING.card_glow_strength)));
   // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
   // selectors (splatter intensity, letter case, time/date format, week start).
   root.setAttribute("data-splatter", b.splatter_intensity || "medium");

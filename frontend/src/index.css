@@ -33,17 +33,23 @@
   --calendar-active: #8cc63f;
   --table-hover: #1a225a;
   --row-border: #1a225a;
-  /* Sprint 110di-10 — Cards & Panels (border + glow). Overridden at runtime
-     by ThemeProvider from admin's Brand & Theme settings. The default keeps
-     a neon-deep-blue edge so dark cards stop blending into the background. */
-  --card-border-color: #1B4D7A;
-  --card-border-rgb: 27, 77, 122;
-  --card-border-rgba: rgba(27, 77, 122, 0.65);
-  --card-border-opacity: 0.65;
-  --card-border-width: 1px;
+  /* Sprint 110di-10/11 — Cards & Panels (border + glow + inset highlight).
+     Overridden at runtime by ThemeProvider from admin's Brand & Theme. */
+  --card-border-color: #008CFF;
+  --card-border-rgb: 0, 140, 255;
+  --card-border-rgba: rgba(0, 140, 255, 0.85);
+  --card-border-opacity: 0.85;
+  --card-border-width: 2px;
   --card-glow-color: #008CFF;
   --card-glow-rgb: 0, 140, 255;
-  --card-glow-rgba: rgba(0, 140, 255, 0.18);
+  --card-glow-rgba: rgba(0, 140, 255, 0.35);
+  --card-glow-opacity: 0.35;
+  --card-glow-blur: 14px;
+  --card-inner-highlight-color: #FFFFFF;
+  --card-inner-highlight-rgb: 255, 255, 255;
+  --card-inner-highlight-rgba: rgba(255, 255, 255, 0.08);
+  --card-inner-highlight-opacity: 0.08;
+  /* Legacy strength var — left for back-compat with older builds. */
   --card-glow-strength: 0.5;
   --sh-display: 'Bowlby One SC', 'Black Ops One', 'Anton', 'Impact', sans-serif;
 }
@@ -91,12 +97,15 @@ body {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  border: var(--card-border-width, 1px) solid var(--card-border-rgba, rgba(27, 77, 122, 0.65));
+  /* Sprint 110di-11 — stronger neon edge so the card actually separates from
+     the dark background. Combines:
+       1. solid border at admin's chosen width/opacity (was rgba-only before)
+       2. outer glow with explicit blur + opacity (was a 0–1 strength fudge)
+       3. inset white highlight so the top edge looks lit, not just outlined. */
+  border: var(--card-border-width, 2px) solid var(--card-border-rgba, rgba(0, 140, 255, 0.85));
   box-shadow:
-    0 0 calc(16px * var(--card-glow-strength, 0.5)) calc(-3px * var(--card-glow-strength, 0.5)) var(--card-glow-rgba, rgba(0, 140, 255, 0.18)),
-    0 4px calc(22px * var(--card-glow-strength, 0.5)) calc(-8px * var(--card-glow-strength, 0.5)) var(--card-glow-rgba, rgba(0, 140, 255, 0.18));
-  /* Keep the overlay above the bg fill but below any positioned children
-     (icons, badges, modals) that have z-index >= 1. */
+    0 0 var(--card-glow-blur, 14px) var(--card-glow-rgba, rgba(0, 140, 255, 0.35)),
+    inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255, 255, 255, 0.08));
   z-index: 0;
 }
 /* Make sure direct children sit above the overlay. Without this, content

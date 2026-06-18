@@ -27,11 +27,13 @@ def test_branding_exposes_card_border_and_glow_with_defaults():
     body = r.json()
     for k in CARD_KEYS:
         assert k in body, f"missing {k}"
-    assert body["card_border_color"]   == "#1B4D7A"
+    assert body["card_border_color"]   == "#008CFF"
     assert body["card_glow_color"]     == "#008CFF"
-    assert float(body["card_border_opacity"]) == 0.65
-    assert float(body["card_border_width"])   == 1
-    assert float(body["card_glow_strength"])  == 0.5
+    assert float(body["card_border_opacity"]) == 0.85
+    assert float(body["card_border_width"])   == 2
+    # New explicit glow opacity + blur (replacing the old `strength` slider).
+    assert float(body["card_glow_opacity"]) == 0.35
+    assert float(body["card_glow_blur"])    == 14
 
 
 def test_settings_persists_card_border_and_glow():

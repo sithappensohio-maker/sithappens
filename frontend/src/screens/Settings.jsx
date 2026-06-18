@@ -633,7 +633,11 @@ function BrandPanel() {
         card_border_opacity:         parseFloat(draft.card_border_opacity),
         card_border_width:           parseFloat(draft.card_border_width),
         card_glow_color:             draft.card_glow_color,
-        card_glow_strength:          parseFloat(draft.card_glow_strength),
+        // Sprint 110di-11 — explicit opacity/blur + inset highlight.
+        card_glow_opacity:           parseFloat(draft.card_glow_opacity),
+        card_glow_blur:              parseFloat(draft.card_glow_blur),
+        card_inner_highlight_color:  draft.card_inner_highlight_color,
+        card_inner_highlight_opacity: parseFloat(draft.card_inner_highlight_opacity),
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -676,12 +680,15 @@ function BrandPanel() {
     theme_calendar_active:       "#8cc63f",
     theme_table_hover:           "#1a225a",
     theme_row_border:            "#1a225a",
-    // Sprint 110di-10 — Cards & Panels defaults.
-    card_border_color:           "#1B4D7A",
-    card_border_opacity:         0.65,
-    card_border_width:           1,
+    // Sprint 110di-10/11 — Cards & Panels defaults.
+    card_border_color:           "#008CFF",
+    card_border_opacity:         0.85,
+    card_border_width:           2,
     card_glow_color:             "#008CFF",
-    card_glow_strength:          0.5,
+    card_glow_opacity:           0.35,
+    card_glow_blur:              14,
+    card_inner_highlight_color:  "#FFFFFF",
+    card_inner_highlight_opacity: 0.08,
   };
 
   const reset = () => setDraft({ ...SH_DEFAULTS });
@@ -801,12 +808,15 @@ function BrandPanel() {
         <ColorField testid="theme-row-border"      label="Row Border"       sub="dividers"             value={draft.theme_row_border}      onChange={(v)=>setDraft({...draft, theme_row_border: v})} />
       </ThemeGroup>
 
-      <ThemeGroup title="Cards & Panels" subtitle="Subtle border + glow so dark cards stop blending into the background. Applies app-wide." testid="theme-group-card">
+      <ThemeGroup title="Cards & Panels" subtitle="Border + glow + inset highlight so dark cards stop blending into the background. Applies app-wide." testid="theme-group-card">
         <ColorField testid="card-border-color" label="Card Border Color" sub="resting edge tint" value={draft.card_border_color} onChange={(v)=>setDraft({...draft, card_border_color: v})} />
         <SliderField testid="card-border-opacity" label="Card Border Opacity" sub="0 (off) → 1 (solid)" min={0} max={1} step={0.05} value={draft.card_border_opacity} onChange={(v)=>setDraft({...draft, card_border_opacity: v})} />
-        <SliderField testid="card-border-width" label="Card Border Width" sub="px" min={0} max={3} step={1} value={draft.card_border_width} onChange={(v)=>setDraft({...draft, card_border_width: v})} suffix="px" />
+        <SliderField testid="card-border-width" label="Card Border Width" sub="px" min={0} max={4} step={1} value={draft.card_border_width} onChange={(v)=>setDraft({...draft, card_border_width: v})} suffix="px" />
         <ColorField testid="card-glow-color" label="Card Glow Color" sub="halo behind cards" value={draft.card_glow_color} onChange={(v)=>setDraft({...draft, card_glow_color: v})} />
-        <SliderField testid="card-glow-strength" label="Card Glow Strength" sub="0 (off) → 1.5 (heavy). Subtle/low recommended." min={0} max={1.5} step={0.05} value={draft.card_glow_strength} onChange={(v)=>setDraft({...draft, card_glow_strength: v})} />
+        <SliderField testid="card-glow-opacity" label="Card Glow Opacity" sub="0 (off) → 1 (solid halo)" min={0} max={1} step={0.05} value={draft.card_glow_opacity} onChange={(v)=>setDraft({...draft, card_glow_opacity: v})} />
+        <SliderField testid="card-glow-blur" label="Card Glow Blur" sub="px (higher = softer halo)" min={0} max={40} step={1} value={draft.card_glow_blur} onChange={(v)=>setDraft({...draft, card_glow_blur: v})} suffix="px" />
+        <ColorField testid="card-inner-highlight-color" label="Inner Highlight Color" sub="top-edge lit sheen" value={draft.card_inner_highlight_color} onChange={(v)=>setDraft({...draft, card_inner_highlight_color: v})} />
+        <SliderField testid="card-inner-highlight-opacity" label="Inner Highlight Opacity" sub="0 (off) → 1 (full sheen)" min={0} max={1} step={0.01} value={draft.card_inner_highlight_opacity} onChange={(v)=>setDraft({...draft, card_inner_highlight_opacity: v})} />
       </ThemeGroup>
 
       <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
@@ -904,36 +914,69 @@ function BrandPanel() {
             </div>
           </div>
 
-          {/* Sprint 110di-10 — Cards & Panels sample. Mirrors the live ::after
-              rule on `.bg-bgPanel` so the admin sees exactly what they're
-              tweaking. Uses inline styles so the in-flight draft values
-              preview immediately, before the admin hits Save. */}
+          {/* Sprint 110di-10/11 — Cards & Panels sample. Mirrors the live
+              ::after rule on `.bg-bgPanel` so the admin sees exactly what
+              they're tweaking. Uses inline styles so the in-flight draft
+              values preview immediately, before the admin hits Save. */}
           {(() => {
             const cbRgb = hexToRgbInline(draft.card_border_color);
             const cgRgb = hexToRgbInline(draft.card_glow_color);
-            const opacity = Math.min(Math.max(parseFloat(draft.card_border_opacity ?? 0.65), 0), 1);
-            const width = Math.max(0, parseFloat(draft.card_border_width ?? 1));
-            const strength = Math.min(Math.max(parseFloat(draft.card_glow_strength ?? 0.5), 0), 2);
+            const ihRgb = hexToRgbInline(draft.card_inner_highlight_color || "#FFFFFF");
+            const opacity = Math.min(Math.max(parseFloat(draft.card_border_opacity ?? 0.85), 0), 1);
+            const width = Math.max(0, parseFloat(draft.card_border_width ?? 2));
+            const glowAlpha = Math.min(Math.max(parseFloat(draft.card_glow_opacity ?? 0.35), 0), 1);
+            const glowBlur = Math.max(0, parseFloat(draft.card_glow_blur ?? 14));
+            const innerAlpha = Math.min(Math.max(parseFloat(draft.card_inner_highlight_opacity ?? 0.08), 0), 1);
+            const liveBorder = `${width}px solid rgba(${cbRgb}, ${opacity})`;
+            const liveShadow = `0 0 ${glowBlur}px rgba(${cgRgb}, ${glowAlpha}), inset 0 1px 0 rgba(${ihRgb}, ${innerAlpha})`;
             const cardStyle = {
-              border: `${width}px solid rgba(${cbRgb}, ${opacity})`,
+              border: liveBorder,
               background: draft.theme_bg_panel,
-              boxShadow: `0 0 ${16 * strength}px ${-3 * strength}px rgba(${cgRgb}, ${0.35 * strength}), 0 4px ${22 * strength}px ${-8 * strength}px rgba(${cgRgb}, ${0.35 * strength})`,
+              boxShadow: liveShadow,
               color: draft.theme_text_primary,
             };
             const nestedStyle = {
               border: `${Math.max(width, 1)}px solid rgba(${cbRgb}, ${opacity * 0.85})`,
               background: draft.theme_bg_base,
-              boxShadow: `0 0 ${10 * strength}px ${-2 * strength}px rgba(${cgRgb}, ${0.25 * strength})`,
+              boxShadow: `0 0 ${glowBlur * 0.6}px rgba(${cgRgb}, ${glowAlpha * 0.7}), inset 0 1px 0 rgba(${ihRgb}, ${innerAlpha * 0.8})`,
             };
             return (
-              <div className="space-y-2 mt-2" data-testid="brand-cards-preview">
+              <div className="space-y-3 mt-2" data-testid="brand-cards-preview">
                 <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Cards & Panels preview</p>
+
+                {/* 3-way comparison: no border / subtle / current admin choice */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-testid="brand-cards-comparison">
+                  <div className="rounded-lg p-3" style={{ background: draft.theme_bg_panel, color: draft.theme_text_primary, border: "1px solid transparent" }}>
+                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.theme_text_muted }}>No border</p>
+                    <p className="text-[12px]">Blends right into the page.</p>
+                  </div>
+                  <div className="rounded-lg p-3" style={{
+                    background: draft.theme_bg_panel,
+                    color: draft.theme_text_primary,
+                    border: `1px solid rgba(${cbRgb}, 0.45)`,
+                    boxShadow: `0 0 8px rgba(${cgRgb}, 0.18), inset 0 1px 0 rgba(${ihRgb}, 0.05)`,
+                  }}>
+                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.theme_text_muted }}>Subtle</p>
+                    <p className="text-[12px]">Visible but quiet.</p>
+                  </div>
+                  <div className="rounded-lg p-3" style={{
+                    background: draft.theme_bg_panel,
+                    color: draft.theme_text_primary,
+                    border: liveBorder,
+                    boxShadow: liveShadow,
+                  }}>
+                    <p className="text-[10px] uppercase tracking-widest font-black mb-1" style={{ color: draft.brand_primary }}>Your settings</p>
+                    <p className="text-[12px]">Stronger neon edge.</p>
+                  </div>
+                </div>
+
+                {/* Full sample card with your settings applied */}
                 <div className="rounded-xl p-4" style={cardStyle}>
                   <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: draft.brand_primary }}>
                     <i className="fas fa-paw mr-1"/>Dashboard card
                   </p>
-                  <h4 className="text-base font-black uppercase italic mt-1" style={{ color: draft.theme_text_display }}>Sample card with border + glow</h4>
-                  <p className="text-[12px] mt-1" style={{ color: draft.theme_text_muted }}>This chrome gets applied app-wide to dashboard, portal, dog profile, booking, and settings cards.</p>
+                  <h4 className="text-base font-black uppercase italic mt-1" style={{ color: draft.theme_text_display }}>Sample card with border + glow + inset highlight</h4>
+                  <p className="text-[12px] mt-1" style={{ color: draft.theme_text_muted }}>This chrome gets applied app-wide to dashboard, portal, dog profile, booking, training, and settings cards.</p>
                   <div className="mt-3 rounded-lg p-3" style={nestedStyle}>
                     <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.brand_accent }}>Nested panel</p>
                     <p className="text-[12px] mt-1" style={{ color: draft.theme_text_primary }}>Used for sub-sections inside a card.</p>
