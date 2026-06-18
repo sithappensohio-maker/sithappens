@@ -1579,11 +1579,14 @@ export default function Portal() {
                       : <div className="h-36 bg-gradient-to-br from-shGreen/20 via-bgHover to-shBlue/10 flex items-center justify-center text-shGreen text-5xl drop-shadow-[0_0_18px_rgba(140,198,63,0.45)]"><i className="fas fa-paw" /></div>}
                     <div className="p-4 relative">
                       <div className="flex items-center justify-between gap-2">
-                        <h4 className="text-lg font-black text-white uppercase italic tracking-tight truncate">{d.name}</h4>
-                        <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px] transition"/>
+                        {/* Sprint 110di-6 — pr-1 + min-w-0 stops italic glyph
+                            slant from getting clipped by `truncate` overflow
+                            on short dog names like "DD" / "SDF". */}
+                        <h4 className="min-w-0 flex-1 pr-1 text-lg font-black text-white uppercase italic tracking-tight truncate">{d.name}</h4>
+                        <i className="fas fa-pen text-gray-600 group-hover:text-shGreen text-[14px] transition shrink-0"/>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-1">
-                        <p className="text-[12px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown breed"}</p>
+                        <p className="min-w-0 flex-1 pr-1 text-[12px] text-shBlue font-black uppercase tracking-widest truncate">{d.breed || "Unknown breed"}</p>
                         {visits > 0 && (
                           <span className="shrink-0 bg-shGreen/20 text-shGreen text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-shGreen/30" data-testid={`visit-badge-${d.id}`}>
                             <i className="fas fa-trophy mr-1"/>{visits}{visits >= 100 ? "+" : ""} {visits === 1 ? "visit" : "visits"}
