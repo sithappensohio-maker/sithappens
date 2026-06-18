@@ -4203,6 +4203,12 @@ async def fetch_branding():
         # Legacy strength slider — keep returned so old client builds don't
         # break, but new clients ignore it in favor of opacity + blur.
         "card_glow_strength":          s.get("card_glow_strength")  if s.get("card_glow_strength")  is not None else 0.5,
+        # Sprint 110di-12 — Card Type Themes. Each type maps to a reusable
+        # CSS class (.card-default/.card-info/.card-stats/etc.) so admins can
+        # recolor each category independently without touching every card.
+        # Merge with defaults so a partial PUT doesn't wipe types the admin
+        # didn't touch.
+        "card_type_themes":         {**_card_type_theme_defaults(), **(s.get("card_type_themes") or {})},
         # Sprint 110dm — UI knobs surfaced for the front-end formatters.
         "splatter_intensity":      ui.get("splatter_intensity", "medium"),
         "primary_cta_copy":        ui.get("primary_cta_copy", "Book Now"),
@@ -4244,6 +4250,27 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
         return await get_settings()
     await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
     return await get_settings()
+
+
+def _card_type_theme_defaults() -> Dict[str, Any]:
+    """Sprint 110di-12 — Sit Happens default palette for the 10 card type
+    themes. Each entry drives a reusable `.card-{id}` class via CSS vars."""
+    base = {"border_opacity": 0.75, "border_width": 2,
+            "glow_opacity": 0.25, "glow_blur": 14,
+            "heading": "", "text": ""}
+    return {
+        "default":  {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},
+        "info":     {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "stats":    {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
+        "success":  {"bg": "#071006", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
+        "warning":  {"bg": "#130B02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
+        "danger":   {"bg": "#170407", "border": "#FF3B5C", "glow": "#FF3B5C", "accent": "#FF3B5C", **base},
+        "payment":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
+        "training": {"bg": "#070914", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
+        "booking":  {"bg": "#050B14", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "profile":  {"bg": "#080C16", "border": "#9BCB00", "glow": "#008CFF", "accent": "#9BCB00", **base},
+    }
+
 
 
 # -------- Sprint 110di-4 — "What to Expect on Your First Visit" content --------

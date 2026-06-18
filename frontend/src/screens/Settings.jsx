@@ -638,6 +638,8 @@ function BrandPanel() {
         card_glow_blur:              parseFloat(draft.card_glow_blur),
         card_inner_highlight_color:  draft.card_inner_highlight_color,
         card_inner_highlight_opacity: parseFloat(draft.card_inner_highlight_opacity),
+        // Sprint 110di-12 — Card Type Themes.
+        card_type_themes:            draft.card_type_themes,
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -689,6 +691,8 @@ function BrandPanel() {
     card_glow_blur:              14,
     card_inner_highlight_color:  "#FFFFFF",
     card_inner_highlight_opacity: 0.08,
+    // Sprint 110di-12 — Card Type Themes defaults.
+    card_type_themes: SH_CARD_TYPE_DEFAULTS(),
   };
 
   const reset = () => setDraft({ ...SH_DEFAULTS });
@@ -1021,6 +1025,183 @@ function BrandPanel() {
     </div>
   );
 }
+
+
+// Sprint 110di-12 — Card Type Themes. Canonical Sit Happens defaults; also
+// used by the "Reset card themes" button and the export/import fallback.
+function SH_CARD_TYPE_DEFAULTS() {
+  const base = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, heading: "", text: "" };
+  return {
+    default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
+    info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
+    stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
+    success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
+    warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
+    danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...base },
+    payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
+    training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
+    booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
+    profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...base },
+  };
+}
+
+const CARD_TYPE_META = [
+  { id: "default",  label: "Default Card",         desc: "Generic dark panels and cards." },
+  { id: "info",     label: "Info Card",            desc: "Dog facts, neutral notices, read-only." },
+  { id: "stats",    label: "Stats Card",           desc: "Dashboard counts: daycare, boarding, totals." },
+  { id: "success",  label: "Success / Good",       desc: "Complete, paid, approved, healthy, active." },
+  { id: "warning",  label: "Warning",              desc: "Expiring soon, attention needed, reminders." },
+  { id: "danger",   label: "Danger / Urgent",      desc: "Overdue, missing vaccines, critical alerts." },
+  { id: "payment",  label: "Payment / Finance",    desc: "Balances, P&L, invoices, transactions." },
+  { id: "training", label: "Training",             desc: "Training progress, homework, goals." },
+  { id: "booking",  label: "Booking / Schedule",   desc: "Bookings, schedule, appointment cards." },
+  { id: "profile",  label: "Client / Dog Profile", desc: "Dog cards, client cards, profile summaries." },
+];
+
+
+function CardTypeThemesPanel({ draft, setDraft }) {
+  // Sprint 110di-12 — Tabbed editor for the 10 card type themes. Tabs keep
+  // the panel compact (~10 short blocks of 8 controls). Each edit writes to
+  // `draft.card_type_themes.{id}`; persistence handled by parent onSave.
+  const types = draft.card_type_themes || SH_CARD_TYPE_DEFAULTS();
+  const [active, setActive] = useState("default");
+  const [open, setOpen] = useState(false);
+  const cur = { ...SH_CARD_TYPE_DEFAULTS()[active], ...(types[active] || {}) };
+
+  const update = (patch) => {
+    const next = { ...types, [active]: { ...cur, ...patch } };
+    setDraft({ ...draft, card_type_themes: next });
+  };
+  const resetAll = () => setDraft({ ...draft, card_type_themes: SH_CARD_TYPE_DEFAULTS() });
+  const resetCurrent = () => {
+    const next = { ...types, [active]: { ...SH_CARD_TYPE_DEFAULTS()[active] } };
+    setDraft({ ...draft, card_type_themes: next });
+  };
+
+  const exportJson = () => {
+    const blob = new Blob([JSON.stringify({ card_type_themes: types }, null, 2)],
+                         { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "sit-happens-card-themes.json"; a.click();
+    URL.revokeObjectURL(url);
+  };
+  const importJson = async (e) => {
+    const f = (e.target.files || [])[0];
+    if (!f) return;
+    try {
+      const txt = await f.text();
+      const obj = JSON.parse(txt);
+      const next = obj.card_type_themes || obj;
+      if (next && typeof next === "object") {
+        setDraft({ ...draft, card_type_themes: { ...SH_CARD_TYPE_DEFAULTS(), ...next } });
+      }
+    } catch (err) {
+      alert("That doesn't look like a Sit Happens card-themes JSON file.");
+    }
+    e.target.value = "";
+  };
+
+  return (
+    <div className="rounded-lg border border-bgHover bg-bgBase/40" data-testid="theme-group-card-types">
+      <button type="button" onClick={()=>setOpen(o=>!o)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+              data-testid="theme-group-card-types-toggle">
+        <div>
+          <p className="text-[14px] font-black text-white uppercase tracking-widest">Card Type Themes</p>
+          <p className="text-[12px] text-gray-500 mt-0.5">Recolor stats, success, warning, danger, payment, training, booking, profile, info, and default cards independently.</p>
+        </div>
+        <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"} text-gray-400`}/>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 pt-1">
+          {/* Tabs */}
+          <div className="flex flex-wrap gap-1 mb-3" role="tablist">
+            {CARD_TYPE_META.map(({ id, label }) => (
+              <button key={id} type="button" onClick={()=>setActive(id)}
+                      data-testid={`ct-tab-${id}`}
+                      className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border transition ${active === id ? "bg-shGreen/15 border-shGreen text-shGreen" : "bg-bgBase border-bgHover text-gray-400 hover:text-white"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-[12px] text-gray-500 mb-3">{CARD_TYPE_META.find(c => c.id === active)?.desc}</p>
+
+          {/* Color + sliders for the active type */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid={`ct-editor-${active}`}>
+            <ColorField testid={`ct-${active}-bg`}     label="Background" sub="card fill"             value={cur.bg}     onChange={(v)=>update({ bg: v })} />
+            <ColorField testid={`ct-${active}-border`} label="Border Color" sub="edge tint"           value={cur.border} onChange={(v)=>update({ border: v })} />
+            <ColorField testid={`ct-${active}-glow`}   label="Glow Color"   sub="halo behind card"    value={cur.glow}   onChange={(v)=>update({ glow: v })} />
+            <ColorField testid={`ct-${active}-accent`} label="Accent Color" sub="icons, labels, pills" value={cur.accent} onChange={(v)=>update({ accent: v })} />
+            <SliderField testid={`ct-${active}-bo`} label="Border Opacity" sub="0 → 1" min={0} max={1}  step={0.05} value={cur.border_opacity} onChange={(v)=>update({ border_opacity: v })} />
+            <SliderField testid={`ct-${active}-bw`} label="Border Width"   sub="px"    min={0} max={4}  step={1}    value={cur.border_width}   onChange={(v)=>update({ border_width: v })}   suffix="px"/>
+            <SliderField testid={`ct-${active}-go`} label="Glow Opacity"   sub="0 → 1" min={0} max={1}  step={0.05} value={cur.glow_opacity}   onChange={(v)=>update({ glow_opacity: v })} />
+            <SliderField testid={`ct-${active}-gb`} label="Glow Blur"      sub="px"    min={0} max={40} step={1}    value={cur.glow_blur}      onChange={(v)=>update({ glow_blur: v })}      suffix="px"/>
+            <ColorField testid={`ct-${active}-heading`} label="Heading Color (optional)" sub="leave blank to inherit" value={cur.heading || ""} onChange={(v)=>update({ heading: v })} />
+            <ColorField testid={`ct-${active}-text`}    label="Text Color (optional)"    sub="leave blank to inherit" value={cur.text || ""}    onChange={(v)=>update({ text: v })} />
+          </div>
+
+          {/* Preview grid: 10 thumbs showing each card type with its colors */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4" data-testid="ct-preview-grid">
+            {CARD_TYPE_META.map(({ id, label }) => {
+              const t = { ...SH_CARD_TYPE_DEFAULTS()[id], ...(types[id] || {}) };
+              const bRgb = hexToRgbInline(t.border);
+              const gRgb = hexToRgbInline(t.glow);
+              const ba = clamp(t.border_opacity, 0, 1);
+              const ga = clamp(t.glow_opacity,   0, 1);
+              const isActive = id === active;
+              return (
+                <button key={id} type="button" onClick={()=>setActive(id)}
+                        data-testid={`ct-preview-${id}`}
+                        style={{
+                          background: t.bg,
+                          border: `${Math.max(1, t.border_width)}px solid rgba(${bRgb}, ${ba})`,
+                          boxShadow: `0 0 ${t.glow_blur}px rgba(${gRgb}, ${ga}), inset 0 1px 0 rgba(255,255,255,0.06)`,
+                          outline: isActive ? `1px dashed ${t.accent}` : "none",
+                          outlineOffset: "2px",
+                        }}
+                        className="rounded-lg p-3 text-left transition">
+                  <p className="text-[9px] font-black uppercase tracking-widest" style={{ color: t.accent }}>{label}</p>
+                  <p className="text-[10px] text-gray-300 mt-1">Sample copy</p>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Footer actions */}
+          <div className="flex items-center justify-between flex-wrap gap-2 mt-4 pt-3 border-t border-bgHover">
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={resetCurrent}
+                      data-testid="ct-reset-current"
+                      className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
+                <i className="fas fa-rotate-left mr-1"/>Reset this type
+              </button>
+              <button type="button" onClick={resetAll}
+                      data-testid="ct-reset-all"
+                      className="text-[12px] font-black uppercase tracking-widest text-shOrange hover:underline">
+                <i className="fas fa-rotate-left mr-1"/>Reset all types
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={exportJson}
+                      data-testid="ct-export"
+                      className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                <i className="fas fa-arrow-down mr-1"/>Export JSON
+              </button>
+              <label className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline cursor-pointer">
+                <i className="fas fa-arrow-up mr-1"/>Import JSON
+                <input type="file" accept="application/json" onChange={importJson} className="hidden" data-testid="ct-import"/>
+              </label>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function clamp(v, lo, hi) { const n = parseFloat(v); return Number.isNaN(n) ? lo : Math.min(Math.max(n, lo), hi); }
+
 
 
 function SliderField({ label, sub, value, onChange, min, max, step, suffix = "", testid }) {

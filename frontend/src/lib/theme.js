@@ -81,6 +81,23 @@ const DEFAULT_BRANDING = {
   card_glow_strength:   0.5,
 };
 
+// Sprint 110di-12 — Card Type Themes. Mirrors the backend
+// `_card_type_theme_defaults()` so we can render the right look even before
+// /branding has loaded.
+const CT_BASE = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, heading: "", text: "" };
+export const DEFAULT_CARD_TYPES = {
+  default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
+  info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+  success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
+  warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
+  danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...CT_BASE },
+  payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
+  training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
+  booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+};
+
 // Convert "#RRGGBB" → "r, g, b" string for CSS rgba() composition.
 function hexToRgb(hex) {
   const h = (hex || "").replace("#", "").trim();
@@ -167,6 +184,32 @@ function clamp01(v, fallback) {
   // still resolves. New rule in index.css ignores it.
   root.style.setProperty("--card-glow-strength",
     String(clamp01(b.card_glow_strength, DEFAULT_BRANDING.card_glow_strength)));
+
+  // Sprint 110di-12 — Card Type Themes. Each type writes a small block of
+  // CSS vars consumed by the matching `.card-{type}` class in index.css.
+  // Default-fallback chain: explicit setting → DEFAULT_CARD_TYPES → black.
+  const types = (b.card_type_themes && typeof b.card_type_themes === "object")
+    ? b.card_type_themes
+    : DEFAULT_CARD_TYPES;
+  Object.keys(DEFAULT_CARD_TYPES).forEach((id) => {
+    const t = { ...DEFAULT_CARD_TYPES[id], ...(types[id] || {}) };
+    const bRgb = hexToRgb(t.border);
+    const gRgb = hexToRgb(t.glow);
+    const bAlpha = clamp01(t.border_opacity, 0.75);
+    const gAlpha = clamp01(t.glow_opacity, 0.25);
+    const bWidth = Math.max(0, parseFloat(t.border_width ?? 2));
+    const gBlur  = Math.max(0, parseFloat(t.glow_blur ?? 14));
+    root.style.setProperty(`--ct-${id}-bg`,         t.bg);
+    root.style.setProperty(`--ct-${id}-border`,     t.border);
+    root.style.setProperty(`--ct-${id}-border-rgba`, `rgba(${bRgb}, ${bAlpha})`);
+    root.style.setProperty(`--ct-${id}-border-w`,   `${bWidth}px`);
+    root.style.setProperty(`--ct-${id}-glow`,       t.glow);
+    root.style.setProperty(`--ct-${id}-glow-rgba`,  `rgba(${gRgb}, ${gAlpha})`);
+    root.style.setProperty(`--ct-${id}-glow-blur`,  `${gBlur}px`);
+    root.style.setProperty(`--ct-${id}-accent`,     t.accent);
+    if (t.heading) root.style.setProperty(`--ct-${id}-heading`, t.heading);
+    if (t.text)    root.style.setProperty(`--ct-${id}-text`,    t.text);
+  });
   // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
   // selectors (splatter intensity, letter case, time/date format, week start).
   root.setAttribute("data-splatter", b.splatter_intensity || "medium");
