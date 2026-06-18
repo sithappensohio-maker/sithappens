@@ -856,12 +856,9 @@ export default function Portal() {
   // the Book Now button for ALL training bookings. Training is bookable.
   const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
 
-  // Onboarding checklist — show until all complete
-  const profileComplete = !!(client?.phone && client?.address);
-  const hasDog = dogs.length > 0;
-  const waiverDone = waiver?.signed && !waiver?.needs_resign;
-  const onboardingDone = profileComplete && hasDog && waiverDone;
-  const onboardingStep = !profileComplete ? 1 : !hasDog ? 2 : !waiverDone ? 3 : 4;
+  // Sprint 110di-3 — Old 3-step onboarding banner removed; the full setup
+  // gating now lives in `PortalSetupChecklist`. Kept the `Hi <name>! Welcome`
+  // header. No need to track per-step state here anymore.
 
   return (
     <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
@@ -914,22 +911,15 @@ export default function Portal() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
-        {!onboardingDone && (
-          <div className="mb-4 sm:mb-6 card-hero rounded-xl p-4 sm:p-6 shadow-2xl" data-testid="onboarding-banner">
-            <div className="flex items-start justify-between gap-3 mb-4">
-              <div className="min-w-0">
-                <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">Hi {user.name.split(" ")[0]}! 🐾 Welcome to Sit Happens</h3>
-                <p className="text-[15px] sm:text-[14px] text-gray-300 mt-1">So glad you're here. Before booking your pup's first stay, please knock out these quick steps so we can take great care of them.</p>
-              </div>
-              <span className="shrink-0 bg-shGreen/20 text-shGreen text-[13px] sm:text-[15px] font-black uppercase tracking-widest px-2 sm:px-3 py-1 rounded-full">{Math.min(onboardingStep - 1, 3)} of 3</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <OnboardStep n={1} done={profileComplete} active={onboardingStep===1} title="Complete your profile" desc="Add your phone, address and emergency contact." cta="Edit Profile" onClick={()=>setProfileOpen(true)} testId="onb-profile" />
-              <OnboardStep n={2} done={hasDog} active={onboardingStep===2} title="Add your dog(s)" desc="Tell us about your pup — breed, age, and vaccinations (rabies expiration is required)." cta="Add a Dog" onClick={()=>setDogModal({open:true, dog:null})} testId="onb-adddog" disabled={onboardingStep<2} />
-              <OnboardStep n={3} done={waiverDone} active={onboardingStep===3} title="Sign the waiver" desc="A quick e-signature so we're all set legally." cta="Sign Waiver" onClick={()=>setShowWaiver(true)} testId="onb-waiver" disabled={onboardingStep<3} />
-            </div>
-          </div>
-        )}
+        {/* Sprint 110di-3 — Pared the old 3-step "onboarding banner" down to a
+            simple welcome line. The full first-time-setup gating now lives in
+            `PortalSetupChecklist` below — keeping both was redundant. */}
+        <div className="mb-4 sm:mb-6 card-hero rounded-xl p-4 sm:p-5 shadow-2xl"
+             data-testid="portal-welcome-banner">
+          <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">
+            Hi {user.name.split(" ")[0]}! <span aria-hidden="true">🐾</span> Welcome to Sit Happens
+          </h3>
+        </div>
 
         {/* Sprint 110ax — Daily dog fact, pinned above the main content */}
         <div className="mb-6"><DogFactCard variant="big" /></div>
@@ -2057,23 +2047,7 @@ export default function Portal() {
   );
 }
 
-function OnboardStep({ n, done, active, title, desc, cta, onClick, testId, disabled = false }) {
-  return (
-    <div className={`rounded-lg p-4 border ${done ? "bg-shGreen/10 border-shGreen/40" : active ? "bg-shBlue/10 border-shBlue/50" : "bg-bgBase/40 border-bgHover"}`}>
-      <div className="flex items-center gap-3 mb-2">
-        <div className={`w-7 h-7 rounded-full flex items-center justify-center text-[14px] font-black ${done ? "bg-shGreen text-bgHeader" : active ? "bg-shBlue text-white" : "bg-bgHover text-gray-400"}`}>
-          {done ? <i className="fas fa-check"/> : n}
-        </div>
-        <p className="text-sm font-black text-white uppercase tracking-tight">{title}</p>
-      </div>
-      <p className="text-[14px] text-gray-300 leading-snug mb-3">{desc}</p>
-      <button onClick={onClick} disabled={disabled || done} data-testid={testId}
-              className={`w-full py-2 rounded font-black text-[15px] uppercase tracking-widest transition ${done ? "bg-shGreen/20 text-shGreen cursor-default" : disabled ? "bg-bgBase text-gray-600 cursor-not-allowed border border-bgHover" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
-        {done ? "Complete" : cta}
-      </button>
-    </div>
-  );
-}
+function OnboardingChecklistPlaceholder() { return null; }  // (legacy slot — onboarding UI moved to PortalSetupChecklist)
 
 
 /**
