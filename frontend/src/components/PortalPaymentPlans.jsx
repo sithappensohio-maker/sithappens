@@ -53,8 +53,8 @@ function PlanCard({ plan, onSign }) {
     <div className="bg-bgPanel border border-bgHover rounded-xl p-4 shadow-lg"
          data-testid={`plan-card-${plan.id}`}>
       <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
-        <div className="min-w-0">
-          <p className="text-base font-black text-white">{plan.program_name}</p>
+        <div className="min-w-0 flex-1">
+          <p className="text-base font-black text-white truncate" title={plan.program_name}>{plan.program_name}</p>
           <p className="text-[12px] text-gray-400">
             {fmt(plan.paid_total)} of {fmt(plan.total_amount)} paid
             {plan.overdue_count > 0 && (
@@ -64,11 +64,16 @@ function PlanCard({ plan, onSign }) {
             )}
           </p>
         </div>
-        <span className="text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded"
+        <span className="text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded shrink-0"
               style={{ color: sm.color, background: sm.color + "15", border: `1px solid ${sm.color}40` }}>
           <i className={`fas ${sm.icon} mr-1`}/>{sm.label}
         </span>
       </div>
+      {plan.status === "pending_signature" && (
+        <p className="text-[12px] text-shOrange mb-2" data-testid={`plan-pending-note-${plan.id}`}>
+          <i className="fas fa-circle-info mr-1"/>Review and sign your agreement to continue.
+        </p>
+      )}
 
       {/* Progress bar */}
       <div className="h-2 bg-bgBase rounded-full overflow-hidden border border-bgHover mb-3">

@@ -133,9 +133,10 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
             <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">
               Photo of certificate (optional)
             </label>
-            <input type="file" accept="image/*" onChange={handleFile}
+            <input type="file" accept="image/*,application/pdf" onChange={handleFile}
                    data-testid="vaccine-wizard-photo"
                    className="block w-full text-[12px] text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-[11px] file:font-black file:uppercase file:tracking-widest file:bg-shBlue/15 file:text-shBlue hover:file:bg-shBlue/25"/>
+            <p className="text-[11px] text-gray-500 mt-1"><i className="fas fa-circle-info mr-1"/>Photos or PDFs accepted.</p>
             {photo && <p className="text-[11px] text-shGreen mt-1"><i className="fas fa-check mr-1"/>Photo attached</p>}
           </div>
 

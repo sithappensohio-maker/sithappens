@@ -42,6 +42,30 @@ export default function PortalTrainingCard({ dog }) {
             <p className="text-[14px] text-gray-400 mt-1 leading-snug">
               No active training program yet. When {dog.name} starts a program, you&apos;ll see goals, homework, progress notes, and completed skills here.
             </p>
+            <div className="flex gap-2 mt-3 flex-wrap">
+              <button
+                onClick={() => {
+                  const el = document.getElementById("portal-homework-anchor")
+                          || document.querySelector('[data-testid="portal-training-section"]');
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                  else window.scrollTo({ top: 0, behavior: "smooth" });
+                }}
+                data-testid={`portal-training-empty-files-${dog.id}`}
+                className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shBlue/15 text-shBlue border border-shBlue/30 hover:bg-shBlue/25 transition">
+                <i className="fas fa-folder-open mr-1.5"/>View Training Files
+              </button>
+              <button
+                onClick={() => {
+                  // Open the existing portal Messages modal via its header
+                  // button — falls back to scrolling if not present.
+                  const btn = document.querySelector('[data-testid="portal-messages-button"]');
+                  if (btn) btn.click();
+                }}
+                data-testid={`portal-training-empty-ask-${dog.id}`}
+                className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shGreen/15 text-shGreen border border-shGreen/30 hover:bg-shGreen/25 transition">
+                <i className="fas fa-comments mr-1.5"/>Ask About Training
+              </button>
+            </div>
           </div>
         </div>
       </div>

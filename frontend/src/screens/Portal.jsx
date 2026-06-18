@@ -1022,6 +1022,9 @@ export default function Portal() {
               <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
                 <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
               </p>
+              <p className="text-[11px] text-gray-500 mt-2 text-center" data-testid="credits-helper-text">
+                <i className="fas fa-circle-info mr-1"/>Credits update after completed bookings or admin changes.
+              </p>
               {(() => {
                 const totalCredits = (credits || 0) + (client?.training_credits || 0) + (client?.boarding_credits || 0);
                 if (totalCredits > 2) return null;
@@ -1515,6 +1518,25 @@ export default function Portal() {
                   const exp = d.vaccines?.[v];
                   return !exp || exp < today || exp < soonStr;
                 });
+                // Sprint 110dh-8 — dog card status badge derived from existing
+                // data only (no schema changes). Priority: expired > missing >
+                // missing-info > complete.
+                const reallyExpired = ["rabies", "bordetella", "dhpp"].filter(v => {
+                  const exp = d.vaccines?.[v]; return exp && exp < today;
+                });
+                const reallyMissing = ["rabies", "bordetella", "dhpp"].filter(v => !d.vaccines?.[v]);
+                const missingDogInfo = !((d.name || "").trim() && (d.breed || "").trim() &&
+                                          ((d.birthday || "").trim() || d.age_y || d.age_m));
+                let cardBadge;
+                if (reallyExpired.length > 0) {
+                  cardBadge = { label: "Expired records", cls: "bg-red-500/15 text-red-300 border-red-500/40", icon: "fa-circle-xmark" };
+                } else if (reallyMissing.length > 0) {
+                  cardBadge = { label: "Needs vaccines", cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-shield-virus" };
+                } else if (missingDogInfo) {
+                  cardBadge = { label: "Missing info", cls: "bg-shBlue/15 text-shBlue border-shBlue/40", icon: "fa-circle-info" };
+                } else {
+                  cardBadge = { label: "Complete", cls: "bg-shGreen/15 text-shGreen border-shGreen/40", icon: "fa-circle-check" };
+                }
                 return (
                 <div key={d.id}
                      className="relative bg-gradient-to-br from-bgPanel via-bgPanel to-shGreen/10 rounded-2xl border border-bgHover hover:border-shGreen/50 overflow-hidden shadow-2xl transition-all hover:-translate-y-0.5"
@@ -1524,6 +1546,10 @@ export default function Portal() {
                       lifts on hover, matching the rest of the portal polish. */}
                   <div className="absolute inset-0 pointer-events-none opacity-25"
                        style={{ background: "radial-gradient(circle at 100% 0%, rgba(140,198,63,0.45) 0%, transparent 55%)" }}/>
+                  <span className={`absolute top-3 left-3 z-10 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${cardBadge.cls}`}
+                        data-testid={`dog-card-badge-${d.id}`}>
+                    <i className={`fas ${cardBadge.icon} mr-1`}/>{cardBadge.label}
+                  </span>
                   <button onClick={()=>setDogModal({open:true, dog:d})}
                           className="relative block w-full text-left group">
                     {d.photo
@@ -1549,13 +1575,13 @@ export default function Portal() {
                   </button>
                   {expiringVaccines.length > 0 && (
                     <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-alert-${d.id}`}>
-                      <p className="text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
-                        <i className="fas fa-shield-virus mr-1"/>{expiringVaccines.length} vaccine{expiringVaccines.length > 1 ? "s" : ""} need updating
+                      <p className="text-[12px] sm:text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
+                        <i className="fas fa-shield-virus mr-1"/>{expiringVaccines.length} record{expiringVaccines.length > 1 ? "s" : ""} needed
                       </p>
                       <button onClick={()=>setVaccineModal({ dog: d, vaccine: expiringVaccines[0] })}
                               data-testid={`vaccine-upload-btn-${d.id}`}
-                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline">
-                        Upload <span className="hidden sm:inline">Vaccine Records</span> <i className="fas fa-arrow-right ml-1"/>
+                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap">
+                        Upload Vaccines <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
                   )}

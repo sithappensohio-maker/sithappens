@@ -981,6 +981,67 @@ const CLIENT_QUICK_ACTIONS = [
 
 const CLIENT_SECTIONS = [
   {
+    id: "first_time_setup",
+    title: "First-Time Setup",
+    icon: "fa-clipboard-check",
+    color: "text-shOrange",
+    overview: "When you first sign in, the portal walks you through everything we need before booking. The setup checklist sits right at the top until every step is complete.",
+    cards: [
+      {
+        title: "Complete your profile, dogs, vaccines, waiver & emergency contact",
+        badges: ["Required"],
+        steps: [
+          "1. Your Information — tap 'Complete My Info' to confirm your name, phone, email and address.",
+          "2. Dog Information — tap 'Add / Update Dog Info' to add each pup (name, breed, birthday, sex, notes). You can add more dogs any time from the same button.",
+          "3. Emergency Contact — tap 'Add Emergency Contact' to give us a backup name + phone we can call if we can't reach you.",
+          "4. Vaccine Records — tap 'Upload Vaccine Records'. If multiple vaccines are due, a wizard walks you through each one in order. Photos or PDFs are accepted.",
+          "5. Client Waiver — tap 'Review & Sign Waiver' to read and e-sign our liability waiver.",
+          "6. Service Intake Forms — when admin assigns a form (boarding/daycare/training intake), it appears here. Fill it out before that service can be booked.",
+        ],
+        tip: "Booking unlocks automatically the moment every step is green — no need to refresh.",
+      },
+    ],
+  },
+  {
+    id: "booking_and_credits",
+    title: "Booking & Credits",
+    icon: "fa-paw",
+    color: "text-shGreen",
+    overview: "How daycare, boarding, training, photography bookings + credits work.",
+    cards: [
+      {
+        title: "Book a service",
+        badges: ["Beginner"],
+        steps: [
+          "Open the green 'Book Now' card in the middle of the portal (or use the Quick Link).",
+          "Pick the service (daycare, boarding, training, grooming, photography), the dog, the date and any add-ons.",
+          "Submit — admin gets notified and the booking shows up under 'My Bookings'.",
+          "Tabs: Upcoming · Past · All. Click any booking to see status, drop-off time, notes, and payment.",
+        ],
+      },
+      {
+        title: "How credits work",
+        badges: ["Reference"],
+        steps: [
+          "Credits are pre-paid passes (daycare/training/boarding). Each completed booking burns one credit of the matching kind.",
+          "Grooming is pay-on-the-day — no credits used.",
+          "Credits update after completed bookings or admin changes (refunds, gifts, transfers).",
+          "When you're running low, the orange 'Need more credits?' card appears in the credits panel — message us or book your next service.",
+        ],
+      },
+      {
+        title: "Payment plans / manual payment tracking",
+        badges: ["Reference"],
+        steps: [
+          "This app tracks outside/manual payments only — no in-app charging.",
+          "Each payment plan shows what you've paid, what's left, and any overdue rows.",
+          "When admin sets up a new plan it starts as 'Awaiting signature' — review and sign the agreement to continue.",
+          "Send payment outside the app (cash/cheque/transfer/etc.) and admin marks the row paid here.",
+        ],
+      },
+    ],
+  },
+  {
     id: "messages",
     title: "Send a message to the team",
     icon: "fa-comments",
@@ -1009,6 +1070,16 @@ const CLIENT_SECTIONS = [
           "If your business has email notifications on, you'll also get a copy in your inbox.",
         ],
         tip: "Resolved threads automatically re-open if you reply — you don't have to start a new conversation if something comes up later.",
+      },
+      {
+        title: "Training homework, files & rewards",
+        badges: ["Reference"],
+        steps: [
+          "Active training programs show up under 'Training Progress' on the portal — goals, completed skills, files and homework all live there.",
+          "Homework you've been assigned appears as its own card with a checkbox; tick it when done so your trainer can see progress.",
+          "Referral rewards: under Quick Links → Refer a Friend, share your code. When a new client signs up and books, you get a free daycare day.",
+          "Photo gallery & download PIN: when admin posts new photos, the Photo Gallery tile shows a NEW badge. Use the PIN when downloading files from the gallery.",
+        ],
       },
     ],
   },
