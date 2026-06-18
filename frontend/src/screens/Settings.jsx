@@ -628,6 +628,12 @@ function BrandPanel() {
         theme_calendar_active:       draft.theme_calendar_active,
         theme_table_hover:           draft.theme_table_hover,
         theme_row_border:            draft.theme_row_border,
+        // Sprint 110di-10 — Cards & Panels (border + glow).
+        card_border_color:           draft.card_border_color,
+        card_border_opacity:         parseFloat(draft.card_border_opacity),
+        card_border_width:           parseFloat(draft.card_border_width),
+        card_glow_color:             draft.card_glow_color,
+        card_glow_strength:          parseFloat(draft.card_glow_strength),
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -670,6 +676,12 @@ function BrandPanel() {
     theme_calendar_active:       "#8cc63f",
     theme_table_hover:           "#1a225a",
     theme_row_border:            "#1a225a",
+    // Sprint 110di-10 — Cards & Panels defaults.
+    card_border_color:           "#1B4D7A",
+    card_border_opacity:         0.65,
+    card_border_width:           1,
+    card_glow_color:             "#008CFF",
+    card_glow_strength:          0.5,
   };
 
   const reset = () => setDraft({ ...SH_DEFAULTS });
@@ -789,6 +801,14 @@ function BrandPanel() {
         <ColorField testid="theme-row-border"      label="Row Border"       sub="dividers"             value={draft.theme_row_border}      onChange={(v)=>setDraft({...draft, theme_row_border: v})} />
       </ThemeGroup>
 
+      <ThemeGroup title="Cards & Panels" subtitle="Subtle border + glow so dark cards stop blending into the background. Applies app-wide." testid="theme-group-card">
+        <ColorField testid="card-border-color" label="Card Border Color" sub="resting edge tint" value={draft.card_border_color} onChange={(v)=>setDraft({...draft, card_border_color: v})} />
+        <SliderField testid="card-border-opacity" label="Card Border Opacity" sub="0 (off) → 1 (solid)" min={0} max={1} step={0.05} value={draft.card_border_opacity} onChange={(v)=>setDraft({...draft, card_border_opacity: v})} />
+        <SliderField testid="card-border-width" label="Card Border Width" sub="px" min={0} max={3} step={1} value={draft.card_border_width} onChange={(v)=>setDraft({...draft, card_border_width: v})} suffix="px" />
+        <ColorField testid="card-glow-color" label="Card Glow Color" sub="halo behind cards" value={draft.card_glow_color} onChange={(v)=>setDraft({...draft, card_glow_color: v})} />
+        <SliderField testid="card-glow-strength" label="Card Glow Strength" sub="0 (off) → 1.5 (heavy). Subtle/low recommended." min={0} max={1.5} step={0.05} value={draft.card_glow_strength} onChange={(v)=>setDraft({...draft, card_glow_strength: v})} />
+      </ThemeGroup>
+
       <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
         {/* Sprint 110di-8 — Expanded live preview surfaces (card / primary
             button / secondary button / input / warning pill / sidebar). Uses
@@ -883,6 +903,63 @@ function BrandPanel() {
               </div>
             </div>
           </div>
+
+          {/* Sprint 110di-10 — Cards & Panels sample. Mirrors the live ::after
+              rule on `.bg-bgPanel` so the admin sees exactly what they're
+              tweaking. Uses inline styles so the in-flight draft values
+              preview immediately, before the admin hits Save. */}
+          {(() => {
+            const cbRgb = hexToRgbInline(draft.card_border_color);
+            const cgRgb = hexToRgbInline(draft.card_glow_color);
+            const opacity = Math.min(Math.max(parseFloat(draft.card_border_opacity ?? 0.65), 0), 1);
+            const width = Math.max(0, parseFloat(draft.card_border_width ?? 1));
+            const strength = Math.min(Math.max(parseFloat(draft.card_glow_strength ?? 0.5), 0), 2);
+            const cardStyle = {
+              border: `${width}px solid rgba(${cbRgb}, ${opacity})`,
+              background: draft.theme_bg_panel,
+              boxShadow: `0 0 ${16 * strength}px ${-3 * strength}px rgba(${cgRgb}, ${0.35 * strength}), 0 4px ${22 * strength}px ${-8 * strength}px rgba(${cgRgb}, ${0.35 * strength})`,
+              color: draft.theme_text_primary,
+            };
+            const nestedStyle = {
+              border: `${Math.max(width, 1)}px solid rgba(${cbRgb}, ${opacity * 0.85})`,
+              background: draft.theme_bg_base,
+              boxShadow: `0 0 ${10 * strength}px ${-2 * strength}px rgba(${cgRgb}, ${0.25 * strength})`,
+            };
+            return (
+              <div className="space-y-2 mt-2" data-testid="brand-cards-preview">
+                <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Cards & Panels preview</p>
+                <div className="rounded-xl p-4" style={cardStyle}>
+                  <p className="text-[11px] font-black uppercase tracking-widest" style={{ color: draft.brand_primary }}>
+                    <i className="fas fa-paw mr-1"/>Dashboard card
+                  </p>
+                  <h4 className="text-base font-black uppercase italic mt-1" style={{ color: draft.theme_text_display }}>Sample card with border + glow</h4>
+                  <p className="text-[12px] mt-1" style={{ color: draft.theme_text_muted }}>This chrome gets applied app-wide to dashboard, portal, dog profile, booking, and settings cards.</p>
+                  <div className="mt-3 rounded-lg p-3" style={nestedStyle}>
+                    <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.brand_accent }}>Nested panel</p>
+                    <p className="text-[12px] mt-1" style={{ color: draft.theme_text_primary }}>Used for sub-sections inside a card.</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-3">
+                    <div className="rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest"
+                         style={{ ...nestedStyle, color: draft.brand_primary }}>
+                      <i className="fas fa-bolt mr-1"/>Quick link
+                    </div>
+                    <div className="rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest"
+                         style={{ ...nestedStyle, color: draft.brand_accent }}>
+                      <i className="fas fa-bullhorn mr-1"/>Announcements
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-3 flex-wrap">
+                    <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
+                            style={{ background: draft.theme_btn_primary_bg, color: draft.theme_btn_primary_fg }}>Save</button>
+                    <button type="button" className="px-3 py-1.5 rounded border font-black text-[12px] uppercase tracking-widest"
+                            style={{ borderColor: draft.theme_btn_secondary_border, color: draft.theme_btn_secondary_fg, background: "transparent" }}>Cancel</button>
+                    <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
+                            style={{ background: draft.theme_btn_danger_bg, color: draft.theme_btn_danger_fg }}>Delete</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </Section>
 
@@ -901,6 +978,30 @@ function BrandPanel() {
     </div>
   );
 }
+
+
+function SliderField({ label, sub, value, onChange, min, max, step, suffix = "", testid }) {
+  // Sprint 110di-10 — compact slider + numeric readout used for the new card
+  // border opacity/width and glow strength controls.
+  const v = value == null ? min : value;
+  return (
+    <div className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid={testid}>
+      <label className="text-[15px] font-black text-gray-400 uppercase tracking-widest">{label}</label>
+      {sub && <p className="text-[13px] text-gray-500 mt-0.5 mb-2 leading-tight">{sub}</p>}
+      <div className="flex items-center gap-3">
+        <input type="range" min={min} max={max} step={step} value={v}
+               onChange={(e)=>onChange(parseFloat(e.target.value))}
+               data-testid={`${testid}-slider`}
+               className="flex-1 accent-shGreen"/>
+        <span className="text-[13px] font-black text-white font-mono w-14 text-right"
+              data-testid={`${testid}-readout`}>
+          {Number(v).toString()}{suffix}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 
 
 function ThemeGroup({ title, subtitle, testid, children }) {

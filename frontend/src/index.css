@@ -33,6 +33,18 @@
   --calendar-active: #8cc63f;
   --table-hover: #1a225a;
   --row-border: #1a225a;
+  /* Sprint 110di-10 — Cards & Panels (border + glow). Overridden at runtime
+     by ThemeProvider from admin's Brand & Theme settings. The default keeps
+     a neon-deep-blue edge so dark cards stop blending into the background. */
+  --card-border-color: #1B4D7A;
+  --card-border-rgb: 27, 77, 122;
+  --card-border-rgba: rgba(27, 77, 122, 0.65);
+  --card-border-opacity: 0.65;
+  --card-border-width: 1px;
+  --card-glow-color: #008CFF;
+  --card-glow-rgb: 0, 140, 255;
+  --card-glow-rgba: rgba(0, 140, 255, 0.18);
+  --card-glow-strength: 0.5;
   --sh-display: 'Bowlby One SC', 'Black Ops One', 'Anton', 'Impact', sans-serif;
 }
 
@@ -66,6 +78,33 @@ body {
       rgba(148, 163, 184, 0.08) 0%,
       rgba(148, 163, 184, 0.02) 38%,
       rgba(2, 6, 23, 0.18) 100%);
+  /* Sprint 110di-10 — `.bg-bgPanel` becomes our anchor for the new app-wide
+     card border/glow. The visual chrome lives in a non-interactive ::after
+     overlay so we don't clobber any existing `border-*` utilities a card
+     might already declare. The CSS vars are populated by ThemeProvider from
+     admin's Brand & Theme settings. */
+  position: relative;
+}
+.bg-bgPanel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  border: var(--card-border-width, 1px) solid var(--card-border-rgba, rgba(27, 77, 122, 0.65));
+  box-shadow:
+    0 0 calc(16px * var(--card-glow-strength, 0.5)) calc(-3px * var(--card-glow-strength, 0.5)) var(--card-glow-rgba, rgba(0, 140, 255, 0.18)),
+    0 4px calc(22px * var(--card-glow-strength, 0.5)) calc(-8px * var(--card-glow-strength, 0.5)) var(--card-glow-rgba, rgba(0, 140, 255, 0.18));
+  /* Keep the overlay above the bg fill but below any positioned children
+     (icons, badges, modals) that have z-index >= 1. */
+  z-index: 0;
+}
+/* Make sure direct children sit above the overlay. Without this, content
+   inside the card stays interactive (links/buttons still click) — pointer
+   events on ::after are off, but z-stacking can still bury hover effects. */
+.bg-bgPanel > * {
+  position: relative;
+  z-index: 1;
 }
 .bg-bgBase {
   background-image:
