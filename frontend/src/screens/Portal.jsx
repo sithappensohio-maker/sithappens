@@ -1532,9 +1532,17 @@ export default function Portal() {
                 const today = todayISO();
                 const soon = new Date(); soon.setDate(soon.getDate() + 30);
                 const soonStr = soon.toISOString().slice(0, 10);
-                const expiringVaccines = ["rabies", "bordetella", "dhpp"].filter(v => {
+                // Sprint 110di-fix — split "must upload now" from "heads up
+                // expiring soon" so the alert badge no longer lies after a
+                // client uploads a fresh cert that happens to be < 30 days
+                // from today.
+                const needsUpload = ["rabies", "bordetella", "dhpp"].filter(v => {
                   const exp = d.vaccines?.[v];
-                  return !exp || exp < today || exp < soonStr;
+                  return !exp || exp < today;
+                });
+                const expiringSoon = ["rabies", "bordetella", "dhpp"].filter(v => {
+                  const exp = d.vaccines?.[v];
+                  return exp && exp >= today && exp < soonStr;
                 });
                 // Sprint 110dh-8 — dog card status badge derived from existing
                 // data only (no schema changes). Priority: expired > missing >
@@ -1591,15 +1599,27 @@ export default function Portal() {
                       <p className="text-[13px] text-gray-400 mt-2"><i className="fas fa-shield-virus text-shBlue mr-1"/>Rabies: <span className={d.vaccines?.rabies && d.vaccines.rabies>=today?"text-shGreen font-black":"text-red-400 font-black"}>{d.vaccines?.rabies||"Missing"}</span></p>
                     </div>
                   </button>
-                  {expiringVaccines.length > 0 && (
+                  {needsUpload.length > 0 && (
                     <div className="border-t border-red-500/30 bg-red-500/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-alert-${d.id}`}>
                       <p className="text-[12px] sm:text-[13px] text-red-300 font-black uppercase tracking-widest min-w-0 truncate">
-                        <i className="fas fa-shield-virus mr-1"/>{expiringVaccines.length} record{expiringVaccines.length > 1 ? "s" : ""} needed
+                        <i className="fas fa-shield-virus mr-1"/>{needsUpload.length} record{needsUpload.length > 1 ? "s" : ""} needed
                       </p>
-                      <button onClick={()=>setVaccineModal({ dog: d, vaccine: expiringVaccines[0] })}
+                      <button onClick={()=>setVaccineQuick({ initialDogId: d.id })}
                               data-testid={`vaccine-upload-btn-${d.id}`}
                               className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap">
                         Upload Vaccines <i className="fas fa-arrow-right ml-1"/>
+                      </button>
+                    </div>
+                  )}
+                  {needsUpload.length === 0 && expiringSoon.length > 0 && (
+                    <div className="border-t border-shOrange/30 bg-shOrange/10 px-4 py-2 flex items-center justify-between gap-2" data-testid={`vaccine-soon-${d.id}`}>
+                      <p className="text-[12px] sm:text-[13px] text-shOrange font-black uppercase tracking-widest min-w-0 truncate">
+                        <i className="fas fa-hourglass-half mr-1"/>{expiringSoon.length} expiring soon
+                      </p>
+                      <button onClick={()=>setVaccineQuick({ initialDogId: d.id })}
+                              data-testid={`vaccine-renew-btn-${d.id}`}
+                              className="shrink-0 text-[12px] sm:text-[13px] font-black uppercase tracking-widest text-shGreen hover:underline whitespace-nowrap">
+                        Renew Now <i className="fas fa-arrow-right ml-1"/>
                       </button>
                     </div>
                   )}

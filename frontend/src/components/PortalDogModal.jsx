@@ -36,7 +36,22 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
 
   const save = async () => {
     setErr("");
-    if (!form.name.trim()) { setErr("Name is required"); return; }
+    // Sprint 110di — all dog fields required except birthday (alt to age),
+    // notes (qualitative), and photo (optional). Either birthday OR age must
+    // be filled so we still know how old the pup is.
+    const required = [
+      { k: "name",     label: "Name" },
+      { k: "breed",    label: "Breed" },
+      { k: "vet_name", label: "Vet name" },
+      { k: "vet_phone", label: "Vet phone" },
+    ];
+    for (const f of required) {
+      if (!(form[f.k] || "").toString().trim()) { setErr(`${f.label} is required`); return; }
+    }
+    const hasBirthday = !!(form.birthday || "").trim();
+    const hasAge = (parseInt(form.age_y) || 0) > 0 || (parseInt(form.age_m) || 0) > 0;
+    if (!hasBirthday && !hasAge) { setErr("Age (years/months) or birthday is required"); return; }
+    if (!form.vaccines?.rabies) { setErr("Rabies expiration is required"); return; }
     setSaving(true);
     try {
       const body = {
@@ -77,7 +92,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
               <input value={form.name} onChange={(e)=>set({name:e.target.value})} data-testid="pd-name"
                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
-            <Field label="Breed">
+            <Field label="Breed" required>
               <input value={form.breed} onChange={(e)=>set({breed:e.target.value})} placeholder="Golden Retriever"
                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
@@ -171,11 +186,11 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Vet name">
+            <Field label="Vet name" required>
               <input value={form.vet_name} onChange={(e)=>set({vet_name:e.target.value})}
                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
             </Field>
-            <Field label="Vet phone">
+            <Field label="Vet phone" required>
               <input value={form.vet_phone} onChange={(e)=>set({vet_phone:e.target.value})}
                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
             </Field>

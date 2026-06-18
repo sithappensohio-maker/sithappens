@@ -3757,5 +3757,45 @@ uploads per vaccine, and make the native calendar picker icon clearly visible
 - Playwright screenshot confirmed the new modal renders for the test client
   with both dogs as picker tiles, all three vaccines as rows with their own
   date + multi-photo inputs, and the calendar icon now visibly white.
+
+## Sprint 110di-2 — Required fields + stale "records needed" badge fix (2026-02-18)
+
+**User ask** (verbatim): "make all dog Fields except birthday required also make
+all owner Fields required also in the my dogs cards after adding the vax
+records its still saying the records are needed"
+
+### Bug — stale "records needed" badge
+- ✅ `Portal.jsx` dog card was flagging any vaccine expiring within 30 days as
+  "X records needed" because the same `expiringVaccines` array conflated
+  missing/expired with expiring-soon. After a client uploaded a fresh cert
+  whose new expiry happened to be < 30 days out, the dog card still screamed
+  "records needed".
+- Split into `needsUpload` (missing or strictly expired) and `expiringSoon`
+  (valid but within 30 days). The red "records needed" strip only renders for
+  the former; expiring-soon gets a softer amber "X expiring soon · Renew Now"
+  strip. Both buttons now open the new multi-vaccine `VaccineQuickUploadModal`
+  scoped to that dog.
+
+### Required field tightening
+- ✅ `PortalProfileModal.jsx` — Name, Email, Address, Phone, Emergency Contact
+  are all required (was: only Name). Save button still validates email shape,
+  and the inline error tells the client exactly which field is missing.
+- ✅ `PortalDogModal.jsx` — Name, Breed, Sex, Spayed/Neutered, Vet Name, Vet
+  Phone, Rabies Expiration, and Years/Months (unless Birthday is set) all
+  marked required and validated client-side. Birthday, Photo, Bordetella,
+  DHPP, and Notes remain optional. Each required field shows an orange `*`.
+- Both modals validate on Save and short-circuit with a precise error message
+  ("X is required") instead of letting the API call go out.
+
+### Cache
+- Service worker bumped to `sh-v7-110di-required-fields-and-vaccine-badge-fix`.
+
+### Tests
+- Backend untouched in this slice; existing `test_portal_email_and_vaccine_multi.py`
+  (5 tests) + `test_setup_checklist.py` (9 tests) all still pass.
+- Playwright smoke confirmed: Profile modal now shows 5 starred fields and
+  Dog modal shows the new "*" markers + inline "Name is required" when saved
+  empty.
+
 - Playwright screenshot confirmed the Profile modal exposes the EMAIL field
   pre-populated with the existing contact email.

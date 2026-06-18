@@ -14,9 +14,19 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
 
   const save = async () => {
     setErr("");
-    if (!form.name.trim()) { setErr("Name is required"); return; }
+    // Sprint 110di — all owner fields required.
+    const fields = [
+      { k: "name",    label: "Name" },
+      { k: "email",   label: "Email" },
+      { k: "address", label: "Address" },
+      { k: "phone",   label: "Phone" },
+      { k: "emerg",   label: "Emergency contact" },
+    ];
+    for (const f of fields) {
+      if (!(form[f.k] || "").trim()) { setErr(`${f.label} is required`); return; }
+    }
     const em = (form.email || "").trim();
-    if (em && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
       setErr("Enter a valid email address"); return;
     }
     setSaving(true);
@@ -39,10 +49,10 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
         <div className="space-y-4">
           {[
             { k: "name", label: "Full Name *", placeholder: "", type: "text" },
-            { k: "email", label: "Email", placeholder: "you@example.com", type: "email" },
-            { k: "address", label: "Address", placeholder: "123 Main St, City, State", type: "text" },
-            { k: "phone", label: "Phone", placeholder: "(555) 123-4567", type: "tel" },
-            { k: "emerg", label: "Emergency Contact", placeholder: "Jane Doe — (555) 555-5555", type: "text" },
+            { k: "email", label: "Email *", placeholder: "you@example.com", type: "email" },
+            { k: "address", label: "Address *", placeholder: "123 Main St, City, State", type: "text" },
+            { k: "phone", label: "Phone *", placeholder: "(555) 123-4567", type: "tel" },
+            { k: "emerg", label: "Emergency Contact *", placeholder: "Jane Doe — (555) 555-5555", type: "text" },
           ].map(f => (
             <div key={f.k}>
               <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">{f.label}</label>
@@ -51,7 +61,7 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
                      data-testid={`pp-${f.k}`}
                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
               {f.k === "email" && (
-                <p className="text-[11px] text-gray-500 mt-1">Used for receipts, low-credit reminders & studio updates. Leave blank to opt out.</p>
+                <p className="text-[11px] text-gray-500 mt-1">Used for receipts, low-credit reminders & studio updates.</p>
               )}
             </div>
           ))}
