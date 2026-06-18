@@ -20386,9 +20386,21 @@ async def operational_readiness(_: dict = Depends(require_admin)):
     checks.append({"id": "reviews", "label": "Review links configured", "done": has_review,
                    "goto": "settings", "fix": "Settings → Marketing & Branding → Review Links"})
 
-    staff_with_roles = await db.users.count_documents({"role": "employee", "staff_role": {"$exists": True}})
-    checks.append({"id": "roles", "label": "Staff roles assigned", "done": staff_with_roles > 0 or
-                   await db.users.count_documents({"role": "employee"}) == 0,
+    # Sprint 110di-7 — `roles` check used to fail for solo admin operators
+    # because it only counted users with role="employee". A solo admin with
+    # zero employees should pass: there's no one to assign roles TO. We now
+    # consider it done when (a) every employee has a `staff_role`, OR (b)
+    # there are no employees at all and at least one admin exists.
+    employee_total = await db.users.count_documents({"role": "employee"})
+    employees_with_roles = await db.users.count_documents({
+        "role": "employee",
+        "staff_role": {"$exists": True, "$nin": [None, ""]},
+    })
+    admin_count = await db.users.count_documents({"role": "admin"})
+    roles_done = (employee_total > 0 and employees_with_roles == employee_total) \
+                 or (employee_total == 0 and admin_count > 0)
+    checks.append({"id": "roles", "label": "Staff roles assigned",
+                   "done": roles_done,
                    "goto": "staff", "fix": "Staff → Roles panel at the top"})
 
     kb = s.get("kennel_board") or {}
@@ -20396,8 +20408,21 @@ async def operational_readiness(_: dict = Depends(require_admin)):
     checks.append({"id": "kennels", "label": "Kennel labels configured", "done": has_kennels,
                    "goto": "kennel", "fix": "Kennel Board → Labels button"})
 
-    backups = await db.backups.count_documents({}) if "backups" in await db.list_collection_names() else 0
-    checks.append({"id": "backup", "label": "Backup created", "done": backups > 0,
+    # Sprint 110di-7 — `backup` check previously looked at `db.backups`, which
+    # nothing in the codebase populates. Real backups (manual + auto) live in
+    # `db.auto_backup_runs`. Auto-backup configuration lives in
+    # `db.app_settings` under _id="auto_backup". We accept either: at least
+    # one non-failed run on file, OR auto-backup currently enabled — gives
+    # newly-set-up studios immediate credit for turning on the safety net.
+    bkup_collections = await db.list_collection_names()
+    backup_runs = (
+        await db.auto_backup_runs.count_documents({"status": {"$ne": "failed"}})
+        if "auto_backup_runs" in bkup_collections else 0
+    )
+    auto_cfg = await db.app_settings.find_one({"_id": "auto_backup"}, {"_id": 0}) or {}
+    auto_enabled = bool(auto_cfg.get("enabled"))
+    checks.append({"id": "backup", "label": "Backup created",
+                   "done": backup_runs > 0 or auto_enabled,
                    "goto": "settings", "fix": "Settings → Staff & Admin → Backups"})
 
     return {
