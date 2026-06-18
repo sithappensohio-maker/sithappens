@@ -34,7 +34,7 @@ const TARGET_SELECTOR = {
  * - When all gates are complete, shows a celebratory success card.
  * - Routes the user to the matching existing portal flow via testid or anchor.
  */
-export default function PortalSetupChecklist({ onAction = () => {}, onStatusChange = () => {} }) {
+export default function PortalSetupChecklist({ onAction = () => {}, onStatusChange = () => {}, refreshKey = 0 }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -47,7 +47,11 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
       setData(null);
     } finally { setLoading(false); }
   };
-  useEffect(() => { load(); }, []);
+  // Re-fetch when refreshKey bumps (parent triggers after dog/vaccine/waiver
+  // save) so step states catch up immediately without waiting for the 60s
+  // poll.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [refreshKey]);
 
   // Re-poll every 60s so admin-side changes (vaccine approval, intake assigned)
   // reflect without forcing a full refresh.
@@ -174,6 +178,27 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
                     className="mt-3 w-full bg-shGreen text-bgHeader text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shGreen/90 transition"
                   >
                     <i className="fas fa-arrow-right mr-2"/>{s.action_label}
+                  </button>
+                )}
+                {/* Sprint 110dh-7 — secondary "Add Another Dog" / "Add Another
+                    Vaccine" actions for steps that the client may want to
+                    revisit even after completing the bare minimum. */}
+                {isComplete && s.id === "dog_info" && (
+                  <button
+                    onClick={() => goTo("dogs")}
+                    data-testid="portal-setup-add-another-dog"
+                    className="mt-3 w-full bg-shBlue/15 text-shBlue text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shBlue/25 transition border border-shBlue/30"
+                  >
+                    <i className="fas fa-plus mr-2"/>Add Another Dog
+                  </button>
+                )}
+                {isComplete && s.id === "vaccines" && (
+                  <button
+                    onClick={() => goTo("vaccines")}
+                    data-testid="portal-setup-update-vaccines"
+                    className="mt-3 w-full bg-shBlue/15 text-shBlue text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shBlue/25 transition border border-shBlue/30"
+                  >
+                    <i className="fas fa-rotate mr-2"/>Update Vaccine Records
                   </button>
                 )}
               </div>

@@ -675,14 +675,19 @@ async def list_clients(_: dict = Depends(require_admin)):
     try:
         settings = await get_settings()
         required_vax = settings.get("required_vaccines", ["rabies"]) or []
-        current_waiver_version = settings.get("waiver_version") or (settings.get("waiver_settings") or {}).get("version") or 1
+        current_waiver_version = int(settings.get("waiver_version") or 1)
         # Batch loads
-        dogs_full = await db.dogs.find({}, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "dob": 1, "age": 1, "vaccines": 1}).to_list(5000)
+        dogs_full = await db.dogs.find({}, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "birthday": 1, "age_y": 1, "age_m": 1, "vaccines": 1}).to_list(5000)
         dogs_full_by_owner: Dict[str, List[Dict[str, Any]]] = {}
         for d in dogs_full:
             dogs_full_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
-        waivers_list = await db.waivers.find({}, {"_id": 0, "client_id": 1, "signed": 1, "waiver_version": 1}).to_list(5000)
-        waivers_by_client = {w.get("client_id"): w for w in waivers_list}
+        # Real waiver collection is waiver_signatures (one row per sign event;
+        # latest row per client wins).
+        waivers_by_client: Dict[str, Dict[str, Any]] = {}
+        async for sig in db.waiver_signatures.find({}, {"_id": 0, "client_id": 1, "waiver_version": 1, "signed_at": 1}).sort("signed_at", -1):
+            cidw = sig.get("client_id")
+            if cidw and cidw not in waivers_by_client:
+                waivers_by_client[cidw] = sig
         pending_vac_dog_ids = set()
         async for vu in db.vaccine_uploads.find({"status": "pending"}, {"_id": 0, "dog_id": 1}):
             if vu.get("dog_id"):
@@ -710,14 +715,16 @@ async def list_clients(_: dict = Depends(require_admin)):
             owner_dogs = dogs_full_by_owner.get(cid, [])
             info_ok = bool((c.get("name") or "").strip() and (c.get("phone") or "").strip() and (c.get("email") or "").strip())
             dog_ok = bool(owner_dogs) and all(
-                (d.get("name") or "").strip() and (d.get("breed") or "").strip() and ((d.get("dob") or "").strip() or d.get("age"))
+                (d.get("name") or "").strip()
+                and (d.get("breed") or "").strip()
+                and ((d.get("birthday") or "").strip() or (d.get("age_y") or 0) or (d.get("age_m") or 0))
                 for d in owner_dogs
             )
             emerg_ok = bool((c.get("emerg") or "").strip())
             vac_ok = bool(owner_dogs) and all(all(_has_vac(d.get("vaccines"), r) for r in required_vax) for d in owner_dogs)
             vac_pending = any(d.get("id") in pending_vac_dog_ids for d in owner_dogs)
             w = waivers_by_client.get(cid)
-            waiver_ok = bool(w and w.get("signed") and (w.get("waiver_version") in (None, current_waiver_version)))
+            waiver_ok = bool(w and int(w.get("waiver_version") or 1) >= current_waiver_version)
             intake_pending = intake_pending_clients.get(cid, 0)
 
             hard_complete = info_ok and dog_ok and emerg_ok and vac_ok and waiver_ok and intake_pending == 0
@@ -21074,9 +21081,11 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
                 missing.append("name")
             if not (d.get("breed") or "").strip():
                 missing.append("breed")
-            # dob OR age (we ship dob only — admins may leave it blank)
-            if not (d.get("dob") or "").strip() and not d.get("age"):
-                missing.append("age/dob")
+            # Birthday OR explicit age values (age_y/age_m) → either counts.
+            has_birthday = bool((d.get("birthday") or "").strip())
+            has_age = bool((d.get("age_y") or 0) or (d.get("age_m") or 0))
+            if not (has_birthday or has_age):
+                missing.append("age/birthday")
             if missing:
                 dogs_missing_basics.append(f"{d.get('name') or 'Unnamed dog'} ({', '.join(missing)})")
         if dogs_missing_basics:
@@ -21129,12 +21138,19 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
             vac_step_status = SETUP_STATUS_COMPLETE
 
     # ---- Step 5: waiver ------------------------------------------------------
-    waiver_doc = await db.waivers.find_one({"client_id": client.get("id")}, {"_id": 0})
-    current_version = settings.get("waiver_version") or settings.get("waiver_settings", {}).get("version") or 1
-    if waiver_doc and waiver_doc.get("signed") and (waiver_doc.get("waiver_version") in (None, current_version)):
-        waiver_step_status = SETUP_STATUS_COMPLETE
-    elif waiver_doc and waiver_doc.get("signed"):
-        waiver_step_status = SETUP_STATUS_IN_PROGRESS   # needs re-sign for updated version
+    # Real collection is `waiver_signatures`; the latest signature row IS the
+    # signed state. waiver_version on the row tells us whether the current
+    # version was acknowledged.
+    sig = await db.waiver_signatures.find_one(
+        {"client_id": client.get("id")}, {"_id": 0}, sort=[("signed_at", -1)],
+    )
+    current_version = int(settings.get("waiver_version") or 1)
+    if sig:
+        sig_version = int(sig.get("waiver_version") or 1)
+        if sig_version >= current_version:
+            waiver_step_status = SETUP_STATUS_COMPLETE
+        else:
+            waiver_step_status = SETUP_STATUS_IN_PROGRESS   # needs re-sign for updated version
     else:
         waiver_step_status = SETUP_STATUS_NOT_STARTED
 

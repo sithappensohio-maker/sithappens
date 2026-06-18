@@ -120,3 +120,52 @@ def test_portal_setup_requires_client_auth():
     ah = _admin_headers()
     r = requests.get(f"{BASE_URL}/api/portal/setup-status", headers=ah, timeout=15)
     assert r.status_code == 403
+
+
+def test_setup_status_vaccines_auto_complete_when_dog_added_with_vaccines():
+    """Sprint 110dh-7 — when a client adds a dog *with* required vaccines,
+    the Vaccines step (#4) should flip from not_started → complete on the
+    next setup-status fetch. No manual upload needed.
+    """
+    cid, ch, ah = _make_client_and_login("vac_auto")
+    # Add emergency contact + sign waiver first so only dogs/vaccines remain.
+    requests.put(f"{BASE_URL}/api/clients/{cid}",
+                 json={"name": "Setup Test vac_auto", "emerg": "Sis — 555-1234"},
+                 headers=ah, timeout=15)
+    # Add a dog (admin endpoint takes the same payload) with rabies expiration
+    # safely in the future.
+    future = "2099-12-31"
+    dog_payload = {
+        "name": "Rex", "breed": "Lab", "owner_id": cid,
+        "birthday": "2020-05-01", "sex": "Male", "fixed": "Yes",
+        "vaccines": {"rabies": future, "bordetella": future, "dhpp": future},
+    }
+    dr = requests.post(f"{BASE_URL}/api/dogs", json=dog_payload, headers=ah, timeout=15)
+    assert dr.status_code == 200, dr.text
+    # Now fetch setup-status as the client and expect vaccine + dog steps complete.
+    r = requests.get(f"{BASE_URL}/api/portal/setup-status", headers=ch, timeout=15)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    vac = next(s for s in d["steps"] if s["id"] == "vaccines")
+    dog = next(s for s in d["steps"] if s["id"] == "dog_info")
+    assert vac["status"] == "complete", f"expected vaccines complete, got {vac['status']}"
+    assert dog["status"] == "complete", f"expected dog_info complete, got {dog['status']}"
+
+
+def test_setup_status_waiver_completes_after_signing():
+    """Signing the waiver via /waivers/sign should immediately flip the waiver
+    step in the setup checklist to complete on the next fetch."""
+    cid, ch, ah = _make_client_and_login("waiver_complete")
+    # Before signing — waiver step should be not_started
+    r = requests.get(f"{BASE_URL}/api/portal/setup-status", headers=ch, timeout=15)
+    w = next(s for s in r.json()["steps"] if s["id"] == "waiver")
+    assert w["status"] == "not_started"
+    # Sign as the client
+    sr = requests.post(f"{BASE_URL}/api/waivers/sign",
+                       json={"accepted": True, "typed_name": "Setup Test waiver_complete", "dog_names": ""},
+                       headers=ch, timeout=15)
+    assert sr.status_code == 200, sr.text
+    # After signing — should be complete
+    r2 = requests.get(f"{BASE_URL}/api/portal/setup-status", headers=ch, timeout=15)
+    w2 = next(s for s in r2.json()["steps"] if s["id"] == "waiver")
+    assert w2["status"] == "complete", f"expected waiver complete after sign, got {w2['status']}"

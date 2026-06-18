@@ -25,6 +25,7 @@ import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
+import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -641,8 +642,11 @@ export default function Portal() {
   const [messagesUnread, setMessagesUnread] = useState(0);
   // Sprint 110dh-6 — first-time client setup gate.
   const [setupStatus, setSetupStatus] = useState(null);
+  const [setupRefresh, setSetupRefresh] = useState(0);
+  const [vaccineWizard, setVaccineWizard] = useState(null); // [{dog, vaccine}, ...]
   const bookingLocked = setupStatus?.booking_locked === true;
   const readyToBook = setupStatus?.ready_to_book === true;
+  const bumpSetupRefresh = () => setSetupRefresh(n => n + 1);
 
   // Poll the client portal unread badge so the header button shows a count.
   useEffect(() => {
@@ -921,6 +925,7 @@ export default function Portal() {
             whenever booking is locked; auto-hides once the client is fully
             ready to book. */}
         <PortalSetupChecklist
+          refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}
           onAction={(target) => {
             // Return true to prevent the default scroll/click fallback.
@@ -929,23 +934,29 @@ export default function Portal() {
               return true;
             }
             if (target === "vaccines") {
-              // Prefer a dog that has a missing/expired required vaccine; fall
-              // back to any dog so the modal opens with something selected.
+              // Collect every (dog, required-vaccine) pair that's missing or
+              // expired, then fire the multi-step wizard. If there's only one,
+              // the wizard still works (1-of-1).
               const todayIso = new Date().toISOString().slice(0, 10);
-              const needsRabies = dogs.find(d => !d?.vaccines?.rabies || String(d.vaccines.rabies).slice(0, 10) < todayIso);
-              const needsBordetella = dogs.find(d => !d?.vaccines?.bordetella || String(d.vaccines.bordetella).slice(0, 10) < todayIso);
-              const needsDhpp = dogs.find(d => !d?.vaccines?.dhpp || String(d.vaccines.dhpp).slice(0, 10) < todayIso);
-              if (needsRabies)        { setVaccineModal({ dog: needsRabies, vaccine: "rabies" });    return true; }
-              if (needsBordetella)    { setVaccineModal({ dog: needsBordetella, vaccine: "bordetella" }); return true; }
-              if (needsDhpp)          { setVaccineModal({ dog: needsDhpp, vaccine: "dhpp" });        return true; }
-              if (dogs.length > 0)    { setVaccineModal({ dog: dogs[0],  vaccine: "rabies" });       return true; }
-              // No dogs yet — scroll to dogs section to add one first.
-              const el = document.getElementById("portal-dogs-anchor");
-              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+              const required = ["rabies", "bordetella", "dhpp"];
+              const queue = [];
+              dogs.forEach(d => {
+                required.forEach(v => {
+                  const exp = d?.vaccines?.[v];
+                  if (!exp || String(exp).slice(0, 10) < todayIso) {
+                    queue.push({ dog: d, vaccine: v });
+                  }
+                });
+              });
+              if (queue.length > 0) { setVaccineWizard(queue); return true; }
+              if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
+              // No dogs yet — open the add-dog modal so they start there.
+              setDogModal({ open: true, dog: null });
               return true;
             }
-            if (target === "dogs" && dogs.length === 0) {
-              // Open the Add a Dog modal directly instead of just scrolling.
+            if (target === "dogs") {
+              // Always open the Add Dog modal from the setup checklist —
+              // covers both "add first dog" and "add another dog".
               setDogModal({ open: true, dog: null });
               return true;
             }
@@ -1812,7 +1823,7 @@ export default function Portal() {
           waiverText={pubSettings.waiver_text}
           version={pubSettings.waiver_version || 1}
           dogNames={dogs.map(d=>d.name).join(", ")}
-          onSigned={async ()=>{ setShowWaiver(false); await loadAll(); }}
+          onSigned={async ()=>{ setShowWaiver(false); await loadAll(); bumpSetupRefresh(); }}
           onClose={()=>setShowWaiver(false)}
           allowClose={waiver?.signed && !waiver?.needs_resign}
         />
@@ -1887,12 +1898,12 @@ export default function Portal() {
       {dogModal.open && (
         <PortalDogModal dog={dogModal.dog}
                         onClose={()=>setDogModal({open:false, dog:null})}
-                        onSaved={loadAll} />
+                        onSaved={async () => { await loadAll(); bumpSetupRefresh(); }} />
       )}
       {profileOpen && client && (
         <PortalProfileModal client={client}
                             onClose={()=>setProfileOpen(false)}
-                            onSaved={loadAll} />
+                            onSaved={async () => { await loadAll(); bumpSetupRefresh(); }} />
       )}
       {tutorialsOpen && (
         <div className="fixed inset-0 z-[9999] bg-bgBase overflow-y-auto" data-testid="portal-tutorials-overlay">
@@ -1942,7 +1953,15 @@ export default function Portal() {
       {celebrating.length > 0 && (
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
-      {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); }} />}
+      {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); bumpSetupRefresh(); }} />}
+
+      {vaccineWizard && vaccineWizard.length > 0 && (
+        <VaccineUploadWizard
+          queue={vaccineWizard}
+          onProgress={() => { bumpSetupRefresh(); loadAll(); }}
+          onAllDone={() => { bumpSetupRefresh(); loadAll(); }}
+          onClose={() => setVaccineWizard(null)} />
+      )}
       {showRecurringModal && <MyRecurringModal dogs={dogs} onClose={()=>setShowRecurringModal(false)} />}
       {onboardingNeeded && !onboardingDismissed && (
         <OnboardingChecklist
