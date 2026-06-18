@@ -608,6 +608,26 @@ function BrandPanel() {
         grad_warning_color: draft.grad_warning_color,
         grad_danger_color:  draft.grad_danger_color,
         grad_success_color: draft.grad_success_color,
+        // Sprint 110di-8 — expanded theme surfaces.
+        theme_bg_base:               draft.theme_bg_base,
+        theme_bg_panel:              draft.theme_bg_panel,
+        theme_bg_header:             draft.theme_bg_header,
+        theme_bg_hover:              draft.theme_bg_hover,
+        theme_text_primary:          draft.theme_text_primary,
+        theme_text_muted:            draft.theme_text_muted,
+        theme_text_display:          draft.theme_text_display,
+        theme_btn_primary_bg:        draft.theme_btn_primary_bg,
+        theme_btn_primary_fg:        draft.theme_btn_primary_fg,
+        theme_btn_secondary_border:  draft.theme_btn_secondary_border,
+        theme_btn_secondary_fg:      draft.theme_btn_secondary_fg,
+        theme_btn_danger_bg:         draft.theme_btn_danger_bg,
+        theme_btn_danger_fg:         draft.theme_btn_danger_fg,
+        theme_input_bg:              draft.theme_input_bg,
+        theme_input_border:          draft.theme_input_border,
+        theme_input_focus:           draft.theme_input_focus,
+        theme_calendar_active:       draft.theme_calendar_active,
+        theme_table_hover:           draft.theme_table_hover,
+        theme_row_border:            draft.theme_row_border,
       });
       setMsg("Saved");
       setTimeout(() => setMsg(""), 1800);
@@ -617,21 +637,42 @@ function BrandPanel() {
     setSaving(false);
   };
 
-  const reset = () => {
-    setDraft({
-      brand_primary: "#8cc63f",
-      brand_accent:  "#00a9e0",
-      brand_warning: "#f26522",
-      brand_font_family: "Inter",
-      brand_footer_text: "Sit Happens",
-      brand_footer_url: "",
-      grad_hero_color:    "#8cc63f",
-      grad_info_color:    "#00a9e0",
-      grad_warning_color: "#f59e0b",
-      grad_danger_color:  "#ef4444",
-      grad_success_color: "#8cc63f",
-    });
+  // Sprint 110di-8 — the canonical Sit Happens default palette. Reset button
+  // copies these into the draft (admin still has to hit Save to commit).
+  const SH_DEFAULTS = {
+    brand_primary: "#8cc63f",
+    brand_accent:  "#00a9e0",
+    brand_warning: "#f26522",
+    brand_font_family: "Inter",
+    brand_footer_text: "Sit Happens",
+    brand_footer_url: "",
+    grad_hero_color:    "#8cc63f",
+    grad_info_color:    "#00a9e0",
+    grad_warning_color: "#f59e0b",
+    grad_danger_color:  "#ef4444",
+    grad_success_color: "#8cc63f",
+    theme_bg_base:               "#060c2e",
+    theme_bg_panel:              "#0c143e",
+    theme_bg_header:             "#03061a",
+    theme_bg_hover:              "#1a225a",
+    theme_text_primary:          "#e2e8f0",
+    theme_text_muted:            "#94a3b8",
+    theme_text_display:          "#ffffff",
+    theme_btn_primary_bg:        "#8cc63f",
+    theme_btn_primary_fg:        "#03061a",
+    theme_btn_secondary_border:  "#1a225a",
+    theme_btn_secondary_fg:      "#e2e8f0",
+    theme_btn_danger_bg:         "#ef4444",
+    theme_btn_danger_fg:         "#ffffff",
+    theme_input_bg:              "#060c2e",
+    theme_input_border:          "#1a225a",
+    theme_input_focus:           "#8cc63f",
+    theme_calendar_active:       "#8cc63f",
+    theme_table_hover:           "#1a225a",
+    theme_row_border:            "#1a225a",
   };
+
+  const reset = () => setDraft({ ...SH_DEFAULTS });
 
   return (
     <div className="space-y-6" data-testid="brand-panel">
@@ -709,28 +750,145 @@ function BrandPanel() {
         </div>
       </Section>
 
+      {/* Sprint 110di-8 — Expanded theme surfaces. Five collapsible groups
+          (Backgrounds, Text, Buttons, Forms, Calendar/Table) so the panel
+          stays scannable. Each row is just a thin ColorField; defaults match
+          the historical Sit Happens palette and can be wiped back by hitting
+          the Reset button below. */}
+      <ThemeGroup title="App Backgrounds" subtitle="Page, panel, header/sidebar, and hover/border surfaces." testid="theme-group-bg">
+        <ColorField testid="theme-bg-base"   label="Base Background"        sub="page body"               value={draft.theme_bg_base}   onChange={(v)=>setDraft({...draft, theme_bg_base: v})} />
+        <ColorField testid="theme-bg-panel"  label="Panel / Card Background" sub="cards, modals, sheets"   value={draft.theme_bg_panel}  onChange={(v)=>setDraft({...draft, theme_bg_panel: v})} />
+        <ColorField testid="theme-bg-header" label="Header / Sidebar"        sub="top nav, side rail"      value={draft.theme_bg_header} onChange={(v)=>setDraft({...draft, theme_bg_header: v})} />
+        <ColorField testid="theme-bg-hover"  label="Hover / Border"          sub="row hover + borders"     value={draft.theme_bg_hover}  onChange={(v)=>setDraft({...draft, theme_bg_hover: v})} />
+      </ThemeGroup>
+
+      <ThemeGroup title="Text" subtitle="Primary body text, muted/secondary text, and display headings." testid="theme-group-text">
+        <ColorField testid="theme-text-primary" label="Primary Text" sub="body copy" value={draft.theme_text_primary} onChange={(v)=>setDraft({...draft, theme_text_primary: v})} />
+        <ColorField testid="theme-text-muted"   label="Muted / Secondary"   sub="captions, hints" value={draft.theme_text_muted}   onChange={(v)=>setDraft({...draft, theme_text_muted: v})} />
+        <ColorField testid="theme-text-display" label="Display / Heading"  sub="hero titles, h1/h2" value={draft.theme_text_display} onChange={(v)=>setDraft({...draft, theme_text_display: v})} />
+      </ThemeGroup>
+
+      <ThemeGroup title="Buttons" subtitle="Primary, secondary outline, and danger button colors." testid="theme-group-btn">
+        <ColorField testid="theme-btn-primary-bg" label="Primary Button BG" sub="solid CTA button" value={draft.theme_btn_primary_bg} onChange={(v)=>setDraft({...draft, theme_btn_primary_bg: v})} />
+        <ColorField testid="theme-btn-primary-fg" label="Primary Button Text" sub="label color"   value={draft.theme_btn_primary_fg} onChange={(v)=>setDraft({...draft, theme_btn_primary_fg: v})} />
+        <ColorField testid="theme-btn-secondary-border" label="Secondary Border" sub="outline color" value={draft.theme_btn_secondary_border} onChange={(v)=>setDraft({...draft, theme_btn_secondary_border: v})} />
+        <ColorField testid="theme-btn-secondary-fg"     label="Secondary Text"   sub="label color"   value={draft.theme_btn_secondary_fg}     onChange={(v)=>setDraft({...draft, theme_btn_secondary_fg: v})} />
+        <ColorField testid="theme-btn-danger-bg" label="Danger Button BG" sub="delete/destructive" value={draft.theme_btn_danger_bg} onChange={(v)=>setDraft({...draft, theme_btn_danger_bg: v})} />
+        <ColorField testid="theme-btn-danger-fg" label="Danger Button Text" sub="label color"     value={draft.theme_btn_danger_fg} onChange={(v)=>setDraft({...draft, theme_btn_danger_fg: v})} />
+      </ThemeGroup>
+
+      <ThemeGroup title="Forms" subtitle="Input fields and focus state." testid="theme-group-form">
+        <ColorField testid="theme-input-bg"     label="Input BG"     sub="text field fill"  value={draft.theme_input_bg}     onChange={(v)=>setDraft({...draft, theme_input_bg: v})} />
+        <ColorField testid="theme-input-border" label="Input Border" sub="resting border"   value={draft.theme_input_border} onChange={(v)=>setDraft({...draft, theme_input_border: v})} />
+        <ColorField testid="theme-input-focus"  label="Focus Glow"   sub="active border + glow" value={draft.theme_input_focus}  onChange={(v)=>setDraft({...draft, theme_input_focus: v})} />
+      </ThemeGroup>
+
+      <ThemeGroup title="Calendar & Tables" subtitle="Calendar active day, table row hover, and row borders." testid="theme-group-grid">
+        <ColorField testid="theme-calendar-active" label="Calendar Active" sub="today / selected day" value={draft.theme_calendar_active} onChange={(v)=>setDraft({...draft, theme_calendar_active: v})} />
+        <ColorField testid="theme-table-hover"     label="Table Row Hover"  sub="hover highlight"      value={draft.theme_table_hover}     onChange={(v)=>setDraft({...draft, theme_table_hover: v})} />
+        <ColorField testid="theme-row-border"      label="Row Border"       sub="dividers"             value={draft.theme_row_border}      onChange={(v)=>setDraft({...draft, theme_row_border: v})} />
+      </ThemeGroup>
+
       <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
-        <div
-          className="rounded-xl p-5 border space-y-3"
-          style={{
-            borderColor: draft.brand_primary,
-            backgroundColor: "#0f172a",
-            fontFamily: draft.brand_font_family === "System" ? "system-ui" : draft.brand_font_family,
-          }}
-        >
-          <div className="flex items-center gap-2">
+        {/* Sprint 110di-8 — Expanded live preview surfaces (card / primary
+            button / secondary button / input / warning pill / sidebar). Uses
+            in-flight draft colors directly so admins can compare before Save. */}
+        <div className="rounded-xl p-5 border space-y-4"
+             data-testid="brand-live-preview"
+             style={{
+               borderColor: draft.theme_bg_hover,
+               backgroundColor: draft.theme_bg_base,
+               color: draft.theme_text_primary,
+               fontFamily: draft.brand_font_family === "System" ? "system-ui" : draft.brand_font_family,
+             }}>
+          {/* Top row: pills */}
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_primary, color: "#0f172a" }}>Primary</span>
             <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_accent, color: "#fff" }}>Accent</span>
             <span className="px-3 py-1 rounded font-black text-[15px] uppercase tracking-widest" style={{ background: draft.brand_warning, color: "#fff" }}>Warning</span>
+            <span className="px-3 py-1 rounded-full font-black text-[12px] uppercase tracking-widest border"
+                  style={{ background: `${draft.theme_btn_danger_bg}22`, color: draft.theme_btn_danger_bg, borderColor: `${draft.theme_btn_danger_bg}55` }}>
+              <i className="fas fa-triangle-exclamation mr-1"/>Danger Pill
+            </span>
           </div>
-          <p className="text-base text-white">A booking was just approved for <span style={{ color: draft.brand_primary, fontWeight: 900 }}>Buddy</span>.</p>
-          <p className="text-[14px] text-gray-300">Rabies expires soon — <span style={{ color: draft.brand_warning, fontWeight: 900 }}>renew before Dec 31</span>.</p>
+
+          {/* Sidebar + card sample */}
+          <div className="grid grid-cols-[120px_1fr] gap-3 rounded-lg overflow-hidden border"
+               style={{ borderColor: draft.theme_bg_hover, background: draft.theme_bg_panel }}>
+            <div className="p-3 space-y-2" style={{ background: draft.theme_bg_header }}>
+              <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Sidebar</p>
+              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
+                   style={{ background: draft.brand_primary, color: draft.theme_btn_primary_fg }}>Dashboard</div>
+              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
+                   style={{ color: draft.theme_text_muted }}>Schedule</div>
+              <div className="px-2 py-1.5 rounded text-[12px] font-black uppercase tracking-widest"
+                   style={{ color: draft.theme_text_muted }}>Clients</div>
+            </div>
+            <div className="p-3 space-y-2">
+              <p className="text-[10px] uppercase tracking-widest font-black" style={{ color: draft.theme_text_muted }}>Card</p>
+              <h4 className="text-base font-black uppercase italic" style={{ color: draft.theme_text_display }}>Buddy is ready for pickup</h4>
+              <p className="text-[13px]" style={{ color: draft.theme_text_primary }}>Crate training, leash manners, and a long walk today.</p>
+              <div className="flex items-center gap-2 pt-1">
+                <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
+                        style={{ background: draft.theme_btn_primary_bg, color: draft.theme_btn_primary_fg }}>Primary Btn</button>
+                <button type="button" className="px-3 py-1.5 rounded border font-black text-[12px] uppercase tracking-widest"
+                        style={{ borderColor: draft.theme_btn_secondary_border, color: draft.theme_btn_secondary_fg, background: "transparent" }}>Secondary</button>
+                <button type="button" className="px-3 py-1.5 rounded font-black text-[12px] uppercase tracking-widest"
+                        style={{ background: draft.theme_btn_danger_bg, color: draft.theme_btn_danger_fg }}>Delete</button>
+              </div>
+              <div className="pt-2">
+                <input readOnly value="Sample input"
+                       className="w-full rounded px-2 py-1.5 text-sm"
+                       style={{ background: draft.theme_input_bg, border: `1px solid ${draft.theme_input_border}`, color: draft.theme_text_primary }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Calendar + table mini */}
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div className="rounded-lg p-3 border" style={{ background: draft.theme_bg_panel, borderColor: draft.theme_row_border }}>
+              <p className="text-[10px] uppercase tracking-widest font-black mb-2" style={{ color: draft.theme_text_muted }}>Calendar (mini)</p>
+              <div className="grid grid-cols-7 gap-1 text-center text-[11px]">
+                {["S","M","T","W","T","F","S"].map((d, i) => (
+                  <div key={`hd${i}`} style={{ color: draft.theme_text_muted }}>{d}</div>
+                ))}
+                {Array.from({ length: 14 }).map((_, i) => {
+                  const isActive = i === 5;
+                  return (
+                    <div key={i} className="rounded py-1"
+                         style={{
+                           background: isActive ? draft.theme_calendar_active : "transparent",
+                           color: isActive ? draft.theme_btn_primary_fg : draft.theme_text_primary,
+                           border: `1px solid ${draft.theme_row_border}`,
+                         }}>{i + 1}</div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="rounded-lg p-0 border overflow-hidden" style={{ background: draft.theme_bg_panel, borderColor: draft.theme_row_border }}>
+              <p className="text-[10px] uppercase tracking-widest font-black px-3 pt-3" style={{ color: draft.theme_text_muted }}>Table rows</p>
+              <div className="mt-2">
+                {["Buddy", "Rocky", "Daisy"].map((name, i) => (
+                  <div key={name}
+                       className={`flex items-center justify-between px-3 py-2 text-sm border-t`}
+                       style={{
+                         borderTopColor: draft.theme_row_border,
+                         background: i === 1 ? draft.theme_table_hover : "transparent",
+                         color: draft.theme_text_primary,
+                       }}>
+                    <span className="font-black">{name}</span>
+                    <span style={{ color: draft.theme_text_muted }}>{i === 1 ? "hover" : "row"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </Section>
 
       <div className="flex justify-between items-center pt-4 border-t border-bgHover">
         <button onClick={reset} data-testid="brand-reset" className="text-[14px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
-          <i className="fas fa-rotate-left mr-2"/>Reset to defaults
+          <i className="fas fa-rotate-left mr-2"/>Reset to Sit Happens Defaults
         </button>
         <div className="flex items-center gap-3">
           {msg && <span className={`text-[14px] font-black uppercase tracking-widest ${msg==="Saved"?"text-shGreen":"text-red-400"}`}>{msg}</span>}
@@ -740,6 +898,33 @@ function BrandPanel() {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+function ThemeGroup({ title, subtitle, testid, children }) {
+  // Sprint 110di-8 — collapsible color group used by the expanded Brand &
+  // Theme panel. Keeps the panel scannable since the new theme controls add
+  // ~17 color rows beyond the original 3. Starts collapsed so admins see
+  // the existing controls first and open only the group they want to tweak.
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-lg border border-bgHover bg-bgBase/40" data-testid={testid}>
+      <button type="button" onClick={()=>setOpen(o=>!o)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left"
+              data-testid={`${testid}-toggle`}>
+        <div>
+          <p className="text-[14px] font-black text-white uppercase tracking-widest">{title}</p>
+          {subtitle && <p className="text-[12px] text-gray-500 mt-0.5">{subtitle}</p>}
+        </div>
+        <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"} text-gray-400`}/>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 pt-1 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

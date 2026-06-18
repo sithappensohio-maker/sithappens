@@ -4167,6 +4167,28 @@ async def fetch_branding():
         "grad_warning_color": s.get("grad_warning_color") or "#f59e0b",
         "grad_danger_color":  s.get("grad_danger_color")  or "#ef4444",
         "grad_success_color": s.get("grad_success_color") or "#8cc63f",
+        # Sprint 110di-8 — expanded theme controls. Backgrounds / text /
+        # buttons / forms / calendar+table. Defaults match the historical
+        # Sit Happens palette; admins override via Settings → Brand & Theme.
+        "theme_bg_base":            s.get("theme_bg_base")            or "#060c2e",
+        "theme_bg_panel":           s.get("theme_bg_panel")           or "#0c143e",
+        "theme_bg_header":          s.get("theme_bg_header")          or "#03061a",
+        "theme_bg_hover":           s.get("theme_bg_hover")           or "#1a225a",
+        "theme_text_primary":       s.get("theme_text_primary")       or "#e2e8f0",
+        "theme_text_muted":         s.get("theme_text_muted")         or "#94a3b8",
+        "theme_text_display":       s.get("theme_text_display")       or "#ffffff",
+        "theme_btn_primary_bg":     s.get("theme_btn_primary_bg")     or s.get("brand_primary") or "#8cc63f",
+        "theme_btn_primary_fg":     s.get("theme_btn_primary_fg")     or "#03061a",
+        "theme_btn_secondary_border": s.get("theme_btn_secondary_border") or "#1a225a",
+        "theme_btn_secondary_fg":   s.get("theme_btn_secondary_fg")   or "#e2e8f0",
+        "theme_btn_danger_bg":      s.get("theme_btn_danger_bg")      or "#ef4444",
+        "theme_btn_danger_fg":      s.get("theme_btn_danger_fg")      or "#ffffff",
+        "theme_input_bg":           s.get("theme_input_bg")           or "#060c2e",
+        "theme_input_border":       s.get("theme_input_border")       or "#1a225a",
+        "theme_input_focus":        s.get("theme_input_focus")        or s.get("brand_primary") or "#8cc63f",
+        "theme_calendar_active":    s.get("theme_calendar_active")    or s.get("brand_primary") or "#8cc63f",
+        "theme_table_hover":        s.get("theme_table_hover")        or "#1a225a",
+        "theme_row_border":         s.get("theme_row_border")         or "#1a225a",
         # Sprint 110dm — UI knobs surfaced for the front-end formatters.
         "splatter_intensity":      ui.get("splatter_intensity", "medium"),
         "primary_cta_copy":        ui.get("primary_cta_copy", "Book Now"),

@@ -3828,6 +3828,45 @@ records its still saying the records are needed"
 
 ## Sprint 110di-5 — Announcement email broadcast + "Sit Happens Team" rebrand (2026-02-18)
 
+## Sprint 110di-8 — Expanded Brand & Theme controls (2026-02-18)
+
+**User ask**: small targeted polish — expand Settings → Marketing & Branding → Brand & Theme so the admin can adjust the app theme/colors more completely from the UI. No rebuild, no redesign, build on top of what exists.
+
+### Backend (`server.py`)
+- ✅ `GET /api/branding` now returns 19 additional theme keys with Sit Happens defaults (backgrounds × 4, text × 3, buttons × 6, forms × 3, calendar/tables × 3).
+- ✅ Persist via existing `PUT /api/settings` (no schema migration — `SettingsIn` already uses `extra="allow"`).
+
+### Frontend
+- ✅ `lib/theme.js`:
+  - `DEFAULT_BRANDING` expanded with all new keys.
+  - `applyBranding` writes them to CSS vars on `<html>` (`--bg-base`, `--bg-panel`, `--bg-header`, `--bg-hover`, `--text-primary`, `--text-muted`, `--text-display`, `--btn-primary-bg/fg`, `--btn-secondary-border/fg`, `--btn-danger-bg/fg`, `--input-bg/border/focus`, `--calendar-active`, `--table-hover`, `--row-border`).
+- ✅ `tailwind.config.js` — `bgBase/bgPanel/bgHeader/bgHover` now reference CSS vars so EVERY Tailwind utility (`bg-bgPanel`, `border-bgHover`, etc.) recolors automatically when admin changes the background palette.
+- ✅ `index.css`:
+  - `:root` extended with the new CSS vars (default values match the current palette).
+  - Hardcoded color values for body text, focus glow, calendar active state, search-flash border, and option hover swapped to `var(--*)` references.
+- ✅ `screens/Settings.jsx BrandPanel`:
+  - New `ThemeGroup` component — collapsible color groups (Backgrounds / Text / Buttons / Forms / Calendar & Tables). Starts collapsed so the panel stays scannable.
+  - 19 new `ColorField` rows wired into the existing draft/save flow.
+  - Save button now persists all new keys.
+  - Reset button restores the canonical Sit Happens palette (label updated to "Reset to Sit Happens Defaults").
+  - Expanded Live Preview with: brand pills + danger pill, a mini sidebar+card sample (primary/secondary/danger buttons + input + heading + body copy), a mini calendar with active day, and a 3-row table sample showing hover state.
+
+### Tests
+- ✅ NEW `backend/tests/test_expanded_theme.py` — 2 tests passing:
+  - `test_branding_endpoint_exposes_all_new_theme_keys_with_defaults`
+  - `test_settings_persists_expanded_theme_keys_round_trip`
+- Playwright smoke confirmed the new groups + reset button render correctly inside Settings → Marketing & Branding → Brand & Theme.
+
+### Acceptance checks
+- ✅ Saving custom backgrounds visibly updates Tailwind utilities across admin + portal (var indirection via tailwind.config.js).
+- ✅ `brand_primary` / `brand_accent` / `brand_warning` still work, gradient colors unchanged, splatter/font/footer/UI knobs unchanged.
+- ✅ Login screen reads the new keys via `/api/branding` before auth.
+- ✅ Reload reapplies saved colors (existing ThemeProvider flow).
+- ✅ Reset button restores the canonical palette.
+- ✅ Existing Settings categories still open correctly (only an additive change to the brand tab).
+- Service worker bumped to `sh-v15-110di-expanded-brand-theme`.
+
+
 **User asks**: every published announcement emails all clients (edits stay silent); rename "Studio" → "Sit Happens Team" everywhere clients see it.
 
 ### Backend

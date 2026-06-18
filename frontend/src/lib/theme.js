@@ -43,6 +43,28 @@ const DEFAULT_BRANDING = {
   grad_warning_color: "#f59e0b",
   grad_danger_color:  "#ef4444",
   grad_success_color: "#8cc63f",
+  // Sprint 110di-8 — expanded theme controls. All five groups (backgrounds,
+  // text, buttons, forms, calendar/table) live under the same global
+  // settings doc and apply via CSS vars on <html>.
+  theme_bg_base:              "#060c2e",
+  theme_bg_panel:             "#0c143e",
+  theme_bg_header:            "#03061a",
+  theme_bg_hover:             "#1a225a",
+  theme_text_primary:         "#e2e8f0",
+  theme_text_muted:           "#94a3b8",
+  theme_text_display:         "#ffffff",
+  theme_btn_primary_bg:       "#8cc63f",
+  theme_btn_primary_fg:       "#03061a",
+  theme_btn_secondary_border: "#1a225a",
+  theme_btn_secondary_fg:     "#e2e8f0",
+  theme_btn_danger_bg:        "#ef4444",
+  theme_btn_danger_fg:        "#ffffff",
+  theme_input_bg:             "#060c2e",
+  theme_input_border:         "#1a225a",
+  theme_input_focus:          "#8cc63f",
+  theme_calendar_active:      "#8cc63f",
+  theme_table_hover:          "#1a225a",
+  theme_row_border:           "#1a225a",
 };
 
 // Convert "#RRGGBB" → "r, g, b" string for CSS rgba() composition.
@@ -55,22 +77,45 @@ function hexToRgb(hex) {
 
 function applyBranding(b) {
   const root = document.documentElement;
-  root.style.setProperty("--sh-green",  b.brand_primary  || DEFAULT_BRANDING.brand_primary);
-  root.style.setProperty("--sh-blue",   b.brand_accent   || DEFAULT_BRANDING.brand_accent);
-  root.style.setProperty("--sh-orange", b.brand_warning  || DEFAULT_BRANDING.brand_warning);
+  const get = (k) => b[k] || DEFAULT_BRANDING[k];
+  root.style.setProperty("--sh-green",  get("brand_primary"));
+  root.style.setProperty("--sh-blue",   get("brand_accent"));
+  root.style.setProperty("--sh-orange", get("brand_warning"));
   const fam = b.brand_font_family || DEFAULT_BRANDING.brand_font_family;
   root.style.setProperty("--sh-font", fam === "System" ? "system-ui" : `'${fam}'`);
   // Gradient colors → expose both hex (for borders) and rgb (for rgba() in gradient stops)
-  root.style.setProperty("--grad-hero",       b.grad_hero_color    || DEFAULT_BRANDING.grad_hero_color);
-  root.style.setProperty("--grad-info",       b.grad_info_color    || DEFAULT_BRANDING.grad_info_color);
-  root.style.setProperty("--grad-warning",    b.grad_warning_color || DEFAULT_BRANDING.grad_warning_color);
-  root.style.setProperty("--grad-danger",     b.grad_danger_color  || DEFAULT_BRANDING.grad_danger_color);
-  root.style.setProperty("--grad-success",    b.grad_success_color || DEFAULT_BRANDING.grad_success_color);
-  root.style.setProperty("--grad-hero-rgb",    hexToRgb(b.grad_hero_color    || DEFAULT_BRANDING.grad_hero_color));
-  root.style.setProperty("--grad-info-rgb",    hexToRgb(b.grad_info_color    || DEFAULT_BRANDING.grad_info_color));
-  root.style.setProperty("--grad-warning-rgb", hexToRgb(b.grad_warning_color || DEFAULT_BRANDING.grad_warning_color));
-  root.style.setProperty("--grad-danger-rgb",  hexToRgb(b.grad_danger_color  || DEFAULT_BRANDING.grad_danger_color));
-  root.style.setProperty("--grad-success-rgb", hexToRgb(b.grad_success_color || DEFAULT_BRANDING.grad_success_color));
+  root.style.setProperty("--grad-hero",       get("grad_hero_color"));
+  root.style.setProperty("--grad-info",       get("grad_info_color"));
+  root.style.setProperty("--grad-warning",    get("grad_warning_color"));
+  root.style.setProperty("--grad-danger",     get("grad_danger_color"));
+  root.style.setProperty("--grad-success",    get("grad_success_color"));
+  root.style.setProperty("--grad-hero-rgb",    hexToRgb(get("grad_hero_color")));
+  root.style.setProperty("--grad-info-rgb",    hexToRgb(get("grad_info_color")));
+  root.style.setProperty("--grad-warning-rgb", hexToRgb(get("grad_warning_color")));
+  root.style.setProperty("--grad-danger-rgb",  hexToRgb(get("grad_danger_color")));
+  root.style.setProperty("--grad-success-rgb", hexToRgb(get("grad_success_color")));
+  // Sprint 110di-8 — expanded theme surfaces. CSS vars consumed directly by
+  // Tailwind utilities (bgBase/bgPanel/bgHeader/bgHover) and `index.css`
+  // global selectors (forms, calendar, tables, buttons).
+  root.style.setProperty("--bg-base",   get("theme_bg_base"));
+  root.style.setProperty("--bg-panel",  get("theme_bg_panel"));
+  root.style.setProperty("--bg-header", get("theme_bg_header"));
+  root.style.setProperty("--bg-hover",  get("theme_bg_hover"));
+  root.style.setProperty("--text-primary", get("theme_text_primary"));
+  root.style.setProperty("--text-muted",   get("theme_text_muted"));
+  root.style.setProperty("--text-display", get("theme_text_display"));
+  root.style.setProperty("--btn-primary-bg",       get("theme_btn_primary_bg"));
+  root.style.setProperty("--btn-primary-fg",       get("theme_btn_primary_fg"));
+  root.style.setProperty("--btn-secondary-border", get("theme_btn_secondary_border"));
+  root.style.setProperty("--btn-secondary-fg",     get("theme_btn_secondary_fg"));
+  root.style.setProperty("--btn-danger-bg",        get("theme_btn_danger_bg"));
+  root.style.setProperty("--btn-danger-fg",        get("theme_btn_danger_fg"));
+  root.style.setProperty("--input-bg",             get("theme_input_bg"));
+  root.style.setProperty("--input-border",         get("theme_input_border"));
+  root.style.setProperty("--input-focus",          get("theme_input_focus"));
+  root.style.setProperty("--calendar-active",      get("theme_calendar_active"));
+  root.style.setProperty("--table-hover",          get("theme_table_hover"));
+  root.style.setProperty("--row-border",           get("theme_row_border"));
   // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
   // selectors (splatter intensity, letter case, time/date format, week start).
   root.setAttribute("data-splatter", b.splatter_intensity || "medium");
