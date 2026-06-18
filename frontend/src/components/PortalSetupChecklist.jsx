@@ -12,7 +12,7 @@ const TARGET_TESTID = {
   profile:  "open-profile",
   dogs:     "portal-add-dog",
   vaccines: null,    // routed manually
-  waiver:   "portal-sign-waiver",
+  waiver:   "open-waiver-button",
   intake:   null,    // intake handled in the existing IntakePortalSection
 };
 
@@ -21,7 +21,11 @@ const TARGET_ANCHOR = {
   dogs:     "portal-dogs-anchor",
   vaccines: "portal-dogs-anchor",
   waiver:   null,
-  intake:   "portal-intake-section",
+  intake:   null,    // querySelector via data-testid below
+};
+
+const TARGET_SELECTOR = {
+  intake:   '[data-testid="portal-intake-section"]',
 };
 
 /**
@@ -59,11 +63,20 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
   if (ready_to_book) return null;
 
   const goTo = (target) => {
-    onAction(target);
+    // Give the parent first crack — it knows about modals, dogs, etc.
+    // If it returns truthy, we don't fall through to scroll.
+    try {
+      if (onAction && onAction(target) === true) return;
+    } catch { /* ignore parent errors */ }
     const tid = TARGET_TESTID[target];
     if (tid) {
       const el = document.querySelector(`[data-testid="${tid}"]`);
       if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.click(); return; }
+    }
+    const sel = TARGET_SELECTOR[target];
+    if (sel) {
+      const el = document.querySelector(sel);
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
     }
     const anchor = TARGET_ANCHOR[target];
     if (anchor) {

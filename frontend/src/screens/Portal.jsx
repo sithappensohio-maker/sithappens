@@ -920,7 +920,42 @@ export default function Portal() {
         {/* Sprint 110dh-6 — First-time setup checklist. Renders at the very top
             whenever booking is locked; auto-hides once the client is fully
             ready to book. */}
-        <PortalSetupChecklist onStatusChange={setSetupStatus} />
+        <PortalSetupChecklist
+          onStatusChange={setSetupStatus}
+          onAction={(target) => {
+            // Return true to prevent the default scroll/click fallback.
+            if (target === "waiver") {
+              setShowWaiver(true);
+              return true;
+            }
+            if (target === "vaccines") {
+              // Prefer a dog that has a missing/expired required vaccine; fall
+              // back to any dog so the modal opens with something selected.
+              const todayIso = new Date().toISOString().slice(0, 10);
+              const needsRabies = dogs.find(d => !d?.vaccines?.rabies || String(d.vaccines.rabies).slice(0, 10) < todayIso);
+              const needsBordetella = dogs.find(d => !d?.vaccines?.bordetella || String(d.vaccines.bordetella).slice(0, 10) < todayIso);
+              const needsDhpp = dogs.find(d => !d?.vaccines?.dhpp || String(d.vaccines.dhpp).slice(0, 10) < todayIso);
+              if (needsRabies)        { setVaccineModal({ dog: needsRabies, vaccine: "rabies" });    return true; }
+              if (needsBordetella)    { setVaccineModal({ dog: needsBordetella, vaccine: "bordetella" }); return true; }
+              if (needsDhpp)          { setVaccineModal({ dog: needsDhpp, vaccine: "dhpp" });        return true; }
+              if (dogs.length > 0)    { setVaccineModal({ dog: dogs[0],  vaccine: "rabies" });       return true; }
+              // No dogs yet — scroll to dogs section to add one first.
+              const el = document.getElementById("portal-dogs-anchor");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+              return true;
+            }
+            if (target === "dogs" && dogs.length === 0) {
+              // Open the Add a Dog modal directly instead of just scrolling.
+              setDogModal({ open: true, dog: null });
+              return true;
+            }
+            if (target === "profile") {
+              setProfileOpen(true);
+              return true;
+            }
+            return false;  // let the checklist fall through to its default scroll
+          }}
+        />
 
         {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game) */}
         <div className="mb-6"><DailyTriviaCard /></div>
@@ -1126,7 +1161,14 @@ export default function Portal() {
                   {dogs.length > 0 && !waiverNeeded && (
                     <QuickLinkTile
                       onClick={()=>{
-                        const el = document.getElementById("portal-bookings-anchor");
+                        // Open the booking wizard directly when ready; otherwise
+                        // scroll to the setup checklist / book section.
+                        if (!bookingLocked) {
+                          setShowBookWizard(true);
+                          return;
+                        }
+                        const el = document.querySelector('[data-testid="portal-setup-checklist"]')
+                                || document.getElementById("portal-book-section");
                         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                       }}
                       testid="portal-ql-book-service"
@@ -1150,8 +1192,21 @@ export default function Portal() {
                   {dogs.length > 0 && (
                     <QuickLinkTile
                       onClick={()=>{
-                        const el = document.getElementById("portal-dogs-anchor");
-                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        // Open the vaccine upload modal directly for the first
+                        // dog with a missing/expired required vaccine.
+                        const todayIso = new Date().toISOString().slice(0, 10);
+                        const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
+                        const r = dogs.find(d => needs(d, "rabies"))
+                              || dogs.find(d => needs(d, "bordetella"))
+                              || dogs.find(d => needs(d, "dhpp"));
+                        if (r) {
+                          const which = needs(r, "rabies") ? "rabies" : needs(r, "bordetella") ? "bordetella" : "dhpp";
+                          setVaccineModal({ dog: r, vaccine: which });
+                          return;
+                        }
+                        // Everything's up-to-date — just open the first dog's
+                        // modal so the client can review/refresh records.
+                        setVaccineModal({ dog: dogs[0], vaccine: "rabies" });
                       }}
                       testid="portal-ql-upload-vaccines"
                       icon="fa-shield-virus"
