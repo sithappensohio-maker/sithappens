@@ -197,6 +197,9 @@ export default function Settings() {
         { id: "portal_links", label: "Portal Links", icon: "fa-link",
           desc: "Outbound links shown to clients in the portal (Instagram, Google Reviews, etc).",
           badges: ["Optional", "Client-facing"] },
+        { id: "portal_first_visit", label: "First Visit Card", icon: "fa-paw",
+          desc: "Edit the 'What to expect on your first visit' card shown on every new client's portal. Add, remove, or reorder bullets.",
+          badges: ["Live", "Client-facing"] },
         { id: "review_links", label: "Review Links", icon: "fa-star",
           desc: "Google, Facebook, and Yelp review URLs + your default review-request message template. Drives the 'Request review' button on every client/dog card.",
           badges: ["Live", "Client-facing"] },
@@ -468,6 +471,7 @@ export default function Settings() {
               {tab === "waiver" && <WaiverPanel s={s} save={save} saving={saving} />}
               {tab === "service_info" && <ServiceInfoPanel s={s} save={save} saving={saving} />}
               {tab === "portal_links" && <PortalLinksPanel s={s} save={save} saving={saving} />}
+              {tab === "portal_first_visit" && <PortalFirstVisitPanel s={s} save={save} saving={saving} />}
               {tab === "review_links" && <ReviewLinksPanel />}
               {tab === "marketing_qr" && <MarketingQRPanel />}
               {tab === "services" && <ServicesSettings />}
@@ -1500,6 +1504,119 @@ function ReviewLinksPanel() {
     </div>
   );
 }
+
+function PortalFirstVisitPanel({ s, save, saving }) {
+  const initial = s.portal_first_visit || {};
+  const [enabled, setEnabled] = useState(initial.enabled !== false);
+  const [heading, setHeading] = useState(initial.heading || "What to expect on your first visit");
+  const [footer, setFooter] = useState(typeof initial.footer === "string" ? initial.footer : "Questions? Text us anytime — we love new pups.");
+  const [bullets, setBullets] = useState(() => {
+    const src = Array.isArray(initial.bullets) && initial.bullets.length > 0
+      ? initial.bullets
+      : [
+          { title: "Pack the basics", body: "leash, any meds, and your dog's regular food if boarding overnight." },
+          { title: "Drop off between 7–10am", body: "(or your scheduled time). We'll do a quick intake at the front desk." },
+          { title: "You'll get a Pup Report Card", body: "by end of day — photos, mood, and a note about how the day went." },
+        ];
+    return src.map(b => ({ title: b.title || "", body: b.body || "" }));
+  });
+
+  const updateBullet = (i, patch) => setBullets((arr) => arr.map((b, idx) => idx === i ? { ...b, ...patch } : b));
+  const addBullet = () => setBullets((arr) => arr.length >= 8 ? arr : [...arr, { title: "", body: "" }]);
+  const removeBullet = (i) => setBullets((arr) => arr.length <= 1 ? arr : arr.filter((_, idx) => idx !== i));
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= bullets.length) return;
+    setBullets((arr) => {
+      const next = [...arr];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
+  const onSave = () => save({
+    portal_first_visit: {
+      enabled,
+      heading: heading.trim() || "What to expect on your first visit",
+      footer: footer,
+      bullets: bullets.filter(b => (b.title || "").trim() || (b.body || "").trim()),
+    },
+  });
+
+  return (
+    <div className="space-y-5" data-testid="portal-first-visit-panel">
+      <p className="text-[14px] text-gray-400">
+        This card appears on every new client&apos;s portal before their first booking — set expectations, packing tips, drop-off times, anything you want them prepped on.
+      </p>
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={enabled} onChange={(e)=>setEnabled(e.target.checked)}
+               className="accent-shGreen w-4 h-4" data-testid="fv-enabled"/>
+        <span className="text-[13px] font-black uppercase tracking-widest text-white">Show this card on the client portal</span>
+      </label>
+
+      <Section title={<span><i className="fas fa-heading text-shBlue mr-2"/>Heading</span>}>
+        <input value={heading} onChange={(e)=>setHeading(e.target.value)} data-testid="fv-heading"
+               className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm"/>
+      </Section>
+
+      <Section title={<span><i className="fas fa-list-ol text-shGreen mr-2"/>Bullets ({bullets.length}/8)</span>}>
+        <div className="space-y-3" data-testid="fv-bullets">
+          {bullets.map((b, i) => (
+            <div key={i} className="bg-bgBase/60 border border-bgHover rounded-lg p-3 space-y-2"
+                 data-testid={`fv-bullet-${i}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Bullet {i + 1}</span>
+                <div className="flex gap-1">
+                  <button type="button" onClick={()=>move(i, -1)} disabled={i === 0}
+                          className="text-[11px] px-2 py-1 rounded bg-bgHover hover:bg-bgPanel text-gray-300 disabled:opacity-30"
+                          data-testid={`fv-bullet-${i}-up`}>
+                    <i className="fas fa-arrow-up"/>
+                  </button>
+                  <button type="button" onClick={()=>move(i, 1)} disabled={i === bullets.length - 1}
+                          className="text-[11px] px-2 py-1 rounded bg-bgHover hover:bg-bgPanel text-gray-300 disabled:opacity-30"
+                          data-testid={`fv-bullet-${i}-down`}>
+                    <i className="fas fa-arrow-down"/>
+                  </button>
+                  <button type="button" onClick={()=>removeBullet(i)} disabled={bullets.length <= 1}
+                          className="text-[11px] px-2 py-1 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 disabled:opacity-30"
+                          data-testid={`fv-bullet-${i}-remove`}>
+                    <i className="fas fa-trash"/>
+                  </button>
+                </div>
+              </div>
+              <input value={b.title} onChange={(e)=>updateBullet(i, { title: e.target.value })}
+                     placeholder="Bold lead-in (e.g. 'Pack the basics')"
+                     data-testid={`fv-bullet-${i}-title`}
+                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+              <textarea value={b.body} onChange={(e)=>updateBullet(i, { body: e.target.value })}
+                        rows={2}
+                        placeholder="The rest of the sentence shown after the bold lead-in."
+                        data-testid={`fv-bullet-${i}-body`}
+                        className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            </div>
+          ))}
+          {bullets.length < 8 && (
+            <button type="button" onClick={addBullet}
+                    data-testid="fv-bullet-add"
+                    className="text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded bg-shBlue/15 text-shBlue border border-shBlue/30 hover:bg-shBlue/25 transition">
+              <i className="fas fa-plus mr-1.5"/>Add bullet
+            </button>
+          )}
+        </div>
+      </Section>
+
+      <Section title={<span><i className="fas fa-comment-dots text-shGreen mr-2"/>Closing line (italic)</span>}>
+        <input value={footer} onChange={(e)=>setFooter(e.target.value)} data-testid="fv-footer"
+               className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm"/>
+        <p className="text-[12px] text-gray-500 mt-1">Shown italicized at the bottom of the card. Leave blank to hide.</p>
+      </Section>
+
+      <SaveBar onSave={onSave} saving={saving} />
+    </div>
+  );
+}
+
 
 function PortalLinksPanel({ s, save, saving }) {
   const initial = s.client_portal_links || {};

@@ -27,6 +27,7 @@ import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
+import PortalAnnouncementsCard from "../components/PortalAnnouncementsCard";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -911,6 +912,9 @@ export default function Portal() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
+        {/* Sprint 110di-4 — Announcements pinned at very top (above welcome). */}
+        <PortalAnnouncementsCard />
+
         {/* Sprint 110di-3 — Pared the old 3-step "onboarding banner" down to a
             simple welcome line. The full first-time-setup gating now lives in
             `PortalSetupChecklist` below — keeping both was redundant. */}
@@ -1653,17 +1657,35 @@ export default function Portal() {
           <PortalFilesSection dogs={dogs} />
 
           <div id="portal-bookings-anchor">
-            {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (
-              <div className="bg-shGreen/10 border border-shGreen/30 rounded-xl p-5 mb-4" data-testid="first-time-tutorial">
-                <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-paw mr-1"/>What to expect on your first visit</p>
-                <ol className="space-y-2 text-[14px] text-gray-300 list-decimal list-inside">
-                  <li><span className="font-black text-white">Pack the basics:</span> leash, any meds, and your dog's regular food if boarding overnight.</li>
-                  <li><span className="font-black text-white">Drop off between 7–10am</span> (or your scheduled time). We'll do a quick intake at the front desk.</li>
-                  <li><span className="font-black text-white">You'll get a Pup Report Card</span> by end of day — photos, mood, and a note about how the day went.</li>
-                </ol>
-                <p className="text-[12px] text-gray-500 mt-3 italic">Questions? Text us anytime — we love new pups.</p>
-              </div>
-            )}
+            {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (() => {
+              // Sprint 110di-4 — admin-editable "What to expect" block.
+              // Driven by settings.portal_first_visit (with safe defaults).
+              const fv = pubSettings?.portal_first_visit || {};
+              if (fv.enabled === false) return null;
+              const heading = fv.heading || "What to expect on your first visit";
+              const bullets = Array.isArray(fv.bullets) && fv.bullets.length > 0 ? fv.bullets : [
+                { title: "Pack the basics", body: "leash, any meds, and your dog's regular food if boarding overnight." },
+                { title: "Drop off between 7–10am", body: "(or your scheduled time). We'll do a quick intake at the front desk." },
+                { title: "You'll get a Pup Report Card", body: "by end of day — photos, mood, and a note about how the day went." },
+              ];
+              const footer = (typeof fv.footer === "string") ? fv.footer : "Questions? Text us anytime — we love new pups.";
+              return (
+                <div className="bg-shGreen/10 border border-shGreen/30 rounded-xl p-5 mb-4" data-testid="first-time-tutorial">
+                  <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-2">
+                    <i className="fas fa-paw mr-1"/>{heading}
+                  </p>
+                  <ol className="space-y-2 text-[14px] text-gray-300 list-decimal list-inside">
+                    {bullets.map((b, i) => (
+                      <li key={i}>
+                        {b.title && <span className="font-black text-white">{b.title}{b.body ? ":" : ""} </span>}
+                        {b.body}
+                      </li>
+                    ))}
+                  </ol>
+                  {footer && <p className="text-[12px] text-gray-500 mt-3 italic">{footer}</p>}
+                </div>
+              );
+            })()}
             {/* Sprint 110z — My Bookings header gets matching eyebrow + italic
                 headline so it aligns with rest of polished portal. */}
             <div className="flex items-end justify-between flex-wrap gap-3 mb-4">

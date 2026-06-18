@@ -27,6 +27,7 @@ import KennelBoard from "./screens/KennelBoard";
 import AuditLog from "./screens/AuditLog";
 import BulkEmail from "./screens/BulkEmail";
 import ClientMessages from "./screens/ClientMessages";
+import Announcements from "./screens/Announcements";
 import Claim from "./screens/Claim";
 import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
@@ -114,6 +115,7 @@ function AdminShell() {
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
     { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages" },
+    { id: "announcements", label: "Announcements", icon: "fa-bullhorn", perm: "settings" },
     { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "settings" },
     { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "settings" },
     { id: "settings", label: "Settings", icon: "fa-cog", perm: "settings" },
@@ -233,6 +235,7 @@ function AdminShell() {
           {tab === "incidents" && <Incidents />}
           {tab === "intake" && <IntakeForms />}
           {tab === "messages" && <ClientMessages />}
+          {tab === "announcements" && <Announcements />}
           {tab === "bulkemail" && <BulkEmail />}
           {tab === "audit" && <AuditLog />}
           {tab === "settings" && <Settings />}

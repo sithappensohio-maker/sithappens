@@ -3799,3 +3799,28 @@ records its still saying the records are needed"
 
 - Playwright screenshot confirmed the Profile modal exposes the EMAIL field
   pre-populated with the existing contact email.
+
+
+## Sprint 110di-4 — Announcements + admin-editable First-Visit card (2026-02-18)
+
+**User ask**: "admin should have settings to customize this window also i would like to have a section in the client portal for announcements and or updates so the clients can see what ever i post also need the admin side to have the required things to make posts for stuff" (1b · 2a · 2d · 2g · 2i)
+
+### Backend (`server.py`)
+- ✅ `GET /api/settings/public` now returns `portal_first_visit` so the portal reads the admin-edited heading/bullets/footer.
+- ✅ Announcements collection + endpoints:
+  - `GET/POST/PUT/DELETE /api/admin/announcements` — admin CRUD (pinned + newest first).
+  - `GET /api/portal/announcements` — published & non-expired only with per-client `read: bool` + `unread` count.
+  - `POST /api/portal/announcements/{id}/read` — idempotent mark-read.
+- Schema: `{ id, title, body, image, pinned, expires_on, published, created_at, created_by, updated_at }`. Read state in `announcement_reads` (`client_id`, `announcement_id`, `read_at`).
+
+### Frontend
+- ✅ NEW `screens/Announcements.jsx` — admin composer (title, multi-line body, optional image, pin-to-top, publish toggle, auto-hide date) + list with edit/delete.
+- ✅ Nav: added Announcements to admin sidebar (bullhorn icon, perm:settings) and wired into `App.js`.
+- ✅ NEW `components/PortalAnnouncementsCard.jsx` — pinned at very top of portal. Collapsible. Per-client read tracking + "X new" unread badge.
+- ✅ `Portal.jsx` — replaced hardcoded "What to expect on your first visit" with one driven by `pubSettings.portal_first_visit` (with defaults + on/off).
+- ✅ `Settings.jsx` — new "First Visit Card" panel under Portal Content with on/off, heading, 1–8 reorderable bullets (move up/down, delete, add), italic closing line.
+- Service worker bumped to `sh-v10-110di-announcements-and-first-visit-editor`.
+
+### Tests
+- ✅ NEW `backend/tests/test_announcements_and_first_visit.py` — 4 tests all passing (CRUD + read tracking + expiry hide + unpublished hide + first-visit content persistence).
+- Playwright smoke confirmed portal pinned announcements (3 NEW badge) + admin composer screen.

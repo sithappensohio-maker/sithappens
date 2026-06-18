@@ -4196,6 +4196,9 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "service_descriptions": s.get("service_descriptions") or {},
         "client_portal_links": s.get("client_portal_links") or {},
         "closed_dates": s.get("closed_dates") or [],
+        # Sprint 110di-4 — admin-editable "What to expect on your first visit"
+        # block rendered on the client portal.
+        "portal_first_visit": s.get("portal_first_visit") or _portal_first_visit_default(),
     }
 
 @api.put("/settings")
@@ -4205,6 +4208,130 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
         return await get_settings()
     await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
     return await get_settings()
+
+
+# -------- Sprint 110di-4 — "What to Expect on Your First Visit" content --------
+def _portal_first_visit_default() -> Dict[str, Any]:
+    """Default copy for the portal `First Visit` card. Stored in settings under
+    `portal_first_visit`. Admin can override per-deployment via Settings.
+    """
+    return {
+        "enabled": True,
+        "heading": "What to expect on your first visit",
+        "footer": "Questions? Text us anytime — we love new pups.",
+        "bullets": [
+            {"title": "Pack the basics",         "body": "leash, any meds, and your dog's regular food if boarding overnight."},
+            {"title": "Drop off between 7–10am", "body": "(or your scheduled time). We'll do a quick intake at the front desk."},
+            {"title": "You'll get a Pup Report Card", "body": "by end of day — photos, mood, and a note about how the day went."},
+        ],
+    }
+
+
+# -------- Sprint 110di-4 — Announcements (admin → client portal) --------
+class AnnouncementBullet(BaseModel):
+    title: str = ""
+    body: str = ""
+
+
+class AnnouncementIn(BaseModel):
+    title: str = Field(min_length=1, max_length=180)
+    body: str = ""                                   # plain text, multi-paragraph
+    image: Optional[str] = ""                        # optional base64 data URL
+    pinned: bool = False
+    expires_on: Optional[str] = ""                   # ISO YYYY-MM-DD or "" for no expiry
+    published: bool = True
+
+
+def _ann_visible_today(a: Dict[str, Any]) -> bool:
+    if not a.get("published", True):
+        return False
+    exp = (a.get("expires_on") or "").strip()
+    if not exp:
+        return True
+    today = datetime.now(timezone.utc).date().isoformat()
+    return exp >= today
+
+
+@api.get("/admin/announcements")
+async def list_admin_announcements(_: dict = Depends(require_admin)):
+    items = await db.announcements.find({}, {"_id": 0}).to_list(length=None)
+    items.sort(key=lambda a: (not a.get("pinned"), a.get("created_at") or ""), reverse=False)
+    # Newest first, with pinned floated to top.
+    items.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+    items.sort(key=lambda a: not a.get("pinned"))
+    return items
+
+
+@api.post("/admin/announcements")
+async def create_announcement(body: AnnouncementIn, admin: dict = Depends(require_admin)):
+    doc = body.model_dump()
+    doc["id"] = uuid.uuid4().hex
+    doc["created_at"] = now_iso()
+    doc["created_by"] = admin.get("name", "admin")
+    doc["updated_at"] = doc["created_at"]
+    await db.announcements.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/admin/announcements/{ann_id}")
+async def update_announcement(ann_id: str, body: AnnouncementIn, admin: dict = Depends(require_admin)):
+    update = body.model_dump()
+    update["updated_at"] = now_iso()
+    update["updated_by"] = admin.get("name", "admin")
+    r = await db.announcements.update_one({"id": ann_id}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    doc = await db.announcements.find_one({"id": ann_id}, {"_id": 0})
+    return doc
+
+
+@api.delete("/admin/announcements/{ann_id}")
+async def delete_announcement(ann_id: str, _: dict = Depends(require_admin)):
+    r = await db.announcements.delete_one({"id": ann_id})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    # Drop read receipts for this announcement so we don't leak orphaned rows.
+    await db.announcement_reads.delete_many({"announcement_id": ann_id})
+    return {"ok": True}
+
+
+@api.get("/portal/announcements")
+async def list_portal_announcements(user: dict = Depends(get_current_user)):
+    """Returns published, non-expired announcements with a `read` flag for
+    the current client (computed from `announcement_reads`)."""
+    client_id = user.get("client_id")
+    items = await db.announcements.find({}, {"_id": 0}).to_list(length=None)
+    items = [a for a in items if _ann_visible_today(a)]
+    items.sort(key=lambda a: a.get("created_at") or "", reverse=True)
+    items.sort(key=lambda a: not a.get("pinned"))
+    if client_id:
+        reads = await db.announcement_reads.find(
+            {"client_id": client_id}, {"_id": 0, "announcement_id": 1}
+        ).to_list(length=None)
+        read_ids = {r["announcement_id"] for r in reads}
+    else:
+        read_ids = set()
+    for a in items:
+        a["read"] = a["id"] in read_ids
+    unread = sum(1 for a in items if not a["read"])
+    return {"items": items, "unread": unread}
+
+
+@api.post("/portal/announcements/{ann_id}/read")
+async def mark_announcement_read(ann_id: str, user: dict = Depends(get_current_user)):
+    client_id = user.get("client_id")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="Only portal clients can mark announcements read")
+    ann = await db.announcements.find_one({"id": ann_id}, {"_id": 0, "id": 1})
+    if not ann:
+        raise HTTPException(status_code=404, detail="Announcement not found")
+    await db.announcement_reads.update_one(
+        {"client_id": client_id, "announcement_id": ann_id},
+        {"$set": {"read_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
 
 
 # -------- Change Password --------
