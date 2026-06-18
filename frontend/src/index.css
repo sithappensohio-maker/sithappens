@@ -131,7 +131,19 @@ button.bg-bgPanel {
   .fc .fc-event { font-size: 9px; padding: 1px 3px; }
 }
 
-input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+/* Date / time / datetime-local picker indicator — force a bright white icon on
+   our dark theme. The default native glyph is barely visible against
+   bg-bgBase, so we invert + boost brightness so it reads like a white icon. */
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator,
+input[type="week"]::-webkit-calendar-picker-indicator {
+  filter: invert(1) brightness(2);
+  opacity: 1;
+  cursor: pointer;
+  padding: 2px;
+}
 
 /* PWA safe-area insets — respect iPhone notch + Android nav bar */
 .pt-safe { padding-top: env(safe-area-inset-top); }

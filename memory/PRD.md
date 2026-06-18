@@ -3700,3 +3700,62 @@ Total scope shipped in one session of nine phases:
 
 ### Tutorials
 - Added a brand-new "Operations Command Center — The New Stack" section to `Tutorials.jsx` covering all 9 phases (Intake Forms, Care Board, Waitlist + Capacity, Kennel Board, Incidents + Safety Flags, Audit Log, Roles & Permissions, Communication Log, Review Requests). Each entry lists where to find it in the sidebar, who can use it (with the new permission labels), and 4-6 concrete how-to steps.
+
+
+## Sprint 110di — Portal Profile Email + Vaccine Quick Upload UX (2026-02-18)
+
+**User ask**: Add the client's email to the profile edit modal. Rework the
+"Upload Vaccine Records" quick link: let the client pick which dog the upload
+is for, give each required vaccine its own date input, allow multiple photo
+uploads per vaccine, and make the native calendar picker icon clearly visible
+(white) against the dark theme.
+
+### Backend (server.py — appended/edited cleanly, no refactor)
+- ✅ `PortalProfileIn` now accepts `email: Optional[str]`. `PUT /api/portal/me`
+  light-validates the shape (must contain `@` and a dot in the domain), lowers
+  the case, and persists to `clients.email`. Blank string is allowed (opt-out).
+- ✅ `VaccineUpdateIn` now accepts `photos: Optional[List[str]]` (multi-photo).
+  When present it supersedes the legacy single `photo` field.
+  `POST /api/portal/dogs/{dog_id}/vaccine-update` (and its admin counterpart
+  `/dogs/{dog_id}/vaccine-cert`) now store an array on `vaccine_certs.{vac}.photos`
+  while continuing to populate the legacy `.photo` (first entry) for back-compat.
+- ✅ `GET /api/admin/vaccine-cert-uploads` now returns `photos: [...]` alongside
+  the legacy `photo` field so the admin review screen can surface every photo
+  the client attached.
+
+### Frontend
+- ✅ `PortalProfileModal.jsx` — added EMAIL row (type=email, autocomplete=email)
+  with helper text explaining the email is used for receipts / reminders, and
+  client-side validation matching the backend shape check.
+- ✅ NEW component `VaccineQuickUploadModal.jsx` — opens from the portal
+  "Upload Vaccine Records" quick link. Dog picker (auto-locks to single-dog
+  clients), all three required vaccines (Rabies / Bordetella / DHPP) on one
+  screen with their own new-expiry date inputs and multi-photo "Add photos"
+  buttons (image or PDF). Submits in series — one POST per filled row.
+- ✅ `Portal.jsx` quick link now opens this new modal instead of the
+  single-vaccine modal, while still preselecting the first dog with a
+  missing/expired required vaccine.
+- ✅ `index.css` — strengthened the date-picker indicator filter (now
+  `invert(1) brightness(2)` with `opacity: 1`) and applied it to date / time /
+  datetime-local / month / week inputs so the popup icon is solid white on
+  every dark form.
+- ✅ Service worker `CACHE_VERSION` bumped to `sh-v6-110di-vaccine-quick-upload`
+  so mobile PWA clients pull the new bundle.
+
+### Tests
+- ✅ New `backend/tests/test_portal_email_and_vaccine_multi.py` — 5 tests, all
+  passing:
+  - `test_portal_me_persists_email`
+  - `test_portal_me_rejects_bad_email`
+  - `test_portal_me_allows_blank_email`
+  - `test_vaccine_update_accepts_multi_photo` (3-photo upload + back-compat)
+  - `test_vaccine_update_legacy_single_photo_still_works`
+- ✅ Regression — full `test_setup_checklist.py` and `test_intake_portal_flow.py`
+  still pass.
+
+### Smoke
+- Playwright screenshot confirmed the new modal renders for the test client
+  with both dogs as picker tiles, all three vaccines as rows with their own
+  date + multi-photo inputs, and the calendar icon now visibly white.
+- Playwright screenshot confirmed the Profile modal exposes the EMAIL field
+  pre-populated with the existing contact email.

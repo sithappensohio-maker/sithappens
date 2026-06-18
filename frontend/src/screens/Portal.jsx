@@ -26,6 +26,7 @@ import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
+import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -753,6 +754,7 @@ export default function Portal() {
   const [rebookSeed, setRebookSeed] = useState(null);  // {dog_id, service_type} preselected when "Book Again" tapped
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
+  const [vaccineQuick, setVaccineQuick] = useState(null); // { initialDogId }
   // Onboarding checklist — auto-pops on portal load when any required vaccine
   // is missing/expired (or the client has no dog yet). Dismissed-this-session
   // is tracked in sessionStorage so it reappears next login until resolved.
@@ -1243,27 +1245,22 @@ export default function Portal() {
                   {dogs.length > 0 && (
                     <QuickLinkTile
                       onClick={()=>{
-                        // Open the vaccine upload modal directly for the first
-                        // dog with a missing/expired required vaccine.
+                        // Open the multi-vaccine quick-upload modal. Pre-pick
+                        // the first dog with a missing/expired required vaccine
+                        // so the form is already targeted at the right pup.
                         const todayIso = new Date().toISOString().slice(0, 10);
                         const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
-                        const r = dogs.find(d => needs(d, "rabies"))
-                              || dogs.find(d => needs(d, "bordetella"))
-                              || dogs.find(d => needs(d, "dhpp"));
-                        if (r) {
-                          const which = needs(r, "rabies") ? "rabies" : needs(r, "bordetella") ? "bordetella" : "dhpp";
-                          setVaccineModal({ dog: r, vaccine: which });
-                          return;
-                        }
-                        // Everything's up-to-date — just open the first dog's
-                        // modal so the client can review/refresh records.
-                        setVaccineModal({ dog: dogs[0], vaccine: "rabies" });
+                        const candidate = dogs.find(d => needs(d, "rabies"))
+                                       || dogs.find(d => needs(d, "bordetella"))
+                                       || dogs.find(d => needs(d, "dhpp"))
+                                       || dogs[0];
+                        setVaccineQuick({ initialDogId: candidate?.id || "" });
                       }}
                       testid="portal-ql-upload-vaccines"
                       icon="fa-shield-virus"
                       color="#f26522"
                       title="Upload Vaccine Records"
-                      subtitle="Keep records current"
+                      subtitle={dogs.length > 1 ? "Pick dog · multi-vax" : "Keep records current"}
                     />
                   )}
                   {(publicServices.length > 0 || publicPrograms.length > 0) && (
@@ -2009,6 +2006,15 @@ export default function Portal() {
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
       {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); bumpSetupRefresh(); }} />}
+
+      {vaccineQuick && (
+        <VaccineQuickUploadModal
+          dogs={dogs}
+          initialDogId={vaccineQuick.initialDogId}
+          onClose={()=>setVaccineQuick(null)}
+          onSaved={async()=>{ setVaccineQuick(null); await loadAll(); bumpSetupRefresh(); }}
+        />
+      )}
 
       {vaccineWizard && vaccineWizard.length > 0 && (
         <VaccineUploadWizard

@@ -1804,6 +1804,9 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
                 "vaccine": vacc,
                 "expires_on": info.get("expires_on") or vaccines.get(vacc, ""),
                 "photo": info.get("photo"),
+                # Sprint 110di — multi-photo upload. Falls back to `[photo]` for
+                # back-compat with older single-photo records.
+                "photos": info.get("photos") or ([info["photo"]] if info.get("photo") else []),
                 "uploaded_at": info.get("uploaded_at"),
                 "uploaded_by": info.get("uploaded_by", ""),
                 "reviewed_at": info.get("reviewed_at"),
@@ -2606,7 +2609,8 @@ async def credit_referral(client_id: str, body: dict, user: dict = Depends(requi
 class VaccineUpdateIn(BaseModel):
     vaccine: Literal["rabies", "bordetella", "dhpp"]
     expires_on: str  # ISO date "YYYY-MM-DD"
-    photo: Optional[str] = ""  # base64 data URL of cert photo
+    photo: Optional[str] = ""  # base64 data URL of cert photo (legacy single-photo path)
+    photos: Optional[List[str]] = None  # multi-photo upload (preferred). When present, supersedes `photo`.
 
 
 @api.post("/portal/dogs/{dog_id}/vaccine-update")
@@ -2626,10 +2630,17 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     vaccines = dict(dog.get("vaccines") or {})
     vaccines[body.vaccine] = body.expires_on
     update_doc: Dict[str, Any] = {"vaccines": vaccines}
-    if body.photo:
+    # Resolve which photos we got — `photos` (multi) takes precedence over the
+    # legacy single `photo` field. Keep `photo` populated with the first entry
+    # so existing reads (admin review screen) still work.
+    photo_list = [p for p in (body.photos or []) if p]
+    if not photo_list and body.photo:
+        photo_list = [body.photo]
+    if photo_list:
         certs = dict(dog.get("vaccine_certs") or {})
         certs[body.vaccine] = {
-            "photo": body.photo,
+            "photo": photo_list[0],
+            "photos": photo_list,
             "uploaded_at": now_iso(),
             "uploaded_by": user.get("name", ""),
             "expires_on": body.expires_on,
@@ -2655,10 +2666,14 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
     vaccines = dict(dog.get("vaccines") or {})
     vaccines[body.vaccine] = body.expires_on
     update_doc: Dict[str, Any] = {"vaccines": vaccines}
-    if body.photo:
+    photo_list = [p for p in (body.photos or []) if p]
+    if not photo_list and body.photo:
+        photo_list = [body.photo]
+    if photo_list:
         certs = dict(dog.get("vaccine_certs") or {})
         certs[body.vaccine] = {
-            "photo": body.photo,
+            "photo": photo_list[0],
+            "photos": photo_list,
             "uploaded_at": now_iso(),
             "uploaded_by": user.get("name", "admin"),
             "uploaded_by_admin": True,
@@ -2678,6 +2693,7 @@ class PortalProfileIn(BaseModel):
     name: str = Field(min_length=1)
     address: Optional[str] = ""
     phone: Optional[str] = ""
+    email: Optional[str] = ""        # contact email on the client record
     emerg: Optional[str] = ""
 
 class PortalDogIn(BaseModel):
@@ -2707,6 +2723,14 @@ async def _require_client_with_record(user: dict) -> str:
 async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)
     update = body.model_dump()
+    # Lightly validate email (just shape — don't bother verifying deliverability).
+    em = (update.get("email") or "").strip()
+    if em:
+        if "@" not in em or "." not in em.split("@")[-1]:
+            raise HTTPException(status_code=400, detail="Enter a valid email address")
+        update["email"] = em.lower()
+    else:
+        update["email"] = ""
     await db.clients.update_one({"id": cid}, {"$set": update})
     # also keep user.name in sync
     await db.users.update_one({"id": user["id"]}, {"$set": {"name": body.name}})
