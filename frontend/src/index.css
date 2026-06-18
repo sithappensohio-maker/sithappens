@@ -131,18 +131,33 @@ button.bg-bgPanel {
   .fc .fc-event { font-size: 9px; padding: 1px 3px; }
 }
 
-/* Date / time / datetime-local picker indicator — force a bright white icon on
-   our dark theme. The default native glyph is barely visible against
-   bg-bgBase, so we invert + boost brightness so it reads like a white icon. */
+/* Date / time / datetime-local picker indicator — replace the native (dark)
+   glyph with an inlined white SVG so it reads on every dark form/modal,
+   including iOS Safari + Android Chrome where `filter: invert()` doesn't
+   always reach the indicator. Larger hit target makes it easier to tap on
+   mobile. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"] {
+  color-scheme: dark;
+}
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 input[type="month"]::-webkit-calendar-picker-indicator,
 input[type="week"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(2);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ffffff'><path d='M19 4h-1V2h-2v2H8V2H6v2H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V10h14v10zm0-12H5V6h14v2z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 18px 18px;
+  filter: none;
   opacity: 1;
+  width: 22px;
+  height: 22px;
   cursor: pointer;
-  padding: 2px;
+  color: transparent;     /* hide any native glyph showing through */
 }
 
 /* PWA safe-area insets — respect iPhone notch + Android nav bar */
