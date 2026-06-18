@@ -1115,8 +1115,20 @@ export default function Portal() {
               <button
                 onClick={() => {
                   if (bookingLocked) {
-                    const el = document.querySelector('[data-testid="portal-setup-checklist"]');
-                    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                    // Scroll the user back up to the checklist. Prefer the
+                    // checklist element itself, but fall back to the top of
+                    // the page / the document scroll root so the click always
+                    // does *something* visible on mobile.
+                    const target = document.querySelector('[data-testid="portal-setup-checklist"]');
+                    if (target && typeof target.scrollIntoView === "function") {
+                      target.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }
+                    // Also lift any parent scroll container (PWA, iframe, etc.)
+                    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+                    try {
+                      const sr = document.querySelector('[data-scroll-root]');
+                      if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
+                    } catch {}
                     return;
                   }
                   setShowBookWizard(true);
@@ -1172,15 +1184,19 @@ export default function Portal() {
                   {dogs.length > 0 && !waiverNeeded && (
                     <QuickLinkTile
                       onClick={()=>{
-                        // Open the booking wizard directly when ready; otherwise
-                        // scroll to the setup checklist / book section.
                         if (!bookingLocked) {
                           setShowBookWizard(true);
                           return;
                         }
-                        const el = document.querySelector('[data-testid="portal-setup-checklist"]')
-                                || document.getElementById("portal-book-section");
-                        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                        const target = document.querySelector('[data-testid="portal-setup-checklist"]');
+                        if (target && typeof target.scrollIntoView === "function") {
+                          target.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                        try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+                        try {
+                          const sr = document.querySelector('[data-scroll-root]');
+                          if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
+                        } catch {}
                       }}
                       testid="portal-ql-book-service"
                       icon="fa-calendar-plus"
