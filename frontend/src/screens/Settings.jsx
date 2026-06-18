@@ -812,6 +812,8 @@ function BrandPanel() {
         <ColorField testid="theme-row-border"      label="Row Border"       sub="dividers"             value={draft.theme_row_border}      onChange={(v)=>setDraft({...draft, theme_row_border: v})} />
       </ThemeGroup>
 
+      <CardTypeThemesPanel draft={draft} setDraft={setDraft} />
+
       <ThemeGroup title="Cards & Panels" subtitle="Border + glow + inset highlight so dark cards stop blending into the background. Applies app-wide." testid="theme-group-card">
         <ColorField testid="card-border-color" label="Card Border Color" sub="resting edge tint" value={draft.card_border_color} onChange={(v)=>setDraft({...draft, card_border_color: v})} />
         <SliderField testid="card-border-opacity" label="Card Border Opacity" sub="0 (off) → 1 (solid)" min={0} max={1} step={0.05} value={draft.card_border_opacity} onChange={(v)=>setDraft({...draft, card_border_opacity: v})} />
