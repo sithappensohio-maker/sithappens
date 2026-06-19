@@ -4328,3 +4328,29 @@ A single dog row with legacy/malformed enum values (`sex='male'` lowercase, `fix
 
 ### Service Worker
 - ✅ Bumped to `sh-v26-110di-27-dogs-coercion-estimate`.
+
+
+## Sprint 110di-35 — Add Employee Crash Fix (2026-02-20)
+**User report**: "Adding staff member error" — full screenshot showed the global error boundary ("The Dog Ate Our Homework") with the underlying React message: *"Objects are not valid as a React child (found: object with keys {type, loc, msg, input, ctx})"*.
+
+### Root Cause
+When a Pydantic 422 validation error fires (e.g. user leaves the email blank or types an invalid email in **Staff → Add Employee**), FastAPI returns `detail` as an **array of objects** (`[{type, loc, msg, input, ctx}, …]`). The Staff modal (and ~30 other catch handlers across the app) does:
+```js
+setErr(e.response?.data?.detail || e.message)
+```
+React then tries to render the array into a `<p>` and crashes, which trips the global error boundary. So the symptom — "Add Employee error" — was actually a *generic 422 handling bug* that any form in the app could trigger.
+
+### Fix
+- ✅ Hardened the axios response interceptor in `/app/frontend/src/lib/api.js` to **normalize Pydantic 422 detail arrays into a human-readable string** before they propagate. Now every existing catch block receives a string like `"email: value is not a valid email address: An email address must have an @-sign."` instead of an unrenderable array. Single-point fix that protects ~30 other call sites without touching them.
+
+### Tests
+- ✅ NEW `tests/test_employee_create.py` — 4 contract tests (happy path 200, duplicate email 400 string detail, invalid email 422 array detail, short password 422). All pass.
+- ✅ Full regression suite — 24/24 (employee_create + roles_permissions + staff_pay_snapshot + help_requests + booking_price_estimate + config_backup).
+
+### Service Worker
+- ✅ Bumped to `sh-v33-110di-35-validation-err-fix`.
+
+### Verified end-to-end via screenshot tool
+- Empty email → modal stays open + clean red `EMAIL: VALUE IS NOT A VALID EMAIL ADDRESS…` message ✅
+- Invalid email format → same clean error ✅
+- Valid form → 200, modal closes, new employee appears in list ✅

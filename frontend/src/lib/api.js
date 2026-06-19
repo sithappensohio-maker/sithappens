@@ -39,6 +39,12 @@ api.request = (cfg) => {
 // Stale-token auto-clear: any 401 from the backend means the saved JWT
 // is invalid (expired, server restart, role change). Drop it and bounce
 // to the login screen instead of letting React crash on a half-loaded UI.
+//
+// Also normalize FastAPI 422 validation errors: by default Pydantic returns
+// `detail` as an array of `{type, loc, msg, input, ctx}` objects. Many call
+// sites render `e.response.data.detail` directly into JSX which crashes the
+// whole app ("Objects are not valid as a React child"). Coerce that array
+// to a human-readable string here so every existing catch handler is safe.
 api.interceptors.response.use(
   (res) => res,
   (err) => {
@@ -48,6 +54,16 @@ api.interceptors.response.use(
       if (window.location.pathname !== "/" && !window.location.pathname.startsWith("/login")) {
         window.location.replace("/");
       }
+    }
+    const d = err?.response?.data?.detail;
+    if (Array.isArray(d)) {
+      err.response.data.detail = d.map((e) => {
+        if (!e || typeof e !== "object") return String(e);
+        const loc = Array.isArray(e.loc) ? e.loc.filter((x) => x !== "body").join(".") : "";
+        return loc ? `${loc}: ${e.msg || "invalid"}` : (e.msg || JSON.stringify(e));
+      }).join("; ");
+    } else if (d && typeof d === "object") {
+      err.response.data.detail = d.msg || JSON.stringify(d);
     }
     return Promise.reject(err);
   }
