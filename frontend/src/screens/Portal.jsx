@@ -1022,8 +1022,66 @@ export default function Portal() {
           );
         })()}
 
-        {/* Sprint 110di-4 — Announcements pinned at very top (above welcome). */}
-        <PortalAnnouncementsCard />
+        {/* Sprint 110di-21 — Landing priority reorder for the upper portal
+            blocks. The admin-set order in cpc.landing_priority controls the
+            sequence of: announcements, credits-callout, upcoming_bookings-callout,
+            my_dogs-callout. The setup checklist (when locked) ALWAYS appears
+            first regardless of this order — that rule is enforced lower down
+            where PortalSetupChecklist is rendered before the two-column grid. */}
+        {(() => {
+          const priority = Array.isArray(cpc.landing_priority) && cpc.landing_priority.length
+            ? cpc.landing_priority : ["setup","announcements","credits","upcoming_bookings","my_dogs","messages"];
+          const blocks = {
+            announcements: <PortalAnnouncementsCard key="announcements" />,
+            credits: sectionOn("credits") && (feat.daycare || feat.boarding || feat.training) ? (
+              <div key="credits-callout" data-testid="portal-credits-callout"
+                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
+                <span className="text-[12px] font-black uppercase tracking-widest text-shGreen">
+                  <i className="fas fa-wallet mr-1.5"/>{label("credits", "Credits")} ready
+                </span>
+                <button onClick={()=>{ document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                        data-testid="portal-credits-callout-jump"
+                        className="text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
+                  View <i className="fas fa-arrow-right ml-1"/>
+                </button>
+              </div>
+            ) : null,
+            upcoming_bookings: bookings.length > 0 ? (
+              <div key="upcoming-callout" data-testid="portal-upcoming-callout"
+                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
+                <span className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+                  <i className="fas fa-calendar-day mr-1.5"/>{label("my_bookings", "My Bookings")} · {bookings.length}
+                </span>
+                <button onClick={()=>{ document.getElementById("portal-bookings-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
+                        data-testid="portal-upcoming-callout-jump"
+                        className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                  View <i className="fas fa-arrow-right ml-1"/>
+                </button>
+              </div>
+            ) : null,
+            my_dogs: dogs.length > 0 ? (
+              <div key="dogs-callout" data-testid="portal-dogs-callout"
+                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
+                <span className="text-[12px] font-black uppercase tracking-widest text-purple-400">
+                  <i className="fas fa-dog mr-1.5"/>{label("my_dogs", "My Dogs")} · {dogs.length}
+                </span>
+              </div>
+            ) : null,
+            messages: sectionOn("messages") && messagesUnread > 0 ? (
+              <div key="msg-callout" data-testid="portal-msg-callout"
+                   className="mb-4 rounded-xl border border-shOrange/40 bg-shOrange/10 px-4 py-2.5 flex items-center justify-between gap-3">
+                <span className="text-[12px] font-black uppercase tracking-widest text-shOrange">
+                  <i className="fas fa-comments mr-1.5"/>{messagesUnread} unread {label("messages", "Messages")}
+                </span>
+                <button onClick={()=>setMessagesOpen(true)} data-testid="portal-msg-callout-jump"
+                        className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:underline">
+                  Open <i className="fas fa-arrow-right ml-1"/>
+                </button>
+              </div>
+            ) : null,
+          };
+          return priority.filter(k => k !== "setup").map(k => blocks[k] || null);
+        })()}
 
         {/* Sprint 110di-3 — Pared the old 3-step "onboarding banner" down to a
             simple welcome line. The full first-time-setup gating now lives in
@@ -1197,6 +1255,7 @@ export default function Portal() {
           </div>
           )}
 
+          {sectionOn("waiver_documents") && (
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
             <div className="flex items-center justify-between mb-2">
               <p className={`text-[14px] font-black uppercase tracking-widest ${waiverNeeded?"text-red-400":"text-shGreen"}`}>
@@ -1275,8 +1334,9 @@ export default function Portal() {
               )}
             </div>
           </div>
+          )}
 
-          {(pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
+          {sectionOn("profile_quick_links") && (pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
             <div className="relative overflow-hidden bg-bgPanel p-5 rounded-2xl border border-bgHover shadow-2xl" data-testid="portal-quick-links">
               {/* Sprint 110y — Quick Links overhauled. Brand-glow halo on the
                   whole card, eyebrow + italic headline, then a 2-col grid of
@@ -1317,7 +1377,7 @@ export default function Portal() {
                     title="My Bookings"
                     subtitle={`${bookings.length} on file`}
                   />
-                  {dogs.length > 0 && (
+                  {dogs.length > 0 && sectionOn("vaccines_compliance") && (
                     <QuickLinkTile
                       onClick={()=>{
                         // Open the multi-vaccine quick-upload modal. Pre-pick
@@ -1803,7 +1863,7 @@ export default function Portal() {
                       { key: "upcoming", label: "Upcoming", color: "shGreen" },
                       { key: "past",     label: "Past",     color: "shBlue"  },
                       { key: "all",      label: "All",      color: "white"   },
-                    ].map(t => {
+                    ].filter(t => t.key !== "past" || sectionOn("booking_history")).map(t => {
                       const active = bookingsTab === t.key;
                       return (
                         <button key={t.key}
@@ -1841,7 +1901,8 @@ export default function Portal() {
                 return terminal || (dt && dt < todayIso);
               };
               let filtered = bookingsTab === "upcoming" ? bookings.filter(b => !isPast(b))
-                              : bookingsTab === "past"   ? bookings.filter(b => isPast(b))
+                              : (bookingsTab === "past" && sectionOn("booking_history")) ? bookings.filter(b => isPast(b))
+                              : bookingsTab === "past" ? []
                               : bookings;
               if (dogFilter) filtered = filtered.filter(b => b.dog_id === dogFilter);
               // Build a unique sorted list of YYYY-MM stamps for the dropdown.
