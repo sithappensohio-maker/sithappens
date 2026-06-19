@@ -9108,10 +9108,16 @@ async def admin_compress_photos_status(_: dict = Depends(require_admin)):
 
 
 @api.get("/backup/export")
-async def backup_export(_: dict = Depends(require_admin)):
+async def backup_export(user: dict = Depends(require_admin)):
     """Download a full JSON backup of every business collection. User accounts
     are intentionally excluded — passwords are hashed and migration of users
-    should go through a separate restore flow."""
+    should go through a separate restore flow.
+
+    Sprint 110di-24 — Permission Matrix wiring: `data_export` matrix key is
+    now consulted so admins with that toggle off can't pull a full data dump."""
+    perms = _perms_for(user)
+    if not perms.get("data_export"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_export")
     payload = {
         "version": BACKUP_VERSION,
         "exported_at": now_iso(),
@@ -9222,11 +9228,18 @@ async def _write_pre_restore_snapshot(kind: str) -> Dict[str, Any]:
 
 
 @api.get("/backup/export-config")
-async def backup_export_config(_: dict = Depends(require_admin)):
+async def backup_export_config(user: dict = Depends(require_admin)):
     """Download a JSON snapshot of just the configuration collections —
     branding, feature visibility, portal controls, dashboard widgets, card
     themes, email templates, payment-plan settings, and named app_settings
-    rows. No client/dog/booking data is included."""
+    rows. No client/dog/booking data is included.
+
+    Sprint 110di-24 — Gated on the `settings` matrix key (which is what
+    governs editing settings in the first place) so a non-settings admin
+    can't smuggle config out via export."""
+    perms = _perms_for(user)
+    if not perms.get("settings"):
+        raise HTTPException(status_code=403, detail="Missing permission: settings")
     return await _build_config_payload()
 
 
@@ -11002,10 +11015,16 @@ import csv
 async def payroll_year_end_csv(
     year: Optional[int] = None,
     detail: bool = False,
-    _: dict = Depends(require_admin),
+    user: dict = Depends(require_admin),
 ):
     """Year-end gross-wages CSV. Pass `?detail=true` to also dump every
-    clocked-in/out entry for the year (handy for 1099/W2 reconciliation)."""
+    clocked-in/out entry for the year (handy for 1099/W2 reconciliation).
+
+    Sprint 110di-24 — Permission Matrix wiring: payroll + data_export both
+    required so the toggles in the matrix actually gate this export."""
+    perms = _perms_for(user)
+    if not perms.get("payroll") or not perms.get("data_export"):
+        raise HTTPException(status_code=403, detail="Missing permission: payroll + data_export")
     y = int(year or business_today().year)
     start_iso = f"{y}-01-01T00:00:00"
     end_iso = f"{y + 1}-01-01T00:00:00"
@@ -11183,9 +11202,15 @@ class UserImportIn(BaseModel):
 
 
 @api.get("/admin/users/export-with-hashes")
-async def admin_users_export_with_hashes(_: dict = Depends(require_admin)):
+async def admin_users_export_with_hashes(user: dict = Depends(require_admin)):
     """Export every user record INCLUDING password_hash. Admin-only.
-    Use this to migrate logins between hosts so clients keep their passwords."""
+    Use this to migrate logins between hosts so clients keep their passwords.
+
+    Sprint 110di-24 — Gated on `data_export` so the Permission Matrix can
+    revoke this from a delegated admin."""
+    perms = _perms_for(user)
+    if not perms.get("data_export"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_export")
     users = await db.users.find({}, {"_id": 0}).to_list(5000)
     return {
         "version": BACKUP_VERSION,
@@ -11270,13 +11295,22 @@ async def admin_recent_errors_clear(_: dict = Depends(require_admin)):
 @api.get("/admin/income/export.csv")
 async def admin_income_csv(
     year: Optional[int] = None,
-    _: dict = Depends(require_admin),
+    user: dict = Depends(require_admin),
 ):
     """Year-end income export as CSV — what the accountant wants in January.
     Defaults to the current year. Rows are individual paid bookings + sold
     credit packs, columns include date, client, dog, service, amount,
     payment method, payment status. Designed to open clean in Excel/Sheets.
+
+    Sprint 110di-24 — Permission Matrix wiring: in addition to require_admin
+    we explicitly consult the `data_export` and `finance_reports` matrix
+    keys so admins can be subdivided into "front office" (no exports) vs
+    "owner/manager" (exports allowed). Without this, those matrix toggles
+    would be decorative for this endpoint.
     """
+    perms = _perms_for(user)
+    if not perms.get("data_export") or not perms.get("finance_reports"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_export + finance_reports")
     from fastapi.responses import Response
     yr = year or business_today().year
     start = f"{yr}-01-01"
@@ -20520,20 +20554,39 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
 
 
 def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
-    """Owner=admin role always gets full perms; otherwise look up by staff_role.
-    Sprint 110di-20 — role permissions can now be overridden by admin via
-    `settings.staff_role_permissions[role]`. Defaults still drive any role
-    the admin hasn't customized, and the `owner` role is always full perms
-    regardless of overrides (lockout protection)."""
-    if (user.get("role") or "").lower() == "admin":
+    """Resolve effective permissions for a user.
+
+    Sprint 110di-20 design: the `owner` staff_role is the ONLY one that
+    bypasses the matrix — that's our lockout protection so a misconfigured
+    matrix can never strip the boss of access. Every other staff_role
+    (manager, trainer, daycare_staff, boarding_staff, front_desk,
+    read_only) goes through the override lookup so admins can customise
+    what their delegates can do.
+
+    Backwards-compat: an `admin`-role user with NO `staff_role` set is
+    treated as the implicit owner (this is how the originally seeded
+    `admin@sithappens.com` lives — no staff_role recorded). Once an admin
+    is explicitly tagged with a non-owner staff_role, the matrix applies.
+
+    Sprint 110di-24 — Before this fix, ALL admins short-circuited to
+    full_perms, which made the data_export/finance_reports/payroll
+    matrix toggles entirely decorative for any admin user. They now
+    actually do something.
+    """
+    role = (user.get("role") or "").lower()
+    raw_sr = user.get("staff_role")
+    sr = (raw_sr or "").lower()
+    # Legacy admin with no staff_role → implicit owner (full perms).
+    if role == "admin" and not raw_sr:
         return _full_perms()
-    sr = (user.get("staff_role") or "").lower()
+    # Explicit owner staff_role → full perms regardless of overrides
+    # (lockout protection). The matrix PUT endpoint also refuses to edit
+    # the owner row, but we belt-and-brace it here.
+    if sr == "owner":
+        return _full_perms()
     if sr not in ROLE_PERMISSIONS:
         sr = "read_only"
     base = dict(ROLE_PERMISSIONS[sr])
-    # Sprint 110di-20 — admin-editable overrides win over the defaults.
-    # `owner` is intentionally excluded by the matrix PUT endpoint so it can
-    # never be downgraded (lockout protection).
     return _apply_role_overrides(base, sr)
 
 

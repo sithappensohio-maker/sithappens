@@ -4228,3 +4228,37 @@ Friendly labels → existing keys mapping:
 
 ### Service Worker
 - ✅ Bumped to `sh-v22-110di-23-portal-priority-config-backup` so mobile PWA picks up the Portal layout change.
+
+
+## Sprint 110di-24 — Final Cleanup Pass: Backup Safety, Matrix Enforcement, QA (2026-02-19)
+**User ask**: (1) Auto pre-import backup; (2) Enhanced restore preview; (3) QA Client Portal Controls; (4) QA + actually enforce Permission Matrix; (5) Stop adding new settings — switch to bug fixing & polish.
+
+### Backend (server.py)
+- ✅ **Auto pre-restore snapshot** (`_write_pre_restore_snapshot`) — every call to `/api/backup/restore` and `/api/backup/restore-config` now writes a full safety dump to `/app/backups/pre-restore-{config,full}-<ts>.json` BEFORE touching anything. Response surfaces `pre_restore_snapshot` metadata (filename, size, path) so the UI can show "Rollback file: …".
+- ✅ **Permission Matrix actually enforced** on the finance/export surface:
+  - `/api/admin/income/export.csv` → requires `data_export` + `finance_reports`
+  - `/api/admin/payroll/year-end.csv` → requires `payroll` + `data_export`
+  - `/api/backup/export` → requires `data_export`
+  - `/api/backup/export-config` → requires `settings`
+  - `/api/admin/users/export-with-hashes` → requires `data_export`
+- ✅ **Fixed `_perms_for` bug**: previously ALL admin-role users short-circuited to full_perms regardless of staff_role, making matrix toggles decorative for any admin. Now only `staff_role == "owner"` (or legacy admins without a staff_role set) bypass. Non-owner admins (managers, etc.) actually go through the matrix overrides. Owner still bypasses for lockout protection.
+
+### Frontend (Settings.jsx → BackupPanel)
+- ✅ **Enhanced restore preview** with before/after diff table per collection (current count vs after-restore count, color-coded delta).
+- ✅ **Explicit "Untouched: clients · dogs · bookings · payments · all per-dog progress"** green callout.
+- ✅ **Auto-snapshot promise** blue callout — tells operator the path their pre-restore snapshot will land at.
+- ✅ Success message includes the snapshot filename so operator can grep for it.
+- ✅ Same upgrade applied to the full backup restore flow.
+
+### Tests
+- ✅ NEW `tests/test_permission_enforcement.py` — 7 tests covering income-csv data_export gate, income-csv finance_reports gate, allowed-when-both-on, payroll gate, backup-export gate, config-export settings gate, owner-bypasses-matrix. All pass.
+- ✅ NEW `tests/test_config_backup.py::test_restore_auto_writes_pre_restore_snapshot` — verifies snapshot metadata is returned and the file exists on disk.
+- ✅ All 31 tests pass across permission_matrix + permission_enforcement + config_backup + client_portal_controls + feature_visibility + booking_flow_dashboard_widgets.
+
+### QA Results (via testing_agent_v3_fork iteration_4)
+- 100% pass rate on Client Portal Controls visible-toggle test (booking_history, profile_quick_links, waiver_documents, vaccines_compliance, landing_priority order, setup-checklist-always-first when bookingLocked).
+- 100% pass rate on Permission Matrix (loads, saves, owner lockout protection works, owner column locked, restricted users blocked from restricted screens).
+- 0 critical bugs, 0 frontend bugs.
+
+### Service Worker
+- ✅ Bumped to `sh-v23-110di-24-perm-enforcement-presnap`.
