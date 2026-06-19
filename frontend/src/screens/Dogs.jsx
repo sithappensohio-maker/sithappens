@@ -13,6 +13,7 @@ import IntakeFormsSection from "../components/IntakeFormsSection";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
+import LazyMount from "../components/LazyMount";
 import { scrollToCardAndFlash } from "../lib/scrollToCard";
 
 const empty = {
@@ -368,15 +369,22 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                     <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
                   )}
                 </div>
-                <IntakeFormsSection clientId={d.owner_id} dogId={d.id} />
-                <SafetyFlagsManager dogId={d.id} compact={false}/>
-                <CommunicationLog clientId={d.owner_id} dogId={d.id} />
-                <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
-                  <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
-                    <i className="fas fa-star mr-1"/>Reviews
-                  </span>
-                  <ReviewRequestButton clientId={d.owner_id} dogId={d.id} dogName={d.name} clientName={d.client_name || ""} compact={true}/>
-                </div>
+                {/* Sprint 110di-25 — Heavy per-card sub-components are
+                    viewport-gated. Without this, 239 dog cards each fire
+                    5 GETs on mount = ~1,200 simultaneous requests that
+                    exhaust the browser socket pool. LazyMount fetches
+                    only the cards currently scrolled into view. */}
+                <LazyMount testid={`dog-extra-${d.id}`} minHeight="160px">
+                  <IntakeFormsSection clientId={d.owner_id} dogId={d.id} />
+                  <SafetyFlagsManager dogId={d.id} compact={false}/>
+                  <CommunicationLog clientId={d.owner_id} dogId={d.id} />
+                  <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
+                    <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+                      <i className="fas fa-star mr-1"/>Reviews
+                    </span>
+                    <ReviewRequestButton clientId={d.owner_id} dogId={d.id} dogName={d.name} clientName={d.client_name || ""} compact={true}/>
+                  </div>
+                </LazyMount>
               </div>
             </div>
           );

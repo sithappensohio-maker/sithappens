@@ -196,11 +196,15 @@ class TestBookings:
         ar = requests.post(f"{BASE_URL}/api/bookings/{b['id']}/approve", headers=admin_h, timeout=15)
         assert ar.status_code == 200
         assert ar.json()["status"] == "approved"
-        # client credits decreased
+        # Sprint 110di-25 — Credits are deducted at CHECKOUT, not approval
+        # (see server.py approve_booking: "Credits are deducted at CHECKOUT,
+        # not approval. Approval just confirms the spot is reserved.").
+        # After approval the balance is still 3; after cancel it stays 3.
+        # (A separate test covers checkout-time credit consumption.)
         cli = requests.get(f"{BASE_URL}/api/clients", headers=admin_h, timeout=15).json()
         cur = next(c for c in cli if c["id"] == created_client["id"])
-        assert cur["credits"] == 2
-        # cancel refunds
+        assert cur["credits"] == 3
+        # cancel keeps balance at 3 (nothing was deducted)
         cr = requests.delete(f"{BASE_URL}/api/bookings/{b['id']}", headers=admin_h, timeout=15)
         assert cr.status_code == 200
         cli2 = requests.get(f"{BASE_URL}/api/clients", headers=admin_h, timeout=15).json()

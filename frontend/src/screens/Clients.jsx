@@ -18,6 +18,7 @@ import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
+import LazyMount from "../components/LazyMount";
 import SendClientEmailModal from "../components/SendClientEmailModal";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
@@ -396,14 +397,18 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
               )}
             </div>
-            <IntakeFormsSection clientId={c.id} />
-            <CommunicationLog clientId={c.id} />
-            <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
-              <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
-                <i className="fas fa-star mr-1"/>Reviews
-              </span>
-              <ReviewRequestButton clientId={c.id} clientName={c.name} compact={true}/>
-            </div>
+            {/* Sprint 110di-25 — Viewport-gated to prevent N+1 fetch storm
+                on the Clients screen with large client lists. */}
+            <LazyMount testid={`client-extra-${c.id}`} minHeight="160px">
+              <IntakeFormsSection clientId={c.id} />
+              <CommunicationLog clientId={c.id} />
+              <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
+                <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+                  <i className="fas fa-star mr-1"/>Reviews
+                </span>
+                <ReviewRequestButton clientId={c.id} clientName={c.name} compact={true}/>
+              </div>
+            </LazyMount>
           </div>
         ))}
       </div>
