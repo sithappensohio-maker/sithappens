@@ -10,6 +10,7 @@ import DogTimeline from "../components/DogTimeline";
 import TrophyWall, { ManualAwardPicker } from "../components/TrophyWall";
 import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
+import DogManageMenu from "../components/DogManageMenu";
 import SafetyFlagsManager from "../components/SafetyFlagsManager";
 import CommunicationLog from "../components/CommunicationLog";
 import ReviewRequestButton from "../components/ReviewRequestButton";
@@ -286,10 +287,15 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                   </div>
                 : <div className="h-40 w-full bg-gradient-to-br from-bgHover to-bgPanel flex items-center justify-center text-shGreen text-5xl"><i className="fas fa-paw" /></div>}
               <div className="p-5">
-                <div className="absolute top-3 right-3 flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
-                  <button onClick={()=>openEdit(d)} className="bg-black/60 text-white p-2 rounded" data-testid={`edit-dog-${d.id}`}><i className="fas fa-edit text-xs" /></button>
-                  <button onClick={()=>remove(d.id)} className="bg-black/60 text-red-400 p-2 rounded"><i className="fas fa-trash text-xs" /></button>
-                </div>
+                {/* Sprint 110di-34 — Always-visible quick Manage menu in
+                    the card top-right. Previously the only entry was a
+                    hover-only pencil icon, which the operator couldn't
+                    find on desktop. The menu now exposes all the
+                    sub-sections of the edit modal directly (Training,
+                    Vaccines, Feeding & Meds, Gallery, Notes) so the
+                    operator can deep-link instead of opening basics
+                    every time. */}
+                <DogManageMenu dog={d} onOpen={openEdit} onDelete={()=>remove(d.id)} />
                 <h4 className="text-lg font-black text-white uppercase tracking-tight">{d.name}</h4>
                 <p className="text-[15px] text-shBlue font-black uppercase tracking-widest">{d.breed || "Unknown breed"}</p>
                 <p className="text-[15px] text-gray-400 mt-2">Owner: <span className="text-gray-200 font-bold">{ownerName(d.owner_id)}</span></p>
