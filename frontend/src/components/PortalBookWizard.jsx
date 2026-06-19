@@ -328,13 +328,31 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
-                      <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
+                      <input type="date" value={date} min={minDate} onChange={(e)=>{
+                          const newDate = e.target.value;
+                          setDate(newDate);
+                          // Sprint 110di-30 — when drop-off changes, auto-bump
+                          // pickup forward if it's no longer a valid (strictly
+                          // after) value. Same-day drop-off is fine; the
+                          // zero-night case is what we guard against.
+                          if (newDate && endDate && endDate <= newDate) setEndDate("");
+                        }} style={{colorScheme:"dark"}}
                              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+                      <p className="text-[11px] text-gray-500 mt-1">Same-day drop-off is fine.</p>
                     </div>
                     <div>
+                      {/* Sprint 110di-30 — pickup picker `min` is drop-off+1
+                          so the OS-level date control already prevents the
+                          zero-night selection that used to fall through to
+                          a confusing client-side validation error. */}
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup date</label>
-                      <input type="date" value={endDate} min={date} onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
+                      <input type="date" value={endDate}
+                             min={date ? (new Date(date + "T12:00:00").getTime() + 86400000 > 0
+                                  ? new Date(new Date(date + "T12:00:00").getTime() + 86400000).toISOString().slice(0,10)
+                                  : date) : minDate}
+                             onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
                              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-end" />
+                      <p className="text-[11px] text-gray-500 mt-1">Must be after drop-off (at least 1 night).</p>
                     </div>
                   </div>
                 )}

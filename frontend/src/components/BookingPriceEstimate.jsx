@@ -180,11 +180,12 @@ export default function BookingPriceEstimate({
   }
   // Sprint 110di-28 — boarding with zero nights (drop-off == pickup) is a
   // half-built selection. Show a polite prompt rather than $0, which would
-  // mis-suggest "free overnight boarding".
+  // mis-suggest "free overnight boarding". Same-day drop-off is fine; the
+  // only invalid case is pickup ON or BEFORE drop-off.
   if (!calc.unitsValid && serviceType === "boarding") {
     return (
       <div className="bg-bgBase border border-shOrange/40 rounded-lg p-3 text-[13px] text-shOrange text-center" data-testid="booking-estimate-incomplete">
-        <i className="fas fa-bed mr-1.5"/>Pick a pickup date AFTER your drop-off date to see your boarding estimate.
+        <i className="fas fa-bed mr-1.5"/>Pick a pickup date <span className="font-black">at least one day after</span> your drop-off to see your boarding estimate.
       </div>
     );
   }

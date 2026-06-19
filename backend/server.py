@@ -1566,14 +1566,15 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 
     # Sprint 110di-28 — Boarding zero-night guard. The boarding price model
     # is nights × per-night rate; zero nights means no stay. Same-day
-    # "boarding" is really daycare and should be booked through that flow.
-    # Admins are NOT exempt because there's no historical use-case for a
-    # zero-night boarding row — it's always a data-entry mistake.
+    # drop-off is FINE; what we reject is pickup === drop-off (which would
+    # be a zero-count stay). For a one-day no-overnight stay, daycare is
+    # the right product. Admins are NOT exempt because there's no
+    # historical use-case for a zero-night boarding row.
     if body.service_type == "boarding":
         if not body.end_date or str(body.end_date)[:10] <= str(body.date)[:10]:
             raise HTTPException(
                 status_code=400,
-                detail="Boarding pickup date must be after drop-off date. For same-day care, book daycare.",
+                detail="Boarding requires at least one overnight stay — pickup must be on a later date than drop-off. (Same-day drop-off is fine, but pickup the same day would be zero nights.)",
             )
 
     # Sprint 110di-19 — Per-service Booking Flow Controls. Each service can

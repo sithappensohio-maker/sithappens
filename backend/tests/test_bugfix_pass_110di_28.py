@@ -117,8 +117,13 @@ def test_show_price_estimate_default_still_true(admin_headers):
 def test_boarding_rejects_same_day_pickup(admin_headers):
     """Boarding with end_date == start_date (zero nights) must NOT be
     accepted by the server. The frontend disables the Confirm button,
-    but a hand-crafted POST would otherwise sneak through."""
-    # Find a real dog so we hit the booking-rule path, not 404.
+    but a hand-crafted POST would otherwise sneak through.
+
+    POSITIVE: same-day DROP-OFF is fine — the only invalid case is
+    pickup on or before drop-off. We pin both the negative (zero nights
+    rejected) AND the adjacent positive (1-night accepted) so future
+    refactors can't over-correct in either direction.
+    """
     dogs = requests.get(f"{BASE}/api/dogs", headers=admin_headers, timeout=15).json()
     assert dogs, "no dogs in DB to test against"
     dog = dogs[0]
@@ -127,7 +132,7 @@ def test_boarding_rejects_same_day_pickup(admin_headers):
         "dog_id": dog["id"],
         "client_id": dog.get("owner_id"),
         "date": start,
-        "end_date": start,           # <-- same day, zero nights
+        "end_date": start,           # <-- same day, zero nights → reject
         "service_type": "boarding",
         "notes": "zero-night reject test",
     }
@@ -136,10 +141,23 @@ def test_boarding_rejects_same_day_pickup(admin_headers):
         headers={**admin_headers, "Content-Type": "application/json"},
         json=body, timeout=20,
     )
-    # 400 (validation) or 422 (Pydantic) — anything but 200 is a pass.
     assert r.status_code >= 400, (
         f"Server accepted a zero-night boarding (status {r.status_code}): {r.text[:200]}"
     )
+    # Positive: 1-night boarding (pickup = drop-off + 1) must succeed.
+    body2 = {**body, "end_date": _today_plus(15), "notes": "1-night accept test"}
+    r2 = requests.post(
+        f"{BASE}/api/bookings",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json=body2, timeout=20,
+    )
+    assert r2.status_code == 200, (
+        f"Server rejected a valid 1-night boarding (status {r2.status_code}): {r2.text[:200]}"
+    )
+    # Clean up the test booking so it doesn't pollute the schedule.
+    bid = r2.json().get("id")
+    if bid:
+        requests.delete(f"{BASE}/api/bookings/{bid}", headers=admin_headers, timeout=10)
 
 
 # ────────────────────── Waitlist daycare flow ─────────────────────────
