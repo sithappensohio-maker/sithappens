@@ -3937,3 +3937,39 @@ The earlier upcoming list (retail items catalog, check-in/check-out census, publ
 - Re-ran `cleanup_test_data.py` at end — env back to 1 kept client (`garrett @ freightshaker06@gmail.com`), 0 dogs. The test suite seeded ~170 transient clients during runs; they're now wiped.
 - No DB schema, branding, or onboarding logic changed. Existing PortalSetupChecklist unchanged.
 
+
+
+## Sprint 110di-15 — Client portal cleanup (Requirements to Book wording + mobile polish) (2026-02-19)
+
+**User ask**: Reuse the existing Requirements To Book / setup-status system (NO new onboarding, NO duplicate checklist). Clean up wording, statuses, and mobile UX so clients can grok and finish setup without confusion.
+
+### Backend (server.py — same endpoint, friendlier labels)
+- ✅ `_compute_setup_status_for_client` step labels renamed to plain client-speak:
+  - Your Information → **My Information**
+  - Dog Information → **My Dog**
+  - Emergency Contact → unchanged
+  - Vaccine Records → **Vaccines**
+  - Client Waiver → **Required Waiver**
+  - Service Intake Forms → **Required Forms**
+- No schema, no endpoint, no requirement-logic changes. The 6 steps + `booking_locked` / `ready_to_book` contract is untouched.
+
+### Frontend (PortalSetupChecklist.jsx)
+- ✅ Status badges collapsed to **two** client-facing states. Backend still emits 4 statuses internally; the UI now maps them to a single uniform vocabulary:
+  - `complete` → "Complete" (shGreen)
+  - `pending_review` → "Needs Attention" (shBlue, hourglass icon — distinct visual for "we're reviewing")
+  - `in_progress` / `not_started` → "Needs Attention" (shOrange, exclamation icon)
+- ✅ Header re-titled **"Requirements to Book"** (was "First-time setup") so it matches the sticky CTA copy ("Complete Setup") and the lock messaging elsewhere in the portal — one consistent vocabulary throughout.
+- ✅ Subtitle rewritten to plainer language: "Finish these once and you're all set to book daycare, boarding, training and grooming."
+- ✅ Mobile polish: tighter padding on small screens (`p-4 sm:p-7`, step cards `p-3 sm:p-4`), responsive H2 size (`text-xl sm:text-3xl`), `leading-snug` on body copy, `break-words` on labels + missing-detail bullets, `min-h-[40px]` on action buttons (better thumb target).
+
+### Frontend (Portal.jsx)
+- ✅ Sticky mobile CTA bumped to `min-h-[56px]`, `text-[15px]`, `py-4`, `border-t-2` and `active:scale-[0.98]` so it reads as a clearly anchored primary action on small screens. Still routes through `openBookingIfReady` so the setup gate stays the single source of truth.
+
+### Tests
+- ✅ All 7 portal/branding pytests still green (`test_portal_setup_status_gate` × 3, `test_card_type_themes` × 2, `test_expanded_theme` × 2).
+- ✅ Live mobile screenshot at 390 px confirms the new labels, status pills, and sticky button copy render correctly.
+
+### Notes
+- No new booking-requirement system was created. No duplicate checklist. The single `/api/portal/setup-status` endpoint is still the only source of truth, and `PortalSetupChecklist` is still the only client-facing renderer.
+- Test data wiped at end via `cleanup_test_data.py` — env back to 1 kept client.
+

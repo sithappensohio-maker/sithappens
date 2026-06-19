@@ -2,10 +2,14 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
 const STATUS_META = {
-  complete:       { label: "Complete",       cls: "bg-shGreen/15  text-shGreen border-shGreen/40",     icon: "fa-circle-check" },
-  pending_review: { label: "Pending Review", cls: "bg-shBlue/15   text-shBlue   border-shBlue/40",     icon: "fa-hourglass-half" },
-  in_progress:    { label: "In Progress",    cls: "bg-shOrange/15 text-shOrange border-shOrange/40",   icon: "fa-circle-dot" },
-  not_started:    { label: "Not Started",    cls: "bg-gray-700/30 text-gray-300 border-gray-600/40",   icon: "fa-circle" },
+  // Sprint 110di-15 — collapse the four backend statuses down to the two
+  // states a client actually cares about: it's done, or it needs their
+  // attention. Pending vaccine review is still surfaced separately below
+  // with its own blurb so the client knows we're working on it.
+  complete:       { label: "Complete",        cls: "bg-shGreen/15  text-shGreen border-shGreen/40",   icon: "fa-circle-check" },
+  pending_review: { label: "Needs Attention", cls: "bg-shBlue/15   text-shBlue   border-shBlue/40",   icon: "fa-hourglass-half" },
+  in_progress:    { label: "Needs Attention", cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-circle-exclamation" },
+  not_started:    { label: "Needs Attention", cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-circle-exclamation" },
 };
 
 const TARGET_TESTID = {
@@ -126,30 +130,32 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
   const overallMeta = STATUS_META[overall] || STATUS_META.not_started;
 
   return (
-    <div className="relative overflow-hidden bg-bgPanel border-2 border-shOrange/40 rounded-2xl p-5 sm:p-7 mb-6 shadow-2xl"
+    <div className="relative overflow-hidden bg-bgPanel border-2 border-shOrange/40 rounded-2xl p-4 sm:p-7 mb-6 shadow-2xl"
          data-testid="portal-setup-checklist">
       <div className="absolute inset-0 pointer-events-none opacity-30"
            style={{ background: "radial-gradient(circle at 10% 10%, rgba(242,101,34,0.5) 0%, transparent 40%), radial-gradient(circle at 90% 90%, rgba(140,198,63,0.35) 0%, transparent 45%)" }}/>
       <div className="relative">
-        {/* Header */}
+        {/* Header — Sprint 110di-15: renamed to "Requirements to Book" so
+            client wording matches the sticky CTA ("Complete Setup") and
+            the lock copy elsewhere in the portal. */}
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shOrange mb-1">
-              <i className="fas fa-clipboard-check mr-1.5"/>First-time setup
+              <i className="fas fa-clipboard-check mr-1.5"/>Requirements to Book
             </p>
-            <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+            <h2 className="text-xl sm:text-3xl font-black text-white uppercase italic tracking-tight leading-tight">
               Get Ready to <span className="text-shGreen">Book.</span>
             </h2>
           </div>
-          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
+          <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
                 data-testid="portal-setup-overall-badge">
             <i className={`fas ${overallMeta.icon} mr-1.5`}/>{completed_count} / {total_count} done
           </span>
         </div>
 
-        <p className="text-[14px] text-gray-300 mt-1 max-w-2xl">
-          Before your dog can join the chaos, we need a few important details. This keeps every dog safe,
-          helps our team care for your dog properly, and makes booking faster after setup is complete.
+        <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1 max-w-2xl leading-relaxed">
+          Finish these once and you&apos;re all set to book daycare, boarding, training and grooming.
+          We&apos;ll only ask again if something expires or changes.
         </p>
 
         {/* Progress bar */}
@@ -166,7 +172,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
             return (
               <div key={s.id}
                    data-testid={`portal-setup-step-${s.id}`}
-                   className={`relative rounded-xl border p-4 transition ${
+                   className={`relative rounded-xl border p-3 sm:p-4 transition ${
                      isComplete
                        ? "bg-shGreen/5 border-shGreen/30"
                        : "bg-bgBase border-bgHover hover:border-shOrange/60"
@@ -181,14 +187,14 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
                         <i className={`fas ${meta.icon} mr-1`}/>{meta.label}
                       </span>
                     </div>
-                    <p className={`text-[15px] font-black uppercase italic tracking-tight ${isComplete ? "text-shGreen" : "text-white"}`}>
+                    <p className={`text-[15px] font-black uppercase italic tracking-tight break-words ${isComplete ? "text-shGreen" : "text-white"}`}>
                       {s.label}
                     </p>
-                    <p className="text-[12px] text-gray-400 mt-0.5">{s.blurb}</p>
+                    <p className="text-[12px] text-gray-400 mt-0.5 leading-snug">{s.blurb}</p>
                     {!isComplete && s.missing && s.missing.length > 0 && (
                       <ul className="mt-2 space-y-0.5">
                         {s.missing.slice(0, 3).map((m, i) => (
-                          <li key={i} className="text-[11px] text-shOrange">
+                          <li key={i} className="text-[11px] text-shOrange break-words">
                             <i className="fas fa-circle-exclamation mr-1"/>{m}
                           </li>
                         ))}
@@ -198,8 +204,8 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
                       </ul>
                     )}
                     {s.status === "pending_review" && (
-                      <p className="text-[11px] text-shBlue mt-2">
-                        <i className="fas fa-clock mr-1"/>We've got your records — admin is reviewing.
+                      <p className="text-[11px] text-shBlue mt-2 leading-snug">
+                        <i className="fas fa-clock mr-1"/>We&apos;ve got your records — our team is reviewing them.
                       </p>
                     )}
                   </div>
@@ -208,7 +214,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onStatusChan
                   <button
                     onClick={() => goTo(s.action_target)}
                     data-testid={`portal-setup-step-action-${s.id}`}
-                    className="mt-3 w-full bg-shGreen text-bgHeader text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shGreen/90 transition"
+                    className="mt-3 w-full bg-shGreen text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest py-2.5 sm:py-2 rounded hover:bg-shGreen/90 active:scale-[0.98] transition min-h-[40px]"
                   >
                     <i className="fas fa-arrow-right mr-2"/>{s.action_label}
                   </button>

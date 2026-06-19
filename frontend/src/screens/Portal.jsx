@@ -1923,16 +1923,18 @@ export default function Portal() {
       {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always
           reachable. Sprint 110di-14: respects the existing setup gate so it
           can never bypass `booking_locked`. When locked → COMPLETE SETUP +
-          scroll to checklist. When ready → BOOK SERVICE + open wizard. */}
+          scroll to checklist. When ready → BOOK SERVICE + open wizard.
+          Sprint 110di-15: bigger touch target, two-line safe area, and a
+          subtle accent strip on top so it reads as an anchored CTA. */}
       {dogs.length > 0 && (
         <button
           onClick={openBookingIfReady}
           data-testid="portal-sticky-book"
           aria-label={bookingLocked ? "Complete setup" : "Book service"}
-          className={`md:hidden fixed bottom-0 inset-x-0 z-30 py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t ${
+          className={`md:hidden fixed bottom-0 inset-x-0 z-30 py-4 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[15px] shadow-2xl border-t-2 min-h-[56px] active:scale-[0.98] transition ${
             bookingLocked
-              ? "bg-shOrange text-bgHeader border-shOrange/60"
-              : "bg-shGreen text-bgHeader border-shGreen/60"
+              ? "bg-shOrange text-bgHeader border-shOrange/80"
+              : "bg-shGreen text-bgHeader border-shGreen/80"
           }`}
         >
           {bookingLocked ? (
