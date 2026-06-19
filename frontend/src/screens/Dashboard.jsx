@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
+import HelpRequestsTile from "../components/HelpRequestsTile";
 import BookingDetailModal from "../components/BookingDetailModal";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
@@ -388,6 +389,13 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {/* Sprint 110bk — Trivia leaderboard at-a-glance */}
       {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
+
+      {/* Sprint 110di-33 — Client help requests inbox. Self-hides when
+          there are no open requests. No new dashboard-widget setting —
+          this is operationally critical (clients can't otherwise reach
+          the operator from inside the portal) so it shows whenever
+          there's something to act on. */}
+      <HelpRequestsTile />
 
 
       {programs && programs.total > 0 && (

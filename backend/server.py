@@ -2842,6 +2842,80 @@ async def portal_gallery_mark_seen(user: dict = Depends(get_current_user)):
     await db.clients.update_one({"id": cid}, {"$set": {"photo_gallery_has_new": False}})
     return {"ok": True}
 
+# ─────────────────────── Sprint 110di-33 · Help Requests ──────────────
+# Tiny support-channel feature: clients submit free-text feedback / bug
+# reports / suggestions from the portal; admins view + mark
+# reviewed/resolved. NOT a full ticket system — no replies, no
+# attachments, no SLAs. Lives in its own `help_requests` collection so
+# it doesn't pollute the messaging surface.
+HELP_TYPES = ("feedback", "problem", "feature", "booking", "other")
+HELP_STATUSES = ("new", "reviewed", "resolved")
+
+
+class HelpRequestIn(BaseModel):
+    type: str = "other"
+    subject: str
+    message: str
+
+
+@api.post("/portal/help-requests")
+async def portal_create_help_request(body: HelpRequestIn, user: dict = Depends(get_current_user)):
+    cid = await _require_client_with_record(user)
+    if body.type not in HELP_TYPES:
+        raise HTTPException(status_code=400, detail=f"type must be one of {HELP_TYPES}")
+    subject = (body.subject or "").strip()[:140]
+    message = (body.message or "").strip()[:4000]
+    if not subject or not message:
+        raise HTTPException(status_code=400, detail="Subject and message are required.")
+    client = await db.clients.find_one({"id": cid}, {"_id": 0, "name": 1, "email": 1})
+    doc = {
+        "id": str(uuid.uuid4()),
+        "client_id": cid,
+        "client_name": (client or {}).get("name", ""),
+        "client_email": (client or {}).get("email", ""),
+        "type": body.type,
+        "subject": subject,
+        "message": message,
+        "status": "new",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.help_requests.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/admin/help-requests")
+async def admin_list_help_requests(
+    status: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    q: Dict[str, Any] = {}
+    if status and status in HELP_STATUSES:
+        q["status"] = status
+    items = await db.help_requests.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return items
+
+
+class HelpRequestStatusIn(BaseModel):
+    status: str
+
+
+@api.put("/admin/help-requests/{req_id}")
+async def admin_update_help_request(req_id: str, body: HelpRequestStatusIn, _: dict = Depends(require_admin)):
+    if body.status not in HELP_STATUSES:
+        raise HTTPException(status_code=400, detail=f"status must be one of {HELP_STATUSES}")
+    r = await db.help_requests.update_one(
+        {"id": req_id},
+        {"$set": {"status": body.status, "updated_at": now_iso()}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Help request not found")
+    doc = await db.help_requests.find_one({"id": req_id}, {"_id": 0})
+    return doc
+
+
+
 @api.post("/portal/dogs", response_model=DogOut)
 async def portal_create_dog(body: PortalDogIn, user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)

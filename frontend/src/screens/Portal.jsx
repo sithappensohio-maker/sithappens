@@ -28,6 +28,7 @@ import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
+import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
 import PortalAnnouncementsCard from "../components/PortalAnnouncementsCard";
@@ -1490,6 +1491,10 @@ export default function Portal() {
               hasn't enabled any methods. Booking is NEVER gated on payment;
               this just tells the client HOW they can pay if they want to. */}
           <PaymentOptionsCard />
+
+          {/* Sprint 110di-33 — Need Help? feedback card. Gated by the
+              client_portal_controls.sections.help_button toggle. */}
+          {sectionOn("help_button") && <NeedHelpCard />}
 
         </div>
 
