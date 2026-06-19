@@ -4145,3 +4145,52 @@ The earlier upcoming list (retail items catalog, check-in/check-out census, publ
 - **Intentionally hard-coded:** trophy criteria, Stripe/PWA implementation details, audit-log keys, dog-care domain heuristics (see audit doc).
 - **Recommendation:** the app is now fully operational without code edits for normal business behavior. Next configurability work (if requested): Staff Permission Matrix visual editor + landing-priority render order honoring (currently storage works but the Portal still renders in code order).
 
+
+
+## Sprint 110di-20 — Staff Permission Matrix UI (2026-02-19)
+
+**User ask**: Visual matrix to manage staff permissions without editing code/raw user records. Use the EXISTING `users.permissions[]` / `can(perm)` architecture. No new permission system, no new keys.
+
+### Backend (server.py)
+- ✅ Module-level `_ROLE_OVERRIDES` cache populated at startup from `settings.staff_role_permissions`. `_perms_for()` now merges base `ROLE_PERMISSIONS[role]` with admin overrides for that role.
+- ✅ `_load_role_overrides_from_settings()` — idempotent helper called on boot + on every matrix endpoint hit; admins see edits reflected on the next request without a restart.
+- ✅ `GET /api/staff/roles` — extended response: `{roles, permission_keys, matrix (effective merged), defaults (immutable baseline), overrides (current admin diff)}`.
+- ✅ `PUT /api/staff/roles/{role}/permissions` — admin-only; persists to `settings.staff_role_permissions[role]`. Returns the merged effective permissions.
+- ✅ Safety: `owner` role is immutable (PUT returns 400 with "Owner role is immutable (lockout protection).") — owner = admin role always gets full perms regardless of overrides.
+- ✅ Schema stability: unknown keys silently dropped on PUT so the matrix can never accumulate garbage.
+
+### Frontend (Settings.jsx)
+- ✅ New **Permission Matrix** subsection under Business Operations (next to the existing "Roles & Permissions" link).
+- ✅ `PermissionMatrixPanel`: rows = 14 permission keys (with friendly labels + tooltips), columns = 7 roles, checkboxes per cell. Per-row "Save row" button so the admin can commit changes one role at a time. Sticky first column for horizontal scroll on smaller screens.
+- ✅ **Dependency assist**: granting `pricing` auto-enables `finance_reports`; `delete_records` auto-enables `clients_edit` + `dogs_edit`; `clients_edit` auto-enables `clients_view`; etc. (kept inline in `PERM_DEPENDENCIES` map).
+- ✅ **Self-lockout guard** in the UI: refuses to save if it would result in zero non-owner roles holding `settings`.
+- ✅ Owner column is locked + clearly badged "Locked".
+
+### Permission key reuse (no duplicates created)
+Friendly labels → existing keys mapping:
+- View Finance/Reports → `finance_reports`
+- Manage Pricing → `pricing`
+- View/Edit Clients → `clients_view` / `clients_edit`
+- View/Edit Dogs → `dogs_view` / `dogs_edit`
+- Log Incidents → `incidents`
+- Check Dogs In/Out → `care_complete`
+- Edit Bookings → `booking_edit`
+- Manage Staff/Payroll → `payroll`
+- Export Data → `data_export`
+- Delete Records → `delete_records`
+- Send Messages → `messages`
+- Manage Settings → `settings`
+
+### Tests
+- ✅ NEW `tests/test_permission_matrix.py` — 6 tests: matrix shape, PUT persistence + override merge, owner immutability, unknown-role rejection, non-admin caller blocked, defaults match the baseline.
+- ✅ Full suite: **25/25** portal/branding/FV/CPC/BFC/DW/perm-matrix tests passing.
+
+### Existing enforcement audit
+- App.js nav: `perm:` key on every gated nav item, filtered via `can(...)` from useAuth.
+- Backend: `@require_admin` on settings/staff/permission writes; `_perms_for()` consulted on every authed request via `me` payload.
+- Per-screen gates: Income/Reports/Settings/Messages/Staff/Care Board/Clients/Dogs already gated. No new enforcement holes surfaced.
+
+### Notes
+- The matrix UI edits ROLE permissions (one row = all users with that role). The existing per-user override path (`users.permissions`) is unchanged. Per-user fine-tuning UI can be added later if requested but the role-level matrix covers the user's stated use case.
+- `owner` role permanently mapped to full perms; admins can't downgrade themselves out of access.
+

@@ -12155,6 +12155,11 @@ async def startup():
         await _seed_dog_facts_if_empty()
     except Exception as exc:
         logger.warning("Dog facts seeding failed: %s", exc)
+    # Sprint 110di-20 — load role permission overrides at boot.
+    try:
+        await _load_role_overrides_from_settings()
+    except Exception as exc:
+        logger.warning("Role override preload failed: %s", exc)
 
 
 @app.on_event("shutdown")
@@ -20289,6 +20294,24 @@ def _empty_perms() -> Dict[str, bool]:
     return {k: False for k in PERMISSION_KEYS}
 
 
+# Sprint 110di-20 — Role permission overrides (admin-editable). Populated
+# from `settings.staff_role_permissions` on startup + every time the matrix
+# PUT endpoint fires. Kept as a module-level dict so the sync `_perms_for()`
+# helper can read without an await chain.
+_ROLE_OVERRIDES: Dict[str, Dict[str, bool]] = {}
+
+
+def _apply_role_overrides(base: Dict[str, bool], role: str) -> Dict[str, bool]:
+    ov = _ROLE_OVERRIDES.get(role) or {}
+    if not ov:
+        return base
+    out = dict(base)
+    for k in PERMISSION_KEYS:
+        if k in ov:
+            out[k] = bool(ov[k])
+    return out
+
+
 # Matrix derived from the user's Phase 7 spec. Owners get everything;
 # Read-only sees but never writes; in-between roles get the minimum slice
 # they need to do their actual job.
@@ -20340,15 +20363,21 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
 
 
 def _perms_for(user: Dict[str, Any]) -> Dict[str, bool]:
-    """Owner=admin role always gets full perms; otherwise look up by staff_role."""
+    """Owner=admin role always gets full perms; otherwise look up by staff_role.
+    Sprint 110di-20 — role permissions can now be overridden by admin via
+    `settings.staff_role_permissions[role]`. Defaults still drive any role
+    the admin hasn't customized, and the `owner` role is always full perms
+    regardless of overrides (lockout protection)."""
     if (user.get("role") or "").lower() == "admin":
         return _full_perms()
     sr = (user.get("staff_role") or "").lower()
-    if sr in ROLE_PERMISSIONS:
-        return ROLE_PERMISSIONS[sr]
-    # Unset employee → default to read_only so unconfigured accounts can't
-    # accidentally do destructive things before the owner sets their role.
-    return ROLE_PERMISSIONS["read_only"]
+    if sr not in ROLE_PERMISSIONS:
+        sr = "read_only"
+    base = dict(ROLE_PERMISSIONS[sr])
+    # Sprint 110di-20 — admin-editable overrides win over the defaults.
+    # `owner` is intentionally excluded by the matrix PUT endpoint so it can
+    # never be downgraded (lockout protection).
+    return _apply_role_overrides(base, sr)
 
 
 def require_permission(key: str):
@@ -20376,11 +20405,72 @@ async def my_permissions(user: dict = Depends(get_current_user)):
 
 @api.get("/staff/roles")
 async def get_staff_roles_matrix(_: dict = Depends(require_admin)):
+    # Sprint 110di-20 — refresh overrides on read so the admin UI always
+    # sees the latest values without a restart.
+    await _load_role_overrides_from_settings()
+    effective = {}
+    for role in STAFF_ROLES:
+        base = dict(ROLE_PERMISSIONS[role])
+        effective[role] = _apply_role_overrides(base, role)
     return {
         "roles": list(STAFF_ROLES),
         "permission_keys": list(PERMISSION_KEYS),
-        "matrix": ROLE_PERMISSIONS,
+        "matrix": effective,
+        "defaults": ROLE_PERMISSIONS,
+        "overrides": _ROLE_OVERRIDES,
     }
+
+
+async def _load_role_overrides_from_settings():
+    """Read settings.staff_role_permissions and stash it in the module-level
+    cache. Idempotent; safe to call on every matrix endpoint hit."""
+    global _ROLE_OVERRIDES
+    s = await db.settings.find_one({"id": "global"}, {"staff_role_permissions": 1})
+    raw = (s or {}).get("staff_role_permissions") or {}
+    out = {}
+    for role, perms in raw.items():
+        if role not in STAFF_ROLES or role == "owner":
+            continue
+        if not isinstance(perms, dict):
+            continue
+        out[role] = {k: bool(v) for k, v in perms.items() if k in PERMISSION_KEYS}
+    _ROLE_OVERRIDES = out
+
+
+class RolePermissionsIn(BaseModel):
+    permissions: Dict[str, bool]
+
+
+@api.put("/staff/roles/{role}/permissions")
+async def update_role_permissions(role: str, body: RolePermissionsIn, user: dict = Depends(require_admin)):
+    """Admin-edit a role's permission map. Saved under
+    settings.staff_role_permissions[role] and used by `_perms_for()` from
+    the next API call onward.
+
+    Safety:
+    - The `owner` role is immutable (full perms always; admins cannot
+      downgrade themselves to lockout).
+    - At least ONE non-owner role must retain the `settings` permission so
+      the owner can recover from a bad save (owner=admin already always has
+      `settings`, but this also protects against accidental flat-off).
+    - Per-key keys must exist in PERMISSION_KEYS — unknown keys are silently
+      dropped to keep the schema stable.
+    """
+    role = (role or "").lower()
+    if role not in STAFF_ROLES:
+        raise HTTPException(status_code=400, detail=f"Unknown role '{role}'")
+    if role == "owner":
+        raise HTTPException(status_code=400, detail="Owner role is immutable (lockout protection).")
+    perms = {k: bool(v) for k, v in (body.permissions or {}).items() if k in PERMISSION_KEYS}
+    # Persist
+    s = await db.settings.find_one({"id": "global"}) or {}
+    current = (s.get("staff_role_permissions") or {})
+    current[role] = perms
+    await db.settings.update_one({"id": "global"}, {"$set": {"staff_role_permissions": current, "updated_at": now_iso()}}, upsert=True)
+    await _load_role_overrides_from_settings()
+    # Return the effective map after merge
+    effective = _apply_role_overrides(dict(ROLE_PERMISSIONS[role]), role)
+    return {"role": role, "permissions": effective}
 
 
 class StaffRoleIn(BaseModel):

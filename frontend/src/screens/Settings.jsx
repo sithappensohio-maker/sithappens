@@ -233,6 +233,9 @@ export default function Settings() {
         { id: "_roles_link", label: "Roles & Permissions", icon: "fa-lock",
           desc: "Owner / Manager / Trainer / Daycare / Boarding / Front Desk / Read-only with a 13-key permission matrix. (Assign roles inside the Staff screen — the role panel sits at the top.)",
           badges: ["Live", "Admin-only"], externalTab: "staff" },
+        { id: "permission_matrix", label: "Permission Matrix", icon: "fa-table-cells-large",
+          desc: "Visual matrix of every role × permission. Toggle a checkbox to grant/revoke; saves go live on next request. Owner role is immutable (lockout protection).",
+          badges: ["Live", "Admin-only"] },
         { id: "_payroll_soon", label: "Payroll Settings", icon: "fa-money-check",
           desc: "Hourly rates, overtime rules, pay-period boundaries.",
           badges: ["Coming soon"], comingSoon: true },
@@ -480,6 +483,7 @@ export default function Settings() {
               {tab === "client_portal_controls" && <ClientPortalControlsPanel />}
               {tab === "booking_flow_controls" && <BookingFlowControlsPanel />}
               {tab === "dashboard_widgets" && <DashboardWidgetsPanel />}
+              {tab === "permission_matrix" && <PermissionMatrixPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -1318,14 +1322,185 @@ function DashboardWidgetsPanel() {
 }
 
 
+// ────────────────────────────────────────────────────────────────────────
+// Sprint 110di-20 — Staff Permission Matrix UI. Reads /api/staff/roles and
+// PUTs to /api/staff/roles/{role}/permissions. Reuses the existing
+// PERMISSION_KEYS schema; does NOT invent new keys. Owner row is locked.
+// ────────────────────────────────────────────────────────────────────────
+const PERM_META = [
+  // Friendly label, backend key (must already exist), tooltip description.
+  { key: "settings",         label: "Manage Settings",     desc: "Access Settings, including this matrix. Required for admin-level recovery." },
+  { key: "finance_reports",  label: "View Finance/Reports",desc: "P&L, revenue, payments, mileage, tax reports." },
+  { key: "pricing",          label: "Manage Pricing",      desc: "Edit service rates, credit pack prices, and discounts." },
+  { key: "clients_view",     label: "View Clients",        desc: "Read-only access to client list + profiles." },
+  { key: "clients_edit",     label: "Edit Clients",        desc: "Create, edit, archive clients and credit packs." },
+  { key: "dogs_view",        label: "View Dogs",           desc: "Read-only access to dog list + profiles." },
+  { key: "dogs_edit",        label: "Edit Dogs",           desc: "Add dogs, edit vitals/vaccines, attach files." },
+  { key: "incidents",        label: "Log Incidents",       desc: "Create and resolve incident reports." },
+  { key: "care_complete",    label: "Check Dogs In/Out",   desc: "Care Board updates, feeding, meds, potty logs." },
+  { key: "booking_edit",     label: "Edit Bookings",       desc: "Create, approve, edit, and cancel bookings." },
+  { key: "payroll",          label: "Manage Staff/Payroll",desc: "View time clocks, run payroll, edit staff." },
+  { key: "data_export",      label: "Export Data",         desc: "CSV / JSON exports for clients, dogs, finance." },
+  { key: "delete_records",   label: "Delete Records",      desc: "Hard-delete clients, dogs, bookings (rarely used)." },
+  { key: "messages",         label: "Send Messages",       desc: "Reply in client message threads, broadcast announcements." },
+];
+
+// Dependencies: granting the dependent permission auto-suggests enabling the base.
+const PERM_DEPENDENCIES = {
+  pricing:        ["finance_reports"],
+  delete_records: ["clients_edit", "dogs_edit"],
+  payroll:        ["clients_view"],
+  clients_edit:   ["clients_view"],
+  dogs_edit:      ["dogs_view"],
+};
+
+function PermissionMatrixPanel() {
+  const [matrix, setMatrix] = useState(null);
+  const [roles, setRoles] = useState([]);
+  const [savingRole, setSavingRole] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState({}); // {roleId: bool}
+
+  const reload = () => {
+    api.get("/staff/roles").then(({ data }) => {
+      setRoles(data.roles || []);
+      setMatrix({ ...(data.matrix || {}) });
+      setDirty({});
+    }).catch(e => setMsg("Load failed: " + (e?.response?.data?.detail || e.message)));
+  };
+  useEffect(reload, []);
+
+  if (!matrix) return <div className="text-gray-400">Loading permission matrix...</div>;
+
+  const toggle = (role, key) => {
+    if (role === "owner") return;
+    const next = !(matrix[role]?.[key] === true);
+    // Auto-enable dependencies when granting a dependent perm.
+    const deps = PERM_DEPENDENCIES[key] || [];
+    setMatrix(p => {
+      const updated = { ...p, [role]: { ...(p[role] || {}), [key]: next } };
+      if (next) {
+        for (const d of deps) {
+          if (updated[role][d] !== true) {
+            updated[role][d] = true;
+          }
+        }
+      }
+      return updated;
+    });
+    setDirty(d => ({ ...d, [role]: true }));
+  };
+
+  const saveRole = async (role) => {
+    if (role === "owner") return;
+    setSavingRole(role); setMsg("");
+    try {
+      const perms = matrix[role] || {};
+      // Safety: ensure at least one non-owner role still has `settings`.
+      const stillHasSettingsSomewhere = roles.some(r => r === "owner" || (r === role ? perms.settings : matrix[r]?.settings));
+      if (!stillHasSettingsSomewhere) {
+        setMsg(`Refused — at least one non-owner role must keep "Manage Settings" so you can recover access.`);
+        setSavingRole(null);
+        return;
+      }
+      const { data } = await api.put(`/staff/roles/${role}/permissions`, { permissions: perms });
+      setMatrix(p => ({ ...p, [role]: data.permissions }));
+      setDirty(d => { const c = { ...d }; delete c[role]; return c; });
+      setMsg(`Saved ${role}.`);
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) {
+      setMsg(`Save failed: ${e?.response?.data?.detail || e.message}`);
+    } finally {
+      setSavingRole(null);
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="permission-matrix-panel">
+      <div className="bg-bgPanel border-2 border-shBlue/40 rounded-2xl p-5 shadow-2xl">
+        <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shBlue mb-1">
+          <i className="fas fa-table-cells-large mr-1.5"/>Permission Matrix
+        </p>
+        <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+          Roles × <span className="text-shGreen">Permissions.</span>
+        </h2>
+        <p className="text-[13px] text-gray-300 mt-2 max-w-3xl leading-snug">
+          Toggle a checkbox to grant or revoke a permission for that role. <b>Owner</b> is immutable so you can&apos;t accidentally lock yourself out. Granting a dependent permission auto-enables its base (e.g. Manage Pricing auto-enables View Finance/Reports). Click &ldquo;Save row&rdquo; to commit one role at a time.
+        </p>
+        {msg && <p className={`text-[12px] mt-3 ${msg.startsWith("Saved") ? "text-shGreen" : "text-shOrange"}`} data-testid="perm-matrix-msg">{msg}</p>}
+      </div>
+
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 overflow-x-auto">
+        <table className="w-full text-[12px] min-w-[900px]" data-testid="perm-matrix-table">
+          <thead>
+            <tr className="border-b border-bgHover">
+              <th className="text-left py-2 px-2 sticky left-0 bg-bgPanel z-10" style={{ minWidth: 200 }}>
+                <span className="font-black uppercase tracking-widest text-gray-400">Permission</span>
+              </th>
+              {roles.map(r => (
+                <th key={r} className="text-center py-2 px-2 font-black uppercase tracking-widest"
+                    data-testid={`perm-col-${r}`}>
+                  <span className={r === "owner" ? "text-shOrange" : "text-white"}>{r.replace(/_/g, " ")}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PERM_META.map(p => (
+              <tr key={p.key} className="border-b border-bgHover/40 hover:bg-bgBase/30">
+                <td className="py-2 px-2 sticky left-0 bg-bgPanel z-10" title={p.desc}>
+                  <p className="text-white font-black">{p.label}</p>
+                  <p className="text-[10px] text-gray-500 leading-snug">{p.desc}</p>
+                </td>
+                {roles.map(r => {
+                  const on = matrix[r]?.[p.key] === true;
+                  const locked = r === "owner";
+                  return (
+                    <td key={r} className="text-center py-2 px-2">
+                      <input type="checkbox" checked={on} disabled={locked}
+                             onChange={() => toggle(r, p.key)}
+                             data-testid={`perm-cell-${r}-${p.key}`}
+                             className="w-5 h-5 cursor-pointer disabled:cursor-not-allowed disabled:opacity-50"/>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+            <tr>
+              <td className="py-3 px-2 sticky left-0 bg-bgPanel z-10"></td>
+              {roles.map(r => (
+                <td key={r} className="text-center py-3 px-2">
+                  {r === "owner" ? (
+                    <span className="text-[10px] uppercase tracking-widest text-shOrange">Locked</span>
+                  ) : (
+                    <button
+                      onClick={() => saveRole(r)}
+                      disabled={!dirty[r] || savingRole === r}
+                      data-testid={`perm-save-${r}`}
+                      className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[10px] px-3 py-1.5 rounded disabled:opacity-50"
+                    >
+                      {savingRole === r ? <i className="fas fa-spinner fa-spin"/> : "Save row"}
+                    </button>
+                  )}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
 function BrandPanel() {
   const ctx = useTheme();
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   // ────────────────────────────────────────────────────────────────────────
-  // Sprint 110di-18/19 — Sub-panels (Client Portal Controls, Booking Flow
-  // Controls, Dashboard Widget Controls) defined directly above this one.
+  // Sprint 110di-18/19/20 — Sub-panels (Client Portal Controls, Booking Flow
+  // Controls, Dashboard Widget Controls, Permission Matrix) defined above.
   // ────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {

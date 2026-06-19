@@ -32,7 +32,7 @@
 |---|---|---|
 | Visibility | **A** | Feature Visibility (`staff_portal`) hides nav + route |
 | Per-role permission keys | **A** | `users.permissions` schema; ~12 known keys (clients_view, dogs_edit, bookings, messages, finance_reports, payroll, incidents, settings, care_complete, etc.) |
-| Per-role permission matrix UI | **B** | Keys exist; no visual matrix yet. Backlog — explicit user direction said priority 2 after Booking Flow. |
+| Per-role permission matrix UI | **A** | **Closed in 110di-20** — Settings → Permission Matrix (14 keys × 7 roles, owner locked, dependency auto-enable, lockout guard) |
 
 ## Booking Flow
 | Item | Status | Notes |
@@ -76,7 +76,7 @@
 | Features | `settings.feature_visibility` | Settings → Feature Visibility |
 | Portal behavior | `settings.client_portal_controls` | Settings → Client Portal Controls |
 | Booking behavior | `settings.booking_rules` + `settings.day_to_day.guardrails` + `settings.booking_flow_controls.per_service` | Settings → Booking Rules + Booking Guardrails + Booking Flow Controls |
-| Permissions | `users.permissions[]` | (matrix UI TODO) |
+| Permissions | `users.permissions[]` + `settings.staff_role_permissions` | Settings → Permission Matrix (14 keys × 7 roles) |
 | Theme | `settings.card_type_themes` + brand_* + theme_* | Settings → Brand & Theme |
 | Notifications | `settings.email_per_step` + `email_templates` + `automation` block | Settings → Email Designer + Email Automation |
 | Dashboard widgets | `settings.dashboard_widgets` | Settings → Dashboard Widgets |
