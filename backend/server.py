@@ -9157,13 +9157,10 @@ CONFIG_COLLECTIONS = [
 CONFIG_BACKUP_VERSION = 1
 
 
-@api.get("/backup/export-config")
-async def backup_export_config(_: dict = Depends(require_admin)):
-    """Download a JSON snapshot of just the configuration collections —
-    branding, feature visibility, portal controls, dashboard widgets, card
-    themes, email templates, payment-plan settings, and named app_settings
-    rows. No client/dog/booking data is included."""
-    payload = {
+async def _build_config_payload() -> Dict[str, Any]:
+    """Build the same config-only snapshot dict that GET /backup/export-config
+    returns. Extracted so the pre-restore safety snapshot can reuse it."""
+    payload: Dict[str, Any] = {
         "kind": "config",
         "version": CONFIG_BACKUP_VERSION,
         "exported_at": now_iso(),
@@ -9185,6 +9182,52 @@ async def backup_export_config(_: dict = Depends(require_admin)):
             docs = await db[c].find({}, {"_id": 0}).to_list(50000)
             payload["collections"][c] = docs
     return payload
+
+
+async def _write_pre_restore_snapshot(kind: str) -> Dict[str, Any]:
+    """Write a safety snapshot of the CURRENT state to disk BEFORE a restore
+    wipes anything. Returns metadata the API can pass back to the UI so the
+    operator can see exactly what file holds their pre-restore state.
+
+    `kind` is either 'config' (snapshots just the configurability collections,
+    matching restore-config scope) or 'full' (snapshots every backup collection).
+    Files land in /app/backups/ alongside the auto-backup output so they're
+    easy to find. Failures are non-fatal — we'd rather the restore proceed
+    than block the user — but we log them and return error metadata.
+    """
+    snapshot_dir = "/app/backups"
+    try:
+        import json
+        os.makedirs(snapshot_dir, exist_ok=True)
+        if kind == "config":
+            payload = await _build_config_payload()
+        else:
+            payload = await _build_backup_payload()
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"pre-restore-{kind}-{ts}.json"
+        full_path = os.path.join(snapshot_dir, filename)
+        with open(full_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, separators=(",", ":"))
+        size = os.path.getsize(full_path)
+        return {
+            "ok": True,
+            "path": full_path,
+            "filename": filename,
+            "size_bytes": size,
+            "created_at": now_iso(),
+        }
+    except Exception as exc:
+        logger.warning("pre-restore snapshot (%s) failed: %s", kind, exc)
+        return {"ok": False, "error": str(exc), "created_at": now_iso()}
+
+
+@api.get("/backup/export-config")
+async def backup_export_config(_: dict = Depends(require_admin)):
+    """Download a JSON snapshot of just the configuration collections —
+    branding, feature visibility, portal controls, dashboard widgets, card
+    themes, email templates, payment-plan settings, and named app_settings
+    rows. No client/dog/booking data is included."""
+    return await _build_config_payload()
 
 
 class ConfigRestoreIn(BaseModel):
@@ -9216,6 +9259,11 @@ async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require
             status_code=400,
             detail=f"Config backup version {body.version} is newer than this server (v{CONFIG_BACKUP_VERSION}). Update the server first.",
         )
+    # Safety net: snapshot the CURRENT config to disk BEFORE we touch anything
+    # so a bad restore can always be rolled back from /app/backups. Failure to
+    # write the snapshot is logged but doesn't abort the restore — better to
+    # let the operator restore than block on a disk error.
+    pre_snapshot = await _write_pre_restore_snapshot("config")
     summary = {}
     for c, docs in (body.collections or {}).items():
         if c not in CONFIG_COLLECTIONS:
@@ -9228,7 +9276,12 @@ async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require
         if docs:
             await db[c].insert_many(docs)
         summary[c] = {"mode": "replace", "inserted": len(docs)}
-    return {"ok": True, "summary": summary, "restored_at": now_iso()}
+    return {
+        "ok": True,
+        "summary": summary,
+        "restored_at": now_iso(),
+        "pre_restore_snapshot": pre_snapshot,
+    }
 
 
 # ─────────────── Sprint 110av · Disk Usage Monitor ───────────────
@@ -11501,6 +11554,10 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
             status_code=400,
             detail=f"Backup version {body.version} is newer than this server (v{BACKUP_VERSION}). Update the server first.",
         )
+    # Safety net: snapshot the CURRENT full state to disk BEFORE we touch
+    # anything so a bad restore can always be rolled back from /app/backups.
+    # Logged + returned to the UI; non-fatal on disk errors.
+    pre_snapshot = await _write_pre_restore_snapshot("full")
     # Older versions are accepted — they simply contain fewer collections.
     # Collections not in the payload are left alone (never wiped), so restoring
     # a v1 snapshot won't blow away homework_templates, trophies, etc.
@@ -11532,7 +11589,12 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
                 await db[c].update_one({"id": key}, {"$set": doc}, upsert=True)
                 upserts += 1
             summary[c] = {"mode": "merge", "upserted": upserts}
-    return {"ok": True, "summary": summary, "restored_at": now_iso()}
+    return {
+        "ok": True,
+        "summary": summary,
+        "restored_at": now_iso(),
+        "pre_restore_snapshot": pre_snapshot,
+    }
 
 
 # ───────────────────────── Trophies ─────────────────────────────

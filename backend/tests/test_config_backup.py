@@ -70,6 +70,30 @@ def test_config_roundtrip(admin_headers):
     assert after == counts_before
 
 
+def test_restore_auto_writes_pre_restore_snapshot(admin_headers, tmp_path):
+    """Restoring must auto-write a pre-restore safety snapshot BEFORE touching
+    anything. The response surfaces the snapshot path so the UI can show it
+    to the operator — they should never have to download a backup manually
+    just to be safe."""
+    import os
+    cur = requests.get(f"{BASE}/api/backup/export-config", headers=admin_headers, timeout=30).json()
+    r = requests.post(
+        f"{BASE}/api/backup/restore-config",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json=cur,
+        timeout=30,
+    )
+    assert r.status_code == 200, r.text
+    out = r.json()
+    snap = out.get("pre_restore_snapshot")
+    assert snap is not None, "restore must return pre_restore_snapshot metadata"
+    assert snap.get("ok") is True, f"snapshot creation failed: {snap}"
+    assert snap.get("filename", "").startswith("pre-restore-config-")
+    assert snap.get("size_bytes", 0) > 0
+    # On the same host, the file should physically exist.
+    assert os.path.exists(snap["path"]), f"snapshot file missing: {snap['path']}"
+
+
 def test_restore_rejects_full_backup(admin_headers):
     """A full backup file (kind absent, version=4) must be rejected with
     a clear 400 — protects the operator from accidentally wiping their

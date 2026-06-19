@@ -3436,16 +3436,30 @@ function BackupPanel() {
     const f = e.target.files?.[0]; if (!f) return;
     setConfigFile(f); setConfigPreview(null); setMsg("");
     const r = new FileReader();
-    r.onload = () => {
+    r.onload = async () => {
       try {
         const parsed = JSON.parse(r.result);
         if (!parsed.version || !parsed.collections) throw new Error("Not a valid config file");
         if (parsed.kind !== "config") {
           throw new Error(`This looks like a '${parsed.kind || "full"}' backup, not a config file. Use the full Restore section below.`);
         }
-        const counts = {};
-        Object.entries(parsed.collections).forEach(([k, v]) => counts[k] = (v || []).length);
-        setConfigPreview({ version: parsed.version, exportedAt: parsed.exported_at, kind: parsed.kind, counts });
+        const incoming = {};
+        Object.entries(parsed.collections).forEach(([k, v]) => incoming[k] = (v || []).length);
+        // Fetch CURRENT counts so the preview can show before-vs-after
+        // diffs. The user explicitly asked for "what will be replaced" —
+        // this is the clearest way to surface it.
+        let current = {};
+        try {
+          const { data: live } = await api.get("/backup/export-config");
+          Object.entries(live.collections || {}).forEach(([k, v]) => current[k] = (v || []).length);
+        } catch (err) { console.warn("config-preview: current fetch failed", err); }
+        setConfigPreview({
+          version: parsed.version,
+          exportedAt: parsed.exported_at,
+          kind: parsed.kind,
+          incoming,
+          current,
+        });
       } catch (err) { setMsg(`Invalid file: ${err.message}`); setConfigFile(null); }
     };
     r.readAsText(f);
@@ -3453,8 +3467,17 @@ function BackupPanel() {
 
   const doConfigRestore = async () => {
     if (!configFile || !configPreview) return;
-    const total = Object.values(configPreview.counts).reduce((a,b)=>a+b, 0);
-    if (!(await confirm({ title: "Replace configuration?", body: `This will REPLACE your current configuration (settings, themes, email templates, payment-plan settings) with ${total} records from ${configFile.name}.\n\nClient/dog/booking data is NOT affected. Download a fresh config backup first if you're unsure.`, confirmText: "Yes, replace config", tone: "danger" }))) return;
+    const total = Object.values(configPreview.incoming).reduce((a,b)=>a+b, 0);
+    if (!(await confirm({
+      title: "Replace configuration?",
+      body: (
+        `This will REPLACE your current configuration (settings, themes, email templates, payment-plan settings) with ${total} records from ${configFile.name}.\n\n` +
+        `Client/dog/booking/payment data is NOT affected.\n\n` +
+        `A safety snapshot of your CURRENT config will be auto-saved to /app/backups/ first, so you can roll back if needed.`
+      ),
+      confirmText: "Yes, replace config",
+      tone: "danger",
+    }))) return;
     setBusy(true); setMsg("");
     try {
       const r = new FileReader();
@@ -3463,7 +3486,11 @@ function BackupPanel() {
           const payload = JSON.parse(r.result);
           const { data } = await api.post("/backup/restore-config", payload);
           const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted}`).join(" · ");
-          setMsg(`Config restored ✓ ${summary} — reload to see all changes.`);
+          const snap = data.pre_restore_snapshot;
+          const snapNote = snap?.ok
+            ? ` Pre-restore snapshot: ${snap.filename}.`
+            : (snap?.error ? ` (Snapshot warning: ${snap.error})` : "");
+          setMsg(`Config restored ✓ ${summary} — reload to see all changes.${snapNote}`);
           setConfigFile(null); setConfigPreview(null);
         } catch (e) { setMsg(`Config restore failed: ${e.response?.data?.detail || e.message}`); }
         setBusy(false);
@@ -3492,7 +3519,7 @@ function BackupPanel() {
     if (!restoreFile || !restorePreview) return;
     const total = Object.values(restorePreview.counts).reduce((a,b)=>a+b, 0);
     const verb = restoreMode === "replace" ? "REPLACE all current data with" : "merge into your current data";
-    if (!(await confirm({ title: restoreMode === "replace" ? "Replace ALL data?" : "Merge into current data?", body: `This will ${verb} ${total} records from ${restoreFile.name}.\n\nThis cannot be undone — make sure you have a current backup downloaded first.`, confirmText: restoreMode === "replace" ? "Yes, replace everything" : "Yes, merge", tone: "danger" }))) return;
+    if (!(await confirm({ title: restoreMode === "replace" ? "Replace ALL data?" : "Merge into current data?", body: `This will ${verb} ${total} records from ${restoreFile.name}.\n\nA safety snapshot of your CURRENT state will be auto-saved to /app/backups/ before anything is touched — you can roll back from there if needed.`, confirmText: restoreMode === "replace" ? "Yes, replace everything" : "Yes, merge", tone: "danger" }))) return;
     setBusy(true); setMsg("");
     try {
       const r = new FileReader();
@@ -3502,7 +3529,11 @@ function BackupPanel() {
           payload.mode = restoreMode;
           const { data } = await api.post("/backup/restore", payload);
           const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted ?? v.upserted}`).join(" · ");
-          setMsg(`Restored ✓ ${summary}`);
+          const snap = data.pre_restore_snapshot;
+          const snapNote = snap?.ok
+            ? ` Pre-restore snapshot: ${snap.filename}.`
+            : (snap?.error ? ` (Snapshot warning: ${snap.error})` : "");
+          setMsg(`Restored ✓ ${summary}.${snapNote}`);
           setRestoreFile(null); setRestorePreview(null);
         } catch (e) { setMsg(`Restore failed: ${e.response?.data?.detail || e.message}`); }
         setBusy(false);
@@ -3569,16 +3600,51 @@ function BackupPanel() {
           </label>
 
           {configPreview && (
-            <div className="bg-bgBase border border-bgHover rounded p-3 space-y-2" data-testid="config-preview">
-              <p className="text-[14px] font-black text-purple-400 uppercase tracking-widest">Config preview</p>
-              <p className="text-[14px] text-gray-400">Exported {configPreview.exportedAt?.slice(0,19).replace("T", " ")}</p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[14px]">
-                {Object.entries(configPreview.counts).map(([k,v]) => (
-                  <div key={k} className="bg-bgPanel rounded px-2 py-1 flex justify-between">
-                    <span className="text-gray-400 uppercase font-black tracking-widest">{k}</span>
-                    <span className="text-white font-black">{v}</span>
-                  </div>
-                ))}
+            <div className="bg-bgBase border border-bgHover rounded p-3 space-y-3" data-testid="config-preview">
+              <div>
+                <p className="text-[14px] font-black text-purple-400 uppercase tracking-widest">Config preview · what will be replaced</p>
+                <p className="text-[14px] text-gray-400">Exported {configPreview.exportedAt?.slice(0,19).replace("T", " ")}</p>
+              </div>
+              {/* Sprint 110di-24 — Before/after diff so the operator sees
+                  exactly what's going to change BEFORE they hit Restore. */}
+              <div className="text-[14px]">
+                <div className="grid grid-cols-12 gap-2 px-2 py-1 bg-bgPanel/40 rounded text-gray-500 font-black uppercase tracking-widest text-[11px]">
+                  <div className="col-span-6">Collection</div>
+                  <div className="col-span-3 text-right">Current</div>
+                  <div className="col-span-3 text-right">After Restore</div>
+                </div>
+                {Object.keys(configPreview.incoming).map((k) => {
+                  const cur = configPreview.current?.[k] ?? 0;
+                  const inc = configPreview.incoming[k];
+                  const diff = inc - cur;
+                  return (
+                    <div key={k} className="grid grid-cols-12 gap-2 px-2 py-1 border-b border-bgHover/50" data-testid={`config-preview-row-${k}`}>
+                      <div className="col-span-6 text-gray-300 uppercase font-black tracking-widest text-[12px] truncate">{k}</div>
+                      <div className="col-span-3 text-right text-gray-400">{cur}</div>
+                      <div className="col-span-3 text-right">
+                        <span className="text-white font-black">{inc}</span>
+                        {diff !== 0 && (
+                          <span className={`ml-2 text-[11px] font-black ${diff > 0 ? "text-shGreen" : "text-shOrange"}`}>
+                            ({diff > 0 ? "+" : ""}{diff})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Explicit reassurance about what is NOT touched. The user
+                  asked for this verbatim — protects against accidental fear
+                  that a config restore could wipe their client list. */}
+              <div className="bg-shGreen/10 border border-shGreen/40 rounded px-3 py-2 text-[12px] text-shGreen flex items-start gap-2" data-testid="config-preview-untouched">
+                <i className="fas fa-shield-halved mt-0.5 shrink-0"/>
+                <span className="font-black uppercase tracking-widest">Untouched: clients · dogs · bookings · payments · all per-dog progress</span>
+              </div>
+              {/* Auto-snapshot promise — backend writes /app/backups/pre-restore-config-*.json
+                  BEFORE applying the restore so rollback is always possible. */}
+              <div className="bg-shBlue/10 border border-shBlue/40 rounded px-3 py-2 text-[12px] text-shBlue flex items-start gap-2" data-testid="config-preview-autosnap">
+                <i className="fas fa-clock-rotate-left mt-0.5 shrink-0"/>
+                <span>A safety snapshot of your current config will be auto-saved to <span className="font-black">/app/backups/</span> before anything is replaced.</span>
               </div>
             </div>
           )}
