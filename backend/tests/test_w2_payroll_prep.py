@@ -43,6 +43,16 @@ def _make_emp(headers, **overrides):
         **overrides,
     }
     r = requests.post(f"{API}/admin/employees", headers=headers, json=body, timeout=15)
+    if r.status_code == 400 and "already exists" in r.text:
+        # Sprint 110di-25 — DELETE /admin/employees only soft-deactivates,
+        # leaving the underlying user row pinned to the email. To make the
+        # test idempotent across crashed-out runs we just re-roll the email
+        # with a uuid suffix and retry. Tests don't depend on the exact
+        # email value, only the new-field round-trip.
+        import uuid as _u
+        local, _, domain = body["email"].partition("@")
+        body["email"] = f"{local}-{_u.uuid4().hex[:6]}@{domain or 'sithappens.com'}"
+        r = requests.post(f"{API}/admin/employees", headers=headers, json=body, timeout=15)
     assert r.status_code == 200, r.text
     return r.json()
 
@@ -94,8 +104,9 @@ def test_employee_update_preserves_new_fields(admin_headers):
 
 def test_employee_default_tax_status_is_1099(admin_headers):
     """Backward compat — when tax_status is omitted, default to 1099."""
+    import uuid as _u
     body = {
-        "email": "pytest-default@sithappens.com",
+        "email": f"pytest-default-{_u.uuid4().hex[:6]}@sithappens.com",
         "name": "Pytest Default",
         "password": "pytest-pw-12",
         "hourly_rate": 15.0,
@@ -111,8 +122,9 @@ def test_employee_default_tax_status_is_1099(admin_headers):
 
 
 def test_employee_invalid_tax_status_rejected(admin_headers):
+    import uuid as _u
     body = {
-        "email": "pytest-bad@sithappens.com",
+        "email": f"pytest-bad-{_u.uuid4().hex[:6]}@sithappens.com",
         "name": "Pytest Bad",
         "password": "pytest-pw-12",
         "tax_status": "magic-rate",

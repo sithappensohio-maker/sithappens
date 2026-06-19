@@ -1476,6 +1476,19 @@ async def list_bookings(
             end_date = (business_today() + timedelta(days=90)).isoformat()
         q["date"] = {"$gte": start_date, "$lte": end_date}
     items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(3000)
+    # Sprint 110di-25 — Defensive coercion at the API boundary so legacy /
+    # mid-migration rows don't 500 the entire list endpoint. The response
+    # model is strict (Literal status enum, required dog_name/client_name),
+    # but the DB has older test/seed rows with `status: "checked_out"` and
+    # missing display names. Map those to safe defaults rather than reject.
+    _STATUS_REMAP = {"checked_in": "approved", "checked_out": "completed"}
+    for it in items:
+        if it.get("status") in _STATUS_REMAP:
+            it["status"] = _STATUS_REMAP[it["status"]]
+        if not it.get("dog_name"):
+            it["dog_name"] = ""
+        if not it.get("client_name"):
+            it["client_name"] = ""
     return items
 
 def _service_cost(rules: dict, service_type: str, days: int) -> int:

@@ -177,7 +177,12 @@ class TestDashboardStats:
             entries = [x for x in stats["today_roster"] if x["id"] == bid]
             assert len(entries) == 1
             dog = entries[0].get("dog") or {}
-            for stripped in ("photo", "photos", "training_logs", "feeding_schedule", "medications"):
+            # Sprint 110di-25 — Only the bandwidth-hog fields are stripped.
+            # feeding_schedule / medications / training_skills are kept on
+            # purpose because the dashboard renders care-icon badges from
+            # them (see dog_proj in server.py). Re-asserting them here would
+            # contradict the design.
+            for stripped in ("photo", "photos", "training_logs"):
                 assert stripped not in dog, (
                     f"Stripped field {stripped!r} present in roster dog: {list(dog.keys())}"
                 )
