@@ -4296,3 +4296,35 @@ Friendly labels → existing keys mapping:
 
 ### Service Worker
 - ✅ Bumped to `sh-v25-110di-25-stabilization`.
+
+
+## Sprint 110di-26 — Booking Price Estimate (2026-02-19)
+**User ask**: Show clients a clear estimated price before they submit a booking. Use existing pricing fields. No payment processor, no online payment, no auto-consume credits.
+
+### Frontend
+- ✅ NEW `BookingPriceEstimate.jsx` — pure client-side component. Reads `/api/services` + `/api/portal/me`. Calculates `base × units × dogs` (+ optional `additional_dog_rate × extras`). Applies credits = `min(balance, units × dogs) × base`. Shows base, additional-dog charge if any, credits available + applied, estimated balance due. Includes the spec disclaimer.
+- ✅ Rendered inline at the bottom of `PortalBookWizard` Step 3, above the Confirm button.
+
+### Backend
+- ✅ NEW setting `booking_flow_controls.show_price_estimate` (default True), exposed via `/api/branding`.
+- ✅ **NO new pricing endpoint** added. The optional `additional_dog_rate` field is opportunistically read from the existing service doc.
+
+### Tests
+- ✅ `tests/test_booking_price_estimate.py` — 5 tests, all passing.
+
+## Sprint 110di-27 — Dogs Endpoint Coercion (CRITICAL BUG FIX) (2026-02-19)
+**User report**: "adding a dog is broken — shows on admin the client has a dog but not on the client's portal so they can't book". Add-dog flow appeared to fail repeatedly.
+
+### Root Cause
+A single dog row with legacy/malformed enum values (`sex='male'` lowercase, `fixed=True` bool) caused `GET /api/dogs` to throw `ResponseValidationError` and return 500 for BOTH admin and client. Every dog the client tried to add WAS being saved correctly — but the list endpoint was dead, so neither admin nor client could see the dogs. From the user's perspective, "Add a Dog" looked broken.
+
+### Fix
+- ✅ `_normalize_dog_doc()` helper that coerces `sex` → 'Male'/'Female' and `fixed` → 'Yes'/'No' at the API boundary. Backfills missing `created_at`.
+- ✅ Applied to `GET /api/dogs` (list) and `GET /api/dogs/{id}` (detail).
+- ✅ One-shot data migration: normalized 17 existing malformed dog rows.
+
+### Tests
+- ✅ `tests/test_dogs_endpoint_coercion.py` — 3 tests: malformed dog from admin scope, same from client scope, single-dog detail endpoint.
+
+### Service Worker
+- ✅ Bumped to `sh-v26-110di-27-dogs-coercion-estimate`.

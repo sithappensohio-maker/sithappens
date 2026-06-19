@@ -1361,7 +1361,39 @@ async def list_dogs(user: dict = Depends(get_current_user)):
     # multiple dogs have 5+ images each. Detail endpoint `/dogs/{id}` returns
     # the full record (with gallery) for the edit modal.
     items = await db.dogs.find(q, {"_id": 0, "photos": 0}).sort("name", 1).to_list(1000)
-    return items
+    # Sprint 110di-27 — Boundary coercion so a single legacy/malformed row
+    # (e.g. sex='male' lowercase from an old import or hand-edit) can't 500
+    # the entire endpoint and lock the client out of their portal. The
+    # response_model is intentionally strict; we normalise inputs here.
+    return [_normalize_dog_doc(d) for d in items]
+
+
+def _normalize_dog_doc(d: dict) -> dict:
+    """Coerce legacy/malformed dog rows into the shape DogOut expects so the
+    strict response_model never trips on a single bad apple. Idempotent."""
+    sex = d.get("sex")
+    if isinstance(sex, str):
+        s = sex.strip().lower()
+        if s in ("male", "m"): d["sex"] = "Male"
+        elif s in ("female", "f"): d["sex"] = "Female"
+        elif sex not in ("Male", "Female"): d["sex"] = "Male"
+    else:
+        d["sex"] = "Male"
+    fixed = d.get("fixed")
+    if isinstance(fixed, bool):
+        d["fixed"] = "Yes" if fixed else "No"
+    elif isinstance(fixed, str):
+        f = fixed.strip().lower()
+        if f in ("yes", "true", "1", "spayed", "neutered"): d["fixed"] = "Yes"
+        elif f in ("no", "false", "0", "intact"): d["fixed"] = "No"
+        elif fixed not in ("Yes", "No"): d["fixed"] = "No"
+    else:
+        d["fixed"] = "No"
+    # created_at is required by DogOut; legacy rows from very early seeds
+    # might be missing it.
+    if not d.get("created_at"):
+        d["created_at"] = now_iso()
+    return d
 
 
 @api.get("/dogs/{dog_id}", response_model=DogOut)
@@ -1373,7 +1405,7 @@ async def get_dog(dog_id: str, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one(q, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
-    return dog
+    return _normalize_dog_doc(dog)
 
 @api.post("/dogs", response_model=DogOut)
 async def create_dog(body: DogIn, _: dict = Depends(require_admin)):
