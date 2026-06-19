@@ -1564,6 +1564,18 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if user.get("role") != "admin" and body.service_type in fv and fv.get(body.service_type) is False:
         raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings are currently disabled.")
 
+    # Sprint 110di-28 — Boarding zero-night guard. The boarding price model
+    # is nights × per-night rate; zero nights means no stay. Same-day
+    # "boarding" is really daycare and should be booked through that flow.
+    # Admins are NOT exempt because there's no historical use-case for a
+    # zero-night boarding row — it's always a data-entry mistake.
+    if body.service_type == "boarding":
+        if not body.end_date or str(body.end_date)[:10] <= str(body.date)[:10]:
+            raise HTTPException(
+                status_code=400,
+                detail="Boarding pickup date must be after drop-off date. For same-day care, book daycare.",
+            )
+
     # Sprint 110di-19 — Per-service Booking Flow Controls. Each service can
     # opt into stricter rules than the global `booking_rules` defaults
     # (require_approval / instant_book / same_day / min_lead_hours /
@@ -4147,7 +4159,30 @@ def _default_settings() -> dict:
         # toggles for individual admin dashboard widgets. Does not touch
         # underlying data.
         "dashboard_widgets": _default_dashboard_widgets(),
+        # Sprint 110di-29 — Payment Options. Admin-curated list of how
+        # clients can pay (Venmo / PayPal / Clover / Cash / Check, plus
+        # any custom rows). Displayed in the portal + post-booking
+        # acknowledgement. Strictly informational — booking is NEVER
+        # blocked on payment, no payment is processed. Manual Payment
+        # Tracking remains the source of truth for what's been paid.
+        "payment_options": _default_payment_options(),
     }
+
+
+def _default_payment_options() -> list:
+    """Five canonical rows + an empty extras pattern. Each row carries
+    `enabled` (UI toggle), `label` (display name the operator can edit),
+    `link` (deeplink for app-handled methods like Venmo/PayPal), and
+    `instructions` (free-text shown next to the link or in lieu of one).
+    Default all disabled so a new install never falsely advertises a
+    payment channel that hasn't been set up yet."""
+    return [
+        {"key": "venmo",  "label": "Venmo",  "enabled": False, "link": "", "instructions": "Open your Venmo app and send to the handle in the link."},
+        {"key": "paypal", "label": "PayPal", "enabled": False, "link": "", "instructions": "Use the PayPal.me link — pick 'Friends & Family' if no fees should apply."},
+        {"key": "clover", "label": "Clover", "enabled": False, "link": "", "instructions": "Tap-to-pay or card-on-file via our Clover terminal at the front desk."},
+        {"key": "cash",   "label": "Cash",   "enabled": False, "link": "", "instructions": "Pay exact change at drop-off if possible."},
+        {"key": "check",  "label": "Check",  "enabled": False, "link": "", "instructions": "Made out to the business name. Memo line: dog's name."},
+    ]
 
 
 def _default_booking_flow_controls() -> dict:
@@ -4417,6 +4452,11 @@ async def get_settings() -> dict:
             if k not in s["dashboard_widgets"]:
                 s["dashboard_widgets"][k] = v
                 changed = True
+    # Sprint 110di-29 — Payment Options. Always pass through the merge
+    # so the admin /api/settings response always shows the full canonical
+    # row set (5 rows + any custom extras), not just the partial set the
+    # admin last saved. Keeps the Settings UI predictable.
+    s["payment_options"] = _merge_payment_options(s.get("payment_options"))
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -4542,7 +4582,43 @@ async def fetch_branding():
         # Sprint 110di-19 — Booking Flow Controls + Dashboard Widget Controls.
         "booking_flow_controls":   {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
         "dashboard_widgets":       {**_default_dashboard_widgets(),     **(s.get("dashboard_widgets") or {})},
+        # Sprint 110di-29 — Payment Options. Exposed unauthed so the
+        # portal and post-booking acknowledgement can show the enabled
+        # methods without an extra round-trip. Only the rows the admin
+        # explicitly marked enabled=True will render client-side, so we
+        # can safely include all rows here.
+        "payment_options":         _merge_payment_options(s.get("payment_options")),
     }
+
+
+def _merge_payment_options(saved) -> list:
+    """Defaults + admin overrides for payment options. Preserves admin
+    custom rows (extras beyond the canonical 5) and per-row toggles."""
+    defaults = _default_payment_options()
+    if not isinstance(saved, list):
+        return defaults
+    out: List[Dict[str, Any]] = []
+    seen_keys = set()
+    # First pass: walk saved rows in the order the admin chose to keep
+    # their sort order.
+    for row in saved:
+        if not isinstance(row, dict):
+            continue
+        key = row.get("key") or row.get("label") or ""
+        default_row = next((d for d in defaults if d["key"] == key), None)
+        merged = {**(default_row or {"key": key, "enabled": False, "link": "", "instructions": ""}), **row}
+        merged.setdefault("label", merged.get("key", "").title() or "Payment")
+        merged.setdefault("enabled", False)
+        merged.setdefault("link", "")
+        merged.setdefault("instructions", "")
+        out.append(merged)
+        seen_keys.add(merged["key"])
+    # Append any canonical rows the admin's saved blob is missing (e.g. a
+    # restore from an older config backup) so the matrix stays predictable.
+    for d in defaults:
+        if d["key"] not in seen_keys:
+            out.append(d)
+    return out
 
 
 def _merge_cpc(saved):
@@ -4592,6 +4668,8 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         # Dashboard Widget Controls (visibility-only).
         "booking_flow_controls":  {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
         "dashboard_widgets":      {**_default_dashboard_widgets(), **(s.get("dashboard_widgets") or {})},
+        # Sprint 110di-29 — Payment Options
+        "payment_options":        _merge_payment_options(s.get("payment_options")),
     }
 
 @api.put("/settings")

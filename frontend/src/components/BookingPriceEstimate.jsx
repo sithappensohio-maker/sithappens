@@ -47,6 +47,7 @@ export default function BookingPriceEstimate({
   multiDates = [],
   isMultiDate = false,
   isWaitlist = false,
+  addons = [],
 }) {
   const [services, setServices] = useState([]);
   const [credits, setCredits] = useState({ daycare: 0, training: 0, boarding: 0 });
@@ -103,18 +104,29 @@ export default function BookingPriceEstimate({
 
     let units = 1; // dates / nights / sessions
     let unitLabel = "session";
+    let unitsValid = true;
     if (serviceType === "daycare") {
       units = isMultiDate ? Math.max(1, multiDates.length) : 1;
       unitLabel = units === 1 ? "day" : "days";
     } else if (serviceType === "boarding") {
       const nights = nightsBetween(date, endDate);
-      units = Math.max(0, nights);
+      units = nights;
       unitLabel = units === 1 ? "night" : "nights";
+      // Sprint 110di-28 — zero-night boarding isn't a real booking. We mark
+      // the estimate as "not yet" instead of confidently showing $0.
+      if (nights < 1) unitsValid = false;
     }
 
     const basePrice = base * units;
     const additionalDogPrice = additionalDogs * extraDogRate * units;
-    const total = basePrice + additionalDogPrice;
+    // Sprint 110di-28 — sum selected add-ons. Each addon row carries its
+    // own `base_price` from the catalog (uses /services/addons output)
+    // so the math reuses the existing pricing surface — no new system.
+    const addonTotal = (addons || []).reduce(
+      (sum, a) => sum + Number(a?.base_price || 0) * Math.max(1, dogs),
+      0
+    );
+    const total = basePrice + additionalDogPrice + addonTotal;
 
     // Credit pool that applies to this service.
     const poolKey = ({
@@ -135,7 +147,11 @@ export default function BookingPriceEstimate({
       base, base_price: basePrice, extraDogRate,
       additional_dogs: additionalDogs,
       additional_dog_price: additionalDogPrice,
-      units, unitLabel,
+      addon_total: addonTotal,
+      addon_lines: (addons || []).map(a => ({
+        id: a.id, name: a.name, price: Number(a?.base_price || 0) * Math.max(1, dogs),
+      })),
+      units, unitLabel, unitsValid,
       total,
       credits_available: creditsAvailable,
       credits_applied: creditUnits,
@@ -144,7 +160,7 @@ export default function BookingPriceEstimate({
       pool_key: poolKey,
       service_name: headlineService.name,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons]);
 
   // Empty-state: nothing to estimate. Stay quiet rather than show $0 —
   // the operator might not have set up a service for this type yet.
@@ -159,6 +175,16 @@ export default function BookingPriceEstimate({
     return (
       <div className="bg-bgBase border border-bgHover rounded-lg p-3 text-[12px] text-gray-500 text-center" data-testid="booking-estimate-unavailable">
         Pricing not configured for this service. {DISCLAIMER}
+      </div>
+    );
+  }
+  // Sprint 110di-28 — boarding with zero nights (drop-off == pickup) is a
+  // half-built selection. Show a polite prompt rather than $0, which would
+  // mis-suggest "free overnight boarding".
+  if (!calc.unitsValid && serviceType === "boarding") {
+    return (
+      <div className="bg-bgBase border border-shOrange/40 rounded-lg p-3 text-[13px] text-shOrange text-center" data-testid="booking-estimate-incomplete">
+        <i className="fas fa-bed mr-1.5"/>Pick a pickup date AFTER your drop-off date to see your boarding estimate.
       </div>
     );
   }
@@ -204,8 +230,24 @@ export default function BookingPriceEstimate({
           </div>
         )}
 
+        {/* Sprint 110di-28 — Add-ons. Each selected add-on shows its name
+            + line price. Uses the catalog's existing base_price; no new
+            pricing system. */}
+        {calc.addon_lines.length > 0 && (
+          <div className="space-y-1" data-testid="booking-estimate-addons">
+            {calc.addon_lines.map(line => (
+              <div key={line.id} className="flex justify-between" data-testid={`booking-estimate-addon-${line.id}`}>
+                <span className="text-gray-400">
+                  <i className="fas fa-plus-circle text-shGreen mr-1.5 opacity-60"/>{line.name}
+                </span>
+                <span className="text-white font-black">{fmtUSD(line.price)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Subtotal line — only when credits or extras matter */}
-        {(hasCredits || calc.additional_dogs > 0) && (
+        {(hasCredits || calc.additional_dogs > 0 || calc.addon_lines.length > 0) && (
           <div className="flex justify-between border-t border-bgHover pt-1.5" data-testid="booking-estimate-subtotal">
             <span className="text-gray-300 font-black uppercase tracking-widest text-[12px]">Standard Price</span>
             <span className="text-white font-black">{fmtUSD(calc.total)}</span>

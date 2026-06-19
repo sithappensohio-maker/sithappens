@@ -4,6 +4,7 @@ import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
 import BookingPriceEstimate from "./BookingPriceEstimate";
+import PaymentOptionsCard from "./PaymentOptionsCard";
 
 /**
  * Client-portal Book Service wizard.
@@ -137,14 +138,18 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Default ON; admin can disable via Settings → Booking Flow Controls.
   const { branding } = useTheme();
   const showEstimate = branding?.booking_flow_controls?.show_price_estimate !== false;
+  const featWaitlist = useFeature("waitlist");
+  const waitlistEnabled =
+    featWaitlist && (branding?.booking_flow_controls?.waitlist_on_capacity !== false);
 
   // Whether the chosen service will land on a waitlist (capacity issues etc).
-  // We mark daycare specifically — if open_slots is 0 but waitlist is on,
-  // the booking still submits and the wizard surface treats it as accepted.
+  // Sprint 110di-28 — daycare ONLY: vaccine_ok && open_slots===0 && waitlist
+  // feature enabled && bfc.waitlist_on_capacity. Drives both the proceed-gate
+  // and the orange "this is full, you can waitlist" copy.
   const willWaitlist =
     serviceType === "daycare" &&
     avail && avail.vaccine_ok && avail.open_slots === 0 &&
-    (branding?.booking_flow_controls?.waitlist_on_capacity !== false);
+    waitlistEnabled;
 
   const canProceedFromStep2 = useMemo(() => {
     if (isMultiDate && serviceType === "daycare") {
@@ -153,14 +158,28 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     if (!date) return false;
     if (dateIsClosed) return false;
     if (serviceType === "boarding") {
-      if (!endDate || endDate < date) return false;
+      // Sprint 110di-28 — zero-night bookings are not bookings. Pickup must
+      // be STRICTLY AFTER drop-off. (Same-day "boarding" is really daycare
+      // and should be booked through that flow.)
+      if (!endDate || endDate <= date) return false;
       if (endDateIsClosed) return false;
       return true;
     }
     if (TIME_SLOTTED.has(serviceType)) return !!time;
-    if (serviceType === "daycare") return !!avail && avail.vaccine_ok && avail.open_slots > 0;
+    if (serviceType === "daycare") {
+      if (!avail || !avail.vaccine_ok) return false;
+      // Sprint 110di-28 — allow the client to advance when capacity is full
+      // ONLY if the admin has turned waitlist on. Without that, this guard
+      // matches the old behaviour (need an open slot).
+      if (avail.open_slots > 0) return true;
+      return waitlistEnabled;
+    }
     return true;
-  }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed, isMultiDate, multiDates]);
+  }, [serviceType, date, endDate, time, avail, dateIsClosed, endDateIsClosed, isMultiDate, multiDates, waitlistEnabled]);
+
+  // Sprint 110di-29 — Acknowledgement step. Holds the just-submitted
+  // summary so step 4 can render payment options without re-fetching.
+  const [acknowledgement, setAcknowledgement] = useState(null);
 
   const book = async () => {
     setErr(""); setSubmitting(true);
@@ -180,7 +199,15 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           setSubmitting(false);
           return;
         }
-        onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped });
+        // Refresh parent in background but keep wizard open on step 4.
+        onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped, keepOpen: true });
+        setAcknowledgement({
+          kind: "multi",
+          count: c, skipped: s,
+          waitlisted: !!willWaitlist,
+        });
+        setStep(4);
+        setSubmitting(false);
         return;
       }
       const body = {
@@ -193,8 +220,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       if (serviceType === "boarding") body.end_date = endDate;
       if (TIME_SLOTTED.has(serviceType)) body.time = time;
       if (serviceType === "grooming") body.grooming_type = groomingType;
-      await api.post("/bookings", body);
-      onBooked && onBooked();
+      const { data: created } = await api.post("/bookings", body);
+      onBooked && onBooked({ keepOpen: true });
+      setAcknowledgement({
+        kind: "single",
+        booking: created || null,
+        waitlisted: !!willWaitlist,
+      });
+      setStep(4);
     } catch (e) {
       setErr(formatErr(e.response?.data?.detail) || "Booking failed");
     } finally { setSubmitting(false); }
@@ -331,9 +364,13 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
 
             {/* Daycare availability */}
             {serviceType === "daycare" && avail && (
-              <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded text-center ${!avail.vaccine_ok?"bg-red-500/15 text-red-400":avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}>
+              <div className={`text-[14px] font-black uppercase tracking-widest p-3 rounded text-center ${!avail.vaccine_ok?"bg-red-500/15 text-red-400":avail.open_slots<=0?"bg-shOrange/15 text-shOrange":"bg-shGreen/10 text-shGreen"}`}
+                   data-testid="wiz-daycare-availability">
                 {!avail.vaccine_ok ? "Rabies missing/expired"
-                  : avail.open_slots <= 0 ? "Fully booked"
+                  : avail.open_slots <= 0
+                    ? (waitlistEnabled
+                        ? "This date is full, but you can request the waitlist."
+                        : "Fully booked")
                   : `${avail.open_slots} of ${avail.capacity} daycare spots open`}
               </div>
             )}
@@ -507,6 +544,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 multiDates={multiDates}
                 isMultiDate={isMultiDate}
                 isWaitlist={!!willWaitlist}
+                addons={eligibleAddons.filter(a => selectedAddonIds.includes(a.id))}
               />
             )}
 
@@ -519,6 +557,38 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <button onClick={book} disabled={submitting} data-testid="wiz-confirm"
                       className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
                 {submitting ? "Booking…" : (isMultiDate && serviceType==="daycare" ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}` : "Confirm booking")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Sprint 110di-29 — Step 4 / Acknowledgement. Shows the booking
+            confirmation + any payment options the operator has enabled.
+            Payment is optional; booking is already submitted. */}
+        {step === 4 && acknowledgement && (
+          <div className="space-y-4" data-testid="wiz-step4-ack">
+            <div className="text-center">
+              <div className={`mx-auto w-14 h-14 rounded-full flex items-center justify-center ${acknowledgement.waitlisted ? "bg-shOrange/20" : "bg-shGreen/20"}`}>
+                <i className={`fas ${acknowledgement.waitlisted ? "fa-hourglass-half text-shOrange" : "fa-circle-check text-shGreen"} text-2xl`}/>
+              </div>
+              <h2 className="text-xl font-black uppercase tracking-tight text-white mt-3">
+                {acknowledgement.waitlisted ? "Waitlist request submitted" : "Booking submitted!"}
+              </h2>
+              <p className="text-[13px] text-gray-400 mt-1">
+                {acknowledgement.kind === "multi"
+                  ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.skipped?`, ${acknowledgement.skipped} skipped`:""}.`
+                  : (acknowledgement.waitlisted
+                      ? "We'll let you know when a spot opens up."
+                      : "We'll review and confirm your spot shortly.")}
+              </p>
+            </div>
+
+            <PaymentOptionsCard compact />
+
+            <div className="flex justify-end">
+              <button onClick={onClose} data-testid="wiz-done"
+                      className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90">
+                Done
               </button>
             </div>
           </div>

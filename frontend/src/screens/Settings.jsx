@@ -254,6 +254,9 @@ export default function Settings() {
         { id: "_d2d_finance", label: "Finance Defaults", icon: "fa-chart-pie",
           desc: "Fiscal year start, bookkeeping export format, mileage rate, 1099 threshold.",
           badges: ["Live", "Admin-only"], d2dSection: "finance" },
+        { id: "payment_options", label: "Payment Options", icon: "fa-money-bill-wave",
+          desc: "Venmo / PayPal / Clover / Cash / Check — toggle which payment methods to show clients in the portal and on booking confirmations. Manual Payment Tracking remains the source of truth.",
+          badges: ["Live", "Client-facing"] },
         { id: "_processors_soon", label: "Payment Processors", icon: "fa-credit-card",
           desc: "Stripe / processor keys, webhook health, payout schedule.",
           badges: ["Coming soon"], comingSoon: true },
@@ -484,6 +487,7 @@ export default function Settings() {
               {tab === "booking_flow_controls" && <BookingFlowControlsPanel />}
               {tab === "dashboard_widgets" && <DashboardWidgetsPanel />}
               {tab === "permission_matrix" && <PermissionMatrixPanel />}
+              {tab === "payment_options" && <PaymentOptionsPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -1107,6 +1111,116 @@ const BFC_SERVICES = [
   { id: "grooming",    label: "Grooming",    master: "grooming",    color: "shBlue"      },
   { id: "photography", label: "Photography", master: "photography", color: "shBlue"      },
 ];
+
+// Sprint 110di-29 — Payment Options panel. Five canonical methods
+// (Venmo / PayPal / Clover / Cash / Check) each with an enabled toggle,
+// editable display name, optional link, and instructions. Shown in the
+// client portal so the operator can tell clients HOW to pay — payment
+// is NEVER processed here and booking is NEVER blocked on payment.
+// Manual Payment Tracking remains the source of truth.
+function PaymentOptionsPanel() {
+  const { reloadBranding } = useTheme();
+  const [rows, setRows] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings").then(({ data }) => {
+      setRows(Array.isArray(data.payment_options) ? data.payment_options : []);
+    });
+  }, []);
+  if (!rows) return <div className="text-gray-400">Loading...</div>;
+
+  const update = (idx, patch) => {
+    setRows(p => p.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+    setDirty(true);
+  };
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await api.put("/settings", { payment_options: rows });
+      try { await reloadBranding(); } catch {}
+      setDirty(false); setMsg("Saved.");
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) { setMsg("Save failed: " + (e?.response?.data?.detail || e.message)); }
+    finally { setSaving(false); }
+  };
+
+  const ICONS = {
+    venmo:  "fa-mobile-screen", paypal: "fa-paypal", clover: "fa-credit-card",
+    cash:   "fa-money-bill-wave", check:  "fa-money-check-dollar",
+  };
+
+  return (
+    <div className="space-y-4" data-testid="payment-options-panel">
+      <div className="bg-bgPanel border-2 border-shGreen/40 rounded-2xl p-5 shadow-2xl flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+            <i className="fas fa-money-bill-wave mr-1.5"/>Payment Options
+          </p>
+          <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+            How clients <span className="text-shGreen">can pay.</span>
+          </h2>
+          <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
+            Toggle the methods you accept. Enabled methods show up in the client portal and on the
+            booking-submitted screen. <span className="text-shOrange">Booking is never blocked on
+            payment</span> — this is purely informational. Manual Payment Tracking stays the source
+            of truth for what's been paid.
+          </p>
+        </div>
+        <button onClick={save} disabled={!dirty || saving} data-testid="pay-options-save"
+                className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50">
+          <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-save"} mr-2`}/>{saving ? "Saving..." : "Save"}
+        </button>
+        {msg && <span className="text-[12px] text-shGreen w-full" data-testid="pay-options-msg">{msg}</span>}
+      </div>
+
+      {rows.map((row, idx) => (
+        <div key={row.key || idx} className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-3"
+             data-testid={`pay-row-${row.key}`}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <p className="text-[15px] font-black uppercase italic tracking-tight text-white flex items-center gap-2">
+              <i className={`fas ${ICONS[row.key] || "fa-money-bill"} text-shGreen`}/>
+              <span>{row.label || (row.key || "").toString().toUpperCase()}</span>
+            </p>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={row.enabled === true}
+                     onChange={e => update(idx, { enabled: e.target.checked })}
+                     data-testid={`pay-toggle-${row.key}`} className="scale-125"/>
+              <span className={`text-[12px] font-black uppercase tracking-widest ${row.enabled ? "text-shGreen" : "text-gray-500"}`}>
+                {row.enabled ? "Enabled" : "Disabled"}
+              </span>
+            </label>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Display name</label>
+              <input value={row.label || ""} onChange={e => update(idx, { label: e.target.value })}
+                     data-testid={`pay-label-${row.key}`}
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"
+                     placeholder={row.key}/>
+            </div>
+            <div>
+              <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Link (optional)</label>
+              <input value={row.link || ""} onChange={e => update(idx, { link: e.target.value })}
+                     data-testid={`pay-link-${row.key}`}
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"
+                     placeholder={row.key === "venmo" ? "https://venmo.com/your-handle" : row.key === "paypal" ? "https://paypal.me/your-handle" : ""}/>
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Instructions for the client</label>
+            <textarea value={row.instructions || ""} onChange={e => update(idx, { instructions: e.target.value })}
+                      data-testid={`pay-instructions-${row.key}`} rows={2}
+                      className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 
 function BookingFlowControlsPanel() {
   const { reloadBranding } = useTheme();
