@@ -1860,7 +1860,7 @@ export default function Portal() {
                   all: bookings.length,
                 };
                 return (
-                  <div className="flex bg-bgPanel border border-bgHover rounded-lg p-1 text-[14px] font-black uppercase tracking-widest" data-testid="bookings-tabs">
+                  <div className="flex bg-bgPanel border border-bgHover rounded-lg p-1 text-[12px] sm:text-[14px] font-black uppercase tracking-widest" data-testid="bookings-tabs">
                     {[
                       { key: "upcoming", label: "Upcoming", color: "shGreen" },
                       { key: "past",     label: "Past",     color: "shBlue"  },
@@ -1871,9 +1871,9 @@ export default function Portal() {
                         <button key={t.key}
                                 onClick={()=>{ setBookingsTab(t.key); if (t.key !== "all") setBookingsMonth(""); }}
                                 data-testid={`bookings-tab-${t.key}`}
-                                className={`px-3 py-1.5 rounded transition flex items-center gap-1.5 ${active ? "bg-bgBase text-white" : "text-gray-500 hover:text-white"}`}>
+                                className={`px-2 sm:px-3 py-1.5 rounded transition flex items-center gap-1 sm:gap-1.5 ${active ? "bg-bgBase text-white" : "text-gray-500 hover:text-white"}`}>
                           <span>{t.label}</span>
-                          <span className={`text-[12px] px-1.5 py-0.5 rounded ${active ? "bg-shGreen/20 text-shGreen" : "bg-bgHover text-gray-400"}`}>{counts[t.key]}</span>
+                          <span className={`text-[10px] sm:text-[12px] px-1 sm:px-1.5 py-0.5 rounded ${active ? "bg-shGreen/20 text-shGreen" : "bg-bgHover text-gray-400"}`}>{counts[t.key]}</span>
                         </button>
                       );
                     })}

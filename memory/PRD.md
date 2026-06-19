@@ -4262,3 +4262,37 @@ Friendly labels → existing keys mapping:
 
 ### Service Worker
 - ✅ Bumped to `sh-v23-110di-24-perm-enforcement-presnap`.
+
+
+## Sprint 110di-25 — Final Stabilization Pass (2026-02-19)
+**User ask**: FINAL QA / HARDENING PASS — no new features, no new settings, no redesign. Run full backend + frontend tests, fix bugs, verify all 10 stabilization items.
+
+### Bugs Found & Fixed
+1. **CRITICAL — Dogs & Clients N+1 fetch storm**: each of the 239 dog cards mounted IntakeFormsSection + CommunicationLog + ReviewRequestButton on render, each firing 5 GETs = ~2,400 concurrent requests on `/dogs` → `net::ERR_INSUFFICIENT_RESOURCES`. Fixed by introducing `frontend/src/components/LazyMount.jsx` (IntersectionObserver, mounts children only when scrolled within 200px of viewport) and wrapping the heavy children in Dogs.jsx + Clients.jsx. **Measured: 2,877 → 45 requests** (98% reduction).
+2. **Additional belt-and-braces — `lib/api.js` in-flight GET de-duplication**: concurrent identical GETs share a single promise, so when 50 cards mount together they de-stampede automatically.
+3. **GET /api/bookings 500** on legacy `status: "checked_out"` / missing `dog_name` / missing `client_name` (response_model rejected). Fixed with defensive coercion at the boundary (`server.py` list_bookings).
+4. **Permission Matrix `_perms_for` shortcut** (carried over from 110di-24, now hardened): non-owner admins now correctly go through matrix overrides; only `staff_role=owner` or legacy admins (no staff_role) bypass.
+5. **Stale tests updated**: `test_iter14_perf` (feeding_schedule/medications kept by design for care badges), `test_sithappens::test_client_create_and_admin_approve` (credits now deducted at CHECKOUT not approval — matches `server.py` comment), `test_w2_payroll_prep` (UUID-suffixed emails to survive test pollution).
+6. **LOW — Portal segmented tab strip 330px-inside-320px** at iPhone SE viewport. Fixed with responsive `text-[12px] sm:text-[14px]` + tighter padding below sm breakpoint.
+
+### Test Results (final)
+- **Backend stabilization scope**: 31/31 ✅ (config_backup, client_portal_controls, feature_visibility, permission_matrix, permission_enforcement, booking_flow_dashboard_widgets)
+- **Backend extended scope**: 70/74 ✅ in isolation (sithappens 20/20, iter14_perf 14/14, w2_payroll 15/15, sprint2 10/10, sprint3 11/11). The 4 failures only appear under cross-suite test pollution — pre-existing environmental, not regressions.
+- **Frontend QA via testing_agent_v3_fork iteration_6**:
+  - Dogs N+1: ✅ FIXED (2,877 → 45)
+  - Clients N+1: ✅ FIXED (similar magnitude → 39)
+  - Mobile portal at 390×844 and 320×568: ✅ no horizontal page overflow
+  - Permission Matrix owner-lockout: ✅ PUT /api/staff/roles/owner/permissions returns 403
+  - Pre-restore snapshot: ✅ filename `pre-restore-config-*` returned in response AND exists on disk in `/app/backups/`
+  - Client Portal Controls toggles: ✅ booking_history / profile_quick_links / waiver_documents persist and reflect in UI
+  - 0 critical bugs, 0 frontend bugs after fix
+
+### Intentionally Left Alone (out of stabilization scope)
+- **Test pollution between suites**: orphaned clients/dogs/users left by long-running test runs cause some tests to fail when run together but pass in isolation. Pre-existing, environmental — not a production bug.
+- **Missing Rocky seed dog**: ~25 tests ERROR because the demo "Rocky" dog isn't in this DB. Seed-data issue, not a code regression.
+- **List virtualization for Dogs/Clients at 1000+ records**: the 239 DOM nodes still mount up-front (only their EXPENSIVE child sub-sections lazy-load). Out of scope; not blocking. Would need `react-window` if the operator scales past ~1k records.
+- **Settings drill-down + browser back history regression** (MEDIUM from iter5): user explicitly said no redesign — defer to a future UX sprint.
+- **Admin "App Update" button via systemd trigger** — explicitly skipped per user request.
+
+### Service Worker
+- ✅ Bumped to `sh-v25-110di-25-stabilization`.
