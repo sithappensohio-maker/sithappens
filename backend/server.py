@@ -1511,6 +1511,14 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     boarding_cap = int(settings.get("boarding_capacity", 10))
 
+    # Sprint 110di-17 — Feature Visibility guard. If the admin has turned
+    # off this service in Settings → Feature Visibility, reject the booking
+    # server-side regardless of how it got submitted. Admins bypass so they
+    # can still clean up historical data if needed.
+    fv = settings.get("feature_visibility") or {}
+    if user.get("role") != "admin" and body.service_type in fv and fv.get(body.service_type) is False:
+        raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings are currently disabled.")
+
     # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
     # book regular services; admin can override by passing the booking through
     # manually with `override_capacity=True` (treated as a force-flag).
@@ -4041,7 +4049,52 @@ def _default_settings() -> dict:
                 "dog_avatar_fallback": "paw",       # "paw" | "initials" | "placeholder"
             },
         },
+        # Sprint 110di-17 — Feature Visibility. Single source of truth for
+        # whether each major app feature is enabled. All default True so
+        # current behavior is preserved; admin can flip off any feature in
+        # Settings → Brand & Theme → Feature Visibility and the toggle is
+        # respected by both backend guards (booking creation, etc.) and
+        # frontend consumers (nav, portal, dashboard, booking wizard).
+        "feature_visibility": _default_feature_visibility(),
     }
+
+
+# Sprint 110di-17 — Feature Visibility. Module-level so backend guards
+# (booking creation, retail endpoints, etc.) can read the same dict the
+# Settings UI writes to. Keep these keys stable — frontend consumers key
+# off them.
+DEFAULT_FEATURE_VISIBILITY = {
+    "daycare":         True,
+    "boarding":        True,
+    "training":        True,
+    "grooming":        True,
+    "photography":     True,
+    "retail":          True,
+    "rewards":         True,
+    "trivia":          True,
+    "homework":        True,
+    "staff_portal":    True,
+    "client_messaging": True,
+    "payment_plans":   True,
+    "manual_payments": True,
+    "waitlist":        True,
+}
+
+
+def _default_feature_visibility() -> dict:
+    return dict(DEFAULT_FEATURE_VISIBILITY)
+
+
+async def _feature_enabled(key: str) -> bool:
+    """Cheap helper for backend guards. Defaults True if the key is unknown
+    or settings doc has no `feature_visibility` block yet (forward-compat)."""
+    s = await db.settings.find_one({"id": "global"}, {"feature_visibility": 1})
+    if not s:
+        return True
+    fv = (s or {}).get("feature_visibility") or {}
+    if key not in fv:
+        return True
+    return bool(fv.get(key))
 
 async def get_settings() -> dict:
     s = await db.settings.find_one({"id": "global"}, {"_id": 0})
@@ -4096,6 +4149,17 @@ async def get_settings() -> dict:
                     if k not in s["day_to_day"][section_key]:
                         s["day_to_day"][section_key][k] = v
                         changed = True
+    # Sprint 110di-17 — Feature Visibility. Backfill missing keys so the
+    # admin's existing on/off choices survive forward-compat upgrades; any
+    # newly-added feature defaults to True (current behavior preserved).
+    if not isinstance(s.get("feature_visibility"), dict):
+        s["feature_visibility"] = _default_feature_visibility()
+        changed = True
+    else:
+        for fk, fv in DEFAULT_FEATURE_VISIBILITY.items():
+            if fk not in s["feature_visibility"]:
+                s["feature_visibility"][fk] = fv
+                changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -4211,6 +4275,9 @@ async def fetch_branding():
         "week_starts_on":          ui.get("week_starts_on", "sunday"),
         "show_prices_in_portal":   ui.get("show_prices_in_portal", True),
         "dog_avatar_fallback":     ui.get("dog_avatar_fallback", "paw"),
+        # Sprint 110di-17 — Feature Visibility. Exposed unauthed so the
+        # login / public booking surfaces respect the admin's choices too.
+        "feature_visibility":      {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
     }
 
 @api.get("/settings/public")
@@ -4232,6 +4299,11 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         # Sprint 110di-4 — admin-editable "What to expect on your first visit"
         # block rendered on the client portal.
         "portal_first_visit": s.get("portal_first_visit") or _portal_first_visit_default(),
+        # Sprint 110di-17 — Feature Visibility. Merged with safe defaults so
+        # an admin who's never opened the new Settings panel still has every
+        # feature ON. Both frontend (nav, portal, dashboard) and backend
+        # guards read from this single block.
+        "feature_visibility": {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
     }
 
 @api.put("/settings")

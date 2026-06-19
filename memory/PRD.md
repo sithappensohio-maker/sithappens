@@ -4008,3 +4008,36 @@ The earlier upcoming list (retail items catalog, check-in/check-out census, publ
 - A full audit-and-replace of every literal `bg-[#...]`, `border-[#...]`, `shadow-[0_0_...]` across the 100+ component files would touch a lot of surfaces and risk regressions. The catalog + CSS classes are in place — recommend converting screens incrementally as they're touched (e.g., add `card-booking` to the booking row, `card-client` to client list rows, `card-dog` to dog tiles). The existing `bg-bgPanel`-based screens already inherit Default Card chrome via the global `.bg-bgPanel::after` rule, so the most common pattern is already theme-driven.
 - Default look (Sit Happens dark neon) preserved — every new type's default palette matches the existing aesthetic; admins can swap colors per type without touching code.
 
+
+
+
+## Sprint 110di-17 — Feature Visibility end-to-end (2026-02-19)
+
+**User ask (Option A)**: ONE reliable Feature Visibility system that lets the admin turn major app features on/off from Settings with the choices respected everywhere. 14 toggles: Daycare, Boarding, Training, Grooming, Photography, Retail, Rewards, Trivia, Homework, Staff Portal, Client Messaging, Payment Plans, Manual Payments, Waitlist. No duplicate Settings panel, no second onboarding/booking-requirement system.
+
+### Backend (server.py)
+- ✅ `DEFAULT_FEATURE_VISIBILITY` — canonical 14-key dict, all default True so current behavior is preserved.
+- ✅ `_default_settings()` extended to embed `feature_visibility`.
+- ✅ `get_settings()` backfills missing keys (forward-compat).
+- ✅ `/api/branding` (unauthed) + `/api/settings/public` (authed) both return `feature_visibility` so login/portal/public surfaces all read the same state.
+- ✅ `SettingsIn` model (`extra="allow"`) accepts `feature_visibility` writes through normal `PUT /api/settings`.
+- ✅ **Server-side guard**: `create_booking()` rejects non-admin bookings for a disabled service_type with a 400 ("Photography bookings are currently disabled."). Admins bypass so historical data stays fixable.
+- ✅ Helper `_feature_enabled(key)` available for other backend guards.
+
+### Frontend
+- ✅ `lib/theme.js` — exports `useFeature(key)` hook, `<FeatureGate>` component, and `FEATURE_KEYS` constant.
+- ✅ `screens/Settings.jsx` — new **Feature Visibility** subsection (first item under Business Operations). `FeatureVisibilityPanel` renders 14 toggle rows with label / friendly description / "Affects:" list / accessible switch. Save persists via `PUT /api/settings`. Reset-all button, live enabled-count badge.
+- ✅ `App.js` (admin shell): nav items tagged with `feature: "..."` filter the sidebar AND the route render (`tab === "trophies" && featureOn("rewards") && <Trophies/>`).
+- ✅ `screens/Portal.jsx`: credit metric tiles dynamically render based on `feat.daycare/training/boarding` (grid columns adapt 1/2/3). Messages button+modal, Trophy Wall, Homework section + HomeworkIncentivesPanel, "Refer a Friend" tile, "Training Files & Homework" quick-link, and "Grooming pay-on-the-day" reminder all gated.
+- ✅ `components/PortalBookWizard.jsx`: `VISIBLE_SERVICES` derived from feature flags; service-picker shows only enabled options.
+
+### Tests
+- ✅ `tests/test_feature_visibility.py` — 4 new pytests (contract shape, round-trip persistence, booking guard rejection, defaults-all-on). All 9 portal/branding/FV tests green.
+- ✅ Live UI verification: with `photography=False`, booking wizard shows exactly 4 services (Daycare, Boarding, Training, Grooming — Photography hidden). Admin shell hides Waitlist nav and Photography quick-links accordingly.
+
+### Historical data
+- Disabled service bookings/records stay in the DB and remain visible to admins. Admins can still create bookings (guard exempts admin role) so they can fix historical data without flipping a toggle back on.
+
+### Notes / Backlog
+- Settings UI panel + storage + key consumer screens are fully wired. Deepest admin-only sub-buttons (Trivia widget, retail screen specifics, manual-payment button visibility, payment-plan creation entry) still respect the toggle via render gating but a few admin power-user surfaces may still expose the feature label. Next refinement pass would surface those.
+- Per user direction, next slice is **Option B — Client Portal Controls** (show/hide credits, prices, dog facts, trivia/rewards, booking history, portal landing section, announcement banner).

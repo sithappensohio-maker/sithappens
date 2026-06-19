@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { useFeature } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
 import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
@@ -642,6 +643,23 @@ export default function Portal() {
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messagesUnread, setMessagesUnread] = useState(0);
+
+  // Sprint 110di-17 — Feature Visibility gates. Each useFeature read is
+  // cheap (just a context lookup) and defaults to TRUE so first paint
+  // never hides anything before the branding context has resolved.
+  const feat = {
+    daycare:          useFeature("daycare"),
+    boarding:         useFeature("boarding"),
+    training:         useFeature("training"),
+    grooming:         useFeature("grooming"),
+    photography:      useFeature("photography"),
+    homework:         useFeature("homework"),
+    rewards:          useFeature("rewards"),
+    trivia:           useFeature("trivia"),
+    waitlist:         useFeature("waitlist"),
+    client_messaging: useFeature("client_messaging"),
+    payment_plans:    useFeature("payment_plans"),
+  };
   // Sprint 110dh-6 — first-time client setup gate.
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupRefresh, setSetupRefresh] = useState(0);
@@ -923,15 +941,17 @@ export default function Portal() {
             <i className="fas fa-circle-question"/>
             <span className="hidden sm:inline">How to Use</span>
           </button>
-          <button onClick={()=>setMessagesOpen(true)} data-testid="portal-messages-button"
-                  className="relative text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2">
-            <i className="fas fa-comments"/>
-            <span className="hidden sm:inline">Messages</span>
-            {messagesUnread > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-shOrange text-bgHeader text-[10px] font-black rounded-full grid place-items-center"
-                    data-testid="portal-messages-badge">{messagesUnread}</span>
-            )}
-          </button>
+          {feat.client_messaging && (
+            <button onClick={()=>setMessagesOpen(true)} data-testid="portal-messages-button"
+                    className="relative text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2">
+              <i className="fas fa-comments"/>
+              <span className="hidden sm:inline">Messages</span>
+              {messagesUnread > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-shOrange text-bgHeader text-[10px] font-black rounded-full grid place-items-center"
+                      data-testid="portal-messages-badge">{messagesUnread}</span>
+              )}
+            </button>
+          )}
           <InstallAppButton
             testid="portal-install-app"
             label="Install"
@@ -1041,41 +1061,37 @@ export default function Portal() {
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
                 <i className="fas fa-wallet mr-1"/>Your Credits
               </p>
-              <div className="grid grid-cols-3 gap-2 text-center items-stretch">
-                <CreditMetricCard
-                  icon="fa-sun"
-                  label="Daycare"
-                  value={credits}
-                  unit="days"
-                  color="shGreen"
-                  haloRgba="rgba(140,198,63,0.7)"
-                  dropShadow="0 0 8px rgba(140,198,63,0.4)"
-                  testid="credit-metric-daycare"
-                />
-                <CreditMetricCard
-                  icon="fa-graduation-cap"
-                  label="Training"
-                  value={client?.training_credits || 0}
-                  unit="sessions"
-                  color="purple-400"
-                  haloRgba="rgba(168,85,247,0.7)"
-                  dropShadow="0 0 8px rgba(168,85,247,0.4)"
-                  testid="credit-metric-training"
-                />
-                <CreditMetricCard
-                  icon="fa-moon"
-                  label="Boarding"
-                  value={client?.boarding_credits || 0}
-                  unit="nights"
-                  color="shOrange"
-                  haloRgba="rgba(242,101,34,0.7)"
-                  dropShadow="0 0 8px rgba(242,101,34,0.4)"
-                  testid="credit-metric-boarding"
-                />
-              </div>
-              <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
-                <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
-              </p>
+              {/* Sprint 110di-17 — credit tiles gated by service feature
+                  toggles. Use a dynamic grid count so layout stays centered
+                  when 1-3 services are enabled. */}
+              {(() => {
+                const tiles = [];
+                if (feat.daycare) tiles.push(
+                  <CreditMetricCard key="daycare" icon="fa-sun" label="Daycare" value={credits} unit="days"
+                    color="shGreen" haloRgba="rgba(140,198,63,0.7)" dropShadow="0 0 8px rgba(140,198,63,0.4)"
+                    testid="credit-metric-daycare"/>
+                );
+                if (feat.training) tiles.push(
+                  <CreditMetricCard key="training" icon="fa-graduation-cap" label="Training" value={client?.training_credits || 0} unit="sessions"
+                    color="purple-400" haloRgba="rgba(168,85,247,0.7)" dropShadow="0 0 8px rgba(168,85,247,0.4)"
+                    testid="credit-metric-training"/>
+                );
+                if (feat.boarding) tiles.push(
+                  <CreditMetricCard key="boarding" icon="fa-moon" label="Boarding" value={client?.boarding_credits || 0} unit="nights"
+                    color="shOrange" haloRgba="rgba(242,101,34,0.7)" dropShadow="0 0 8px rgba(242,101,34,0.4)"
+                    testid="credit-metric-boarding"/>
+                );
+                if (tiles.length === 0) return null;
+                const colsClass = tiles.length === 1 ? "grid-cols-1" : tiles.length === 2 ? "grid-cols-2" : "grid-cols-3";
+                return (
+                  <div className={`grid ${colsClass} gap-2 text-center items-stretch`}>{tiles}</div>
+                );
+              })()}
+              {feat.grooming && (
+                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
+                  <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
+                </p>
+              )}
               <p className="text-[11px] text-gray-500 mt-2 text-center" data-testid="credits-helper-text">
                 <i className="fas fa-circle-info mr-1"/>Credits update after completed bookings or admin changes.
               </p>
@@ -1271,7 +1287,7 @@ export default function Portal() {
                       subtitle={`${publicServices.length + publicPrograms.length} offered · quote`}
                     />
                   )}
-                  {(homework.length > 0 || dogs.length > 0) && (
+                  {feat.homework && (homework.length > 0 || dogs.length > 0) && (
                     <QuickLinkTile
                       onClick={()=>{
                         const el = document.getElementById("portal-homework-anchor")
@@ -1285,7 +1301,7 @@ export default function Portal() {
                       subtitle={homework.length > 0 ? `${homework.length} active plan${homework.length===1?"":"s"}` : "Progress · files"}
                     />
                   )}
-                  {referralCode && (
+                  {feat.rewards && referralCode && (
                     <QuickLinkTile
                       onClick={()=>setShowReferModal(true)}
                       testid="portal-refer-friend"
@@ -1370,7 +1386,7 @@ export default function Portal() {
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old
               referral feed has been removed (client uses a separate system). */}
-          {homework.length > 0 && (
+          {feat.homework && homework.length > 0 && (
             <div id="portal-homework-anchor" data-testid="portal-homework">
               {/* Sprint 110y — Homework section gets matching eyebrow + italic
                   headline treatment. */}
@@ -1466,7 +1482,7 @@ export default function Portal() {
             </div>
           )}
 
-          {(trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
+          {feat.rewards && (trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
             <div data-testid="portal-trophies-section"
                  className="relative overflow-hidden bg-gradient-to-br from-shOrange/15 via-bgPanel to-shBlue/15 border border-shOrange/40 rounded-2xl p-5 shadow-2xl">
               {/* Sprint 110z — Trophy Wall gets matching brand-glow halo + eyebrow
@@ -1500,7 +1516,7 @@ export default function Portal() {
             </div>
           )}
 
-          <HomeworkIncentivesPanel />
+          {feat.homework && <HomeworkIncentivesPanel />}
 
           <div id="portal-dogs-anchor">
             {/* Sprint 110y — My Dogs section header gets the eyebrow + italic
@@ -2025,12 +2041,14 @@ export default function Portal() {
         </div>
       )}
 
-      <PortalMessages
-        dogs={dogs}
-        open={messagesOpen}
-        onClose={() => setMessagesOpen(false)}
-        onUnreadChange={setMessagesUnread}
-      />
+      {feat.client_messaging && (
+        <PortalMessages
+          dogs={dogs}
+          open={messagesOpen}
+          onClose={() => setMessagesOpen(false)}
+          onUnreadChange={setMessagesUnread}
+        />
+      )}
 
       <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}

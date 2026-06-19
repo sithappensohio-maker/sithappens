@@ -296,3 +296,31 @@ export function ThemeProvider({ children }) {
     </ThemeCtx.Provider>
   );
 }
+
+// Sprint 110di-17 — Feature Visibility. Convenience hook for any screen
+// that needs to gate render based on the admin's feature toggles. Defaults
+// to TRUE if the key is unknown or the branding hasn't loaded yet so the
+// app never accidentally hides itself on first paint.
+export const FEATURE_KEYS = [
+  "daycare", "boarding", "training", "grooming", "photography",
+  "retail", "rewards", "trivia", "homework", "staff_portal",
+  "client_messaging", "payment_plans", "manual_payments", "waitlist",
+];
+
+export function useFeature(key) {
+  const { branding } = useTheme();
+  const fv = branding?.feature_visibility;
+  if (!fv) return true;
+  if (!(key in fv)) return true;
+  return fv[key] !== false;
+}
+
+/**
+ * <FeatureGate name="photography"> ... </FeatureGate>
+ * Renders children only when the feature is enabled. Supports `fallback`
+ * for empty-state replacement.
+ */
+export function FeatureGate({ name, children, fallback = null }) {
+  const enabled = useFeature(name);
+  return enabled ? children : fallback;
+}

@@ -1,7 +1,7 @@
 import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./lib/auth";
-import { ThemeProvider } from "./lib/theme";
+import { ThemeProvider, useTheme } from "./lib/theme";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
 import Schedule from "./screens/Schedule";
@@ -42,6 +42,11 @@ import { api } from "./lib/api";
 
 function AdminShell() {
   const { user, logout, can } = useAuth();
+  const { branding } = useTheme();
+  // Sprint 110di-17 — feature_visibility map. Default-true if missing so
+  // first paint never hides anything.
+  const fv = branding?.feature_visibility || {};
+  const featureOn = (key) => fv[key] !== false;
   const [tab, setTab] = useState("dashboard");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -103,18 +108,18 @@ function AdminShell() {
     { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
     { id: "kennel", label: "Kennel Board", icon: "fa-paw", perm: "dogs_view" },
     { id: "bookings", label: "Bookings", icon: "fa-calendar-check" },
-    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit" },
+    { id: "waitlist", label: "Waitlist", icon: "fa-hourglass-half", perm: "booking_edit", feature: "waitlist" },
     { id: "recurring", label: "Recurring", icon: "fa-rotate" },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
-    { id: "homework", label: "Homework", icon: "fa-graduation-cap" },
-    { id: "trophies", label: "Trophies", icon: "fa-trophy" },
+    { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
+    { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
     { id: "income", label: "Income", icon: "fa-dollar-sign", perm: "finance_reports" },
-    { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll" },
+    { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
-    { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages" },
+    { id: "messages", label: "Client Messages", icon: "fa-comments", perm: "messages", feature: "client_messaging" },
     { id: "announcements", label: "Announcements", icon: "fa-bullhorn", perm: "settings" },
     { id: "bulkemail", label: "Bulk Email", icon: "fa-paper-plane", perm: "settings" },
     { id: "audit", label: "Audit Log", icon: "fa-list-check", perm: "settings" },
@@ -139,7 +144,7 @@ function AdminShell() {
         </p>
       </div>
       <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
-        {navItems.filter(n => !n.perm || can(n.perm)).map(n => (
+        {navItems.filter(n => (!n.perm || can(n.perm)) && (!n.feature || featureOn(n.feature))).map(n => (
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
                   className={`group w-full text-left py-2.5 px-3 rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
             <i className={`fas ${n.icon} mr-3 w-4 ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} /> {n.label}
@@ -223,18 +228,18 @@ function AdminShell() {
           {tab === "care" && <CareBoard />}
           {tab === "kennel" && <KennelBoard />}
           {tab === "bookings" && <Bookings />}
-          {tab === "waitlist" && <Waitlist />}
+          {tab === "waitlist" && featureOn("waitlist") && <Waitlist />}
           {tab === "recurring" && <RecurringTemplates />}
           {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
-          {tab === "homework" && <Homework />}
-          {tab === "trophies" && <Trophies />}
+          {tab === "homework" && featureOn("homework") && <Homework />}
+          {tab === "trophies" && featureOn("rewards") && <Trophies />}
           {tab === "income" && <Income />}
-          {tab === "staff" && <Staff />}
+          {tab === "staff" && featureOn("staff_portal") && <Staff />}
           {tab === "incidents" && <Incidents />}
           {tab === "intake" && <IntakeForms />}
-          {tab === "messages" && <ClientMessages />}
+          {tab === "messages" && featureOn("client_messaging") && <ClientMessages />}
           {tab === "announcements" && <Announcements />}
           {tab === "bulkemail" && <BulkEmail />}
           {tab === "audit" && <AuditLog />}

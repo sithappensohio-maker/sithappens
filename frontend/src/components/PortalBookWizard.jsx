@@ -20,6 +20,8 @@ import { todayISO } from "../lib/date";
  */
 function fmt(d) { return d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : ""; }
 
+import { useFeature } from "../lib/theme";
+
 const SERVICE_OPTIONS = [
   { key: "daycare",     label: "Daycare",     icon: "fa-paw",          color: "bg-shGreen/15 text-shGreen border-shGreen/40", desc: "Drop-in day care" },
   { key: "boarding",    label: "Boarding",    icon: "fa-bed",          color: "bg-purple-500/15 text-purple-300 border-purple-500/40", desc: "Overnight stays" },
@@ -32,6 +34,16 @@ const TIME_SLOTTED = new Set(["training", "grooming", "photography"]);
 
 export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   useEditLock(true);
+  // Sprint 110di-17 — Feature Visibility. Service options the admin has
+  // disabled are filtered out of the picker entirely so clients can't even
+  // attempt to book them.
+  const featDaycare      = useFeature("daycare");
+  const featBoarding     = useFeature("boarding");
+  const featTraining     = useFeature("training");
+  const featGrooming     = useFeature("grooming");
+  const featPhotography  = useFeature("photography");
+  const FEATURE_BY_SERVICE = { daycare: featDaycare, boarding: featBoarding, training: featTraining, grooming: featGrooming, photography: featPhotography };
+  const VISIBLE_SERVICES = SERVICE_OPTIONS.filter(o => FEATURE_BY_SERVICE[o.key] !== false);
   const [step, setStep] = useState(1);
   const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
@@ -212,7 +224,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             <div>
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
               <div className="grid grid-cols-2 gap-3 mt-2">
-                {SERVICE_OPTIONS.map(s => (
+                {VISIBLE_SERVICES.map(s => (
                   <button key={s.key} onClick={()=>setServiceType(s.key)} data-testid={`wiz-svc-${s.key}`}
                           className={`text-left p-4 rounded-lg border transition ${serviceType===s.key ? s.color + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
                     <p className="font-black uppercase tracking-widest text-[15px]"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>

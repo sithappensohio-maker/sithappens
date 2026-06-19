@@ -77,6 +77,9 @@ export default function Settings() {
       accent: "shBlue",
       blurb: "Hours, capacity, kennels, booking rules, and recurring schedules.",
       subsections: [
+        { id: "feature_visibility", label: "Feature Visibility", icon: "fa-toggle-on",
+          desc: "Turn major app features (Daycare, Boarding, Training, Grooming, Photography, Retail, Rewards, Trivia, Homework, Staff Portal, Messaging, Payment Plans, Manual Payments, Waitlist) on or off app-wide. Disabled features hide from the portal, nav, dashboard, and booking.",
+          badges: ["Live", "Admin-only"] },
         { id: "day_to_day", label: "Operator Quick Controls", icon: "fa-bolt",
           desc: "At-a-glance status of the rules you tweak most often, with deep links to each setting's true home.",
           badges: ["Live", "Admin-only"] },
@@ -464,6 +467,7 @@ export default function Settings() {
               {tab.startsWith("_d2d_") && <DayToDayPanel s={s} save={save} saving={saving} section={tab.replace("_d2d_", "")} />}
               {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
               {tab === "brand" && <BrandPanel />}
+              {tab === "feature_visibility" && <FeatureVisibilityPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -578,6 +582,207 @@ function Badge({ label }) {
     </span>
   );
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Sprint 110di-17 — Feature Visibility panel. Single source of truth for
+// turning major app features on/off. The toggles read/write into
+// settings.feature_visibility via the /api/settings endpoint. Frontend
+// consumers (admin nav, portal, dashboard, booking wizard) gate render
+// via the `useFeature(key)` hook in /lib/theme.js.
+// ────────────────────────────────────────────────────────────────────────
+const FEATURE_VISIBILITY_META = [
+  // service features
+  { id: "daycare",         label: "Daycare",         icon: "fa-sun",            color: "shGreen",
+    desc: "Day boarding. Disable to hide from booking, portal credits, dashboard stats, and reports filter.",
+    affects: ["Booking wizard", "Portal credits", "Dashboard stats", "Quick links", "Reports"] },
+  { id: "boarding",        label: "Boarding",        icon: "fa-moon",           color: "shOrange",
+    desc: "Overnight boarding. Disable to hide from booking, portal credits, kennel board, dashboard stats.",
+    affects: ["Booking wizard", "Portal credits", "Kennel board", "Dashboard stats", "Reports"] },
+  { id: "training",        label: "Training",        icon: "fa-graduation-cap", color: "purple-400",
+    desc: "Training sessions. Disable to hide from booking, portal credits, homework, training programs.",
+    affects: ["Booking wizard", "Portal credits", "Homework", "Programs", "Reports"] },
+  { id: "grooming",        label: "Grooming",        icon: "fa-scissors",       color: "shBlue",
+    desc: "Bath, nails, grooming services. Disable to hide from booking and dashboard stats.",
+    affects: ["Booking wizard", "Dashboard stats", "Reports"] },
+  { id: "photography",     label: "Photography",     icon: "fa-camera",         color: "shBlue",
+    desc: "Photography sessions. Disable to hide from booking, portal CTA, and quick links.",
+    affects: ["Booking wizard", "Portal", "Quick links", "Reports"] },
+  // monetization features
+  { id: "retail",          label: "Retail",          icon: "fa-shop",           color: "shGreen",
+    desc: "Retail sales / point-of-sale. Disable to hide retail nav, sales buttons, and inventory.",
+    affects: ["Admin nav", "Booking detail", "Reports"] },
+  { id: "payment_plans",   label: "Payment Plans",   icon: "fa-file-invoice-dollar", color: "shOrange",
+    desc: "Installment plans for boarding & big-ticket. Disable to hide plan-creation UI and admin shelf.",
+    affects: ["Booking detail", "Admin nav", "Reports"] },
+  { id: "manual_payments", label: "Manual Payments", icon: "fa-money-bills",    color: "shGreen",
+    desc: "Cash, check, and other offline payment recording. Disable if you only accept card payments.",
+    affects: ["Payments shelf", "Booking checkout"] },
+  // engagement features
+  { id: "rewards",         label: "Rewards / Trophies", icon: "fa-trophy",      color: "shOrange",
+    desc: "Client-facing trophies, milestones, referrals. Disable to hide trophy nav and portal section.",
+    affects: ["Admin nav", "Portal", "Quick links"] },
+  { id: "trivia",          label: "Trivia",          icon: "fa-question",       color: "shBlue",
+    desc: "Daily trivia mini-game on the client portal. Disable to hide the trivia widget.",
+    affects: ["Portal", "Quick links"] },
+  { id: "homework",        label: "Homework",        icon: "fa-book-open",      color: "purple-400",
+    desc: "Training homework assignments + step tracking. Disable to hide homework nav and portal section.",
+    affects: ["Admin nav", "Portal", "Quick links"] },
+  // portals & comms
+  { id: "staff_portal",    label: "Staff Portal",    icon: "fa-id-badge",       color: "shBlue",
+    desc: "Employee clock-in, schedule, payroll surface. Disable to hide the staff portal entry point.",
+    affects: ["Admin nav", "Login routing"] },
+  { id: "client_messaging",label: "Client Messaging",icon: "fa-comments",       color: "shGreen",
+    desc: "Two-way client/admin chat. Disable to hide Messages from portal and admin nav.",
+    affects: ["Admin nav", "Portal", "Quick links"] },
+  { id: "waitlist",        label: "Waitlist",        icon: "fa-hourglass-half", color: "shOrange",
+    desc: "Auto-waitlist when a service is full. Disable to hide waitlist nav and CTAs.",
+    affects: ["Booking wizard", "Admin nav", "Reports"] },
+];
+
+function FeatureVisibilityPanel() {
+  const [s, setS] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings").then(({ data }) => {
+      const fv = data.feature_visibility || {};
+      const initial = {};
+      FEATURE_VISIBILITY_META.forEach(({ id }) => { initial[id] = fv[id] !== false; });
+      setS(initial);
+    });
+  }, []);
+
+  const toggle = (id) => {
+    setS(prev => ({ ...prev, [id]: !prev[id] }));
+    setDirty(true);
+  };
+
+  const saveAll = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await api.put("/settings", { feature_visibility: s });
+      // Force theme provider to re-pull the public branding (which now
+      // includes the updated `feature_visibility` block) so every consumer
+      // screen sees the new state without a page reload.
+      try { await api.get("/branding"); } catch {}
+      setDirty(false);
+      setMsg("Saved. Refresh other tabs to pick up changes.");
+      setTimeout(() => setMsg(""), 4500);
+    } catch (e) {
+      setMsg("Save failed: " + (e?.response?.data?.detail || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const resetAll = () => {
+    const all = {};
+    FEATURE_VISIBILITY_META.forEach(({ id }) => { all[id] = true; });
+    setS(all);
+    setDirty(true);
+  };
+
+  if (!s) return <div className="text-gray-400">Loading...</div>;
+
+  const enabledCount = Object.values(s).filter(v => v).length;
+  const totalCount = FEATURE_VISIBILITY_META.length;
+
+  return (
+    <div className="space-y-4" data-testid="feature-visibility-panel">
+      <div className="bg-bgPanel border-2 border-shBlue/40 rounded-2xl p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shBlue mb-1">
+              <i className="fas fa-toggle-on mr-1.5"/>Feature Visibility
+            </p>
+            <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+              App-Wide Feature <span className="text-shGreen">Switches.</span>
+            </h2>
+            <p className="text-[13px] text-gray-300 mt-2 max-w-2xl">
+              Turn major app features on or off. Disabled features hide from the admin nav, client portal,
+              dashboard, booking wizard, and reports filter. Historical data stays in the database — it just
+              stops appearing in new flows.
+            </p>
+          </div>
+          <span className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border bg-shGreen/15 text-shGreen border-shGreen/40"
+                data-testid="feature-visibility-count">
+            <i className="fas fa-circle-check mr-1.5"/>{enabledCount} / {totalCount} enabled
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 mt-2">
+          <button
+            onClick={saveAll}
+            disabled={!dirty || saving}
+            data-testid="feature-visibility-save"
+            className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50"
+          >
+            <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-save"} mr-2`}/>
+            {saving ? "Saving..." : "Save changes"}
+          </button>
+          <button
+            onClick={resetAll}
+            data-testid="feature-visibility-reset"
+            className="bg-bgBase border border-bgHover text-gray-300 font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded hover:border-shBlue"
+          >
+            <i className="fas fa-rotate-left mr-2"/>Enable all
+          </button>
+          {msg && (
+            <span className="text-[12px] text-shGreen ml-2" data-testid="feature-visibility-msg">{msg}</span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {FEATURE_VISIBILITY_META.map((f) => {
+          const enabled = s[f.id] !== false;
+          return (
+            <div
+              key={f.id}
+              data-testid={`feature-row-${f.id}`}
+              className={`rounded-xl border p-4 transition ${enabled ? "bg-bgPanel border-bgHover" : "bg-bgPanel/60 border-bgHover/60 opacity-75"}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <i className={`fas ${f.icon} text-${f.color}`}/>
+                    <p className={`text-[15px] font-black uppercase italic tracking-tight ${enabled ? "text-white" : "text-gray-500"}`}>
+                      {f.label}
+                    </p>
+                    <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${
+                      enabled
+                        ? "bg-shGreen/15 text-shGreen border-shGreen/40"
+                        : "bg-gray-700/30 text-gray-400 border-gray-600/40"
+                    }`}>
+                      {enabled ? "On" : "Off"}
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-gray-400 mt-1 leading-snug">{f.desc}</p>
+                  <p className="text-[10px] text-gray-500 mt-2 uppercase tracking-widest">
+                    Affects: <span className="text-gray-300">{f.affects.join(" · ")}</span>
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={enabled}
+                  data-testid={`feature-toggle-${f.id}`}
+                  onClick={() => toggle(f.id)}
+                  className={`relative shrink-0 w-12 h-7 rounded-full transition ${enabled ? "bg-shGreen" : "bg-gray-600"}`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${enabled ? "translate-x-5" : "translate-x-0"}`}/>
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 
 function BrandPanel() {
   const ctx = useTheme();
