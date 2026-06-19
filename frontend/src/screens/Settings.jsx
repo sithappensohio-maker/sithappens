@@ -628,17 +628,10 @@ function BrandPanel() {
         theme_calendar_active:       draft.theme_calendar_active,
         theme_table_hover:           draft.theme_table_hover,
         theme_row_border:            draft.theme_row_border,
-        // Sprint 110di-10 — Cards & Panels (border + glow).
-        card_border_color:           draft.card_border_color,
-        card_border_opacity:         parseFloat(draft.card_border_opacity),
-        card_border_width:           parseFloat(draft.card_border_width),
-        card_glow_color:             draft.card_glow_color,
-        // Sprint 110di-11 — explicit opacity/blur + inset highlight.
-        card_glow_opacity:           parseFloat(draft.card_glow_opacity),
-        card_glow_blur:              parseFloat(draft.card_glow_blur),
-        card_inner_highlight_color:  draft.card_inner_highlight_color,
-        card_inner_highlight_opacity: parseFloat(draft.card_inner_highlight_opacity),
-        // Sprint 110di-12 — Card Type Themes.
+        // Sprint 110di-13 — Card chrome lives entirely under
+        // `card_type_themes`. The Default Card type also drives the legacy
+        // global card CSS vars (see theme.js), so there's a single source of
+        // truth for normal panels and the 9 categorized variants.
         card_type_themes:            draft.card_type_themes,
       });
       setMsg("Saved");
@@ -682,16 +675,9 @@ function BrandPanel() {
     theme_calendar_active:       "#8cc63f",
     theme_table_hover:           "#1a225a",
     theme_row_border:            "#1a225a",
-    // Sprint 110di-10/11 — Cards & Panels defaults.
-    card_border_color:           "#008CFF",
-    card_border_opacity:         0.85,
-    card_border_width:           2,
-    card_glow_color:             "#008CFF",
-    card_glow_opacity:           0.35,
-    card_glow_blur:              14,
-    card_inner_highlight_color:  "#FFFFFF",
-    card_inner_highlight_opacity: 0.08,
-    // Sprint 110di-12 — Card Type Themes defaults.
+    // Sprint 110di-13 — Card chrome defaults live exclusively in the
+    // `card_type_themes` object now. The Default Card type controls the
+    // global panel border/glow/inset highlight app-wide.
     card_type_themes: SH_CARD_TYPE_DEFAULTS(),
   };
 
@@ -909,24 +895,24 @@ function BrandPanel() {
             </div>
           </div>
 
-          {/* Sprint 110di-10/11 — Cards & Panels sample. Mirrors the live
-              ::after rule on `.bg-bgPanel` so the admin sees exactly what
-              they're tweaking. Uses inline styles so the in-flight draft
-              values preview immediately, before the admin hits Save. */}
+          {/* Sprint 110di-13 — Cards & Panels preview reads from the
+              `Default Card` type. One source of truth: tweak the Default
+              tab below and this preview reflects it instantly. */}
           {(() => {
-            const cbRgb = hexToRgbInline(draft.card_border_color);
-            const cgRgb = hexToRgbInline(draft.card_glow_color);
-            const ihRgb = hexToRgbInline(draft.card_inner_highlight_color || "#FFFFFF");
-            const opacity = Math.min(Math.max(parseFloat(draft.card_border_opacity ?? 0.85), 0), 1);
-            const width = Math.max(0, parseFloat(draft.card_border_width ?? 2));
-            const glowAlpha = Math.min(Math.max(parseFloat(draft.card_glow_opacity ?? 0.35), 0), 1);
-            const glowBlur = Math.max(0, parseFloat(draft.card_glow_blur ?? 14));
-            const innerAlpha = Math.min(Math.max(parseFloat(draft.card_inner_highlight_opacity ?? 0.08), 0), 1);
+            const dflt = { ...SH_CARD_TYPE_DEFAULTS().default, ...((draft.card_type_themes || {}).default || {}) };
+            const cbRgb = hexToRgbInline(dflt.border);
+            const cgRgb = hexToRgbInline(dflt.glow);
+            const ihRgb = hexToRgbInline(dflt.inner_highlight_color || "#FFFFFF");
+            const opacity = Math.min(Math.max(parseFloat(dflt.border_opacity ?? 0.75), 0), 1);
+            const width = Math.max(0, parseFloat(dflt.border_width ?? 2));
+            const glowAlpha = Math.min(Math.max(parseFloat(dflt.glow_opacity ?? 0.25), 0), 1);
+            const glowBlur = Math.max(0, parseFloat(dflt.glow_blur ?? 14));
+            const innerAlpha = Math.min(Math.max(parseFloat(dflt.inner_highlight_opacity ?? 0.08), 0), 1);
             const liveBorder = `${width}px solid rgba(${cbRgb}, ${opacity})`;
             const liveShadow = `0 0 ${glowBlur}px rgba(${cgRgb}, ${glowAlpha}), inset 0 1px 0 rgba(${ihRgb}, ${innerAlpha})`;
             const cardStyle = {
               border: liveBorder,
-              background: draft.theme_bg_panel,
+              background: dflt.bg || draft.theme_bg_panel,
               boxShadow: liveShadow,
               color: draft.theme_text_primary,
             };

@@ -65,20 +65,9 @@ const DEFAULT_BRANDING = {
   theme_calendar_active:      "#8cc63f",
   theme_table_hover:          "#1a225a",
   theme_row_border:           "#1a225a",
-  // Sprint 110di-10 — Card border + glow controls. App-wide via ::after.
-  // Sprint 110di-11 — Stronger defaults + separate opacity/blur + inset
-  // highlight so the edge actually reads on dark cards.
-  card_border_color:    "#008CFF",
-  card_border_opacity:  0.85,
-  card_border_width:    2,        // px
-  card_glow_color:      "#008CFF",
-  card_glow_opacity:    0.35,
-  card_glow_blur:       14,       // px
-  card_inner_highlight_color:   "#FFFFFF",
-  card_inner_highlight_opacity: 0.08,
-  // Legacy — left around so older settings don't error out, no longer used
-  // to compute the new visuals.
-  card_glow_strength:   0.5,
+  // Sprint 110di-13 — Card chrome lives entirely under `card_type_themes`.
+  // The Default Card type drives the global panel border/glow/highlight via
+  // the mirror block in applyBranding() below.
 };
 
 // Sprint 110di-12/13 — Card Type Themes. Mirrors the backend
@@ -155,35 +144,10 @@ function clamp01(v, fallback) {
   root.style.setProperty("--calendar-active",      get("theme_calendar_active"));
   root.style.setProperty("--table-hover",          get("theme_table_hover"));
   root.style.setProperty("--row-border",           get("theme_row_border"));
-  // Sprint 110di-10/11 — Cards & Panels (border + glow + inner highlight).
-  // Each value is exposed as both the raw hex AND a pre-built rgba so the
-  // ::after overlay in index.css can lay them down without extra math.
-  const cbHex   = get("card_border_color");
-  const cbAlpha = clamp01(b.card_border_opacity, DEFAULT_BRANDING.card_border_opacity);
-  const cbWidth = Math.max(0, parseFloat(b.card_border_width ?? DEFAULT_BRANDING.card_border_width));
-  const cgHex   = get("card_glow_color");
-  const cgAlpha = clamp01(b.card_glow_opacity, DEFAULT_BRANDING.card_glow_opacity);
-  const cgBlur  = Math.max(0, parseFloat(b.card_glow_blur ?? DEFAULT_BRANDING.card_glow_blur));
-  const ihHex   = get("card_inner_highlight_color");
-  const ihAlpha = clamp01(b.card_inner_highlight_opacity, DEFAULT_BRANDING.card_inner_highlight_opacity);
-  root.style.setProperty("--card-border-color",   cbHex);
-  root.style.setProperty("--card-border-rgb",     hexToRgb(cbHex));
-  root.style.setProperty("--card-border-rgba",    `rgba(${hexToRgb(cbHex)}, ${cbAlpha})`);
-  root.style.setProperty("--card-border-opacity", String(cbAlpha));
-  root.style.setProperty("--card-border-width",   `${cbWidth}px`);
-  root.style.setProperty("--card-glow-color",     cgHex);
-  root.style.setProperty("--card-glow-rgb",       hexToRgb(cgHex));
-  root.style.setProperty("--card-glow-rgba",      `rgba(${hexToRgb(cgHex)}, ${cgAlpha})`);
-  root.style.setProperty("--card-glow-opacity",   String(cgAlpha));
-  root.style.setProperty("--card-glow-blur",      `${cgBlur}px`);
-  root.style.setProperty("--card-inner-highlight-color",   ihHex);
-  root.style.setProperty("--card-inner-highlight-rgb",     hexToRgb(ihHex));
-  root.style.setProperty("--card-inner-highlight-rgba",    `rgba(${hexToRgb(ihHex)}, ${ihAlpha})`);
-  root.style.setProperty("--card-inner-highlight-opacity", String(ihAlpha));
-  // Legacy strength var kept around so any older CSS rule that referenced it
-  // still resolves. New rule in index.css ignores it.
-  root.style.setProperty("--card-glow-strength",
-    String(clamp01(b.card_glow_strength, DEFAULT_BRANDING.card_glow_strength)));
+  // Sprint 110di-13 — Card chrome variables (--card-border-*, --card-glow-*,
+  // --card-inner-highlight-*) are written exclusively by the Default Card
+  // Type Theme block further down. Legacy top-level `card_border_*` /
+  // `card_glow_*` / `card_inner_highlight_*` settings are no longer used.
 
   // Sprint 110di-12 — Card Type Themes. Each type writes a small block of
   // CSS vars consumed by the matching `.card-{type}` class in index.css.

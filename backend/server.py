@@ -4189,20 +4189,11 @@ async def fetch_branding():
         "theme_calendar_active":    s.get("theme_calendar_active")    or s.get("brand_primary") or "#8cc63f",
         "theme_table_hover":        s.get("theme_table_hover")        or "#1a225a",
         "theme_row_border":         s.get("theme_row_border")         or "#1a225a",
-        # Sprint 110di-10 — Card border + glow controls.
-        # Sprint 110di-11 — Stronger defaults + explicit glow blur/opacity +
-        # inner highlight so the edge is clearly visible on dark cards.
-        "card_border_color":           s.get("card_border_color")    or "#008CFF",
-        "card_border_opacity":         s.get("card_border_opacity") if s.get("card_border_opacity") is not None else 0.85,
-        "card_border_width":           s.get("card_border_width")   if s.get("card_border_width")   is not None else 2,
-        "card_glow_color":             s.get("card_glow_color")     or "#008CFF",
-        "card_glow_opacity":           s.get("card_glow_opacity")   if s.get("card_glow_opacity")   is not None else 0.35,
-        "card_glow_blur":              s.get("card_glow_blur")      if s.get("card_glow_blur")      is not None else 14,
-        "card_inner_highlight_color":  s.get("card_inner_highlight_color") or "#FFFFFF",
-        "card_inner_highlight_opacity": s.get("card_inner_highlight_opacity") if s.get("card_inner_highlight_opacity") is not None else 0.08,
-        # Legacy strength slider — keep returned so old client builds don't
-        # break, but new clients ignore it in favor of opacity + blur.
-        "card_glow_strength":          s.get("card_glow_strength")  if s.get("card_glow_strength")  is not None else 0.5,
+        # Sprint 110di-13 — Card chrome lives entirely under
+        # `card_type_themes` (Default Card drives the global panel look).
+        # Legacy top-level card_border_*/card_glow_*/card_inner_highlight_*
+        # keys are no longer returned; any stale values in MongoDB are
+        # ignored harmlessly.
         # Sprint 110di-12 — Card Type Themes. Each type maps to a reusable
         # CSS class (.card-default/.card-info/.card-stats/etc.) so admins can
         # recolor each category independently without touching every card.

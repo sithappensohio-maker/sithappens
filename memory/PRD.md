@@ -3886,3 +3886,34 @@ records its still saying the records are needed"
 
 ### Notes
 - Background broadcast tasks during heavy pytest hammering briefly starved the backend worker (Resend SDK is sync). Real-world usage (one admin posting one announcement at a time) is unaffected.
+
+
+
+## Sprint 110di-13 — Cleanup pass: unify Card chrome under Card Type Themes + wipe test data (2026-02-19)
+
+**User ask**: Finish the merge that consolidated "Cards & Panels" into "Card Type Themes" (Default Card is the single source of truth). Stop firing test emails. Delete all auto-generated test clients/dogs except one. From now on focus is cleanup & refinement only — earlier upcoming items (retail catalog, check-in/out, public booking page, kiosk wall, SMS) are paused/dropped.
+
+### Backend (server.py)
+- ✅ Removed legacy top-level `card_border_color/opacity/width`, `card_glow_color/opacity/blur/strength`, `card_inner_highlight_color/opacity` keys from `/api/branding` response. Stale values still sitting in MongoDB are silently ignored.
+- ✅ `card_type_themes` remains the single source of truth (10 types, default chain via `_card_type_theme_defaults` merge).
+
+### Frontend
+- ✅ `screens/Settings.jsx` — removed legacy `card_*` keys from the save payload, SH_DEFAULTS, and rewired the Brand & Theme preview block to read from `draft.card_type_themes.default` so the live sample reflects edits to the Default tab.
+- ✅ `lib/theme.js` — dropped the legacy `--card-border-*` / `--card-glow-*` / `--card-inner-highlight-*` writer block from `applyBranding()` and the matching defaults from `DEFAULT_BRANDING`. The Default Card Type Theme block still mirrors those CSS vars so the existing `.bg-bgPanel::after` rule stays correct.
+- ✅ Static fallback values in `index.css` :root remain in place as a safety net.
+
+### Tests
+- ✅ Removed the now-obsolete `tests/test_card_border_glow.py` and `tests/test_card_border_stronger.py` (their coverage is fully replaced by `tests/test_card_type_themes.py`).
+- ✅ `tests/test_card_type_themes.py` + `tests/test_expanded_theme.py` — all 4 passing.
+
+### Data Cleanup
+- ✅ New `backend/cleanup_test_data.py` script (dry-run + --confirm modes).
+- ✅ Live run removed **6 668 docs**: 1 148 clients, 678 dogs, 2 074 bookings, plus full cascade across awarded trophies, communications, message threads, credit adjustments/lots/packs, homework, incidents, intake submissions, notification log, payment plans/transactions, price overrides, quote requests, referrals, retail sales, step events, task dismissals, trivia attempts, waiver signatures, dog facts/programs, recurring templates, training sessions, vaccine dismissals, audit log entries tied to deleted client users, and 399 obsolete `role=client` user accounts.
+- ✅ KEPT: 1 client (`garrett <freightshaker06@gmail.com>` / `4b3658d3-…`) and its linked client login.
+- ✅ Admin (`admin@sithappens.com`), Trainer (`alex@sithappens.com`), Demo Staff (`staff@sithappens.com`), 60 employee accounts, settings/branding/services/templates: **untouched**.
+
+### Operator workflow change
+- ⏸ Per operator: do NOT auto-send test emails any more — the email pipeline is verified working. Existing "Send Test" UI buttons in BulkEmail and EmailDesignerPanel stay (operator-triggered only).
+
+### Backlog after this sprint
+The earlier upcoming list (retail items catalog, check-in/check-out census, public `/book` page, kiosk wall, Twilio SMS) is **paused** per operator instruction. Future work focus: cleanup and refinement only — no new big features unless explicitly requested.
