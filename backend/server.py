@@ -4640,8 +4640,14 @@ def _merge_cpc(saved):
     return out
 
 @api.get("/settings/public")
-async def fetch_public_settings(user: dict = Depends(get_current_user)):
-    """Limited settings exposed to clients for booking validation."""
+async def fetch_public_settings():
+    """Limited settings exposed to clients for booking validation.
+
+    Sprint 110di-32 — Endpoint is now truly public (no auth dependency)
+    to match its name. The booking-price estimate component fetches
+    this BEFORE login state matters, and brand-new clients hitting the
+    portal pre-claim shouldn't 401. Only fields safe for unauthenticated
+    callers are included in the response."""
     s = await get_settings()
     return {
         "service_hours": s.get("service_hours"),
