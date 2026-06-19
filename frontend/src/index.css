@@ -384,6 +384,66 @@ input[type="week"]::-webkit-calendar-picker-indicator {
   [data-testid="pack-receipt"] { position: absolute !important; inset: 0 !important; background: #fff !important; }
 }
 
+/* ── Sprint 110di-36 — Multi-page print support for the Run Sheet ───────────
+   The app shell wraps content in `h-screen` + `overflow-hidden` containers
+   plus an inner `overflow-y-auto` scroll region. Browsers print the on-screen
+   viewport, so without these overrides the print job is clipped to a single
+   page no matter how long the run sheet is.
+   
+   We let the entire run sheet view flow naturally during print, hide the
+   sidebar/header/sticky chrome, and tell the browser not to split individual
+   dog cards across pages. */
+@media print {
+  @page { margin: 0.5in; }
+
+  /* Collapse SPA shell constraints so content can flow across pages. */
+  html, body, #root,
+  #root > div,
+  #root > div > main,
+  #root > div > main > div,
+  #root > div > main > div[data-scroll-root] {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    width: auto !important;
+    display: block !important;
+    background: #fff !important;
+  }
+
+  /* Hide global chrome that doesn't belong on a printed sheet. */
+  aside,
+  header,
+  [data-testid="drawer-backdrop"],
+  [data-testid="mobile-drawer"] { display: none !important; }
+
+  /* Trim default page padding so we get more usable area. */
+  #root > div > main > div[data-scroll-root] { padding: 0 !important; }
+
+  /* Keep individual run-sheet cards together so a single dog doesn't split
+     across two pages. The `print-card` class is already applied per-dog. */
+  .print-card { break-inside: avoid; page-break-inside: avoid; }
+
+  /* Sit Happens dark theme uses white text on dark backgrounds — print white
+     on white = blank paper. Force black text + white card background for
+     every print-card descendant. */
+  .print-card { background: #fff !important; color: #000 !important;
+                border-color: #ccc !important; box-shadow: none !important; }
+  .print-card * { color: #000 !important; background: transparent !important;
+                  background-color: transparent !important;
+                  box-shadow: none !important; }
+  /* Inner sub-cards (Pills, note boxes) keep a faint outline so they're
+     still visually distinct on paper. */
+  .print-card .bg-bgBase,
+  .print-card .bg-bgPanel,
+  .print-card .bg-bgHover,
+  .print-card .bg-bgHeader { border: 1px solid #ddd !important; }
+
+  /* Make sure browsers respect our background overrides. */
+  * { -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important; }
+}
+
 /* ── Sprint 110dd — Sit Happens public-site visual identity ────────────────
    Display font, paint-splatter overlay motifs, and glow card outlines that
    mirror the sithappensohiodogtraining.com hero treatment. */

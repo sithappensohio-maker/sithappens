@@ -4354,3 +4354,26 @@ React then tries to render the array into a `<p>` and crashes, which trips the g
 - Empty email → modal stays open + clean red `EMAIL: VALUE IS NOT A VALID EMAIL ADDRESS…` message ✅
 - Invalid email format → same clean error ✅
 - Valid form → 200, modal closes, new employee appears in list ✅
+
+
+## Sprint 110di-36 — Run Sheet Multi-Page Print Fix (2026-02-20)
+**User report**: "run sheet only makes one page and that doesn't fit everything when printing".
+
+### Root Cause
+The SPA shell in `App.js` wraps content in three nested containers with `h-screen` + `overflow-hidden` + an inner `overflow-y-auto` scroll region. When the browser prints, it captures the current viewport — so anything past viewport height is clipped, producing a single page no matter how many dogs are on the run sheet.
+
+### Fix — `frontend/src/index.css`
+Added a comprehensive `@media print` block that:
+- Collapses SPA shell constraints (`height: auto`, `overflow: visible`, `display: block`) so content flows naturally across pages.
+- Hides global chrome (sidebar `aside`, top `header`, mobile drawer) during print.
+- Adds `break-inside / page-break-inside: avoid` to `.print-card` so individual dog cards stay intact.
+- Forces white card backgrounds + black text + outlined inner Pills for legible black-and-white printing on the dark theme.
+- Sets `@page { margin: 0.5in }` and `print-color-adjust: exact` for consistent output across browsers.
+
+### Verified
+- Print emulation in Playwright: `document.documentElement.scrollHeight` went from ~800px (single viewport) → **42,720px** (~50 pages of content flow naturally).
+- Browser-generated PDF: 64MB / many pages of content (vs single-page before).
+- The fix lives entirely in the global stylesheet so it also benefits any other "Print" surface that uses the `print-card` class.
+
+### Service Worker
+- ✅ Bumped to `sh-v34-110di-36-runsheet-print`.
