@@ -83,6 +83,12 @@ export default function Settings() {
         { id: "client_portal_controls", label: "Client Portal Controls", icon: "fa-mobile-screen-button",
           desc: "Show/hide portal sections, set landing priority, edit client-facing labels, post an announcement banner, and customize empty-state copy. Feature Visibility above is the master switch — anything turned off there stays hidden here.",
           badges: ["Live", "Client-facing"] },
+        { id: "booking_flow_controls", label: "Booking Flow Controls", icon: "fa-calendar-check",
+          desc: "Per-service overrides on top of the global Booking Rules: require approval, instant book, same-day allowed, minimum lead time, maximum advance days. Empty values fall back to the global defaults.",
+          badges: ["Live", "Per-service"] },
+        { id: "dashboard_widgets", label: "Dashboard Widget Controls", icon: "fa-grip",
+          desc: "Hide individual admin dashboard widgets without touching the underlying data. Use this to slim the dashboard down to what your team actually scans.",
+          badges: ["Live", "Visibility-only"] },
         { id: "day_to_day", label: "Operator Quick Controls", icon: "fa-bolt",
           desc: "At-a-glance status of the rules you tweak most often, with deep links to each setting's true home.",
           badges: ["Live", "Admin-only"] },
@@ -472,6 +478,8 @@ export default function Settings() {
               {tab === "brand" && <BrandPanel />}
               {tab === "feature_visibility" && <FeatureVisibilityPanel />}
               {tab === "client_portal_controls" && <ClientPortalControlsPanel />}
+              {tab === "booking_flow_controls" && <BookingFlowControlsPanel />}
+              {tab === "dashboard_widgets" && <DashboardWidgetsPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -1079,14 +1087,245 @@ function ClientPortalControlsPanel() {
 }
 
 
+// ────────────────────────────────────────────────────────────────────────
+// Sprint 110di-19 — Booking Flow Controls + Dashboard Widget Controls.
+// Both reuse the existing settings storage via PUT /api/settings — no new
+// booking system, no duplicate panels. Per-service overrides layer on top
+// of the existing global booking_rules/day_to_day.guardrails.
+// ────────────────────────────────────────────────────────────────────────
+const BFC_SERVICES = [
+  { id: "daycare",     label: "Daycare",     master: "daycare",     color: "shGreen"     },
+  { id: "boarding",    label: "Boarding",    master: "boarding",    color: "shOrange"    },
+  { id: "training",    label: "Training",    master: "training",    color: "purple-400"  },
+  { id: "grooming",    label: "Grooming",    master: "grooming",    color: "shBlue"      },
+  { id: "photography", label: "Photography", master: "photography", color: "shBlue"      },
+];
+
+function BookingFlowControlsPanel() {
+  const [bfc, setBfc] = useState(null);
+  const [fv, setFv] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings").then(({ data }) => {
+      setBfc(data.booking_flow_controls);
+      setFv(data.feature_visibility || {});
+    });
+  }, []);
+  if (!bfc) return <div className="text-gray-400">Loading...</div>;
+
+  const setSvc = (svc, key, val) => {
+    setBfc(p => ({ ...p, per_service: { ...p.per_service, [svc]: { ...(p.per_service?.[svc] || {}), [key]: val } } }));
+    setDirty(true);
+  };
+  const setTop = (key, val) => { setBfc(p => ({ ...p, [key]: val })); setDirty(true); };
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await api.put("/settings", { booking_flow_controls: bfc });
+      setDirty(false); setMsg("Saved.");
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) { setMsg("Save failed: " + (e?.response?.data?.detail || e.message)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="booking-flow-controls-panel">
+      <div className="bg-bgPanel border-2 border-shBlue/40 rounded-2xl p-5 shadow-2xl flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shBlue mb-1">
+            <i className="fas fa-calendar-check mr-1.5"/>Booking Flow Controls
+          </p>
+          <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+            Per-Service <span className="text-shGreen">Rules.</span>
+          </h2>
+          <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
+            Per-service overrides on top of the global Booking Rules. Empty lead/advance fields fall back to the global setting. Admin role bypasses these guards.
+          </p>
+        </div>
+        <button onClick={save} disabled={!dirty || saving} data-testid="bfc-save"
+                className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50">
+          <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-save"} mr-2`}/>{saving ? "Saving..." : "Save"}
+        </button>
+        {msg && <span className="text-[12px] text-shGreen w-full" data-testid="bfc-msg">{msg}</span>}
+      </div>
+
+      {BFC_SERVICES.map(svc => {
+        const cur = bfc.per_service?.[svc.id] || {};
+        const masterOff = fv && fv[svc.master] === false;
+        return (
+          <div key={svc.id} data-testid={`bfc-svc-${svc.id}`}
+               className={`bg-bgPanel border border-bgHover rounded-2xl p-4 ${masterOff ? "opacity-60" : ""}`}>
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <p className={`text-[15px] font-black uppercase italic tracking-tight text-${svc.color}`}>{svc.label}</p>
+              {masterOff && <span className="text-[10px] text-shOrange uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Feature OFF</span>}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              {[
+                { k: "require_approval", label: "Require approval", desc: "Admin must approve before client sees Confirmed." },
+                { k: "instant_book",     label: "Instant book",     desc: "Auto-confirm on submit." },
+                { k: "same_day",         label: "Same-day allowed", desc: "Client can book for today." },
+              ].map(t => (
+                <label key={t.k} className="flex items-start gap-2 bg-bgBase border border-bgHover rounded-lg p-3 cursor-pointer">
+                  <input type="checkbox" checked={cur[t.k] === true} onChange={e => setSvc(svc.id, t.k, e.target.checked)}
+                         disabled={masterOff}
+                         data-testid={`bfc-${svc.id}-${t.k}`}
+                         className="mt-1"/>
+                  <span>
+                    <span className="text-[13px] font-black uppercase tracking-widest text-white block">{t.label}</span>
+                    <span className="text-[11px] text-gray-400">{t.desc}</span>
+                  </span>
+                </label>
+              ))}
+              <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+                <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Min lead (hours)</p>
+                <input type="number" min={0} value={cur.min_lead_hours ?? ""} placeholder="—"
+                       onChange={e => setSvc(svc.id, "min_lead_hours", e.target.value === "" ? null : Number(e.target.value))}
+                       disabled={masterOff}
+                       data-testid={`bfc-${svc.id}-min_lead_hours`}
+                       className="w-full mt-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-[13px] text-white"/>
+                <p className="text-[10px] text-gray-500 mt-1">Blank = use global</p>
+              </div>
+              <div className="bg-bgBase border border-bgHover rounded-lg p-3">
+                <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Max advance (days)</p>
+                <input type="number" min={0} value={cur.max_advance_days ?? ""} placeholder="—"
+                       onChange={e => setSvc(svc.id, "max_advance_days", e.target.value === "" ? null : Number(e.target.value))}
+                       disabled={masterOff}
+                       data-testid={`bfc-${svc.id}-max_advance_days`}
+                       className="w-full mt-1 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-[13px] text-white"/>
+                <p className="text-[10px] text-gray-500 mt-1">Blank = use global</p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-3">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">
+          <i className="fas fa-hourglass-half mr-1.5"/>Capacity behavior
+        </p>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="checkbox" checked={bfc.waitlist_on_capacity === true}
+                 onChange={e => setTop("waitlist_on_capacity", e.target.checked)}
+                 data-testid="bfc-waitlist-on-capacity" className="mt-1"/>
+          <span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-white block">Auto-offer waitlist when full</span>
+            <span className="text-[11px] text-gray-400">If Feature Visibility waitlist is off, this is ignored.</span>
+          </span>
+        </label>
+        <div>
+          <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Capacity-reached message</p>
+          <input value={bfc.capacity_reached_copy || ""} onChange={e => setTop("capacity_reached_copy", e.target.value)}
+                 data-testid="bfc-capacity-copy"
+                 className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const DASHBOARD_WIDGET_META = [
+  { id: "hero_card",         label: "Hero card",            desc: "'Today at Sit Happens' hero panel." },
+  { id: "today_tasks",       label: "Today's tasks",        desc: "Task readiness checklist for closing routine." },
+  { id: "upcoming_bookings", label: "Upcoming bookings",    desc: "Next 7 days of approved bookings." },
+  { id: "daycare_stats",     label: "Daycare stats",        desc: "Capacity / occupancy tile.", master: "daycare" },
+  { id: "boarding_stats",    label: "Boarding stats",       desc: "Kennel availability tile.",  master: "boarding" },
+  { id: "training_stats",    label: "Training stats",       desc: "Active programs tile.",      master: "training" },
+  { id: "grooming_stats",    label: "Grooming stats",       desc: "Upcoming grooms tile.",      master: "grooming" },
+  { id: "total_dogs",        label: "Total dogs",           desc: "Lifetime dog count tile." },
+  { id: "dog_fact",          label: "Dog Fact of the Day",  desc: "Admin-view of the daily breed fact." },
+  { id: "trivia",            label: "Daily trivia",         desc: "Admin trivia card.", master: "trivia" },
+  { id: "pnl",               label: "P&L summary",          desc: "Month-to-date revenue / expenses / net." },
+  { id: "mileage",           label: "Mileage",              desc: "MTD logged miles + IRS rate." },
+  { id: "owner_clock",       label: "Owner clock",          desc: "Owner's clock-in/out widget." },
+  { id: "closing_routine",   label: "Closing routine",      desc: "End-of-day checklist." },
+  { id: "quick_links",       label: "Quick links",          desc: "Tile grid (clients, dogs, bookings, etc.)." },
+];
+
+function DashboardWidgetsPanel() {
+  const [dw, setDw] = useState(null);
+  const [fv, setFv] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => {
+    api.get("/settings").then(({ data }) => {
+      setDw(data.dashboard_widgets || {});
+      setFv(data.feature_visibility || {});
+    });
+  }, []);
+  if (!dw) return <div className="text-gray-400">Loading...</div>;
+
+  const toggle = (id) => { setDw(p => ({ ...p, [id]: !(p[id] !== false) })); setDirty(true); };
+  const save = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await api.put("/settings", { dashboard_widgets: dw });
+      setDirty(false); setMsg("Saved.");
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) { setMsg("Save failed: " + (e?.response?.data?.detail || e.message)); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="dashboard-widgets-panel">
+      <div className="bg-bgPanel border-2 border-shGreen/40 rounded-2xl p-5 shadow-2xl flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+            <i className="fas fa-grip mr-1.5"/>Dashboard Widget Controls
+          </p>
+          <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+            Slim Your <span className="text-shGreen">Dashboard.</span>
+          </h2>
+          <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
+            Hide widgets without touching the underlying data. Reports and APIs are unaffected.
+          </p>
+        </div>
+        <button onClick={save} disabled={!dirty || saving} data-testid="dw-save"
+                className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50">
+          <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-save"} mr-2`}/>{saving ? "Saving..." : "Save"}
+        </button>
+        {msg && <span className="text-[12px] text-shGreen w-full" data-testid="dw-msg">{msg}</span>}
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        {DASHBOARD_WIDGET_META.map(w => {
+          const on = dw[w.id] !== false;
+          const masterOff = w.master && fv && fv[w.master] === false;
+          return (
+            <div key={w.id} data-testid={`dw-row-${w.id}`}
+                 className={`flex items-start gap-3 p-3 rounded-lg border ${on && !masterOff ? "bg-bgBase border-bgHover" : "bg-bgBase/40 border-bgHover/60 opacity-70"}`}>
+              <div className="flex-1 min-w-0">
+                <p className={`text-[14px] font-black uppercase tracking-wide ${on && !masterOff ? "text-white" : "text-gray-500"}`}>{w.label}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{w.desc}</p>
+                {masterOff && (
+                  <p className="text-[10px] text-shOrange mt-1 uppercase tracking-widest">
+                    <i className="fas fa-lock mr-1"/>Disabled by Feature Visibility ({w.master})
+                  </p>
+                )}
+              </div>
+              <CpcSwitch on={on && !masterOff} disabled={masterOff}
+                         testid={`dw-toggle-${w.id}`}
+                         onClick={() => !masterOff && toggle(w.id)} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 function BrandPanel() {
   const ctx = useTheme();
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   // ────────────────────────────────────────────────────────────────────────
-  // Sprint 110di-18 — Client Portal Controls panel inlined above BrandPanel
-  // by moving the function above this comment. See block right above.
+  // Sprint 110di-18/19 — Sub-panels (Client Portal Controls, Booking Flow
+  // Controls, Dashboard Widget Controls) defined directly above this one.
   // ────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {

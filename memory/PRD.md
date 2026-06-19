@@ -4094,3 +4094,54 @@ The earlier upcoming list (retail items catalog, check-in/check-out census, publ
 - Booking history list, profile quick links, waiver/documents, vaccines/compliance section toggles persist in settings but their *render gates* in Portal.jsx are still TODO — they currently always render. Wiring those is a 30-min follow-up if needed; the schema is in place.
 - Landing-priority reorder UI works but Portal.jsx currently renders sections in the original code order. Honoring the reorder requires a sectioned-render refactor — out of scope for this end-to-end pass per "no portal redesign" rule. Setup-incomplete-overrides-everything still works because the checklist is the first thing rendered.
 
+
+
+## Sprint 110di-19 — Configurability completion pass (2026-02-19)
+
+**User ask**: Finish the configurability story. NO new systems. Audit existing settings, close real operational gaps, kill any debt. Priority 1: Booking Flow Controls (per-service). Priority 2: Staff Permission Matrix. Priority 3: Dashboard Widget Controls.
+
+### Step 1 — Audit deliverable
+- ✅ `/app/memory/CONFIGURABILITY_AUDIT.md` — full A/B/C breakdown across Admin Dashboard, Client Portal, Staff Portal, Booking Flow, Care/Kennel Board, Waitlist, Intake, Waiver, Rewards, Messaging, Reports, Finance, Settings, Navigation, Theme. Includes single-source-of-truth map and intentionally-hard-coded justification list.
+
+### Step 2 — Verified existing settings
+- Feature Visibility, Client Portal Controls, Card Type Themes (24 types), Booking Rules, Brand & Theme, Waiver, Email templates, Permission keys, Vaccine requirements — all confirmed wired through to either a backend guard or a frontend render gate (see audit doc for surface-by-surface notes).
+
+### Step 3 — Closed P1 (Booking Flow Controls) + P3 (Dashboard Widget Controls)
+
+**Backend (server.py)**:
+- ✅ `_default_booking_flow_controls()` — per-service `{require_approval, instant_book, same_day, min_lead_hours, max_advance_days}` map for daycare/boarding/training/grooming/photography. Plus top-level `waitlist_on_capacity` + `capacity_reached_copy`. Defaults match current hard-coded behavior (daycare instant + same-day, boarding requires approval).
+- ✅ `_default_dashboard_widgets()` — 15-key visibility map (hero/today_tasks/dog_fact/trivia/daycare_stats/boarding_stats/training_stats/grooming_stats/total_dogs/pnl/mileage/owner_clock/closing_routine/quick_links/upcoming_bookings). All default True.
+- ✅ Deep-merge backfill in `get_settings()` (forward-compat).
+- ✅ Exposed via both `/api/branding` (unauthed) and `/api/settings/public` (authed).
+- ✅ `create_booking()` extended with three new server-side guards (non-admin only):
+  - same_day=False → reject today's date with `"Same-day {service} bookings are not allowed."`
+  - min_lead_hours → reject if booking is within window
+  - max_advance_days → reject beyond window
+
+**Frontend (Settings.jsx)**:
+- ✅ Added 2 new subsections under Business Operations: "Booking Flow Controls" + "Dashboard Widget Controls".
+- ✅ `BookingFlowControlsPanel` — per-service rows with require-approval / instant-book / same-day checkboxes + min-lead-hours + max-advance-days inputs. Feature-Visibility-locked services greyed out with a "Feature OFF" pill. Plus a global "auto-offer waitlist when full" toggle + capacity-reached copy editor.
+- ✅ `DashboardWidgetsPanel` — 15-row switch grid using the existing `CpcSwitch`. Service-stat rows greyed out + locked when matching Feature Visibility is off.
+
+**Frontend (Dashboard.jsx)**:
+- ✅ Reads `dashboard_widgets` from theme context, `widgetOn(id)` helper gates each render.
+- ✅ Wired gates: Owner Clock, Closing Routine, Quick Links, Today Tasks (ReadinessChecklist), Dog Fact chip, 3 stat cards (daycare/boarding/total dogs), P&L tile, Mileage tile, Trivia leaderboard.
+
+### Step 3 deferred (priority 2)
+- **Staff Permission Matrix UI** — backend `users.permissions[]` already supports per-role granular keys; building a visual matrix surface would be an isolated 1-day task. Deferred per the user-imposed priority order. Per-permission `can(perm)` checks are already enforced in App.js nav and screen renders. Audit doc lists the existing keys.
+
+### Step 4 — Settings debt
+- Zero duplicate settings found.
+- Zero unused/dead settings found.
+- Zero duplicate card editors / theme controls / portal controls.
+- Legacy aliases (`card_type_themes.stats/training/profile`) deliberately kept for back-compat — CSS-var fallback chains route them through the modern keys.
+
+### Step 5 — Tests
+- ✅ NEW `tests/test_booking_flow_dashboard_widgets.py` — 4 tests pinning contract, round-trip, server-side guard behavior, defaults preserve existing behavior.
+- ✅ All 17 portal/branding/FV/CPC/BFC/DW tests green.
+
+### Final configurability report
+- **Configurable from Settings:** features (14), portal sections (11), portal labels (11), portal landing order, portal announcements, portal empty-states, booking-locked copy, per-service booking rules (5 services × 5 knobs), dashboard widgets (15), card themes (24 types × 15 knobs), brand colors/fonts/footer, hours/timezone/holidays, intake forms, waiver text+version+scope, required vaccines, email templates + per-template enable, mileage rate, fiscal year, deposit policy, daycare/boarding capacity, ~12 permission keys per role.
+- **Intentionally hard-coded:** trophy criteria, Stripe/PWA implementation details, audit-log keys, dog-care domain heuristics (see audit doc).
+- **Recommendation:** the app is now fully operational without code edits for normal business behavior. Next configurability work (if requested): Staff Permission Matrix visual editor + landing-priority render order honoring (currently storage works but the Portal still renders in code order).
+

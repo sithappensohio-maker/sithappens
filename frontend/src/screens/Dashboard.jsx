@@ -14,6 +14,7 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
 import ReadinessChecklist from "../components/ReadinessChecklist";
 import DashboardQuickLinks from "../components/DashboardQuickLinks";
+import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
 const DEFAULT_MOOD_TAGS = ["Playful", "Calm", "Napped Well", "Made a Friend", "Worked on Training", "Star of the Day", "Tired Pup", "Extra Hungry"];
@@ -27,6 +28,11 @@ function fmtTime(iso) {
 }
 
 export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {}, can = () => true }) {
+  // Sprint 110di-19 — Dashboard Widget Controls. Single source of truth via
+  // /api/branding. `widgetOn(id)` defaults TRUE (current behavior preserved).
+  const { branding: _br } = useTheme();
+  const _dw = _br?.dashboard_widgets || {};
+  const widgetOn = (id) => _dw[id] !== false;
   const [stats, setStats] = useState(null);
   const [moodTags, setMoodTags] = useState(DEFAULT_MOOD_TAGS);
   const [reportFor, setReportFor] = useState(null); // booking
@@ -201,15 +207,18 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         </div>
       </div>
 
-      {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="owner-tools-row">
-        <OwnerClock/>
-        <EndOfDayPanel onJump={(bid)=>setDetailFor({ id: bid })}/>
-      </div>
+      {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up
+          Sprint 110di-19 — gated by Dashboard Widget Controls */}
+      {(widgetOn("owner_clock") || widgetOn("closing_routine")) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="owner-tools-row">
+          {widgetOn("owner_clock") && <OwnerClock/>}
+          {widgetOn("closing_routine") && <EndOfDayPanel onJump={(bid)=>setDetailFor({ id: bid })}/>}
+        </div>
+      )}
 
       {/* Operations polish — Quick links to new ops screens + readiness checklist */}
-      <DashboardQuickLinks onNavigate={onNavigate} can={can} />
-      <ReadinessChecklist onNavigate={onNavigate} />
+      {widgetOn("quick_links") && <DashboardQuickLinks onNavigate={onNavigate} can={can} />}
+      {widgetOn("today_tasks") && <ReadinessChecklist onNavigate={onNavigate} />}
 
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
@@ -357,22 +366,25 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         }
       }} />
 
-      {/* Sprint 110ax — Daily dog fact (matches what clients see in their portal) */}
-      <DogFactCard variant="chip" />
+      {/* Sprint 110ax — Daily dog fact (matches what clients see in their portal)
+          Sprint 110di-19 — gated by Dashboard Widget Controls */}
+      {widgetOn("dog_fact") && <DogFactCard variant="chip" />}
 
+      {(widgetOn("daycare_stats") || widgetOn("boarding_stats") || widgetOn("total_dogs")) && (
       <div className="grid grid-cols-3 gap-3 md:gap-6">
-        <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-stats"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />
-        <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-stats"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />
-        <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass="card-stats"             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />
+        {widgetOn("daycare_stats")  && <StatCard label="Daycare Today" value={`${stats.daycare_occupancy} / ${stats.daycare_capacity}`} accent="border-t-shBlue" gradClass="card-stats"    textColor="text-white" testId="stat-daycare" onClick={()=>onNavigate("schedule")} />}
+        {widgetOn("boarding_stats") && <StatCard label="Boarding Today" value={stats.boarding_today}   accent="border-t-shGreen"  gradClass="card-stats"    textColor="text-shGreen" testId="stat-boarding" onClick={()=>onNavigate("schedule")} />}
+        {widgetOn("total_dogs")     && <StatCard label="Total Dogs"    value={stats.total_dogs}      accent="border-t-bgHover"  gradClass="card-stats"             textColor="text-white" testId="stat-dogs" onClick={()=>onNavigate("dogs")} />}
       </div>
+      )}
 
-      {todayPnl && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
+      {todayPnl && widgetOn("pnl") && <TodayPnlTile data={todayPnl} expanded={pnlExpanded} onToggle={()=>setPnlExpanded(e=>!e)} onNavStaff={()=>onNavigate("staff")} onRefresh={refreshPnl} />}
 
       {/* Sprint 110bq — Daily mileage quick-log */}
-      <MileageDashTile onNavTax={()=>onNavigate("staff")} />
+      {widgetOn("mileage") && <MileageDashTile onNavTax={()=>onNavigate("staff")} />}
 
       {/* Sprint 110bk — Trivia leaderboard at-a-glance */}
-      <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />
+      {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
 
 
       {programs && programs.total > 0 && (

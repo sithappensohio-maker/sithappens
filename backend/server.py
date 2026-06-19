@@ -1519,6 +1519,37 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     if user.get("role") != "admin" and body.service_type in fv and fv.get(body.service_type) is False:
         raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings are currently disabled.")
 
+    # Sprint 110di-19 — Per-service Booking Flow Controls. Each service can
+    # opt into stricter rules than the global `booking_rules` defaults
+    # (require_approval / instant_book / same_day / min_lead_hours /
+    # max_advance_days). Admins still bypass these checks so they can fix
+    # historical data and rescue clients.
+    bfc = (settings.get("booking_flow_controls") or {}).get("per_service") or {}
+    svc_rules = bfc.get(body.service_type) or {}
+    if user.get("role") != "admin" and body.date:
+        from datetime import datetime as _dt, date as _date, timedelta as _td
+        try:
+            req_date = _dt.fromisoformat(str(body.date)[:10]).date() if not isinstance(body.date, _date) else body.date
+        except Exception:
+            req_date = None
+        if req_date:
+            now = _dt.now()
+            today = now.date()
+            if svc_rules.get("same_day") is False and req_date == today:
+                raise HTTPException(status_code=400, detail=f"Same-day {body.service_type} bookings are not allowed. Please pick a future date.")
+            min_lead = svc_rules.get("min_lead_hours")
+            if isinstance(min_lead, (int, float)) and min_lead > 0:
+                # Treat the booking moment as 00:01 of the requested day for
+                # comparison — same-day is already handled above.
+                booking_dt = _dt.combine(req_date, _dt.min.time())
+                hours_lead = (booking_dt - now).total_seconds() / 3600.0
+                if hours_lead < float(min_lead):
+                    raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings require at least {int(min_lead)}h advance notice.")
+            max_adv = svc_rules.get("max_advance_days")
+            if isinstance(max_adv, (int, float)) and max_adv > 0:
+                if (req_date - today).days > int(max_adv):
+                    raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings can only be made up to {int(max_adv)} days in advance.")
+
     # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
     # book regular services; admin can override by passing the booking through
     # manually with `override_capacity=True` (treated as a force-flag).
@@ -4063,6 +4094,58 @@ def _default_settings() -> dict:
         # higher master switch; this only refines visibility within
         # features that are already enabled.
         "client_portal_controls": _default_client_portal_controls(),
+        # Sprint 110di-19 — Booking Flow Controls. Per-service overrides on
+        # top of the global `booking_rules` + `day_to_day.guardrails`. ONE
+        # extension to the existing booking system — no second engine.
+        "booking_flow_controls": _default_booking_flow_controls(),
+        # Sprint 110di-19 — Dashboard Widget Controls. Visibility-only
+        # toggles for individual admin dashboard widgets. Does not touch
+        # underlying data.
+        "dashboard_widgets": _default_dashboard_widgets(),
+    }
+
+
+def _default_booking_flow_controls() -> dict:
+    """Per-service overrides for require_approval/instant/same_day/lead_time/
+    max_advance. Empty per_service maps mean: fall back to the global
+    booking_rules + day_to_day.guardrails. Admin sets the override only when
+    they want a service to behave differently from the global default."""
+    return {
+        "per_service": {
+            "daycare":     {"require_approval": False, "instant_book": True,  "same_day": True,  "min_lead_hours": None, "max_advance_days": None},
+            "boarding":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
+            "training":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
+            "grooming":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
+            "photography": {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
+        },
+        # When a service is at capacity, do we auto-offer the waitlist?
+        # Falls through to feature_visibility.waitlist as a master switch.
+        "waitlist_on_capacity":   True,
+        # When a service is at capacity AND waitlist is off, what to show?
+        "capacity_reached_copy":  "We're full for that day — please pick another date.",
+    }
+
+
+def _default_dashboard_widgets() -> dict:
+    """Admin dashboard widget visibility. All default True (current
+    behavior preserved). Hides only the visual surface — underlying
+    queries/data still run so reports stay accurate."""
+    return {
+        "hero_card":         True,
+        "today_tasks":       True,
+        "dog_fact":          True,
+        "trivia":            True,
+        "daycare_stats":     True,
+        "boarding_stats":    True,
+        "training_stats":    True,
+        "grooming_stats":    True,
+        "total_dogs":        True,
+        "pnl":               True,
+        "mileage":           True,
+        "owner_clock":       True,
+        "closing_routine":   True,
+        "quick_links":       True,
+        "upcoming_bookings": True,
     }
 
 
@@ -4250,6 +4333,39 @@ async def get_settings() -> dict:
                 if sub_key not in cpc:
                     cpc[sub_key] = sub_default
                     changed = True
+    # Sprint 110di-19 — Booking Flow Controls + Dashboard Widget Controls.
+    # Deep-merge backfill so existing installs gain the new keys without
+    # losing admin overrides.
+    bfc_default = _default_booking_flow_controls()
+    if not isinstance(s.get("booking_flow_controls"), dict):
+        s["booking_flow_controls"] = bfc_default
+        changed = True
+    else:
+        cur = s["booking_flow_controls"]
+        for k, v in bfc_default.items():
+            if k == "per_service" and isinstance(cur.get("per_service"), dict):
+                # merge each service-specific override individually
+                for svc, defaults in v.items():
+                    if svc not in cur["per_service"]:
+                        cur["per_service"][svc] = defaults
+                        changed = True
+                    else:
+                        for ks, vd in defaults.items():
+                            if ks not in cur["per_service"][svc]:
+                                cur["per_service"][svc][ks] = vd
+                                changed = True
+            elif k not in cur:
+                cur[k] = v
+                changed = True
+    dw_default = _default_dashboard_widgets()
+    if not isinstance(s.get("dashboard_widgets"), dict):
+        s["dashboard_widgets"] = dw_default
+        changed = True
+    else:
+        for k, v in dw_default.items():
+            if k not in s["dashboard_widgets"]:
+                s["dashboard_widgets"][k] = v
+                changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -4372,6 +4488,9 @@ async def fetch_branding():
         # portal/login surfaces read the same single source of truth
         # without an extra round-trip.
         "client_portal_controls":  _merge_cpc(s.get("client_portal_controls")),
+        # Sprint 110di-19 — Booking Flow Controls + Dashboard Widget Controls.
+        "booking_flow_controls":   {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
+        "dashboard_widgets":       {**_default_dashboard_widgets(),     **(s.get("dashboard_widgets") or {})},
     }
 
 
@@ -4418,6 +4537,10 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         "feature_visibility": {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
         # Sprint 110di-18 — Client Portal Controls.
         "client_portal_controls": _merge_cpc(s.get("client_portal_controls")),
+        # Sprint 110di-19 — Booking Flow Controls (per-service overrides) +
+        # Dashboard Widget Controls (visibility-only).
+        "booking_flow_controls":  {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
+        "dashboard_widgets":      {**_default_dashboard_widgets(), **(s.get("dashboard_widgets") or {})},
     }
 
 @api.put("/settings")
