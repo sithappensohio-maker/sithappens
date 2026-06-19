@@ -81,10 +81,10 @@ const DEFAULT_BRANDING = {
   card_glow_strength:   0.5,
 };
 
-// Sprint 110di-12 — Card Type Themes. Mirrors the backend
-// `_card_type_theme_defaults()` so we can render the right look even before
-// /branding has loaded.
-const CT_BASE = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, heading: "", text: "" };
+// Sprint 110di-12/13 — Card Type Themes. Mirrors the backend
+// `_card_type_theme_defaults()`. Inner highlight rolled into each type so
+// the Default Card is the single source of truth for global panel chrome.
+const CT_BASE = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
 export const DEFAULT_CARD_TYPES = {
   default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
   info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
@@ -195,8 +195,10 @@ function clamp01(v, fallback) {
     const t = { ...DEFAULT_CARD_TYPES[id], ...(types[id] || {}) };
     const bRgb = hexToRgb(t.border);
     const gRgb = hexToRgb(t.glow);
+    const ihRgb = hexToRgb(t.inner_highlight_color || "#FFFFFF");
     const bAlpha = clamp01(t.border_opacity, 0.75);
     const gAlpha = clamp01(t.glow_opacity, 0.25);
+    const ihAlpha = clamp01(t.inner_highlight_opacity, 0.08);
     const bWidth = Math.max(0, parseFloat(t.border_width ?? 2));
     const gBlur  = Math.max(0, parseFloat(t.glow_blur ?? 14));
     root.style.setProperty(`--ct-${id}-bg`,         t.bg);
@@ -207,8 +209,23 @@ function clamp01(v, fallback) {
     root.style.setProperty(`--ct-${id}-glow-rgba`,  `rgba(${gRgb}, ${gAlpha})`);
     root.style.setProperty(`--ct-${id}-glow-blur`,  `${gBlur}px`);
     root.style.setProperty(`--ct-${id}-accent`,     t.accent);
+    root.style.setProperty(`--ct-${id}-inner-highlight-rgba`, `rgba(${ihRgb}, ${ihAlpha})`);
     if (t.heading) root.style.setProperty(`--ct-${id}-heading`, t.heading);
     if (t.text)    root.style.setProperty(`--ct-${id}-text`,    t.text);
+    // Sprint 110di-13 — Mirror the DEFAULT type to the legacy global card
+    // variables so `.bg-bgPanel::after` (and any code still reading
+    // `--card-border-rgba` / `--card-glow-rgba` / `--card-inner-highlight-rgba`)
+    // also picks up the unified Default Card values. Single source of truth.
+    if (id === "default") {
+      root.style.setProperty("--card-border-color",   t.border);
+      root.style.setProperty("--card-border-rgba",    `rgba(${bRgb}, ${bAlpha})`);
+      root.style.setProperty("--card-border-width",   `${bWidth}px`);
+      root.style.setProperty("--card-glow-color",     t.glow);
+      root.style.setProperty("--card-glow-rgba",      `rgba(${gRgb}, ${gAlpha})`);
+      root.style.setProperty("--card-glow-blur",      `${gBlur}px`);
+      root.style.setProperty("--card-inner-highlight-color", t.inner_highlight_color || "#FFFFFF");
+      root.style.setProperty("--card-inner-highlight-rgba",  `rgba(${ihRgb}, ${ihAlpha})`);
+    }
   });
   // Sprint 110dm — admin-controlled UI knobs. data-* attributes drive CSS
   // selectors (splatter intensity, letter case, time/date format, week start).

@@ -814,17 +814,6 @@ function BrandPanel() {
 
       <CardTypeThemesPanel draft={draft} setDraft={setDraft} />
 
-      <ThemeGroup title="Cards & Panels" subtitle="Border + glow + inset highlight so dark cards stop blending into the background. Applies app-wide." testid="theme-group-card">
-        <ColorField testid="card-border-color" label="Card Border Color" sub="resting edge tint" value={draft.card_border_color} onChange={(v)=>setDraft({...draft, card_border_color: v})} />
-        <SliderField testid="card-border-opacity" label="Card Border Opacity" sub="0 (off) → 1 (solid)" min={0} max={1} step={0.05} value={draft.card_border_opacity} onChange={(v)=>setDraft({...draft, card_border_opacity: v})} />
-        <SliderField testid="card-border-width" label="Card Border Width" sub="px" min={0} max={4} step={1} value={draft.card_border_width} onChange={(v)=>setDraft({...draft, card_border_width: v})} suffix="px" />
-        <ColorField testid="card-glow-color" label="Card Glow Color" sub="halo behind cards" value={draft.card_glow_color} onChange={(v)=>setDraft({...draft, card_glow_color: v})} />
-        <SliderField testid="card-glow-opacity" label="Card Glow Opacity" sub="0 (off) → 1 (solid halo)" min={0} max={1} step={0.05} value={draft.card_glow_opacity} onChange={(v)=>setDraft({...draft, card_glow_opacity: v})} />
-        <SliderField testid="card-glow-blur" label="Card Glow Blur" sub="px (higher = softer halo)" min={0} max={40} step={1} value={draft.card_glow_blur} onChange={(v)=>setDraft({...draft, card_glow_blur: v})} suffix="px" />
-        <ColorField testid="card-inner-highlight-color" label="Inner Highlight Color" sub="top-edge lit sheen" value={draft.card_inner_highlight_color} onChange={(v)=>setDraft({...draft, card_inner_highlight_color: v})} />
-        <SliderField testid="card-inner-highlight-opacity" label="Inner Highlight Opacity" sub="0 (off) → 1 (full sheen)" min={0} max={1} step={0.01} value={draft.card_inner_highlight_opacity} onChange={(v)=>setDraft({...draft, card_inner_highlight_opacity: v})} />
-      </ThemeGroup>
-
       <Section title="Live Preview" subtitle="A quick taste of how things look with the choices above.">
         {/* Sprint 110di-8 — Expanded live preview surfaces (card / primary
             button / secondary button / input / warning pill / sidebar). Uses
@@ -1032,7 +1021,7 @@ function BrandPanel() {
 // Sprint 110di-12 — Card Type Themes. Canonical Sit Happens defaults; also
 // used by the "Reset card themes" button and the export/import fallback.
 function SH_CARD_TYPE_DEFAULTS() {
-  const base = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, heading: "", text: "" };
+  const base = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
   return {
     default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
     info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
@@ -1111,7 +1100,8 @@ function CardTypeThemesPanel({ draft, setDraft }) {
               data-testid="theme-group-card-types-toggle">
         <div>
           <p className="text-[14px] font-black text-white uppercase tracking-widest">Card Type Themes</p>
-          <p className="text-[12px] text-gray-500 mt-0.5">Recolor stats, success, warning, danger, payment, training, booking, profile, info, and default cards independently.</p>
+          <p className="text-[12px] text-gray-500 mt-0.5">Control default card styling plus specific card types like stats, success, warning, danger, payment, training, booking, profile, and info.</p>
+          <p className="text-[11px] text-shGreen mt-1"><i className="fas fa-info-circle mr-1"/>Default Card controls normal panels app-wide. Other card types only override the values they define — blank/zero fields fall back to Default Card.</p>
         </div>
         <i className={`fas ${open ? "fa-chevron-up" : "fa-chevron-down"} text-gray-400`}/>
       </button>
@@ -1177,6 +1167,12 @@ function CardTypeThemesPanel({ draft, setDraft }) {
                       data-testid="ct-reset-current"
                       className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
                 <i className="fas fa-rotate-left mr-1"/>Reset this type
+              </button>
+              <button type="button"
+                      onClick={()=>{ setActive("default"); const next = { ...types, default: { ...SH_CARD_TYPE_DEFAULTS().default } }; setDraft({ ...draft, card_type_themes: next }); }}
+                      data-testid="ct-reset-default"
+                      className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                <i className="fas fa-rotate-left mr-1"/>Reset Default Card
               </button>
               <button type="button" onClick={resetAll}
                       data-testid="ct-reset-all"
@@ -4103,4 +4099,3 @@ function DogFactsPanel() {
     </div>
   );
 }
-

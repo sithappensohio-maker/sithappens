@@ -4254,9 +4254,13 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
 
 def _card_type_theme_defaults() -> Dict[str, Any]:
     """Sprint 110di-12 — Sit Happens default palette for the 10 card type
-    themes. Each entry drives a reusable `.card-{id}` class via CSS vars."""
+    themes. Each entry drives a reusable `.card-{id}` class via CSS vars.
+    Sprint 110di-13 — Unified: each type now also carries inner_highlight
+    color/opacity (rolled in from the legacy global card chrome controls)."""
     base = {"border_opacity": 0.75, "border_width": 2,
             "glow_opacity": 0.25, "glow_blur": 14,
+            "inner_highlight_color": "#FFFFFF",
+            "inner_highlight_opacity": 0.08,
             "heading": "", "text": ""}
     return {
         "default":  {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},

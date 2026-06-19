@@ -97,15 +97,14 @@ body {
   inset: 0;
   border-radius: inherit;
   pointer-events: none;
-  /* Sprint 110di-11 — stronger neon edge so the card actually separates from
-     the dark background. Combines:
-       1. solid border at admin's chosen width/opacity (was rgba-only before)
-       2. outer glow with explicit blur + opacity (was a 0–1 strength fudge)
-       3. inset white highlight so the top edge looks lit, not just outlined. */
-  border: var(--card-border-width, 2px) solid var(--card-border-rgba, rgba(0, 140, 255, 0.85));
+  /* Sprint 110di-13 — Single source of truth: read from Default Card vars so
+     the global card chrome and the Card Type Themes system can't drift. The
+     legacy --card-* vars are also kept in sync by ThemeProvider for any code
+     still reading them directly. */
+  border: var(--ct-default-border-w, var(--card-border-width, 2px)) solid var(--ct-default-border-rgba, var(--card-border-rgba, rgba(0, 140, 255, 0.85)));
   box-shadow:
-    0 0 var(--card-glow-blur, 14px) var(--card-glow-rgba, rgba(0, 140, 255, 0.35)),
-    inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255, 255, 255, 0.08));
+    0 0 var(--ct-default-glow-blur, var(--card-glow-blur, 14px)) var(--ct-default-glow-rgba, var(--card-glow-rgba, rgba(0, 140, 255, 0.35))),
+    inset 0 1px 0 var(--ct-default-inner-highlight-rgba, var(--card-inner-highlight-rgba, rgba(255, 255, 255, 0.08)));
   z-index: 0;
 }
 /* Make sure direct children sit above the overlay. Without this, content
@@ -144,25 +143,25 @@ body {
 .card-booking > *, .card-profile > * { position: relative; z-index: 1; }
 
 .card-default  { background: var(--ct-default-bg,  #05090D); }
-.card-default::after  { border: var(--ct-default-border-w,  2px) solid var(--ct-default-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-default-glow-blur, 14px) var(--ct-default-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-default::after  { border: var(--ct-default-border-w,  2px) solid var(--ct-default-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-default-glow-blur, 14px) var(--ct-default-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08)); }
 .card-info     { background: var(--ct-info-bg,     #05090D); }
-.card-info::after     { border: var(--ct-info-border-w,     2px) solid var(--ct-info-border-rgba,     rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-info-glow-blur,    14px) var(--ct-info-glow-rgba,     rgba(0,140,255,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-info::after     { border: var(--ct-info-border-w,     2px) solid var(--ct-info-border-rgba,     rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-info-glow-blur,    14px) var(--ct-info-glow-rgba,     rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-info-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-stats    { background: var(--ct-stats-bg,    #05090D); }
-.card-stats::after    { border: var(--ct-stats-border-w,    2px) solid var(--ct-stats-border-rgba,    rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-stats-glow-blur,   14px) var(--ct-stats-glow-rgba,    rgba(0,140,255,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-stats::after    { border: var(--ct-stats-border-w,    2px) solid var(--ct-stats-border-rgba,    rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-stats-glow-blur,   14px) var(--ct-stats-glow-rgba,    rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-stats-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-success  { background: var(--ct-success-bg,  #071006); }
-.card-success::after  { border: var(--ct-success-border-w,  2px) solid var(--ct-success-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-success-glow-blur, 14px) var(--ct-success-glow-rgba,  rgba(155,203,0,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-success::after  { border: var(--ct-success-border-w,  2px) solid var(--ct-success-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-success-glow-blur, 14px) var(--ct-success-glow-rgba,  rgba(155,203,0,0.25)), inset 0 1px 0 var(--ct-success-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-warning  { background: var(--ct-warning-bg,  #130B02); }
-.card-warning::after  { border: var(--ct-warning-border-w,  2px) solid var(--ct-warning-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-warning-glow-blur, 14px) var(--ct-warning-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-warning::after  { border: var(--ct-warning-border-w,  2px) solid var(--ct-warning-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-warning-glow-blur, 14px) var(--ct-warning-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-warning-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-danger   { background: var(--ct-danger-bg,   #170407); }
-.card-danger::after   { border: var(--ct-danger-border-w,   2px) solid var(--ct-danger-border-rgba,   rgba(255,59,92,0.75)); box-shadow: 0 0 var(--ct-danger-glow-blur,  14px) var(--ct-danger-glow-rgba,   rgba(255,59,92,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-danger::after   { border: var(--ct-danger-border-w,   2px) solid var(--ct-danger-border-rgba,   rgba(255,59,92,0.75)); box-shadow: 0 0 var(--ct-danger-glow-blur,  14px) var(--ct-danger-glow-rgba,   rgba(255,59,92,0.25)), inset 0 1px 0 var(--ct-danger-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-payment  { background: var(--ct-payment-bg,  #09080D); }
-.card-payment::after  { border: var(--ct-payment-border-w,  2px) solid var(--ct-payment-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-payment-glow-blur, 14px) var(--ct-payment-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-payment::after  { border: var(--ct-payment-border-w,  2px) solid var(--ct-payment-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-payment-glow-blur, 14px) var(--ct-payment-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-payment-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-training { background: var(--ct-training-bg, #070914); }
-.card-training::after { border: var(--ct-training-border-w, 2px) solid var(--ct-training-border-rgba, rgba(168,85,247,0.75)); box-shadow: 0 0 var(--ct-training-glow-blur,14px) var(--ct-training-glow-rgba, rgba(168,85,247,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-training::after { border: var(--ct-training-border-w, 2px) solid var(--ct-training-border-rgba, rgba(168,85,247,0.75)); box-shadow: 0 0 var(--ct-training-glow-blur,14px) var(--ct-training-glow-rgba, rgba(168,85,247,0.25)), inset 0 1px 0 var(--ct-training-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-booking  { background: var(--ct-booking-bg,  #050B14); }
-.card-booking::after  { border: var(--ct-booking-border-w,  2px) solid var(--ct-booking-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-booking-glow-blur, 14px) var(--ct-booking-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-booking::after  { border: var(--ct-booking-border-w,  2px) solid var(--ct-booking-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-booking-glow-blur, 14px) var(--ct-booking-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-booking-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-profile  { background: var(--ct-profile-bg,  #080C16); }
-.card-profile::after  { border: var(--ct-profile-border-w,  2px) solid var(--ct-profile-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-profile-glow-blur, 14px) var(--ct-profile-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--card-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-profile::after  { border: var(--ct-profile-border-w,  2px) solid var(--ct-profile-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-profile-glow-blur, 14px) var(--ct-profile-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-profile-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .bg-bgBase {
   background-image:
     linear-gradient(135deg,
