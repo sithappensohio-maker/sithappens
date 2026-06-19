@@ -48,9 +48,12 @@ export default function BookingPriceEstimate({
   isMultiDate = false,
   isWaitlist = false,
   addons = [],
+  dropoffTime = "",
+  pickupTime = "",
 }) {
   const [services, setServices] = useState([]);
   const [credits, setCredits] = useState({ daycare: 0, training: 0, boarding: 0 });
+  const [rules, setRules] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -58,8 +61,12 @@ export default function BookingPriceEstimate({
     Promise.all([
       api.get("/services"),
       api.get("/portal/me"),
+      // Sprint 110di-31 — pull booking_rules so we can mirror the server's
+      // half-day formula client-side. `/settings/public` is unauthenticated
+      // and small, and de-duplicated via the api-layer in-flight cache.
+      api.get("/settings/public").catch(() => ({ data: {} })),
     ])
-      .then(([sRes, mRes]) => {
+      .then(([sRes, mRes, settRes]) => {
         if (cancelled) return;
         setServices(Array.isArray(sRes.data) ? sRes.data : []);
         const c = mRes.data?.client || {};
@@ -68,10 +75,12 @@ export default function BookingPriceEstimate({
           training: Number(c.training_credits || 0),
           boarding: Number(c.boarding_credits || 0),
         });
+        setRules(settRes.data?.booking_rules || {});
       })
       .catch(() => {
-        // Defensive — never block the booking flow on a failed estimate.
-        if (!cancelled) { setServices([]); setCredits({ daycare: 0, training: 0, boarding: 0 }); }
+        if (!cancelled) {
+          setServices([]); setCredits({ daycare: 0, training: 0, boarding: 0 }); setRules({});
+        }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -105,16 +114,44 @@ export default function BookingPriceEstimate({
     let units = 1; // dates / nights / sessions
     let unitLabel = "session";
     let unitsValid = true;
+    let halfDay = false;
     if (serviceType === "daycare") {
       units = isMultiDate ? Math.max(1, multiDates.length) : 1;
       unitLabel = units === 1 ? "day" : "days";
     } else if (serviceType === "boarding") {
-      const nights = nightsBetween(date, endDate);
-      units = nights;
+      // Sprint 110di-31 — Mirror the server's half-day rule when the
+      // client picks drop-off + pickup times. Total hours come from the
+      // two datetimes; boarding_half_day_max_hours (default 12) decides
+      // whether the trailing partial day is full or half.
+      const totalHours = (date && endDate && dropoffTime && pickupTime)
+        ? Math.max(0, (
+            new Date(`${endDate}T${pickupTime}:00`).getTime() -
+            new Date(`${date}T${dropoffTime}:00`).getTime()
+          ) / 3600000)
+        : null;
+      const maxHalfH = Number(rules.boarding_half_day_max_hours ?? 12);
+      const halfPct  = Number(rules.half_day_pct ?? 50) / 100;
+      if (totalHours !== null && totalHours > 0) {
+        const wholeNights = Math.floor(totalHours / 24);
+        const remainder   = totalHours - wholeNights * 24;
+        if (remainder > maxHalfH) {
+          units = wholeNights + 1;
+        } else if (remainder > 0.1) {
+          // Half-day surcharge applies to the trailing partial day.
+          units = wholeNights + halfPct;
+          halfDay = true;
+        } else {
+          units = wholeNights;
+        }
+        if (units < 1) unitsValid = false;
+      } else {
+        // No times yet — fall back to calendar-night count so the panel
+        // is still informative on the first render before the time
+        // pickers have settled.
+        units = nightsBetween(date, endDate);
+        if (units < 1) unitsValid = false;
+      }
       unitLabel = units === 1 ? "night" : "nights";
-      // Sprint 110di-28 — zero-night boarding isn't a real booking. We mark
-      // the estimate as "not yet" instead of confidently showing $0.
-      if (nights < 1) unitsValid = false;
     }
 
     const basePrice = base * units;
@@ -151,7 +188,7 @@ export default function BookingPriceEstimate({
       addon_lines: (addons || []).map(a => ({
         id: a.id, name: a.name, price: Number(a?.base_price || 0) * Math.max(1, dogs),
       })),
-      units, unitLabel, unitsValid,
+      units, unitLabel, unitsValid, halfDay,
       total,
       credits_available: creditsAvailable,
       credits_applied: creditUnits,
@@ -160,7 +197,7 @@ export default function BookingPriceEstimate({
       pool_key: poolKey,
       service_name: headlineService.name,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, dropoffTime, pickupTime, rules]);
 
   // Empty-state: nothing to estimate. Stay quiet rather than show $0 —
   // the operator might not have set up a service for this type yet.
@@ -209,9 +246,11 @@ export default function BookingPriceEstimate({
         <div className="flex justify-between" data-testid="booking-estimate-base">
           <span className="text-gray-400">
             Base price
-            {(calc.units > 1) && (
+            {(calc.units > 1 || calc.halfDay) && (
               <span className="text-gray-500 ml-1">
-                ({calc.units} {calc.unitLabel} × {fmtUSD(calc.base)})
+                ({calc.halfDay
+                  ? `${calc.units.toFixed(1).replace(/\.0$/,'')} ${calc.unitLabel} (early pickup)`
+                  : `${calc.units} ${calc.unitLabel}`} × {fmtUSD(calc.base)})
               </span>
             )}
           </span>

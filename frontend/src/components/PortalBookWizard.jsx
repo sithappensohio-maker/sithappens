@@ -55,6 +55,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [date, setDate] = useState(todayISO());
   const [endDate, setEndDate] = useState("");
   const [time, setTime] = useState("");
+  // Sprint 110di-31 — Boarding drop-off / pickup TIMES. Used by the estimate
+  // to apply the existing half-day pricing rule (boarding_half_day_max_hours
+  // from booking_rules). Sensible defaults match typical kennel hours so a
+  // client who skips the picker still gets a reasonable estimate.
+  const [dropoffTime, setDropoffTime] = useState("09:00");
+  const [pickupTime, setPickupTime]  = useState("17:00");
   const [groomingType, setGroomingType] = useState("bath");
   const [notes, setNotes] = useState("");
   const [slots, setSlots] = useState(null);
@@ -217,7 +223,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         notes,
         addon_service_ids: selectedAddonIds,
       };
-      if (serviceType === "boarding") body.end_date = endDate;
+      if (serviceType === "boarding") {
+        body.end_date = endDate;
+        body.dropoff_time = dropoffTime;
+        body.pickup_time  = pickupTime;
+      }
       if (TIME_SLOTTED.has(serviceType)) body.time = time;
       if (serviceType === "grooming") body.grooming_type = groomingType;
       const { data: created } = await api.post("/bookings", body);
@@ -325,6 +335,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             ) : (
               <>
                 {serviceType === "boarding" && (
+                  <>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
@@ -355,6 +366,28 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                       <p className="text-[11px] text-gray-500 mt-1">Must be after drop-off (at least 1 night).</p>
                     </div>
                   </div>
+                  {/* Sprint 110di-31 — Drop-off and pickup TIMES. Feed the
+                      existing half-day pricing rule so an early pickup
+                      doesn't get charged a full extra day. The estimate
+                      panel computes units from these + booking_rules. */}
+                  <div className="grid grid-cols-2 gap-3 mt-1">
+                    <div>
+                      <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off time</label>
+                      <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)}
+                             style={{colorScheme:"dark"}}
+                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+                             data-testid="wiz-dropoff-time" />
+                    </div>
+                    <div>
+                      <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup time</label>
+                      <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)}
+                             style={{colorScheme:"dark"}}
+                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+                             data-testid="wiz-pickup-time" />
+                      <p className="text-[11px] text-gray-500 mt-1">Early pickup may cut the final day in half (admin's rule).</p>
+                    </div>
+                  </div>
+                  </>
                 )}
 
                 {/* Daycare or time-slotted: single date */}
@@ -563,6 +596,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 isMultiDate={isMultiDate}
                 isWaitlist={!!willWaitlist}
                 addons={eligibleAddons.filter(a => selectedAddonIds.includes(a.id))}
+                dropoffTime={dropoffTime}
+                pickupTime={pickupTime}
               />
             )}
 

@@ -160,6 +160,42 @@ def test_boarding_rejects_same_day_pickup(admin_headers):
         requests.delete(f"{BASE}/api/bookings/{bid}", headers=admin_headers, timeout=10)
 
 
+def test_boarding_accepts_dropoff_pickup_times(admin_headers):
+    """Sprint 110di-31 — Wizard now sends `dropoff_time` and `pickup_time`
+    so the estimate can apply the existing half-day rule. Confirm those
+    fields round-trip through the booking endpoint."""
+    dogs = requests.get(f"{BASE}/api/dogs", headers=admin_headers, timeout=15).json()
+    assert dogs
+    dog = dogs[0]
+    body = {
+        "dog_id": dog["id"], "client_id": dog.get("owner_id"),
+        "date": _today_plus(30), "end_date": _today_plus(33),
+        "service_type": "boarding",
+        "dropoff_time": "09:00", "pickup_time": "10:00",
+        "notes": "early pickup half-day test",
+    }
+    r = requests.post(
+        f"{BASE}/api/bookings",
+        headers={**admin_headers, "Content-Type": "application/json"},
+        json=body, timeout=20,
+    )
+    if r.status_code != 200:
+        # capacity full on the picked date — try a different window.
+        body["date"] = _today_plus(60)
+        body["end_date"] = _today_plus(63)
+        r = requests.post(
+            f"{BASE}/api/bookings",
+            headers={**admin_headers, "Content-Type": "application/json"},
+            json=body, timeout=20,
+        )
+    assert r.status_code == 200, f"expected 200, got {r.status_code}: {r.text[:200]}"
+    booking = r.json()
+    assert booking.get("dropoff_time") == "09:00"
+    assert booking.get("pickup_time") == "10:00"
+    # Clean up.
+    requests.delete(f"{BASE}/api/bookings/{booking['id']}", headers=admin_headers, timeout=10)
+
+
 # ────────────────────── Waitlist daycare flow ─────────────────────────
 @pytest.fixture
 def filled_daycare_capacity(admin_headers):
