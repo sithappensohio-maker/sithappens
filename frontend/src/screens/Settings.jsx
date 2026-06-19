@@ -80,6 +80,9 @@ export default function Settings() {
         { id: "feature_visibility", label: "Feature Visibility", icon: "fa-toggle-on",
           desc: "Turn major app features (Daycare, Boarding, Training, Grooming, Photography, Retail, Rewards, Trivia, Homework, Staff Portal, Messaging, Payment Plans, Manual Payments, Waitlist) on or off app-wide. Disabled features hide from the portal, nav, dashboard, and booking.",
           badges: ["Live", "Admin-only"] },
+        { id: "client_portal_controls", label: "Client Portal Controls", icon: "fa-mobile-screen-button",
+          desc: "Show/hide portal sections, set landing priority, edit client-facing labels, post an announcement banner, and customize empty-state copy. Feature Visibility above is the master switch — anything turned off there stays hidden here.",
+          badges: ["Live", "Client-facing"] },
         { id: "day_to_day", label: "Operator Quick Controls", icon: "fa-bolt",
           desc: "At-a-glance status of the rules you tweak most often, with deep links to each setting's true home.",
           badges: ["Live", "Admin-only"] },
@@ -468,6 +471,7 @@ export default function Settings() {
               {tab === "hours" && <HoursPanel s={s} save={save} saving={saving} />}
               {tab === "brand" && <BrandPanel />}
               {tab === "feature_visibility" && <FeatureVisibilityPanel />}
+              {tab === "client_portal_controls" && <ClientPortalControlsPanel />}
               {tab === "capacity" && <CapacityPanel s={s} save={save} saving={saving} />}
               {tab === "rules" && <RulesPanel s={s} save={save} saving={saving} />}
               {tab === "vaccines" && <VaccinesPanel s={s} save={save} saving={saving} />}
@@ -784,11 +788,306 @@ function FeatureVisibilityPanel() {
 }
 
 
+// ────────────────────────────────────────────────────────────────────────
+// Sprint 110di-18 — Client Portal Controls. One panel for ALL client-portal
+// behavior: section visibility, landing order, announcement banner, custom
+// labels, booking-locked message, empty-state copy. Stored under
+// settings.client_portal_controls — re-uses the existing /api/settings
+// endpoint, no duplicate panel created.
+// ────────────────────────────────────────────────────────────────────────
+const CPC_SECTION_META = [
+  { id: "credits",             label: "Credits",                    masterFeature: null,
+    desc: "Daycare/training/boarding credit tiles." },
+  { id: "prices",              label: "Service prices",             masterFeature: null,
+    desc: "Show pricing in the portal services modal + booking wizard." },
+  { id: "dog_facts",           label: "Dog Fact of the Day",        masterFeature: null,
+    desc: "Daily fun-fact widget on the portal home." },
+  { id: "trivia_rewards",      label: "Trivia & Rewards",           masterFeature: "rewards",
+    desc: "Trivia widget + Trophy Wall. Hidden if Rewards or Trivia is OFF in Feature Visibility." },
+  { id: "booking_history",     label: "Booking history",            masterFeature: null,
+    desc: "Past completed/cancelled bookings list." },
+  { id: "upcoming_bookings",   label: "Upcoming bookings",          masterFeature: null,
+    desc: "Pending + approved bookings card." },
+  { id: "profile_quick_links", label: "Profile quick links",        masterFeature: null,
+    desc: "Quick-link tile grid (services, vaccines, recurring, etc.)." },
+  { id: "waiver_documents",    label: "Waiver & documents",         masterFeature: null,
+    desc: "Waiver section + uploaded files panel." },
+  { id: "vaccines_compliance", label: "Vaccines / compliance",      masterFeature: null,
+    desc: "Vaccine status pills + upload CTA." },
+  { id: "messages",            label: "Client messages",            masterFeature: "client_messaging",
+    desc: "Two-way chat button + modal. Hidden if Client Messaging is OFF in Feature Visibility." },
+  { id: "help_button",         label: "Help / How-to button",       masterFeature: null,
+    desc: "'How to Use' tutorial drawer link in the portal header." },
+];
+
+const CPC_LANDING_OPTIONS = [
+  { id: "setup",             label: "Requirements to Book" },
+  { id: "announcements",     label: "Announcements" },
+  { id: "credits",           label: "Credits" },
+  { id: "upcoming_bookings", label: "Upcoming Bookings" },
+  { id: "my_dogs",           label: "My Dogs" },
+  { id: "messages",          label: "Messages" },
+];
+
+const CPC_ANNOUNCEMENT_STYLES = [
+  { id: "info",    label: "Info",     color: "shBlue" },
+  { id: "success", label: "Success",  color: "shGreen" },
+  { id: "warning", label: "Warning",  color: "shOrange" },
+  { id: "urgent",  label: "Urgent",   color: "red-500" },
+];
+
+function CpcSwitch({ on, onClick, testid, disabled }) {
+  return (
+    <button type="button" role="switch" aria-checked={on}
+            data-testid={testid} onClick={onClick} disabled={disabled}
+            className={`relative shrink-0 w-12 h-7 rounded-full transition ${disabled ? "bg-gray-700 opacity-50" : on ? "bg-shGreen" : "bg-gray-600"}`}>
+      <span className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${on ? "translate-x-5" : "translate-x-0"}`}/>
+    </button>
+  );
+}
+
+function ClientPortalControlsPanel() {
+  const [cpc, setCpc] = useState(null);
+  const [fv, setFv] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    api.get("/settings").then(({ data }) => {
+      setCpc(data.client_portal_controls);
+      setFv(data.feature_visibility || {});
+    });
+  }, []);
+
+  if (!cpc) return <div className="text-gray-400">Loading...</div>;
+
+  const setSection = (id, on) => {
+    setCpc(p => ({ ...p, sections: { ...p.sections, [id]: on } }));
+    setDirty(true);
+  };
+  const setLabel = (k, v) => {
+    setCpc(p => ({ ...p, labels: { ...p.labels, [k]: v } }));
+    setDirty(true);
+  };
+  const setEmpty = (k, v) => {
+    setCpc(p => ({ ...p, empty_states: { ...p.empty_states, [k]: v } }));
+    setDirty(true);
+  };
+  const setAnn = (k, v) => {
+    setCpc(p => ({ ...p, announcement: { ...p.announcement, [k]: v } }));
+    setDirty(true);
+  };
+  const setLanding = (idx, id) => {
+    setCpc(p => {
+      const next = [...(p.landing_priority || [])];
+      const cur = next.indexOf(id);
+      // swap if already in list, else replace at idx
+      if (cur !== -1 && cur !== idx) { next[cur] = next[idx]; }
+      next[idx] = id;
+      return { ...p, landing_priority: next };
+    });
+    setDirty(true);
+  };
+
+  const saveAll = async () => {
+    setSaving(true); setMsg("");
+    try {
+      await api.put("/settings", { client_portal_controls: cpc });
+      setDirty(false);
+      setMsg("Saved. Refresh the client portal to see changes.");
+      setTimeout(() => setMsg(""), 5000);
+    } catch (e) {
+      setMsg("Save failed: " + (e?.response?.data?.detail || e.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5" data-testid="client-portal-controls-panel">
+      <div className="bg-bgPanel border-2 border-shGreen/40 rounded-2xl p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+              <i className="fas fa-mobile-screen-button mr-1.5"/>Client Portal Controls
+            </p>
+            <h2 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight">
+              What clients <span className="text-shGreen">see &amp; do.</span>
+            </h2>
+            <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
+              Tune what the client portal shows, what comes first, and the wording on common buttons + empty states.
+              Feature Visibility is the master switch — anything turned off there stays hidden here automatically.
+            </p>
+          </div>
+          <button onClick={saveAll} disabled={!dirty || saving} data-testid="cpc-save"
+                  className="bg-shGreen text-bgHeader font-black uppercase tracking-widest text-[12px] px-4 py-2 rounded disabled:opacity-50">
+            <i className={`fas ${saving ? "fa-spinner fa-spin" : "fa-save"} mr-2`}/>{saving ? "Saving..." : "Save changes"}
+          </button>
+        </div>
+        {msg && <span className="text-[12px] text-shGreen" data-testid="cpc-msg">{msg}</span>}
+      </div>
+
+      {/* ── Sections ────────────────────────────────────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-3">
+          <i className="fas fa-eye mr-1.5"/>Show / hide portal sections
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {CPC_SECTION_META.map(({ id, label, desc, masterFeature }) => {
+            const on = cpc.sections?.[id] !== false;
+            const masterOff = masterFeature && fv && fv[masterFeature] === false;
+            return (
+              <div key={id} data-testid={`cpc-section-row-${id}`}
+                   className={`flex items-start gap-3 p-3 rounded-lg border ${on && !masterOff ? "border-bgHover bg-bgBase" : "border-bgHover bg-bgBase/40 opacity-70"}`}>
+                <div className="flex-1 min-w-0">
+                  <p className={`text-[14px] font-black uppercase tracking-wide ${on && !masterOff ? "text-white" : "text-gray-500"}`}>{label}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5 leading-snug">{desc}</p>
+                  {masterOff && (
+                    <p className="text-[10px] text-shOrange mt-1 uppercase tracking-widest">
+                      <i className="fas fa-lock mr-1"/>Disabled by Feature Visibility ({masterFeature})
+                    </p>
+                  )}
+                </div>
+                <CpcSwitch on={on && !masterOff} disabled={masterOff}
+                        testid={`cpc-toggle-${id}`}
+                        onClick={() => !masterOff && setSection(id, !on)} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Landing priority ─────────────────────────────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-2">
+          <i className="fas fa-list-ol mr-1.5"/>Portal landing order
+        </p>
+        <p className="text-[12px] text-gray-400 mb-3 leading-snug">
+          Choose what clients see first. Requirements-to-Book always shows first when setup is incomplete, regardless of this order.
+        </p>
+        <div className="space-y-2">
+          {(cpc.landing_priority || []).map((id, idx) => (
+            <div key={idx} className="flex items-center gap-2" data-testid={`cpc-landing-row-${idx}`}>
+              <span className="text-[11px] text-gray-500 font-black w-6">{idx + 1}.</span>
+              <select value={id} onChange={e => setLanding(idx, e.target.value)}
+                      data-testid={`cpc-landing-${idx}`}
+                      className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1.5 text-[13px] text-white">
+                {CPC_LANDING_OPTIONS.map(o => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Announcement banner ──────────────────────────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">
+            <i className="fas fa-bullhorn mr-1.5"/>Portal announcement banner
+          </p>
+          <CpcSwitch on={cpc.announcement?.enabled === true} testid="cpc-announcement-toggle"
+                  onClick={() => setAnn("enabled", !cpc.announcement?.enabled)} />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Title</label>
+            <input value={cpc.announcement?.title || ""} onChange={e => setAnn("title", e.target.value)}
+                   data-testid="cpc-announcement-title"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"
+                   placeholder="e.g. Holiday hours" />
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Style</label>
+            <select value={cpc.announcement?.style || "info"} onChange={e => setAnn("style", e.target.value)}
+                    data-testid="cpc-announcement-style"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white">
+              {CPC_ANNOUNCEMENT_STYLES.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Message</label>
+            <textarea rows={3} value={cpc.announcement?.message || ""} onChange={e => setAnn("message", e.target.value)}
+                      data-testid="cpc-announcement-message"
+                      className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"
+                      placeholder="One-line update for every client opening the portal."/>
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Start date (optional)</label>
+            <input type="date" value={cpc.announcement?.start_date || ""} onChange={e => setAnn("start_date", e.target.value)}
+                   data-testid="cpc-announcement-start"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+          </div>
+          <div>
+            <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">End date (optional)</label>
+            <input type="date" value={cpc.announcement?.end_date || ""} onChange={e => setAnn("end_date", e.target.value)}
+                   data-testid="cpc-announcement-end"
+                   className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Labels ───────────────────────────────────────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-3">
+          <i className="fas fa-font mr-1.5"/>Client-facing labels
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {Object.entries(cpc.labels || {}).map(([k, v]) => (
+            <div key={k}>
+              <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">{k.replace(/_/g, " ")}</label>
+              <input value={v || ""} onChange={e => setLabel(k, e.target.value)}
+                     data-testid={`cpc-label-${k}`}
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Booking locked message + empty states ──────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5 space-y-4">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+            <i className="fas fa-lock mr-1.5"/>Booking locked message
+          </p>
+          <p className="text-[11px] text-gray-500 mb-2">Shown when the client tries to book but Requirements to Book is incomplete.</p>
+          <textarea rows={2} value={cpc.booking_locked_message || ""}
+                    onChange={e => { setCpc(p => ({ ...p, booking_locked_message: e.target.value })); setDirty(true); }}
+                    data-testid="cpc-booking-locked-message"
+                    className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+        </div>
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-2">
+            <i className="fas fa-circle-info mr-1.5"/>Empty-state copy
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.entries(cpc.empty_states || {}).map(([k, v]) => (
+              <div key={k}>
+                <label className="text-[11px] text-gray-400 font-black uppercase tracking-widest">{k.replace(/_/g, " ")}</label>
+                <input value={v || ""} onChange={e => setEmpty(k, e.target.value)}
+                       data-testid={`cpc-empty-${k}`}
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function BrandPanel() {
   const ctx = useTheme();
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  // ────────────────────────────────────────────────────────────────────────
+  // Sprint 110di-18 — Client Portal Controls panel inlined above BrandPanel
+  // by moving the function above this comment. See block right above.
+  // ────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     if (ctx?.branding && !draft) setDraft({ ...ctx.branding });

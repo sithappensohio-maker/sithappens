@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api, formatErr } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useFeature } from "../lib/theme";
+import { useTheme } from "../lib/theme";
 import WaiverModal from "../components/WaiverModal";
 import Lightbox from "../components/Lightbox";
 import PortalDogModal from "../components/PortalDogModal";
@@ -660,6 +661,33 @@ export default function Portal() {
     client_messaging: useFeature("client_messaging"),
     payment_plans:    useFeature("payment_plans"),
   };
+
+  // Sprint 110di-18 — Client Portal Controls. Read once from theme context.
+  // `sectionOn(name)` is the canonical helper — Feature Visibility (master)
+  // wins over the per-section toggle. `label(key, fallback)` returns the
+  // admin's custom label, defaulting to the hard-coded fallback so legacy
+  // installs keep working.
+  const { branding: _brandingCpc } = useTheme();
+  const cpc = _brandingCpc?.client_portal_controls || {};
+  const sectionOn = (name) => {
+    // Each section can have an implicit Feature Visibility master.
+    const masterMap = { trivia_rewards: "rewards", messages: "client_messaging" };
+    const m = masterMap[name];
+    if (m && feat[m] === false) return false;
+    return (cpc.sections || {})[name] !== false;
+  };
+  const label = (key, fallback) => {
+    const v = (cpc.labels || {})[key];
+    return (typeof v === "string" && v.trim()) ? v : fallback;
+  };
+  // Admin announcement banner — only show when enabled AND inside the
+  // optional date window. Empty start/end means no lower/upper bound.
+  const _ann = cpc.announcement || {};
+  const _todayISO = new Date().toISOString().slice(0, 10);
+  const announcementVisible = !!(_ann.enabled
+    && (_ann.title?.trim() || _ann.message?.trim())
+    && (!_ann.start_date || _ann.start_date <= _todayISO)
+    && (!_ann.end_date   || _ann.end_date   >= _todayISO));
   // Sprint 110dh-6 — first-time client setup gate.
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupRefresh, setSetupRefresh] = useState(0);
@@ -936,16 +964,18 @@ export default function Portal() {
           </div>
         </div>
         <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
-                  className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
-            <i className="fas fa-circle-question"/>
-            <span className="hidden sm:inline">How to Use</span>
-          </button>
-          {feat.client_messaging && (
+          {sectionOn("help_button") && (
+            <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
+                    className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
+              <i className="fas fa-circle-question"/>
+              <span className="hidden sm:inline">How to Use</span>
+            </button>
+          )}
+          {sectionOn("messages") && (
             <button onClick={()=>setMessagesOpen(true)} data-testid="portal-messages-button"
                     className="relative text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2">
               <i className="fas fa-comments"/>
-              <span className="hidden sm:inline">Messages</span>
+              <span className="hidden sm:inline">{label("messages", "Messages")}</span>
               {messagesUnread > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-shOrange text-bgHeader text-[10px] font-black rounded-full grid place-items-center"
                       data-testid="portal-messages-badge">{messagesUnread}</span>
@@ -966,6 +996,32 @@ export default function Portal() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
+        {/* Sprint 110di-18 — Admin-set announcement banner. Renders at the
+            very top whenever enabled + within the date window. */}
+        {announcementVisible && (() => {
+          const styleMap = {
+            info:    { bg: "bg-shBlue/10",   border: "border-shBlue/50",   text: "text-shBlue",   icon: "fa-circle-info" },
+            success: { bg: "bg-shGreen/10",  border: "border-shGreen/50",  text: "text-shGreen",  icon: "fa-circle-check" },
+            warning: { bg: "bg-shOrange/10", border: "border-shOrange/50", text: "text-shOrange", icon: "fa-triangle-exclamation" },
+            urgent:  { bg: "bg-red-500/15",  border: "border-red-500/60",  text: "text-red-400",  icon: "fa-bullhorn" },
+          };
+          const sty = styleMap[_ann.style] || styleMap.info;
+          return (
+            <div data-testid="portal-admin-announcement"
+                 className={`mb-4 rounded-xl border ${sty.bg} ${sty.border} p-4 shadow-lg flex items-start gap-3`}>
+              <i className={`fas ${sty.icon} ${sty.text} text-xl shrink-0 mt-0.5`}/>
+              <div className="min-w-0">
+                {_ann.title?.trim() && (
+                  <p className={`text-[14px] font-black uppercase tracking-widest ${sty.text}`}>{_ann.title}</p>
+                )}
+                {_ann.message?.trim() && (
+                  <p className="text-[13px] text-gray-200 mt-0.5 leading-snug">{_ann.message}</p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Sprint 110di-4 — Announcements pinned at very top (above welcome). */}
         <PortalAnnouncementsCard />
 
@@ -979,8 +1035,9 @@ export default function Portal() {
           </h3>
         </div>
 
-        {/* Sprint 110ax — Daily dog fact, pinned above the main content */}
-        <div className="mb-6"><DogFactCard variant="big" /></div>
+        {/* Sprint 110ax — Daily dog fact, pinned above the main content.
+            Sprint 110di-18 — Gated by Client Portal Controls. */}
+        {sectionOn("dog_facts") && <div className="mb-6"><DogFactCard variant="big" /></div>}
 
         {/* Sprint 110dh-6 — First-time setup checklist. Renders at the very top
             whenever booking is locked; auto-hides once the client is fully
@@ -1039,8 +1096,9 @@ export default function Portal() {
           }}
         />
 
-        {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game) */}
-        <div className="mb-6"><DailyTriviaCard /></div>
+        {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game).
+            Sprint 110di-18 — Gated by Client Portal Controls (trivia_rewards). */}
+        {sectionOn("trivia_rewards") && feat.trivia && <div className="mb-6"><DailyTriviaCard /></div>}
 
         {/* Sprint 110dh-5 — Mobile-only hoist: Action Needed (intake forms) is
             the most important item so it should be the first thing visible on
@@ -1053,13 +1111,15 @@ export default function Portal() {
         <div className="col-span-1 space-y-6">
           {/* Sprint 110x — credits card upgraded with brand-color glow halos
               behind each metric, slightly bigger numbers, gradient bg. Same
-              data, much more visually engaging. */}
+              data, much more visually engaging.
+              Sprint 110di-18 — Gated by Client Portal Controls section toggle. */}
+          {sectionOn("credits") && (
           <div className="relative overflow-hidden bg-bgPanel card-pop p-6 rounded-2xl border border-bgHover shadow-2xl" data-testid="credits-card">
             <div className="absolute inset-0 pointer-events-none opacity-25"
                  style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.5) 0%, transparent 55%)" }}/>
             <div className="relative">
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
-                <i className="fas fa-wallet mr-1"/>Your Credits
+                <i className="fas fa-wallet mr-1"/>{label("credits", "Your Credits")}
               </p>
               {/* Sprint 110di-17 — credit tiles gated by service feature
                   toggles. Use a dynamic grid count so layout stays centered
@@ -1128,13 +1188,14 @@ export default function Portal() {
                        }}
                       data-testid="jump-to-bookings"
                       className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
-                <i className="fas fa-calendar-day mr-2"/>My Bookings · {bookings.length}
+                <i className="fas fa-calendar-day mr-2"/>{label("my_bookings", "My Bookings")} · {bookings.length}
               </button>
               <div className="mt-4 pt-4 border-t border-bgHover">
                 <TextSizePicker testid="portal-text-size" compact />
               </div>
             </div>
           </div>
+          )}
 
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
             <div className="flex items-center justify-between mb-2">
@@ -1180,7 +1241,7 @@ export default function Portal() {
                 </div>
               </div>
               <p className="text-[14px] text-gray-200 leading-relaxed mb-4">
-                {bookingLocked ? "Complete your setup checklist above before booking." :
+                {bookingLocked ? (cpc.booking_locked_message || "Complete your setup checklist above before booking.") :
                  dogs.length === 0 ? "Add a dog first to book a service." :
                  waiverNeeded ? "Sign the waiver before booking your first service." :
                  "Daycare, boarding, training & more — pick a service and a date."}
@@ -1482,7 +1543,7 @@ export default function Portal() {
             </div>
           )}
 
-          {feat.rewards && (trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
+          {sectionOn("trivia_rewards") && feat.rewards && (trophies.client_trophies.length > 0 || trophies.dog_trophies.length > 0) && (
             <div data-testid="portal-trophies-section"
                  className="relative overflow-hidden bg-gradient-to-br from-shOrange/15 via-bgPanel to-shBlue/15 border border-shOrange/40 rounded-2xl p-5 shadow-2xl">
               {/* Sprint 110z — Trophy Wall gets matching brand-glow halo + eyebrow
@@ -1680,6 +1741,8 @@ export default function Portal() {
           <PortalFilesSection dogs={dogs} />
 
           <div id="portal-bookings-anchor">
+            {/* Sprint 110di-18 — booking history list gated. Empty-state copy
+                respects the admin's client_portal_controls.empty_states. */}
             {bookings.length === 0 && dogs.length > 0 && !waiverNeeded && (() => {
               // Sprint 110di-4 — admin-editable "What to expect" block.
               // Driven by settings.portal_first_visit (with safe defaults).
@@ -1813,7 +1876,7 @@ export default function Portal() {
                   <>
                     {monthDropdown}
                     <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-500 uppercase font-black text-xs" data-testid="bookings-empty">
-                      {bookingsTab === "upcoming" ? "No upcoming bookings — book a service above." : bookingsTab === "past" ? "No past bookings yet." : bookingsMonth ? "No bookings that month." : "No bookings yet."}
+                      {bookingsTab === "upcoming" ? (cpc.empty_states?.no_bookings || "No upcoming bookings — book a service above.") : bookingsTab === "past" ? (cpc.empty_states?.no_bookings || "No past bookings yet.") : bookingsMonth ? "No bookings that month." : (cpc.empty_states?.no_bookings || "No bookings yet.")}
                     </div>
                   </>
                 );
@@ -1954,9 +2017,9 @@ export default function Portal() {
           }`}
         >
           {bookingLocked ? (
-            <><i className="fas fa-lock"/>Complete Setup</>
+            <><i className="fas fa-lock"/>{label("complete_setup", "Complete Setup")}</>
           ) : (
-            <><i className="fas fa-calendar-plus"/>Book Service</>
+            <><i className="fas fa-calendar-plus"/>{label("book_service", "Book Service")}</>
           )}
         </button>
       )}

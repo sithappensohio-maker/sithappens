@@ -4056,6 +4056,69 @@ def _default_settings() -> dict:
         # respected by both backend guards (booking creation, etc.) and
         # frontend consumers (nav, portal, dashboard, booking wizard).
         "feature_visibility": _default_feature_visibility(),
+        # Sprint 110di-18 — Client Portal Controls. ONE unified block that
+        # the admin uses to control what shows in the client portal, what
+        # comes first, what labels/CTA wording to use, the announcement
+        # banner, and empty-state copy. Feature Visibility above is the
+        # higher master switch; this only refines visibility within
+        # features that are already enabled.
+        "client_portal_controls": _default_client_portal_controls(),
+    }
+
+
+# Sprint 110di-18 — Client Portal Controls defaults. Module-level so backend
+# guards / public endpoints share one schema.
+def _default_client_portal_controls() -> dict:
+    return {
+        "sections": {
+            "credits":             True,
+            "prices":              True,
+            "dog_facts":           True,
+            "trivia_rewards":      True,
+            "booking_history":     True,
+            "upcoming_bookings":   True,
+            "profile_quick_links": True,
+            "waiver_documents":    True,
+            "vaccines_compliance": True,
+            "messages":            True,
+            "help_button":         True,
+        },
+        # Order the client sees sections in. Requirements-To-Book always
+        # overrides this when setup is incomplete (handled in the Portal).
+        "landing_priority": [
+            "setup", "announcements", "credits", "upcoming_bookings",
+            "my_dogs", "messages",
+        ],
+        "announcement": {
+            "enabled":    False,
+            "title":      "",
+            "message":    "",
+            "style":      "info",   # "info" | "success" | "warning" | "urgent"
+            "start_date": "",       # ISO YYYY-MM-DD (blank = no lower bound)
+            "end_date":   "",       # ISO YYYY-MM-DD (blank = no upper bound)
+        },
+        "labels": {
+            "book_service":     "Book Service",
+            "complete_setup":   "Complete Setup",
+            "ready_to_book":    "Ready to Book",
+            "setup_incomplete": "Setup Incomplete",
+            "my_profile":       "My Profile",
+            "my_bookings":      "My Bookings",
+            "my_dogs":          "My Dogs",
+            "credits":          "Credits",
+            "required_waiver":  "Required Waiver",
+            "vaccines":         "Vaccines",
+            "messages":         "Messages",
+        },
+        "booking_locked_message":
+            "Please complete your required setup items before booking services.",
+        "empty_states": {
+            "no_bookings":  "No bookings yet — book your dog's first day!",
+            "no_dogs":      "No dogs added yet — add your first dog to get started.",
+            "no_messages":  "No messages yet — your conversations will appear here.",
+            "no_credits":   "No credits available — purchase a pack to get started.",
+            "no_documents": "No documents needed right now.",
+        },
     }
 
 
@@ -4160,6 +4223,33 @@ async def get_settings() -> dict:
             if fk not in s["feature_visibility"]:
                 s["feature_visibility"][fk] = fv
                 changed = True
+    # Sprint 110di-18 — Client Portal Controls. Deep-merge backfill so any
+    # newly-added section/label/empty-state key gets a sensible default
+    # without overwriting the admin's saved overrides.
+    cpc_default = _default_client_portal_controls()
+    if not isinstance(s.get("client_portal_controls"), dict):
+        s["client_portal_controls"] = cpc_default
+        changed = True
+    else:
+        cpc = s["client_portal_controls"]
+        for sub_key, sub_default in cpc_default.items():
+            if isinstance(sub_default, dict):
+                if not isinstance(cpc.get(sub_key), dict):
+                    cpc[sub_key] = sub_default
+                    changed = True
+                else:
+                    for k, v in sub_default.items():
+                        if k not in cpc[sub_key]:
+                            cpc[sub_key][k] = v
+                            changed = True
+            elif isinstance(sub_default, list):
+                if not isinstance(cpc.get(sub_key), list):
+                    cpc[sub_key] = sub_default
+                    changed = True
+            else:
+                if sub_key not in cpc:
+                    cpc[sub_key] = sub_default
+                    changed = True
     if changed:
         await db.settings.update_one({"id": "global"}, {"$set": s}, upsert=True)
     return s
@@ -4278,7 +4368,29 @@ async def fetch_branding():
         # Sprint 110di-17 — Feature Visibility. Exposed unauthed so the
         # login / public booking surfaces respect the admin's choices too.
         "feature_visibility":      {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
+        # Sprint 110di-18 — Client Portal Controls. Exposed here so the
+        # portal/login surfaces read the same single source of truth
+        # without an extra round-trip.
+        "client_portal_controls":  _merge_cpc(s.get("client_portal_controls")),
     }
+
+
+def _merge_cpc(saved):
+    """Deep-merge admin overrides on top of the canonical defaults so a
+    partial PUT (or a missing nested key) never returns `None` to the UI."""
+    base = _default_client_portal_controls()
+    if not isinstance(saved, dict):
+        return base
+    out = dict(base)
+    for k, default_v in base.items():
+        v = saved.get(k)
+        if isinstance(default_v, dict) and isinstance(v, dict):
+            out[k] = {**default_v, **v}
+        elif v is None:
+            out[k] = default_v
+        else:
+            out[k] = v
+    return out
 
 @api.get("/settings/public")
 async def fetch_public_settings(user: dict = Depends(get_current_user)):
@@ -4304,6 +4416,8 @@ async def fetch_public_settings(user: dict = Depends(get_current_user)):
         # feature ON. Both frontend (nav, portal, dashboard) and backend
         # guards read from this single block.
         "feature_visibility": {**_default_feature_visibility(), **(s.get("feature_visibility") or {})},
+        # Sprint 110di-18 — Client Portal Controls.
+        "client_portal_controls": _merge_cpc(s.get("client_portal_controls")),
     }
 
 @api.put("/settings")
