@@ -179,6 +179,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {/* Sprint 110u — landing-page-style hero header. Brand glow backdrop,
           uppercase italic title, eyebrow tag, snapshot stat tiles. Replaces
           the bare H2 the page used to open with. */}
+      {/* Sprint 110di-20-fix — hero card gated. */}
+      {widgetOn("hero_card") && (
       <div className="relative overflow-hidden rounded-2xl border border-bgHover bg-gradient-to-br from-bgPanel via-bgBase to-bgPanel p-5 sm:p-7" data-testid="dashboard-hero">
         <div className="absolute inset-0 pointer-events-none opacity-40"
              style={{ background: "radial-gradient(circle at 15% 20%, rgba(0,169,224,0.45) 0%, transparent 40%), radial-gradient(circle at 85% 80%, rgba(140,198,63,0.4) 0%, transparent 45%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.25) 0%, transparent 35%)" }}/>
@@ -197,15 +199,16 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           </div>
           {stats && (
             <div className="flex flex-wrap gap-2 shrink-0" data-testid="dashboard-hero-tiles">
-              <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>
-              <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>
-              <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>
-              <DashHeroTile icon="fa-bath"          color="#06b6d4" label="Grooming today" value={stats?.grooming_today ?? 0}/>
+              {widgetOn("daycare_stats")  && <DashHeroTile icon="fa-sun"           color="#00a9e0" label="Daycare today" value={`${stats?.daycare_occupancy ?? 0}/${stats?.daycare_capacity ?? 0}`}/>}
+              {widgetOn("boarding_stats") && <DashHeroTile icon="fa-moon"          color="#8cc63f" label="Boarding tonight" value={stats?.boarding_today ?? 0}/>}
+              {widgetOn("training_stats") && <DashHeroTile icon="fa-graduation-cap" color="#a855f7" label="Training today" value={stats?.training_today ?? 0}/>}
+              {widgetOn("grooming_stats") && <DashHeroTile icon="fa-bath"          color="#06b6d4" label="Grooming today" value={stats?.grooming_today ?? 0}/>}
               <DashHeroTile icon="fa-camera-retro"  color="#f97316" label="Photography today" value={stats?.photography_today ?? 0}/>
             </div>
           )}
         </div>
       </div>
+      )}
 
       {/* Sprint 110df — Solo-operator owner clock + end-of-day wrap-up
           Sprint 110di-19 — gated by Dashboard Widget Controls */}

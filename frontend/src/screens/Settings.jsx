@@ -656,6 +656,7 @@ const FEATURE_VISIBILITY_META = [
 ];
 
 function FeatureVisibilityPanel() {
+  const { reloadBranding } = useTheme();
   const [s, setS] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -682,7 +683,7 @@ function FeatureVisibilityPanel() {
       // Force theme provider to re-pull the public branding (which now
       // includes the updated `feature_visibility` block) so every consumer
       // screen sees the new state without a page reload.
-      try { await api.get("/branding"); } catch {}
+      try { await reloadBranding(); } catch {}
       setDirty(false);
       setMsg("Saved. Refresh other tabs to pick up changes.");
       setTimeout(() => setMsg(""), 4500);
@@ -859,6 +860,7 @@ function CpcSwitch({ on, onClick, testid, disabled }) {
 }
 
 function ClientPortalControlsPanel() {
+  const { reloadBranding } = useTheme();
   const [cpc, setCpc] = useState(null);
   const [fv, setFv] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -906,6 +908,7 @@ function ClientPortalControlsPanel() {
     setSaving(true); setMsg("");
     try {
       await api.put("/settings", { client_portal_controls: cpc });
+      try { await reloadBranding(); } catch {}
       setDirty(false);
       setMsg("Saved. Refresh the client portal to see changes.");
       setTimeout(() => setMsg(""), 5000);
@@ -1106,6 +1109,7 @@ const BFC_SERVICES = [
 ];
 
 function BookingFlowControlsPanel() {
+  const { reloadBranding } = useTheme();
   const [bfc, setBfc] = useState(null);
   const [fv, setFv] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1129,6 +1133,7 @@ function BookingFlowControlsPanel() {
     setSaving(true); setMsg("");
     try {
       await api.put("/settings", { booking_flow_controls: bfc });
+      try { await reloadBranding(); } catch {}
       setDirty(false); setMsg("Saved.");
       setTimeout(() => setMsg(""), 4000);
     } catch (e) { setMsg("Save failed: " + (e?.response?.data?.detail || e.message)); }
@@ -1249,6 +1254,7 @@ const DASHBOARD_WIDGET_META = [
 ];
 
 function DashboardWidgetsPanel() {
+  const { reloadBranding } = useTheme();
   const [dw, setDw] = useState(null);
   const [fv, setFv] = useState({});
   const [saving, setSaving] = useState(false);
@@ -1267,6 +1273,7 @@ function DashboardWidgetsPanel() {
     setSaving(true); setMsg("");
     try {
       await api.put("/settings", { dashboard_widgets: dw });
+      try { await reloadBranding(); } catch {}
       setDirty(false); setMsg("Saved.");
       setTimeout(() => setMsg(""), 4000);
     } catch (e) { setMsg("Save failed: " + (e?.response?.data?.detail || e.message)); }

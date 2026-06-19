@@ -243,6 +243,17 @@ export function ThemeProvider({ children }) {
   useEffect(() => { applyTextSize(prefs.text_size); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 2. Fetch brand colors (no auth) — works on Login screen too.
+  // Sprint 110di-20-fix — exposed `reloadBranding` so Settings panels that
+  // mutate branding-adjacent settings (dashboard_widgets, feature_visibility,
+  // client_portal_controls) can push the latest values into context without
+  // a hard refresh.
+  const reloadBranding = useCallback(async () => {
+    try {
+      const { data } = await api.get("/branding");
+      setBranding(data);
+      applyBranding(data);
+    } catch { /* offline-tolerant */ }
+  }, []);
   useEffect(() => {
     let cancelled = false;
     api.get("/branding")
@@ -291,7 +302,7 @@ export function ThemeProvider({ children }) {
   };
 
   return (
-    <ThemeCtx.Provider value={{ branding, prefs, savePrefs, saveBranding, reloadUserPrefs: loadUserPrefs }}>
+    <ThemeCtx.Provider value={{ branding, prefs, savePrefs, saveBranding, reloadBranding, reloadUserPrefs: loadUserPrefs }}>
       {children}
     </ThemeCtx.Provider>
   );
