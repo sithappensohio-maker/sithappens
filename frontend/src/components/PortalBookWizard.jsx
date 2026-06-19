@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
+import BookingPriceEstimate from "./BookingPriceEstimate";
 
 /**
  * Client-portal Book Service wizard.
@@ -20,7 +21,7 @@ import { todayISO } from "../lib/date";
  */
 function fmt(d) { return d ? new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday:"short", month:"short", day:"numeric" }) : ""; }
 
-import { useFeature } from "../lib/theme";
+import { useFeature, useTheme } from "../lib/theme";
 
 const SERVICE_OPTIONS = [
   { key: "daycare",     label: "Daycare",     icon: "fa-paw",          color: "bg-shGreen/15 text-shGreen border-shGreen/40", desc: "Drop-in day care" },
@@ -131,6 +132,19 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       setMultiDates([]);
     }
   }, [serviceType]);
+
+  // Sprint 110di-26 — gate the estimate on Booking Flow Controls toggle.
+  // Default ON; admin can disable via Settings → Booking Flow Controls.
+  const { branding } = useTheme();
+  const showEstimate = branding?.booking_flow_controls?.show_price_estimate !== false;
+
+  // Whether the chosen service will land on a waitlist (capacity issues etc).
+  // We mark daycare specifically — if open_slots is 0 but waitlist is on,
+  // the booking still submits and the wizard surface treats it as accepted.
+  const willWaitlist =
+    serviceType === "daycare" &&
+    avail && avail.vaccine_ok && avail.open_slots === 0 &&
+    (branding?.booking_flow_controls?.waitlist_on_capacity !== false);
 
   const canProceedFromStep2 = useMemo(() => {
     if (isMultiDate && serviceType === "daycare") {
@@ -479,6 +493,22 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             </div>
 
             {err && <div className="text-[15px] font-black p-3 rounded uppercase tracking-widest bg-red-500/15 text-red-400 text-center">{err}</div>}
+
+            {/* Sprint 110di-26 — Live booking estimate. Gated on the admin
+                toggle in Booking Flow Controls (default ON). Uses the
+                existing services catalog + client's credit balance —
+                does NOT auto-consume credits, does NOT process payment. */}
+            {showEstimate && (
+              <BookingPriceEstimate
+                serviceType={serviceType}
+                dogCount={1}
+                date={date}
+                endDate={endDate}
+                multiDates={multiDates}
+                isMultiDate={isMultiDate}
+                isWaitlist={!!willWaitlist}
+              />
+            )}
 
             <p className="text-[14px] text-gray-500 text-center">Your booking will be reviewed and approved by Sit Happens.</p>
 

@@ -1231,6 +1231,30 @@ function BookingFlowControlsPanel() {
                  className="w-full mt-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-white"/>
         </div>
       </div>
+
+      {/* Sprint 110di-26 — Price Estimate toggle. When enabled (default),
+          clients see a live estimate in the booking wizard Step 3 just
+          above the Confirm button. Uses the existing services catalog +
+          the client's existing credit balance; does NOT auto-consume
+          credits or process payment. */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-3" data-testid="bfc-price-estimate-card">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+          <i className="fas fa-receipt mr-1.5"/>Price estimates
+        </p>
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input type="checkbox" checked={bfc.show_price_estimate !== false}
+                 onChange={e => setTop("show_price_estimate", e.target.checked)}
+                 data-testid="bfc-show-price-estimate" className="mt-1"/>
+          <span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-white block">Show booking price estimates</span>
+            <span className="text-[11px] text-gray-400">
+              Shows a live estimate to the client in the booking wizard, before submit, using your existing
+              service prices and the client's credit balance. Informational only — no payment is processed
+              and credits are not consumed.
+            </span>
+          </span>
+        </label>
+      </div>
     </div>
   );
 }

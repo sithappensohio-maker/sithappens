@@ -4136,6 +4136,12 @@ def _default_booking_flow_controls() -> dict:
         "waitlist_on_capacity":   True,
         # When a service is at capacity AND waitlist is off, what to show?
         "capacity_reached_copy":  "We're full for that day — please pick another date.",
+        # Sprint 110di-26 — Show clients a live price estimate in the
+        # booking wizard before they submit. Uses the existing service
+        # catalog (base_price, optional additional_dog_rate) and the
+        # client's existing credit balances. Does NOT auto-consume
+        # credits or require payment — it's informational only.
+        "show_price_estimate":    True,
     }
 
 
