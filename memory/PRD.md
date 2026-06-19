@@ -4377,3 +4377,29 @@ Added a comprehensive `@media print` block that:
 
 ### Service Worker
 - ✅ Bumped to `sh-v34-110di-36-runsheet-print`.
+
+
+## Sprint 110di-37 — Save PDF + Boarding-only Filter on Run Sheet (2026-02-20)
+**User ask**: After fixing multi-page printing, add (a) a "Save PDF" button next to the Print button that triggers a clean download with no print dialog, and (b) a "Boarding only" toggle so staff can print just the kennel cards. *"Just don't break anything else."*
+
+### Frontend (`screens/RunSheet.jsx`)
+- ✅ Added **"Boarding only"** checkbox (`data-testid="rs-boarding-only"`) next to the date picker. Toggling filters the `groups` array to just `["boarding"]` and updates the header counts + PDF filename suffix.
+- ✅ Added **"Save PDF"** button (`data-testid="rs-save-pdf"`, blue). Click handler dynamically `import("html2pdf.js")`, toggles `body.printing-pdf`, renders the run-sheet region (wrapped in a new `printRef` div) to a real PDF download (`run-sheet-YYYY-MM-DD[-boarding].pdf`), then removes the class. Falls back to `window.print()` if the library fails to load.
+- ✅ Existing Print button untouched — green, same `window.print()` behavior, still uses `@media print` rules.
+
+### Frontend (`index.css`)
+- ✅ Duplicated the `@media print` rule body into a `body.printing-pdf` block so the html2pdf path (which uses html2canvas and does NOT honor `@media print`) renders the same white-card black-text layout as a real print job. Both blocks kept in sync; a comment in the CSS calls this out.
+
+### Library
+- ✅ Added `html2pdf.js@^0.10` via yarn. Loaded lazily so it doesn't bloat the initial bundle. One harmless sourcemap warning at compile time (`SVGPathData.module.js.map` missing in the package) — not a runtime issue.
+
+### Verified
+- Print btn / PDF btn / Boarding-only checkbox all render with correct test ids.
+- Boarding-only toggle: hides daycare/grooming/training group headers, updates the on-screen header "34 DOGS ON PREMISES · BOARDING ONLY".
+- Save PDF: lazy-imports html2pdf (~700ms first call), generates **2.18 MB** PDF and triggers browser download — **no print dialog**.
+- PDF filename includes the date and `-boarding` suffix when the filter is on.
+- Backend regression suite: 24/24 ✅ (employee_create + roles_permissions + staff_pay_snapshot + help_requests + booking_price_estimate + config_backup).
+- Existing `@media print` (window.print) flow untouched and still works.
+
+### Service Worker
+- ✅ Bumped to `sh-v35-110di-37-pdf-export-boarding-filter`.

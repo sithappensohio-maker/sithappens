@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
 import BookingDetailModal from "../components/BookingDetailModal";
@@ -14,6 +14,13 @@ export default function RunSheet() {
   // BookingDetailModal so staff can peek vaccines/meds/care/report-card
   // history without leaving the run sheet.
   const [detailId, setDetailId] = useState(null);
+  // Sprint 110di-37 — "Boarding only" / kennel-card filter. Boarding dogs
+  // need printed door cards more often than daycare drop-offs.
+  const [boardingOnly, setBoardingOnly] = useState(false);
+  // Sprint 110di-37 — Save-PDF state (busy + ref to the printable region so
+  // html2pdf only renders the run sheet, not the page chrome).
+  const [savingPdf, setSavingPdf] = useState(false);
+  const printRef = useRef(null);
 
   const load = async (d) => {
     const { data } = await api.get("/run-sheet", { params: { date_str: d } });
@@ -21,17 +28,47 @@ export default function RunSheet() {
   };
   useEffect(() => { load(date); }, [date]);
 
+  const savePdf = async () => {
+    if (savingPdf || !printRef.current) return;
+    setSavingPdf(true);
+    document.body.classList.add("printing-pdf");
+    try {
+      // Lazy-load html2pdf so it only ships when the user actually exports.
+      const mod = await import("html2pdf.js");
+      const html2pdf = mod.default || mod;
+      await html2pdf().from(printRef.current).set({
+        margin: 0.5,
+        filename: `run-sheet-${data?.date || todayISO()}${boardingOnly ? "-boarding" : ""}.pdf`,
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff" },
+        jsPDF: { unit: "in", format: "letter", orientation: "portrait" },
+        pagebreak: { mode: ["css", "legacy"], avoid: ".print-card" },
+      }).save();
+    } catch (e) {
+      // Non-fatal — fall back to the regular print dialog so staff still
+      // get a sheet out.
+      window.print();
+    } finally {
+      document.body.classList.remove("printing-pdf");
+      setSavingPdf(false);
+    }
+  };
+
   if (!data) return <div className="text-gray-400">Loading…</div>;
 
-  const groups = ["boarding", "daycare", "grooming", "training"];
+  const allGroups = ["boarding", "daycare", "grooming", "training"];
+  const groups = boardingOnly ? ["boarding"] : allGroups;
   const bookings = data.bookings || [];
+  const visibleCount = boardingOnly
+    ? bookings.filter((b) => b.service_type === "boarding").length
+    : bookings.length;
 
   return (
     <div className="animate-slide-in space-y-6" data-testid="run-sheet">
       <style>{`@media print { .no-print{display:none!important;} body{background:white!important;} .print-card{background:white!important;color:black!important;border-color:#ccc!important;} .print-card *{color:black!important;} }`}</style>
       <div className="no-print">
         <PageHero
-          eyebrow={{ icon: "fa-clipboard-list", text: `${bookings.length} dogs on premises`, color: "text-shGreen" }}
+          eyebrow={{ icon: "fa-clipboard-list", text: `${visibleCount} dogs on premises${boardingOnly ? " · boarding only" : ""}`, color: "text-shGreen" }}
           title="Daily Run Sheet."
           highlight="For the team."
           subtitle="Feeding · Medication · Notes · Times — print-ready for the fridge."
@@ -39,9 +76,21 @@ export default function RunSheet() {
             <div className="flex items-center gap-2 flex-wrap">
               <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="rs-date"
                      className="bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}}/>
+              <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest text-gray-300 cursor-pointer hover:border-shBlue transition"
+                     data-testid="rs-boarding-only-label">
+                <input type="checkbox" checked={boardingOnly}
+                       onChange={(e)=>setBoardingOnly(e.target.checked)}
+                       data-testid="rs-boarding-only"
+                       className="w-4 h-4 accent-shBlue"/>
+                Boarding only
+              </label>
               <button onClick={()=>window.print()} data-testid="rs-print"
                       className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest shadow hover:bg-shGreen/90 transition">
                 <i className="fas fa-print mr-1"/>Print
+              </button>
+              <button onClick={savePdf} disabled={savingPdf} data-testid="rs-save-pdf"
+                      className="bg-shBlue text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest shadow hover:bg-shBlue/90 transition disabled:opacity-50">
+                <i className={`fas ${savingPdf ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1`}/>{savingPdf ? "Saving…" : "Save PDF"}
               </button>
             </div>
           )}
@@ -49,17 +98,18 @@ export default function RunSheet() {
         />
       </div>
 
+      <div ref={printRef}>
       <div className="print-card bg-bgPanel border border-bgHover rounded-xl p-6 mb-6 shadow-2xl">
         <div className="flex justify-between items-start mb-2">
           <div>
             <h2 className="text-2xl font-black uppercase italic text-shGreen">Sit Happens · Daily Sheet</h2>
             <p className="text-xs text-gray-400 uppercase font-black tracking-widest">{new Date(data.date+"T12:00").toLocaleDateString(undefined,{ weekday:'long', month:'long', day:'numeric', year:'numeric' })}</p>
           </div>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest text-right">{bookings.length} dogs on premises</p>
+          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest text-right">{visibleCount} dogs{boardingOnly ? " · boarding only" : " on premises"}</p>
         </div>
       </div>
 
-      {bookings.length === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black">No dogs scheduled for this day.</div>}
+      {visibleCount === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black" data-testid="rs-empty">No {boardingOnly ? "boarding " : ""}dogs scheduled for this day.</div>}
 
       {groups.map(g => {
         const list = bookings.filter(b => b.service_type === g);
@@ -139,6 +189,7 @@ export default function RunSheet() {
           </div>
         );
       })}
+      </div>
 
       {detailId && (
         <BookingDetailModal booking={{ id: detailId }}
