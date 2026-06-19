@@ -3917,3 +3917,23 @@ records its still saying the records are needed"
 
 ### Backlog after this sprint
 The earlier upcoming list (retail items catalog, check-in/check-out census, public `/book` page, kiosk wall, Twilio SMS) is **paused** per operator instruction. Future work focus: cleanup and refinement only — no new big features unless explicitly requested.
+
+
+## Sprint 110di-14 — Mobile portal: credit card alignment + sticky CTA respects setup gate (2026-02-19)
+
+**User ask**: Focused mobile fix. Three credit boxes (Daycare/Training/Boarding) must be visually identical and centered. The mobile sticky Book Service button bypasses the setup requirements — wire it into the existing `GET /api/portal/setup-status` gate. No redesign, no second onboarding system.
+
+### Portal.jsx
+- ✅ **Shared `CreditMetricCard` component** (new, defined at file bottom). One reusable tile: equal h-full, equal padding (p-3), `flex flex-col items-center justify-center text-center`, centered icon/label/number/unit with consistent vertical spacing. Verified at 390px width — three boxes each measure exactly 107 × 128 px. Same data (`credits` / `client.training_credits` / `client.boarding_credits`), same brand colors (shGreen / purple-400 / shOrange).
+- ✅ **`openBookingIfReady` async helper** — single source of truth that fetches the live setup-status, syncs state, then either scrolls to the checklist (when `booking_locked`) or opens the wizard (when `ready_to_book`). All "Book" entry points now route through it: sticky mobile CTA, desktop Book Now button, Quick Link tile, "Book Again" rebook, and the SetupSuccess hero. No more direct `setShowBookWizard(true)` bypasses anywhere in the file.
+- ✅ **Sticky CTA** — was `onClick={()=>setShowBookWizard(true)}`. Now `onClick={openBookingIfReady}`. Text & color flip on `bookingLocked`: "Complete Setup" (shOrange) vs "Book Service" (shGreen). Mobile-verified.
+- ✅ **Wizard mount guard** — `{showBookWizard && readyToBook && <PortalBookWizard …/>}` prevents accidental future bypasses.
+
+### Tests
+- ✅ NEW `backend/tests/test_portal_setup_status_gate.py` — 3 tests passing. Pins the `/api/portal/setup-status` contract (the 5 required keys: `steps`, `booking_locked`, `ready_to_book`, `completed_count`, `total_count`), verifies 403 for non-clients, and that a brand-new client is locked.
+- ✅ Mobile Playwright validation (manual): with a fresh seeded client+dog, `STICKY (locked) == "Complete Setup"` then DB-flipped to `ready_to_book=True` → `STICKY (ready) == "Book Service"` and `portal-book-wizard` testid mounted. Credit boxes confirmed 107×128 each.
+
+### Notes
+- Re-ran `cleanup_test_data.py` at end — env back to 1 kept client (`garrett @ freightshaker06@gmail.com`), 0 dogs. The test suite seeded ~170 transient clients during runs; they're now wiped.
+- No DB schema, branding, or onboarding logic changed. Existing PortalSetupChecklist unchanged.
+

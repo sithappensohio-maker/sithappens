@@ -685,6 +685,40 @@ export default function Portal() {
   const [bookingsMonth, setBookingsMonth] = useState("");
   // New: wizard-based booking flow (replaces inline form).
   const [showBookWizard, setShowBookWizard] = useState(false);
+
+  // Sprint 110di-14 — central guard for ALL "open booking wizard" callers.
+  // Fetches the live setup gate, syncs state, and either (a) routes the
+  // client to the setup checklist when booking is locked, or (b) opens the
+  // wizard. Use this anywhere the wizard could be opened so the sticky
+  // mobile CTA, the desktop Book Now button, and any future entry point all
+  // share a single source of truth — no second onboarding system.
+  const openBookingIfReady = useCallback(async () => {
+    let live = setupStatus;
+    try {
+      const { data } = await api.get("/portal/setup-status");
+      live = data;
+      setSetupStatus(data);
+    } catch {
+      // Network blip — fall back to last known state. If we don't have one,
+      // route to the checklist to be safe (never silently bypass the gate).
+    }
+    if (!live || live.booking_locked === true) {
+      // Refresh the checklist so the user sees the latest steps, then
+      // scroll to it. window+scrollRoot fallbacks keep mobile happy.
+      setSetupRefresh(n => n + 1);
+      const target = document.querySelector('[data-testid="portal-setup-checklist"]');
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
+      try {
+        const sr = document.querySelector('[data-scroll-root]');
+        if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
+      } catch {}
+      return;
+    }
+    setShowBookWizard(true);
+  }, [setupStatus]);
   // Sprint 110cf — Reschedule request modal for prepaid program sessions
   const [rescheduleFor, setRescheduleFor] = useState(null);
 
@@ -936,7 +970,7 @@ export default function Portal() {
           <PortalSetupSuccess
             onBook={() => {
               dismissSetupSuccess();
-              setShowBookWizard(true);
+              openBookingIfReady();
             }}
             onDismiss={dismissSetupSuccess}
           />
@@ -1007,34 +1041,37 @@ export default function Portal() {
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
                 <i className="fas fa-wallet mr-1"/>Your Credits
               </p>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="relative bg-bgBase rounded-lg p-3 border border-shGreen/20">
-                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(140,198,63,0.7) 0%, transparent 65%)" }}/>
-                  <div className="relative">
-                    <i className="fas fa-sun text-shGreen text-sm mb-1"/>
-                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Daycare</p>
-                    <p className="text-3xl font-black text-shGreen mt-1 drop-shadow-[0_0_8px_rgba(140,198,63,0.4)]">{credits}</p>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">days</p>
-                  </div>
-                </div>
-                <div className="relative bg-bgBase rounded-lg p-3 border border-purple-500/20">
-                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(168,85,247,0.7) 0%, transparent 65%)" }}/>
-                  <div className="relative">
-                    <i className="fas fa-graduation-cap text-purple-400 text-sm mb-1"/>
-                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Training</p>
-                    <p className="text-3xl font-black text-purple-400 mt-1 drop-shadow-[0_0_8px_rgba(168,85,247,0.4)]">{client?.training_credits || 0}</p>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">sessions</p>
-                  </div>
-                </div>
-                <div className="relative bg-bgBase rounded-lg p-3 border border-shOrange/20">
-                  <div className="absolute inset-0 pointer-events-none opacity-20 rounded-lg" style={{ background: "radial-gradient(circle, rgba(242,101,34,0.7) 0%, transparent 65%)" }}/>
-                  <div className="relative">
-                    <i className="fas fa-moon text-shOrange text-sm mb-1"/>
-                    <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest">Boarding</p>
-                    <p className="text-3xl font-black text-shOrange mt-1 drop-shadow-[0_0_8px_rgba(242,101,34,0.4)]">{client?.boarding_credits || 0}</p>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest mt-1">nights</p>
-                  </div>
-                </div>
+              <div className="grid grid-cols-3 gap-2 text-center items-stretch">
+                <CreditMetricCard
+                  icon="fa-sun"
+                  label="Daycare"
+                  value={credits}
+                  unit="days"
+                  color="shGreen"
+                  haloRgba="rgba(140,198,63,0.7)"
+                  dropShadow="0 0 8px rgba(140,198,63,0.4)"
+                  testid="credit-metric-daycare"
+                />
+                <CreditMetricCard
+                  icon="fa-graduation-cap"
+                  label="Training"
+                  value={client?.training_credits || 0}
+                  unit="sessions"
+                  color="purple-400"
+                  haloRgba="rgba(168,85,247,0.7)"
+                  dropShadow="0 0 8px rgba(168,85,247,0.4)"
+                  testid="credit-metric-training"
+                />
+                <CreditMetricCard
+                  icon="fa-moon"
+                  label="Boarding"
+                  value={client?.boarding_credits || 0}
+                  unit="nights"
+                  color="shOrange"
+                  haloRgba="rgba(242,101,34,0.7)"
+                  dropShadow="0 0 8px rgba(242,101,34,0.4)"
+                  testid="credit-metric-boarding"
+                />
               </div>
               <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-3 text-center">
                 <i className="fas fa-bath text-shBlue mr-1"/>Grooming is pay-on-the-day
@@ -1133,26 +1170,7 @@ export default function Portal() {
                  "Daycare, boarding, training & more — pick a service and a date."}
               </p>
               <button
-                onClick={() => {
-                  if (bookingLocked) {
-                    // Scroll the user back up to the checklist. Prefer the
-                    // checklist element itself, but fall back to the top of
-                    // the page / the document scroll root so the click always
-                    // does *something* visible on mobile.
-                    const target = document.querySelector('[data-testid="portal-setup-checklist"]');
-                    if (target && typeof target.scrollIntoView === "function") {
-                      target.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }
-                    // Also lift any parent scroll container (PWA, iframe, etc.)
-                    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-                    try {
-                      const sr = document.querySelector('[data-scroll-root]');
-                      if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
-                    } catch {}
-                    return;
-                  }
-                  setShowBookWizard(true);
-                }}
+                onClick={openBookingIfReady}
                 disabled={!bookingLocked && (dogs.length === 0 || waiverNeeded)}
                 data-testid="portal-book-button"
                 className={`w-full py-4 rounded-lg font-black uppercase text-[14px] tracking-widest shadow-xl flex items-center justify-center gap-2 transition ${
@@ -1203,21 +1221,7 @@ export default function Portal() {
                       links (Website, Photo Gallery) sit at the end. */}
                   {dogs.length > 0 && !waiverNeeded && (
                     <QuickLinkTile
-                      onClick={()=>{
-                        if (!bookingLocked) {
-                          setShowBookWizard(true);
-                          return;
-                        }
-                        const target = document.querySelector('[data-testid="portal-setup-checklist"]');
-                        if (target && typeof target.scrollIntoView === "function") {
-                          target.scrollIntoView({ behavior: "smooth", block: "start" });
-                        }
-                        try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch {}
-                        try {
-                          const sr = document.querySelector('[data-scroll-root]');
-                          if (sr) sr.scrollTo({ top: 0, behavior: "smooth" });
-                        } catch {}
-                      }}
+                      onClick={openBookingIfReady}
                       testid="portal-ql-book-service"
                       icon="fa-calendar-plus"
                       color="#8cc63f"
@@ -1842,7 +1846,7 @@ export default function Portal() {
                       {["completed","cancelled","rejected"].includes(b.status) && (
                         <button onClick={()=>{
                                   setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type });
-                                  setShowBookWizard(true);
+                                  openBookingIfReady();
                                   document.getElementById("portal-book-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
                                 }}
                                 data-testid={`book-again-${b.id}`}
@@ -1916,19 +1920,30 @@ export default function Portal() {
         />
       )}
 
-      {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always reachable */}
+      {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always
+          reachable. Sprint 110di-14: respects the existing setup gate so it
+          can never bypass `booking_locked`. When locked → COMPLETE SETUP +
+          scroll to checklist. When ready → BOOK SERVICE + open wizard. */}
       {dogs.length > 0 && (
         <button
-          onClick={()=>setShowBookWizard(true)}
-          disabled={waiverNeeded}
+          onClick={openBookingIfReady}
           data-testid="portal-sticky-book"
-          className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-shGreen text-bgHeader py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t border-shGreen/60 disabled:opacity-50"
+          aria-label={bookingLocked ? "Complete setup" : "Book service"}
+          className={`md:hidden fixed bottom-0 inset-x-0 z-30 py-3 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[14px] shadow-2xl border-t ${
+            bookingLocked
+              ? "bg-shOrange text-bgHeader border-shOrange/60"
+              : "bg-shGreen text-bgHeader border-shGreen/60"
+          }`}
         >
-          <i className="fas fa-calendar-plus"/>Book Service
+          {bookingLocked ? (
+            <><i className="fas fa-lock"/>Complete Setup</>
+          ) : (
+            <><i className="fas fa-calendar-plus"/>Book Service</>
+          )}
         </button>
       )}
 
-      {showBookWizard && (
+      {showBookWizard && readyToBook && (
         <PortalBookWizard
           dogs={dogs}
           seed={rebookSeed}
@@ -2073,6 +2088,60 @@ export default function Portal() {
 }
 
 function OnboardingChecklistPlaceholder() { return null; }  // (legacy slot — onboarding UI moved to PortalSetupChecklist)
+
+
+/**
+ * Sprint 110di-14 — Shared credit metric tile used by the portal credits
+ * card (Daycare / Training / Boarding). One component, identical layout,
+ * identical sizing — only the icon / label / value / unit / color change.
+ *
+ * Layout: flex column, items-center + justify-center, equal padding, equal
+ * height (h-full inside an items-stretch grid). Verified at <400px width:
+ * label sits on a single line because the parent grid is grid-cols-3 with
+ * tight gap-2, and we use uppercase tracking-widest at text-[11px].
+ */
+function CreditMetricCard({ icon, label, value, unit, color, haloRgba, dropShadow, testid }) {
+  // Tailwind can't JIT class names from a runtime string for arbitrary
+  // brand colors (shGreen / shOrange / purple-400), so we whitelist the
+  // border + text variants we actually use. Keeping the color="brand" API
+  // on the call-site clean while guaranteeing the classes ship in the bundle.
+  const borderCls = {
+    shGreen:      "border-shGreen/20",
+    shOrange:     "border-shOrange/20",
+    "purple-400": "border-purple-500/20",
+  }[color] || "border-bgHover";
+  const textCls = {
+    shGreen:      "text-shGreen",
+    shOrange:     "text-shOrange",
+    "purple-400": "text-purple-400",
+  }[color] || "text-white";
+  return (
+    <div
+      data-testid={testid}
+      className={`relative bg-bgBase rounded-lg p-3 border ${borderCls} h-full flex flex-col items-center justify-center text-center`}
+    >
+      <div
+        className="absolute inset-0 pointer-events-none opacity-20 rounded-lg"
+        style={{ background: `radial-gradient(circle, ${haloRgba} 0%, transparent 65%)` }}
+      />
+      <div className="relative flex flex-col items-center justify-center gap-1 w-full">
+        <i className={`fas ${icon} ${textCls} text-sm`} />
+        <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest text-center leading-tight">
+          {label}
+        </p>
+        <p
+          className={`text-3xl font-black ${textCls} leading-none`}
+          style={{ filter: `drop-shadow(${dropShadow})` }}
+        >
+          {value}
+        </p>
+        <p className="text-[10px] text-gray-500 uppercase tracking-widest text-center leading-tight">
+          {unit}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 
 /**
