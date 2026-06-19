@@ -1022,6 +1022,65 @@ export default function Portal() {
           );
         })()}
 
+        {/* Sprint 110dh-6 / 110di-22 — Setup checklist hoisted ABOVE landing_priority
+            so "Requirements to Book" is ALWAYS the first thing a not-yet-onboarded
+            client sees, regardless of the admin's landing_priority order. The
+            checklist auto-hides once setup is complete, so this slot becomes
+            invisible for fully onboarded clients. The success card (shown once
+            the first time setup completes) also lives here. */}
+        {showSetupSuccess && (
+          <PortalSetupSuccess
+            onBook={() => {
+              dismissSetupSuccess();
+              openBookingIfReady();
+            }}
+            onDismiss={dismissSetupSuccess}
+          />
+        )}
+        <PortalSetupChecklist
+          refreshKey={setupRefresh}
+          onStatusChange={setSetupStatus}
+          onAction={(target) => {
+            // Return true to prevent the default scroll/click fallback.
+            if (target === "waiver") {
+              setShowWaiver(true);
+              return true;
+            }
+            if (target === "vaccines") {
+              // Collect every (dog, required-vaccine) pair that's missing or
+              // expired, then fire the multi-step wizard. If there's only one,
+              // the wizard still works (1-of-1).
+              const todayIso = new Date().toISOString().slice(0, 10);
+              const required = ["rabies", "bordetella", "dhpp"];
+              const queue = [];
+              dogs.forEach(d => {
+                required.forEach(v => {
+                  const exp = d?.vaccines?.[v];
+                  if (!exp || String(exp).slice(0, 10) < todayIso) {
+                    queue.push({ dog: d, vaccine: v });
+                  }
+                });
+              });
+              if (queue.length > 0) { setVaccineWizard(queue); return true; }
+              if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
+              // No dogs yet — open the add-dog modal so they start there.
+              setDogModal({ open: true, dog: null });
+              return true;
+            }
+            if (target === "dogs") {
+              // Always open the Add Dog modal from the setup checklist —
+              // covers both "add first dog" and "add another dog".
+              setDogModal({ open: true, dog: null });
+              return true;
+            }
+            if (target === "profile") {
+              setProfileOpen(true);
+              return true;
+            }
+            return false;  // let the checklist fall through to its default scroll
+          }}
+        />
+
         {/* Sprint 110di-21 — Landing priority reorder for the upper portal
             blocks. The admin-set order in cpc.landing_priority controls the
             sequence of: announcements, credits-callout, upcoming_bookings-callout,
@@ -1096,63 +1155,6 @@ export default function Portal() {
         {/* Sprint 110ax — Daily dog fact, pinned above the main content.
             Sprint 110di-18 — Gated by Client Portal Controls. */}
         {sectionOn("dog_facts") && <div className="mb-6"><DogFactCard variant="big" /></div>}
-
-        {/* Sprint 110dh-6 — First-time setup checklist. Renders at the very top
-            whenever booking is locked; auto-hides once the client is fully
-            ready to book. Sprint 110dh-9 — Replaced by the success card the
-            first time setup completes (until dismissed). */}
-        {showSetupSuccess && (
-          <PortalSetupSuccess
-            onBook={() => {
-              dismissSetupSuccess();
-              openBookingIfReady();
-            }}
-            onDismiss={dismissSetupSuccess}
-          />
-        )}
-        <PortalSetupChecklist
-          refreshKey={setupRefresh}
-          onStatusChange={setSetupStatus}
-          onAction={(target) => {
-            // Return true to prevent the default scroll/click fallback.
-            if (target === "waiver") {
-              setShowWaiver(true);
-              return true;
-            }
-            if (target === "vaccines") {
-              // Collect every (dog, required-vaccine) pair that's missing or
-              // expired, then fire the multi-step wizard. If there's only one,
-              // the wizard still works (1-of-1).
-              const todayIso = new Date().toISOString().slice(0, 10);
-              const required = ["rabies", "bordetella", "dhpp"];
-              const queue = [];
-              dogs.forEach(d => {
-                required.forEach(v => {
-                  const exp = d?.vaccines?.[v];
-                  if (!exp || String(exp).slice(0, 10) < todayIso) {
-                    queue.push({ dog: d, vaccine: v });
-                  }
-                });
-              });
-              if (queue.length > 0) { setVaccineWizard(queue); return true; }
-              if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
-              // No dogs yet — open the add-dog modal so they start there.
-              setDogModal({ open: true, dog: null });
-              return true;
-            }
-            if (target === "dogs") {
-              // Always open the Add Dog modal from the setup checklist —
-              // covers both "add first dog" and "add another dog".
-              setDogModal({ open: true, dog: null });
-              return true;
-            }
-            if (target === "profile") {
-              setProfileOpen(true);
-              return true;
-            }
-            return false;  // let the checklist fall through to its default scroll
-          }}
-        />
 
         {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game).
             Sprint 110di-18 — Gated by Client Portal Controls (trivia_rewards). */}
@@ -1275,6 +1277,7 @@ export default function Portal() {
               <p className="text-xs text-gray-400">Signed by <span className="text-white font-black">{waiver?.signature?.typed_name}</span> on {(waiver?.signature?.signed_at||"").slice(0,10)}</p>
             )}
           </div>
+          )}
 
           {/* Sprint 110x — Book Service promoted ABOVE quick links and turned
               into a vivid gradient hero CTA (brand-color glow, oversized icon,
@@ -1334,7 +1337,6 @@ export default function Portal() {
               )}
             </div>
           </div>
-          )}
 
           {sectionOn("profile_quick_links") && (pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
             <div className="relative overflow-hidden bg-bgPanel p-5 rounded-2xl border border-bgHover shadow-2xl" data-testid="portal-quick-links">

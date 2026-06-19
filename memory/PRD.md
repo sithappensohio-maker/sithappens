@@ -4194,3 +4194,37 @@ Friendly labels → existing keys mapping:
 - The matrix UI edits ROLE permissions (one row = all users with that role). The existing per-user override path (`users.permissions`) is unchanged. Per-user fine-tuning UI can be added later if requested but the role-level matrix covers the user's stated use case.
 - `owner` role permanently mapped to full perms; admins can't downgrade themselves out of access.
 
+
+
+
+## Sprint 110di-22 — Portal Landing Priority Hoisted Setup Checklist (2026-02-19)
+**User ask**: Finish wiring remaining Client Portal Controls in Portal.jsx (booking_history, profile_quick_links, waiver_documents, vaccines_compliance, landing_priority render order). Ensure "Requirements To Book" remains first when incomplete.
+
+### Frontend (Portal.jsx)
+- ✅ **Fixed accidental gate**: the `waiver_documents` `sectionOn(...)` wrap was incorrectly enclosing both the Client Waiver card AND the entire Book Service hero CTA. Toggling waiver off would have hidden booking. Now the gate is closed tightly around just the waiver card.
+- ✅ **Hoisted PortalSetupChecklist + PortalSetupSuccess** above the `landing_priority` block. "Requirements to Book" now ALWAYS renders first when `bookingLocked` is true, regardless of the admin's landing_priority order. The checklist auto-hides once setup is complete, so this slot becomes invisible for fully onboarded clients.
+- ✅ All Client Portal Controls now properly gated by `sectionOn(...)`: `booking_history`, `profile_quick_links`, `waiver_documents`, `vaccines_compliance`, `help_button`, `messages`, `credits`, `dog_facts`, `trivia_rewards`.
+
+## Sprint 110di-23 — Config Export / Import (2026-02-19)
+**User ask**: Add config export/import functionality into the existing backup system. Do not create a new system.
+
+### Backend (server.py)
+- ✅ **`GET /api/backup/export-config`** — returns `{kind: "config", version: 1, exported_at, collections: {...}}` with just the 5 configurability collections: `settings`, `app_settings`, `email_settings`, `email_templates`, `payment_plan_settings`. No client/dog/booking data.
+- ✅ **`POST /api/backup/restore-config`** — full-replace semantics for each config collection in the payload. Rejects:
+  - files lacking `kind: "config"` (e.g. a full backup uploaded by mistake) with a clear 400
+  - future-version snapshots
+  - anything outside the config allow-list is silently ignored (no accidental wipe of clients)
+- ✅ `CONFIG_COLLECTIONS` constant + `CONFIG_BACKUP_VERSION=1` declared next to the existing `BACKUP_COLLECTIONS`.
+
+### Frontend (Settings.jsx → BackupPanel)
+- ✅ New **"Config Export / Import"** subsection slotted between Year-End Income Export and Restore from Backup — visually integrated into the existing backup system, no new top-level UI.
+- ✅ Purple "Download Config (.json)" button + dedicated file picker + "Restore Config" button.
+- ✅ Frontend pre-validation: rejects uploaded files lacking `kind: "config"` at preview time with a friendly error pointing the operator to the full Restore section.
+- ✅ Confirmation modal explains "Client/dog/booking data is NOT affected."
+
+### Tests
+- ✅ NEW `tests/test_config_backup.py` — 5 tests: export shape, idempotent roundtrip, rejects full backups, rejects future versions, silently ignores collections outside the allow-list. All pass.
+- ✅ Full configurability regression suite (20 tests) still green.
+
+### Service Worker
+- ✅ Bumped to `sh-v22-110di-23-portal-priority-config-backup` so mobile PWA picks up the Portal layout change.

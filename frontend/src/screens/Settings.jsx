@@ -3378,6 +3378,11 @@ function BackupPanel() {
   const [restoreFile, setRestoreFile] = useState(null);
   const [restoreMode, setRestoreMode] = useState("merge");
   const [restorePreview, setRestorePreview] = useState(null);
+  // Sprint 110di-23 — Config-only export/import (settings, themes, email
+  // templates, payment-plan settings). Separate file from the full backup so
+  // the operator can carry just their configuration between hosts.
+  const [configFile, setConfigFile] = useState(null);
+  const [configPreview, setConfigPreview] = useState(null);
 
   const download = async () => {
     setBusy(true); setMsg("");
@@ -3408,6 +3413,63 @@ function BackupPanel() {
       setMsg(`Income CSV for ${year} downloaded ✓`);
     } catch (e) { console.warn("income csv failed", e); setMsg("Income export failed"); }
     setBusy(false);
+  };
+
+  // Sprint 110di-23 — Config-only download. Bundles just the settings collections.
+  const downloadConfig = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const { data } = await api.get("/backup/export-config");
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url; a.download = `sit-happens-config-${date}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMsg("Config downloaded ✓");
+    } catch { setMsg("Config download failed"); }
+    setBusy(false);
+  };
+
+  const onPickConfigFile = (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    setConfigFile(f); setConfigPreview(null); setMsg("");
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(r.result);
+        if (!parsed.version || !parsed.collections) throw new Error("Not a valid config file");
+        if (parsed.kind !== "config") {
+          throw new Error(`This looks like a '${parsed.kind || "full"}' backup, not a config file. Use the full Restore section below.`);
+        }
+        const counts = {};
+        Object.entries(parsed.collections).forEach(([k, v]) => counts[k] = (v || []).length);
+        setConfigPreview({ version: parsed.version, exportedAt: parsed.exported_at, kind: parsed.kind, counts });
+      } catch (err) { setMsg(`Invalid file: ${err.message}`); setConfigFile(null); }
+    };
+    r.readAsText(f);
+  };
+
+  const doConfigRestore = async () => {
+    if (!configFile || !configPreview) return;
+    const total = Object.values(configPreview.counts).reduce((a,b)=>a+b, 0);
+    if (!(await confirm({ title: "Replace configuration?", body: `This will REPLACE your current configuration (settings, themes, email templates, payment-plan settings) with ${total} records from ${configFile.name}.\n\nClient/dog/booking data is NOT affected. Download a fresh config backup first if you're unsure.`, confirmText: "Yes, replace config", tone: "danger" }))) return;
+    setBusy(true); setMsg("");
+    try {
+      const r = new FileReader();
+      r.onload = async () => {
+        try {
+          const payload = JSON.parse(r.result);
+          const { data } = await api.post("/backup/restore-config", payload);
+          const summary = Object.entries(data.summary).map(([k,v])=>`${k}: ${v.inserted}`).join(" · ");
+          setMsg(`Config restored ✓ ${summary} — reload to see all changes.`);
+          setConfigFile(null); setConfigPreview(null);
+        } catch (e) { setMsg(`Config restore failed: ${e.response?.data?.detail || e.message}`); }
+        setBusy(false);
+      };
+      r.readAsText(configFile);
+    } catch { setBusy(false); setMsg("Config restore failed"); }
   };
 
   const onPickFile = (e) => {
@@ -3481,6 +3543,51 @@ function BackupPanel() {
                 className="bg-shBlue text-bgHeader px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
           <i className="fas fa-file-csv mr-2"/>{busy ? "Working…" : `Download ${new Date().getFullYear()} Income (.csv)`}
         </button>
+      </div>
+
+      {/* Sprint 110di-23 — Config-only export/import. Lets the operator carry
+          their settings/branding/themes/email templates between hosts without
+          shipping any client/dog/booking data. Tiny file (typically < 100 KB)
+          vs. the full backup which can be megabytes. */}
+      <div className="border-t border-bgHover pt-6" data-testid="config-backup-section">
+        <h4 className="text-sm font-black text-purple-400 uppercase tracking-widest mb-2"><i className="fas fa-sliders mr-2"/>Config Export / Import</h4>
+        <p className="text-[14px] text-gray-300 mb-3 leading-relaxed">
+          Download just your <span className="text-white font-black">configuration</span> — branding, themes, feature visibility,
+          portal controls, dashboard widgets, card themes, email templates, and payment-plan settings.
+          <br/><span className="text-gray-500">No client/dog/booking data is touched. Tiny file — perfect for cloning a staging-tested config into production, or rolling back a theme change.</span>
+        </p>
+        <button onClick={downloadConfig} disabled={busy} data-testid="config-download"
+                className="bg-purple-500 text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+          <i className="fas fa-download mr-2"/>{busy ? "Working…" : "Download Config (.json)"}
+        </button>
+
+        <div className="mt-5 space-y-3">
+          <label className="block">
+            <span className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Restore config from file</span>
+            <input type="file" accept=".json,application/json" onChange={onPickConfigFile} data-testid="config-file"
+                   className="block mt-1 w-full text-sm text-gray-300 file:mr-3 file:py-2 file:px-4 file:rounded file:border-0 file:bg-bgBase file:text-purple-400 file:font-black file:uppercase file:text-[14px] file:tracking-widest hover:file:bg-bgHover cursor-pointer" />
+          </label>
+
+          {configPreview && (
+            <div className="bg-bgBase border border-bgHover rounded p-3 space-y-2" data-testid="config-preview">
+              <p className="text-[14px] font-black text-purple-400 uppercase tracking-widest">Config preview</p>
+              <p className="text-[14px] text-gray-400">Exported {configPreview.exportedAt?.slice(0,19).replace("T", " ")}</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-[14px]">
+                {Object.entries(configPreview.counts).map(([k,v]) => (
+                  <div key={k} className="bg-bgPanel rounded px-2 py-1 flex justify-between">
+                    <span className="text-gray-400 uppercase font-black tracking-widest">{k}</span>
+                    <span className="text-white font-black">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button onClick={doConfigRestore} disabled={busy || !configPreview} data-testid="config-restore"
+                  className="bg-purple-500 text-white px-6 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+            <i className="fas fa-upload mr-2"/>{busy ? "Restoring…" : "Restore Config"}
+          </button>
+        </div>
       </div>
 
       <div className="border-t border-bgHover pt-6">

@@ -9136,6 +9136,101 @@ async def backup_export(_: dict = Depends(require_admin)):
     return payload
 
 
+# ─────────────── Sprint 110di-23 · Config-only Export/Import ───────────────
+# A trimmed slice of the backup that ONLY contains "configurability" data:
+# the master `settings` blob (branding, feature_visibility,
+# client_portal_controls, booking_flow_controls, dashboard_widgets,
+# card_type_themes, etc.), email templates/branding, payment-plan settings,
+# and named app_settings rows (auto_backup, quarterly_tax, …).
+#
+# Lets the operator carry their configuration between staging/prod or back
+# up just their themes/toggles WITHOUT bundling client/dog/booking data.
+# Restore is always a full overwrite of the named config keys ("replace"
+# semantics for these specific collections only) — predictable backup/restore.
+CONFIG_COLLECTIONS = [
+    "settings",
+    "app_settings",
+    "email_settings",
+    "email_templates",
+    "payment_plan_settings",
+]
+CONFIG_BACKUP_VERSION = 1
+
+
+@api.get("/backup/export-config")
+async def backup_export_config(_: dict = Depends(require_admin)):
+    """Download a JSON snapshot of just the configuration collections —
+    branding, feature visibility, portal controls, dashboard widgets, card
+    themes, email templates, payment-plan settings, and named app_settings
+    rows. No client/dog/booking data is included."""
+    payload = {
+        "kind": "config",
+        "version": CONFIG_BACKUP_VERSION,
+        "exported_at": now_iso(),
+        "collections": {},
+    }
+    for c in CONFIG_COLLECTIONS:
+        if c in STRING_ID_COLLECTIONS:
+            docs = await db[c].find({}).to_list(50000)
+            cleaned: List[Dict[str, Any]] = []
+            for d in docs:
+                _id = d.get("_id")
+                if isinstance(_id, str):
+                    d["_id"] = _id
+                else:
+                    d.pop("_id", None)
+                cleaned.append(d)
+            payload["collections"][c] = cleaned
+        else:
+            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
+            payload["collections"][c] = docs
+    return payload
+
+
+class ConfigRestoreIn(BaseModel):
+    version: int
+    collections: dict
+    # Optional marker we set on export so users can't accidentally restore a
+    # full-data backup through this endpoint (which would silently drop most
+    # of their collections).
+    kind: Optional[str] = None
+
+
+@api.post("/backup/restore-config")
+async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require_admin)):
+    """Restore configuration from a config-only backup file. Always replaces
+    the listed config collections with the snapshot contents. Collections
+    NOT in the payload are left untouched. Anything outside the configured
+    allow-list is silently ignored — so you can't accidentally wipe clients
+    by uploading the wrong file."""
+    if body.kind != "config":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This file looks like a '{body.kind or 'full'}' export, not a config export. "
+                "Use the full Restore panel for full backups, or re-download via Config Export."
+            ),
+        )
+    if body.version > CONFIG_BACKUP_VERSION:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Config backup version {body.version} is newer than this server (v{CONFIG_BACKUP_VERSION}). Update the server first.",
+        )
+    summary = {}
+    for c, docs in (body.collections or {}).items():
+        if c not in CONFIG_COLLECTIONS:
+            continue
+        docs = [d for d in (docs or []) if isinstance(d, dict)]
+        # Full-replace semantics: drop the collection, then bulk-insert.
+        # Config docs are tiny (handful of rows max) so wiping is cheap and
+        # predictable — matches user expectation for "restore this config".
+        await db[c].delete_many({})
+        if docs:
+            await db[c].insert_many(docs)
+        summary[c] = {"mode": "replace", "inserted": len(docs)}
+    return {"ok": True, "summary": summary, "restored_at": now_iso()}
+
+
 # ─────────────── Sprint 110av · Disk Usage Monitor ───────────────
 # Shows free/used space for every path the container can see. Helps the
 # operator know when they're running out of room for backups / Mongo data
