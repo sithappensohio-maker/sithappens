@@ -1,4 +1,6 @@
-"""Sprint 110di-12 — Card Type Themes round-trip + reset/export coverage."""
+"""Sprint 110di-12 — Card Type Themes round-trip + reset/export coverage.
+Sprint 110di-16 — Catalog extended to 24 surface types covering every
+reusable card across the app."""
 import os, requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
@@ -12,8 +14,18 @@ def _admin_h():
     return {"Authorization": f"Bearer {r.json()['token']}"}
 
 
-TYPE_IDS = ["default", "info", "stats", "success", "warning",
-            "danger", "payment", "training", "booking", "profile"]
+# Sprint 110di-16 — full catalog of 24 user-facing card type ids. Legacy
+# aliases (`stats`, `training`, `profile`) are still emitted by the backend
+# for back-compat but aren't asserted here.
+TYPE_IDS = [
+    "default", "hero", "stat", "info", "task", "fact",
+    "booking", "client", "dog", "staff",
+    "care", "kennel", "waitlist",
+    "intake", "waiver",
+    "finance", "report", "payment",
+    "warning", "success", "danger",
+    "modal", "form", "table",
+]
 
 
 def test_branding_exposes_card_type_themes_with_all_ten_types():
@@ -28,8 +40,10 @@ def test_branding_exposes_card_type_themes_with_all_ten_types():
         assert t["bg"].startswith("#"), f"{tid}.bg should be a hex color"
     # Sanity: spec colors for a few signature types
     assert types["danger"]["border"]  == "#FF3B5C"
-    assert types["training"]["accent"] == "#A855F7"
+    assert types["staff"]["accent"]   == "#A855F7"
     assert types["payment"]["border"] == "#F26500"
+    assert types["hero"]["accent"]    == "#9BCB00"
+    assert types["modal"]["bg"]       == "#0c143e"
 
 
 def test_card_type_themes_round_trip_through_settings():

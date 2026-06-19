@@ -3973,3 +3973,38 @@ The earlier upcoming list (retail items catalog, check-in/check-out census, publ
 - No new booking-requirement system was created. No duplicate checklist. The single `/api/portal/setup-status` endpoint is still the only source of truth, and `PortalSetupChecklist` is still the only client-facing renderer.
 - Test data wiped at end via `cleanup_test_data.py` — env back to 1 kept client.
 
+
+
+## Sprint 110di-16 — Global theme catalog extended to 24 types + live sample gallery (2026-02-19)
+
+**User ask**: ONE Brand & Theme editor — no duplicate card editors anywhere. Extend the existing Card Type Themes system to cover every reusable surface in the app (hero, stat, info, task, fact, booking, client, dog, staff, care, kennel, waitlist, intake, waiver, finance, report, payment, warning, success, danger, modal, form, table). Add a richer live preview. Keep the Sit Happens dark neon default look.
+
+### Backend (server.py)
+- ✅ `_card_type_theme_defaults()` extended from 10 → **24 surface types** + 3 legacy aliases (`stats`, `training`, `profile`) kept for back-compat. Each type carries the same 11-property contract (bg, border, glow, accent + border_opacity/border_width/glow_opacity/glow_blur + inner_highlight_color/inner_highlight_opacity + optional heading/text overrides).
+- ✅ `/api/branding` now returns 27 entries under `card_type_themes` — the merge with `_card_type_theme_defaults()` means new clients automatically get the full palette, and stale saved settings preserve their custom colors.
+
+### Frontend
+- ✅ `lib/theme.js DEFAULT_CARD_TYPES` mirrors the 24-type catalog. `applyBranding()` already iterates every key and writes `--ct-{id}-*` CSS vars + mirrors Default Card to the legacy global card vars — no code change needed; the new types flow through automatically.
+- ✅ `index.css` semantic classes `.card-{type}` added for all 24 types using the existing `::after` overlay pattern (border + glow + inner highlight). Legacy `.card-stats / .card-training / .card-profile` selectors now fall back through `var(--ct-stat-*) → var(--ct-stats-*)` so old templates keep working AND pick up the new admin-editable values.
+- ✅ `Settings.jsx`:
+  - `SH_CARD_TYPE_DEFAULTS()` extended to the 24-type catalog.
+  - `CARD_TYPE_META` rewritten with friendly labels + descriptions ("Default Card", "Hero Card", "Stat Card", "Care Board", "Kennel Board", "Waitlist", "Intake Forms", "Waiver", "Finance", "Reports", "Modal", "Form", "Table", etc.).
+  - The existing tabbed editor and 24-thumb preview grid pick up the new types with **zero structural change** — single source of truth preserved.
+  - NEW **Live Sample Gallery** section directly below the thumb grid (`data-testid="ct-sample-gallery"`). Renders 23 realistic sample cards (Hero · Welcome back, Stat · Daycare today, Booking · Daycare Buddy, Client · Alex Rivera, Dog · Buddy Lab, Care log, Finance · January revenue, Warning · vaccine expiring, Form · Add a dog, Table · Today's bookings, Modal · Book a service, etc.) using the live in-flight draft values so edits apply instantly.
+  - Each gallery card uses the exact same `border + box-shadow + inner highlight` math as the live CSS rule, so what the admin sees IS what the app renders.
+
+### Tests
+- ✅ `tests/test_card_type_themes.py` — TYPE_IDS list extended to all 24 user-facing types. New assertions on signature colors (`hero.accent == #9BCB00`, `staff.accent == #A855F7`, `modal.bg == #0c143e`). All 7 portal/branding tests still green.
+
+### Single-source-of-truth confirmed
+- One editor: Settings → Marketing & Branding → Brand & Theme → Card Type Themes.
+- One backend default fn: `_card_type_theme_defaults()`.
+- One frontend default obj: `DEFAULT_CARD_TYPES` / `SH_CARD_TYPE_DEFAULTS()`.
+- One CSS class family: `.card-{type}`.
+- One CSS-var family: `--ct-{type}-*`.
+- One Default Card → global mirror block in `theme.js` so panels using bare `bg-bgPanel` automatically inherit the Default Card chrome.
+
+### Notes / Backlog (per "do not break functionality")
+- A full audit-and-replace of every literal `bg-[#...]`, `border-[#...]`, `shadow-[0_0_...]` across the 100+ component files would touch a lot of surfaces and risk regressions. The catalog + CSS classes are in place — recommend converting screens incrementally as they're touched (e.g., add `card-booking` to the booking row, `card-client` to client list rows, `card-dog` to dog tiles). The existing `bg-bgPanel`-based screens already inherit Default Card chrome via the global `.bg-bgPanel::after` rule, so the most common pattern is already theme-driven.
+- Default look (Sit Happens dark neon) preserved — every new type's default palette matches the existing aesthetic; admins can swap colors per type without touching code.
+

@@ -123,14 +123,24 @@ body {
        <div className="card-stats rounded-xl p-4"> ... </div>
    When a `.card-*` class is set, the overlay border + glow comes from the
    type vars and the global `.bg-bgPanel::after` rule is suppressed. */
-.card-default, .card-info, .card-stats, .card-success, .card-warning,
-.card-danger, .card-payment, .card-training, .card-booking, .card-profile {
+.card-default, .card-hero, .card-stat, .card-info, .card-task, .card-fact,
+.card-booking, .card-client, .card-dog, .card-staff, .card-care, .card-kennel,
+.card-waitlist, .card-intake, .card-waiver, .card-finance, .card-report,
+.card-payment, .card-warning, .card-success, .card-danger,
+.card-modal, .card-form, .card-table,
+/* legacy alias selectors — old templates still using these keep working */
+.card-stats, .card-training, .card-profile {
   position: relative;
   isolation: isolate;
 }
-.card-default::after, .card-info::after, .card-stats::after, .card-success::after,
-.card-warning::after, .card-danger::after, .card-payment::after, .card-training::after,
-.card-booking::after, .card-profile::after {
+.card-default::after, .card-hero::after, .card-stat::after, .card-info::after,
+.card-task::after, .card-fact::after, .card-booking::after, .card-client::after,
+.card-dog::after, .card-staff::after, .card-care::after, .card-kennel::after,
+.card-waitlist::after, .card-intake::after, .card-waiver::after,
+.card-finance::after, .card-report::after, .card-payment::after,
+.card-warning::after, .card-success::after, .card-danger::after,
+.card-modal::after, .card-form::after, .card-table::after,
+.card-stats::after, .card-training::after, .card-profile::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -138,30 +148,68 @@ body {
   pointer-events: none;
   z-index: 0;
 }
-.card-default > *, .card-info > *, .card-stats > *, .card-success > *,
-.card-warning > *, .card-danger > *, .card-payment > *, .card-training > *,
-.card-booking > *, .card-profile > * { position: relative; z-index: 1; }
+.card-default > *, .card-hero > *, .card-stat > *, .card-info > *,
+.card-task > *, .card-fact > *, .card-booking > *, .card-client > *,
+.card-dog > *, .card-staff > *, .card-care > *, .card-kennel > *,
+.card-waitlist > *, .card-intake > *, .card-waiver > *,
+.card-finance > *, .card-report > *, .card-payment > *,
+.card-warning > *, .card-success > *, .card-danger > *,
+.card-modal > *, .card-form > *, .card-table > *,
+.card-stats > *, .card-training > *, .card-profile > * { position: relative; z-index: 1; }
 
 .card-default  { background: var(--ct-default-bg,  #05090D); }
 .card-default::after  { border: var(--ct-default-border-w,  2px) solid var(--ct-default-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-default-glow-blur, 14px) var(--ct-default-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-stat     { background: var(--ct-stat-bg,     #05090D); }
+.card-stat::after     { border: var(--ct-stat-border-w,     2px) solid var(--ct-stat-border-rgba,     rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-stat-glow-blur,    14px) var(--ct-stat-glow-rgba,     rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-stat-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-info     { background: var(--ct-info-bg,     #05090D); }
 .card-info::after     { border: var(--ct-info-border-w,     2px) solid var(--ct-info-border-rgba,     rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-info-glow-blur,    14px) var(--ct-info-glow-rgba,     rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-info-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-stats    { background: var(--ct-stats-bg,    #05090D); }
-.card-stats::after    { border: var(--ct-stats-border-w,    2px) solid var(--ct-stats-border-rgba,    rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-stats-glow-blur,   14px) var(--ct-stats-glow-rgba,    rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-stats-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-success  { background: var(--ct-success-bg,  #071006); }
-.card-success::after  { border: var(--ct-success-border-w,  2px) solid var(--ct-success-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-success-glow-blur, 14px) var(--ct-success-glow-rgba,  rgba(155,203,0,0.25)), inset 0 1px 0 var(--ct-success-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-warning  { background: var(--ct-warning-bg,  #130B02); }
-.card-warning::after  { border: var(--ct-warning-border-w,  2px) solid var(--ct-warning-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-warning-glow-blur, 14px) var(--ct-warning-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-warning-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-danger   { background: var(--ct-danger-bg,   #170407); }
-.card-danger::after   { border: var(--ct-danger-border-w,   2px) solid var(--ct-danger-border-rgba,   rgba(255,59,92,0.75)); box-shadow: 0 0 var(--ct-danger-glow-blur,  14px) var(--ct-danger-glow-rgba,   rgba(255,59,92,0.25)), inset 0 1px 0 var(--ct-danger-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-payment  { background: var(--ct-payment-bg,  #09080D); }
-.card-payment::after  { border: var(--ct-payment-border-w,  2px) solid var(--ct-payment-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-payment-glow-blur, 14px) var(--ct-payment-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-payment-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-training { background: var(--ct-training-bg, #070914); }
-.card-training::after { border: var(--ct-training-border-w, 2px) solid var(--ct-training-border-rgba, rgba(168,85,247,0.75)); box-shadow: 0 0 var(--ct-training-glow-blur,14px) var(--ct-training-glow-rgba, rgba(168,85,247,0.25)), inset 0 1px 0 var(--ct-training-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-task     { background: var(--ct-task-bg,     #0E0902); }
+.card-task::after     { border: var(--ct-task-border-w,     2px) solid var(--ct-task-border-rgba,     rgba(242,101,0,0.75));  box-shadow: 0 0 var(--ct-task-glow-blur,    14px) var(--ct-task-glow-rgba,     rgba(242,101,0,0.25)),  inset 0 1px 0 var(--ct-task-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-fact     { background: var(--ct-fact-bg,     #04111B); }
+.card-fact::after     { border: var(--ct-fact-border-w,     2px) solid var(--ct-fact-border-rgba,     rgba(0,200,255,0.75)); box-shadow: 0 0 var(--ct-fact-glow-blur,    14px) var(--ct-fact-glow-rgba,     rgba(0,200,255,0.25)), inset 0 1px 0 var(--ct-fact-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
 .card-booking  { background: var(--ct-booking-bg,  #050B14); }
 .card-booking::after  { border: var(--ct-booking-border-w,  2px) solid var(--ct-booking-border-rgba,  rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-booking-glow-blur, 14px) var(--ct-booking-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-booking-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
-.card-profile  { background: var(--ct-profile-bg,  #080C16); }
-.card-profile::after  { border: var(--ct-profile-border-w,  2px) solid var(--ct-profile-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-profile-glow-blur, 14px) var(--ct-profile-glow-rgba,  rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-profile-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-client   { background: var(--ct-client-bg,   #080C16); }
+.card-client::after   { border: var(--ct-client-border-w,   2px) solid var(--ct-client-border-rgba,   rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-client-glow-blur,  14px) var(--ct-client-glow-rgba,   rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-client-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-dog      { background: var(--ct-dog-bg,      #0A0F08); }
+.card-dog::after      { border: var(--ct-dog-border-w,      2px) solid var(--ct-dog-border-rgba,      rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-dog-glow-blur,     14px) var(--ct-dog-glow-rgba,      rgba(155,203,0,0.25)), inset 0 1px 0 var(--ct-dog-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-staff    { background: var(--ct-staff-bg,    #0A0814); }
+.card-staff::after    { border: var(--ct-staff-border-w,    2px) solid var(--ct-staff-border-rgba,    rgba(168,85,247,0.75)); box-shadow: 0 0 var(--ct-staff-glow-blur,   14px) var(--ct-staff-glow-rgba,    rgba(168,85,247,0.25)), inset 0 1px 0 var(--ct-staff-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-care     { background: var(--ct-care-bg,     #04130B); }
+.card-care::after     { border: var(--ct-care-border-w,     2px) solid var(--ct-care-border-rgba,     rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-care-glow-blur,    14px) var(--ct-care-glow-rgba,     rgba(155,203,0,0.25)), inset 0 1px 0 var(--ct-care-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-kennel   { background: var(--ct-kennel-bg,   #050B14); }
+.card-kennel::after   { border: var(--ct-kennel-border-w,   2px) solid var(--ct-kennel-border-rgba,   rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-kennel-glow-blur,  14px) var(--ct-kennel-glow-rgba,   rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-kennel-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-waitlist { background: var(--ct-waitlist-bg, #120A02); }
+.card-waitlist::after { border: var(--ct-waitlist-border-w, 2px) solid var(--ct-waitlist-border-rgba, rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-waitlist-glow-blur,14px) var(--ct-waitlist-glow-rgba, rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-waitlist-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-intake   { background: var(--ct-intake-bg,   #05090D); }
+.card-intake::after   { border: var(--ct-intake-border-w,   2px) solid var(--ct-intake-border-rgba,   rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-intake-glow-blur,  14px) var(--ct-intake-glow-rgba,   rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-intake-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-waiver   { background: var(--ct-waiver-bg,   #060c2e); }
+.card-waiver::after   { border: var(--ct-waiver-border-w,   2px) solid var(--ct-waiver-border-rgba,   rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-waiver-glow-blur,  14px) var(--ct-waiver-glow-rgba,   rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-waiver-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-finance  { background: var(--ct-finance-bg,  #09080D); }
+.card-finance::after  { border: var(--ct-finance-border-w,  2px) solid var(--ct-finance-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-finance-glow-blur, 14px) var(--ct-finance-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-finance-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-report   { background: var(--ct-report-bg,   #0A0E18); }
+.card-report::after   { border: var(--ct-report-border-w,   2px) solid var(--ct-report-border-rgba,   rgba(27,77,122,0.75)); box-shadow: 0 0 var(--ct-report-glow-blur,  14px) var(--ct-report-glow-rgba,   rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-report-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-payment  { background: var(--ct-payment-bg,  #09080D); }
+.card-payment::after  { border: var(--ct-payment-border-w,  2px) solid var(--ct-payment-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-payment-glow-blur, 14px) var(--ct-payment-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-payment-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-warning  { background: var(--ct-warning-bg,  #130B02); }
+.card-warning::after  { border: var(--ct-warning-border-w,  2px) solid var(--ct-warning-border-rgba,  rgba(242,101,0,0.75)); box-shadow: 0 0 var(--ct-warning-glow-blur, 14px) var(--ct-warning-glow-rgba,  rgba(242,101,0,0.25)), inset 0 1px 0 var(--ct-warning-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-success  { background: var(--ct-success-bg,  #071006); }
+.card-success::after  { border: var(--ct-success-border-w,  2px) solid var(--ct-success-border-rgba,  rgba(155,203,0,0.75)); box-shadow: 0 0 var(--ct-success-glow-blur, 14px) var(--ct-success-glow-rgba,  rgba(155,203,0,0.25)), inset 0 1px 0 var(--ct-success-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-danger   { background: var(--ct-danger-bg,   #170407); }
+.card-danger::after   { border: var(--ct-danger-border-w,   2px) solid var(--ct-danger-border-rgba,   rgba(255,59,92,0.75)); box-shadow: 0 0 var(--ct-danger-glow-blur,  14px) var(--ct-danger-glow-rgba,   rgba(255,59,92,0.25)), inset 0 1px 0 var(--ct-danger-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-modal    { background: var(--ct-modal-bg,    #0c143e); }
+.card-modal::after    { border: var(--ct-modal-border-w,    2px) solid var(--ct-modal-border-rgba,    rgba(0,140,255,0.75)); box-shadow: 0 0 var(--ct-modal-glow-blur,   14px) var(--ct-modal-glow-rgba,    rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-modal-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-form     { background: var(--ct-form-bg,     #05090D); }
+.card-form::after     { border: var(--ct-form-border-w,     2px) solid var(--ct-form-border-rgba,     rgba(26,34,90,0.75));  box-shadow: 0 0 var(--ct-form-glow-blur,    14px) var(--ct-form-glow-rgba,     rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-form-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-table    { background: var(--ct-table-bg,    #05090D); }
+.card-table::after    { border: var(--ct-table-border-w,    2px) solid var(--ct-table-border-rgba,    rgba(26,34,90,0.75));  box-shadow: 0 0 var(--ct-table-glow-blur,   14px) var(--ct-table-glow-rgba,    rgba(0,140,255,0.25)), inset 0 1px 0 var(--ct-table-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+/* legacy alias rules — keep working for templates that already shipped */
+.card-stats    { background: var(--ct-stat-bg,     var(--ct-stats-bg,    #05090D)); }
+.card-stats::after    { border: var(--ct-stat-border-w,    var(--ct-stats-border-w,   2px)) solid var(--ct-stat-border-rgba, var(--ct-stats-border-rgba, rgba(27,77,122,0.75))); box-shadow: 0 0 var(--ct-stat-glow-blur, var(--ct-stats-glow-blur, 14px)) var(--ct-stat-glow-rgba, var(--ct-stats-glow-rgba, rgba(0,140,255,0.25))), inset 0 1px 0 var(--ct-stat-inner-highlight-rgba, rgba(255,255,255,0.08)); }
+.card-training { background: var(--ct-training-bg, #070914); }
+.card-training::after { border: var(--ct-training-border-w, 2px) solid var(--ct-training-border-rgba, rgba(168,85,247,0.75)); box-shadow: 0 0 var(--ct-training-glow-blur,14px) var(--ct-training-glow-rgba, rgba(168,85,247,0.25)), inset 0 1px 0 var(--ct-training-inner-highlight-rgba, var(--ct-default-inner-highlight-rgba, rgba(255,255,255,0.08))); }
+.card-profile  { background: var(--ct-client-bg,   var(--ct-profile-bg,  #080C16)); }
+.card-profile::after  { border: var(--ct-client-border-w,  var(--ct-profile-border-w,  2px)) solid var(--ct-client-border-rgba, var(--ct-profile-border-rgba, rgba(155,203,0,0.75))); box-shadow: 0 0 var(--ct-client-glow-blur, var(--ct-profile-glow-blur, 14px)) var(--ct-client-glow-rgba, var(--ct-profile-glow-rgba, rgba(0,140,255,0.25))), inset 0 1px 0 var(--ct-client-inner-highlight-rgba, rgba(255,255,255,0.08)); }
 .bg-bgBase {
   background-image:
     linear-gradient(135deg,

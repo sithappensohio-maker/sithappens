@@ -1006,33 +1006,68 @@ function BrandPanel() {
 
 // Sprint 110di-12 — Card Type Themes. Canonical Sit Happens defaults; also
 // used by the "Reset card themes" button and the export/import fallback.
+// Sprint 110di-16 — Catalog extended to 23 surface types so every reusable
+// card/panel/modal/table/form in the app inherits from one source.
 function SH_CARD_TYPE_DEFAULTS() {
   const base = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
   return {
     default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
+    hero:     { bg: "#060c2e", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
+    stat:     { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
     info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
-    stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
-    success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
-    warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
-    danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...base },
-    payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
-    training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
+    task:     { bg: "#0E0902", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
+    fact:     { bg: "#04111B", border: "#00C8FF", glow: "#00C8FF", accent: "#00C8FF", ...base },
     booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
+    client:   { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...base },
+    dog:      { bg: "#0A0F08", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
+    staff:    { bg: "#0A0814", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
+    care:     { bg: "#04130B", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
+    kennel:   { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
+    waitlist: { bg: "#120A02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
+    intake:   { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...base },
+    waiver:   { bg: "#060c2e", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
+    finance:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
+    report:   { bg: "#0A0E18", border: "#1B4D7A", glow: "#008CFF", accent: "#00C8FF", ...base },
+    payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...base },
+    warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...base },
+    success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...base },
+    danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...base },
+    modal:    { bg: "#0c143e", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...base },
+    form:     { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#9BCB00", ...base },
+    table:    { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#00C8FF", ...base },
+    // legacy aliases — not surfaced in UI editor but kept so older saved
+    // settings keep their custom colors and don't snap back to defaults.
+    stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...base },
+    training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...base },
     profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...base },
   };
 }
 
 const CARD_TYPE_META = [
-  { id: "default",  label: "Default Card",         desc: "Generic dark panels and cards." },
-  { id: "info",     label: "Info Card",            desc: "Dog facts, neutral notices, read-only." },
-  { id: "stats",    label: "Stats Card",           desc: "Dashboard counts: daycare, boarding, totals." },
-  { id: "success",  label: "Success / Good",       desc: "Complete, paid, approved, healthy, active." },
-  { id: "warning",  label: "Warning",              desc: "Expiring soon, attention needed, reminders." },
-  { id: "danger",   label: "Danger / Urgent",      desc: "Overdue, missing vaccines, critical alerts." },
-  { id: "payment",  label: "Payment / Finance",    desc: "Balances, P&L, invoices, transactions." },
-  { id: "training", label: "Training",             desc: "Training progress, homework, goals." },
-  { id: "booking",  label: "Booking / Schedule",   desc: "Bookings, schedule, appointment cards." },
-  { id: "profile",  label: "Client / Dog Profile", desc: "Dog cards, client cards, profile summaries." },
+  { id: "default",  label: "Default Card",      desc: "Every generic dark panel/card across the app." },
+  { id: "hero",     label: "Hero Card",         desc: "Top-of-page feature cards (Today at Sit Happens, Welcome hero)." },
+  { id: "stat",     label: "Stat Card",         desc: "Dashboard counts: daycare, boarding, totals." },
+  { id: "info",     label: "Info Card",         desc: "Neutral notices, read-only callouts, helper text." },
+  { id: "task",     label: "Task Card",         desc: "Operational readiness, to-do items, reminders." },
+  { id: "fact",     label: "Fact Card",         desc: "Dog Fact of the Day, trivia answer, fun facts." },
+  { id: "booking",  label: "Booking Card",      desc: "Bookings, schedule rows, appointment cards." },
+  { id: "client",   label: "Client Card",       desc: "Client list rows + client profile summaries." },
+  { id: "dog",      label: "Dog Card",          desc: "Dog list rows + dog profile summaries." },
+  { id: "staff",    label: "Staff Card",        desc: "Employees, schedule, time clock entries." },
+  { id: "care",     label: "Care Board",        desc: "Care Board rows (feeding, meds, potty)." },
+  { id: "kennel",   label: "Kennel Board",      desc: "Kennel Board rows + assignments." },
+  { id: "waitlist", label: "Waitlist",          desc: "Waitlist requests + queued bookings." },
+  { id: "intake",   label: "Intake Forms",      desc: "Service intake forms (admin + client)." },
+  { id: "waiver",   label: "Waiver",            desc: "Liability waiver + signatures." },
+  { id: "finance",  label: "Finance",           desc: "P&L, expenses, tax payments, revenue summaries." },
+  { id: "report",   label: "Reports",           desc: "Reports + analytics dashboards." },
+  { id: "payment",  label: "Payment",           desc: "Invoices, transactions, credit packs." },
+  { id: "warning",  label: "Warning",           desc: "Expiring soon, attention needed, alerts." },
+  { id: "success",  label: "Success",           desc: "Complete, paid, approved, healthy, active." },
+  { id: "danger",   label: "Danger / Urgent",   desc: "Overdue, missing vaccines, critical alerts." },
+  { id: "modal",    label: "Modal",             desc: "Modal/drawer surfaces (booking wizard, profile editor)." },
+  { id: "form",     label: "Form",              desc: "Form panels — inputs, textareas, dropdowns." },
+  { id: "table",    label: "Table",             desc: "Table wrappers + sortable lists." },
 ];
 
 
@@ -1119,7 +1154,7 @@ function CardTypeThemesPanel({ draft, setDraft }) {
             <ColorField testid={`ct-${active}-text`}    label="Text Color (optional)"    sub="leave blank to inherit" value={cur.text || ""}    onChange={(v)=>update({ text: v })} />
           </div>
 
-          {/* Preview grid: 10 thumbs showing each card type with its colors */}
+          {/* Preview grid: thumb buttons for each card type (clickable to switch) */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mt-4" data-testid="ct-preview-grid">
             {CARD_TYPE_META.map(({ id, label }) => {
               const t = { ...SH_CARD_TYPE_DEFAULTS()[id], ...(types[id] || {}) };
@@ -1144,6 +1179,89 @@ function CardTypeThemesPanel({ draft, setDraft }) {
                 </button>
               );
             })}
+          </div>
+
+          {/* Sprint 110di-16 — Full live-preview gallery. Shows realistic
+              sample content for the most visible card types so admins can
+              eyeball the overall app look without leaving Settings. All
+              swatches read from the in-flight draft so edits apply live. */}
+          <div className="mt-6 pt-5 border-t border-bgHover" data-testid="ct-sample-gallery">
+            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-3">
+              <i className="fas fa-images mr-1.5"/>Live sample gallery
+            </p>
+            <p className="text-[12px] text-gray-400 mb-3">
+              These render with the exact CSS variables your saved theme writes — what you see is what
+              every matching card across the app gets.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {[
+                { id: "hero",    icon: "fa-bolt",            title: "Welcome back, Alex!",  body: "3 of your favorite people are here today.",       chip: "Today" },
+                { id: "stat",    icon: "fa-chart-simple",    title: "Daycare today",        body: "12 / 30 dogs · capacity 40%",                      chip: "Live" },
+                { id: "info",    icon: "fa-circle-info",     title: "Heads up",             body: "Saturday daycare opens next month — same pricing.", chip: "Info" },
+                { id: "task",    icon: "fa-list-check",      title: "Operational readiness", body: "8 of 9 setup steps complete.",                    chip: "1 left" },
+                { id: "fact",    icon: "fa-paw",             title: "Dog fact of the day",  body: "Poodles came from Germany — 'Pudel' = 'to splash'.", chip: "Breed" },
+                { id: "booking", icon: "fa-calendar-check",  title: "Daycare · Buddy",      body: "Tue, Feb 20 · 7:30am drop-off",                     chip: "Approved" },
+                { id: "client",  icon: "fa-user",            title: "Alex Rivera",          body: "3 dogs · 5 credits · waiver signed",                chip: "Active" },
+                { id: "dog",     icon: "fa-dog",             title: "Buddy — Lab",          body: "4 yo · vaccines current · loves the splash pool",    chip: "Healthy" },
+                { id: "staff",   icon: "fa-id-badge",        title: "Trainer Jamie",        body: "Clocked in · 4h 12m · Care Board",                  chip: "On shift" },
+                { id: "care",    icon: "fa-bowl-food",       title: "Care log · Buddy",     body: "Fed 8am · Meds 10am · Potty 11am",                  chip: "On track" },
+                { id: "kennel",  icon: "fa-warehouse",       title: "Kennel 4",             body: "Rocky · Boarding · until Fri",                      chip: "Occupied" },
+                { id: "waitlist",icon: "fa-hourglass-half",  title: "Waitlist · Daycare",   body: "Daisy · requested Thu Feb 22",                      chip: "Pending" },
+                { id: "intake",  icon: "fa-clipboard-list",  title: "Boarding intake",      body: "12 questions · 4 minutes",                          chip: "Required" },
+                { id: "waiver",  icon: "fa-file-signature",  title: "Liability waiver",     body: "Signed Jan 15, 2026 · v3",                          chip: "Signed" },
+                { id: "finance", icon: "fa-dollar-sign",     title: "January revenue",      body: "$4,250 · expenses $1,180 · net $3,070",            chip: "P&L" },
+                { id: "report",  icon: "fa-chart-line",      title: "Weekly report",        body: "Feb 10 → Feb 16 · 84 visits · 12 new",              chip: "Report" },
+                { id: "payment", icon: "fa-credit-card",     title: "Daycare pack · 10",    body: "$200 · paid by card · Jan 8",                       chip: "Paid" },
+                { id: "warning", icon: "fa-triangle-exclamation", title: "Vaccine expiring", body: "Buddy · rabies expires Mar 1",                    chip: "Soon" },
+                { id: "success", icon: "fa-circle-check",    title: "Setup complete",       body: "You can now book daycare, boarding, training.",     chip: "Ready" },
+                { id: "danger",  icon: "fa-circle-exclamation", title: "Overdue",           body: "Daisy · DHPP expired 12 days ago",                 chip: "Action" },
+                { id: "modal",   icon: "fa-window-restore",  title: "Book a service",       body: "Step 1 of 3 · choose service type",                 chip: "Modal" },
+                { id: "form",    icon: "fa-keyboard",        title: "Add a dog",            body: "Name · breed · age · vaccines",                     chip: "Form" },
+                { id: "table",   icon: "fa-table",           title: "Today's bookings",     body: "12 rows · sort by time · filter by service",        chip: "Table" },
+              ].map((sample) => {
+                const t = { ...SH_CARD_TYPE_DEFAULTS()[sample.id], ...(types[sample.id] || {}) };
+                const bRgb = hexToRgbInline(t.border);
+                const gRgb = hexToRgbInline(t.glow);
+                const ihRgb = hexToRgbInline(t.inner_highlight_color || "#FFFFFF");
+                const ba = clamp(t.border_opacity, 0, 1);
+                const ga = clamp(t.glow_opacity,   0, 1);
+                const iha = clamp(t.inner_highlight_opacity, 0, 1);
+                const cardStyle = {
+                  background: t.bg,
+                  border: `${Math.max(1, t.border_width)}px solid rgba(${bRgb}, ${ba})`,
+                  boxShadow: `0 0 ${t.glow_blur}px rgba(${gRgb}, ${ga}), inset 0 1px 0 rgba(${ihRgb}, ${iha})`,
+                  color: t.text || draft.theme_text_primary,
+                };
+                return (
+                  <button
+                    key={sample.id}
+                    type="button"
+                    onClick={() => setActive(sample.id)}
+                    data-testid={`ct-sample-${sample.id}`}
+                    className="text-left rounded-xl p-3 transition hover:scale-[1.01]"
+                    style={cardStyle}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: t.accent }}>
+                        <i className={`fas ${sample.icon} mr-1`}/>{sample.id}
+                      </p>
+                      <span className="text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border"
+                            style={{ color: t.accent, borderColor: `rgba(${bRgb}, ${Math.max(ba, 0.4)})`, background: `rgba(${bRgb}, 0.08)` }}>
+                        {sample.chip}
+                      </span>
+                    </div>
+                    <p className="text-[13px] font-black uppercase italic leading-tight"
+                       style={{ color: t.heading || draft.theme_text_display || "#fff" }}>
+                      {sample.title}
+                    </p>
+                    <p className="text-[11px] mt-1 leading-snug"
+                       style={{ color: t.text || draft.theme_text_muted }}>
+                      {sample.body}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Footer actions */}

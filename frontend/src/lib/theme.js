@@ -70,20 +70,38 @@ const DEFAULT_BRANDING = {
   // the mirror block in applyBranding() below.
 };
 
-// Sprint 110di-12/13 — Card Type Themes. Mirrors the backend
-// `_card_type_theme_defaults()`. Inner highlight rolled into each type so
-// the Default Card is the single source of truth for global panel chrome.
+// Sprint 110di-12/13/16 — Card Type Themes. Mirrors the backend
+// `_card_type_theme_defaults()`. Catalog covers every reusable surface
+// across the app so admins can recolor any card category from one place.
 const CT_BASE = { border_opacity: 0.75, border_width: 2, glow_opacity: 0.25, glow_blur: 14, inner_highlight_color: "#FFFFFF", inner_highlight_opacity: 0.08, heading: "", text: "" };
 export const DEFAULT_CARD_TYPES = {
   default:  { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
+  hero:     { bg: "#060c2e", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
+  stat:     { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
   info:     { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
-  stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
-  success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
-  warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
-  danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...CT_BASE },
-  payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
-  training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
+  task:     { bg: "#0E0902", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
+  fact:     { bg: "#04111B", border: "#00C8FF", glow: "#00C8FF", accent: "#00C8FF", ...CT_BASE },
   booking:  { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  client:   { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+  dog:      { bg: "#0A0F08", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
+  staff:    { bg: "#0A0814", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
+  care:     { bg: "#04130B", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
+  kennel:   { bg: "#050B14", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  waitlist: { bg: "#120A02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
+  intake:   { bg: "#05090D", border: "#008CFF", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  waiver:   { bg: "#060c2e", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+  finance:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
+  report:   { bg: "#0A0E18", border: "#1B4D7A", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  payment:  { bg: "#09080D", border: "#F26500", glow: "#F26500", accent: "#9BCB00", ...CT_BASE },
+  warning:  { bg: "#130B02", border: "#F26500", glow: "#F26500", accent: "#F26500", ...CT_BASE },
+  success:  { bg: "#071006", border: "#9BCB00", glow: "#9BCB00", accent: "#9BCB00", ...CT_BASE },
+  danger:   { bg: "#170407", border: "#FF3B5C", glow: "#FF3B5C", accent: "#FF3B5C", ...CT_BASE },
+  modal:    { bg: "#0c143e", border: "#008CFF", glow: "#008CFF", accent: "#008CFF", ...CT_BASE },
+  form:     { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+  table:    { bg: "#05090D", border: "#1A225A", glow: "#008CFF", accent: "#00C8FF", ...CT_BASE },
+  // legacy aliases (do not surface in UI; kept so older settings keep working)
+  stats:    { bg: "#05090D", border: "#1B4D7A", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
+  training: { bg: "#070914", border: "#A855F7", glow: "#A855F7", accent: "#A855F7", ...CT_BASE },
   profile:  { bg: "#080C16", border: "#9BCB00", glow: "#008CFF", accent: "#9BCB00", ...CT_BASE },
 };
 

@@ -4244,25 +4244,59 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
 
 
 def _card_type_theme_defaults() -> Dict[str, Any]:
-    """Sprint 110di-12 — Sit Happens default palette for the 10 card type
-    themes. Each entry drives a reusable `.card-{id}` class via CSS vars.
+    """Sprint 110di-12 — Sit Happens default palette for the card type themes.
+    Each entry drives a reusable `.card-{id}` class via CSS vars.
     Sprint 110di-13 — Unified: each type now also carries inner_highlight
-    color/opacity (rolled in from the legacy global card chrome controls)."""
+    color/opacity (rolled in from the legacy global card chrome controls).
+    Sprint 110di-16 — Catalog extended to 23 types covering every reusable
+    surface across the app (hero, stat, info, task, fact, booking, client,
+    dog, staff, care, kennel, waitlist, intake, waiver, finance, report,
+    payment, warning, success, danger, modal, form, table). Each type
+    inherits from `default` unless overridden by the admin in Settings →
+    Brand & Theme → Card Type Themes. Legacy keys (`stats`, `training`,
+    `profile`) are kept so older saved settings keep working but are no
+    longer surfaced in the UI editor."""
     base = {"border_opacity": 0.75, "border_width": 2,
             "glow_opacity": 0.25, "glow_blur": 14,
             "inner_highlight_color": "#FFFFFF",
             "inner_highlight_opacity": 0.08,
             "heading": "", "text": ""}
     return {
+        # --- core surfaces ---
         "default":  {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},
+        "hero":     {"bg": "#060c2e", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
+        # --- data / informational ---
+        "stat":     {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
         "info":     {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
-        "stats":    {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
-        "success":  {"bg": "#071006", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
-        "warning":  {"bg": "#130B02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
-        "danger":   {"bg": "#170407", "border": "#FF3B5C", "glow": "#FF3B5C", "accent": "#FF3B5C", **base},
-        "payment":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
-        "training": {"bg": "#070914", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
+        "task":     {"bg": "#0E0902", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
+        "fact":     {"bg": "#04111B", "border": "#00C8FF", "glow": "#00C8FF", "accent": "#00C8FF", **base},
+        # --- bookings / people / animals ---
         "booking":  {"bg": "#050B14", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "client":   {"bg": "#080C16", "border": "#9BCB00", "glow": "#008CFF", "accent": "#9BCB00", **base},
+        "dog":      {"bg": "#0A0F08", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
+        "staff":    {"bg": "#0A0814", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
+        # --- operations boards ---
+        "care":     {"bg": "#04130B", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
+        "kennel":   {"bg": "#050B14", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "waitlist": {"bg": "#120A02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
+        # --- compliance / paperwork ---
+        "intake":   {"bg": "#05090D", "border": "#008CFF", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "waiver":   {"bg": "#060c2e", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
+        # --- money ---
+        "finance":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
+        "report":   {"bg": "#0A0E18", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        "payment":  {"bg": "#09080D", "border": "#F26500", "glow": "#F26500", "accent": "#9BCB00", **base},
+        # --- state semantics ---
+        "warning":  {"bg": "#130B02", "border": "#F26500", "glow": "#F26500", "accent": "#F26500", **base},
+        "success":  {"bg": "#071006", "border": "#9BCB00", "glow": "#9BCB00", "accent": "#9BCB00", **base},
+        "danger":   {"bg": "#170407", "border": "#FF3B5C", "glow": "#FF3B5C", "accent": "#FF3B5C", **base},
+        # --- chrome surfaces ---
+        "modal":    {"bg": "#0c143e", "border": "#008CFF", "glow": "#008CFF", "accent": "#008CFF", **base},
+        "form":     {"bg": "#05090D", "border": "#1A225A", "glow": "#008CFF", "accent": "#9BCB00", **base},
+        "table":    {"bg": "#05090D", "border": "#1A225A", "glow": "#008CFF", "accent": "#00C8FF", **base},
+        # --- legacy aliases — kept so older settings keep working ---
+        "stats":    {"bg": "#05090D", "border": "#1B4D7A", "glow": "#008CFF", "accent": "#9BCB00", **base},
+        "training": {"bg": "#070914", "border": "#A855F7", "glow": "#A855F7", "accent": "#A855F7", **base},
         "profile":  {"bg": "#080C16", "border": "#9BCB00", "glow": "#008CFF", "accent": "#9BCB00", **base},
     }
 
