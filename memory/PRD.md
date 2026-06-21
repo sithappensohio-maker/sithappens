@@ -4521,3 +4521,24 @@ The new multi-dog block in Sprint 110di-38 introduced a chip-style add-on select
 
 ### Service Worker
 - ✅ Bumped to `sh-v40-110di-42-sidebar-top-controls`.
+
+
+## Sprint 110di-43 — Schedule Mobile List View (2026-02-20)
+**User report**: "we really need to fix the calendar screen on small screens in the schedule" — screenshot showed empty calendar at iPad/landscape width.
+
+### Diagnosis
+Mobile breakpoint was `(max-width: 767px)` — anything wider (iPad portrait at 768-1023px, landscape phones) defaulted to the cramped desktop month grid which doesn't render the 7-col grid legibly at small widths.
+
+### Fix (`screens/Schedule.jsx`)
+- ✅ Installed `@fullcalendar/list@^6.1.21`.
+- ✅ Breakpoint widened to `(max-width: 1023px)` — iPad portrait, landscape phones and small tablets now get the friendly mobile view.
+- ✅ Mobile/tablet uses FullCalendar's `listMonth` view — clean vertical list of bookings grouped by day, every row tappable.
+- ✅ Toolbar adds LIST / GRID toggle so power users can flip to month-grid view when needed.
+- ✅ Desktop (≥1024px) byte-identical to before — `dayGridMonth` with drag-to-reschedule.
+
+### Verified
+- Mobile (414×896): clean list view with date headers + tappable booking rows + LIST/GRID toggle.
+- Desktop (1440×900): full month grid still renders correctly with all events visible.
+
+### Service Worker
+- ✅ Bumped to `sh-v41-110di-43-schedule-list-mobile`.

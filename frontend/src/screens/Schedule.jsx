@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import FullCalendar from "@fullcalendar/react";
 import dayGridPlugin from "@fullcalendar/daygrid";
+import listPlugin from "@fullcalendar/list";
 import interactionPlugin from "@fullcalendar/interaction";
 import { api, formatErr } from "../lib/api";
 import PageHero from "../components/PageHero";
@@ -9,7 +10,10 @@ import BookingDetailModal from "../components/BookingDetailModal";
 
 function isoOnly(d) { return d.toISOString().split("T")[0]; }
 function isMobile() {
-  return typeof window !== "undefined" && window.matchMedia("(max-width: 767px)").matches;
+  // Sprint 110di-43 — widened to (max-width: 1023px) so iPad portrait,
+  // landscape phones, and small tablets all get the mobile-friendly list
+  // view instead of the cramped month grid.
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
 }
 
 /** Cute service color chips, kept in sync with the calendar palette. */
@@ -46,7 +50,7 @@ export default function Schedule() {
   const calRef = useRef(null);
 
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px)");
+    const mq = window.matchMedia("(max-width: 1023px)");
     const handler = (e) => setMobile(e.matches);
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -172,21 +176,21 @@ export default function Schedule() {
       />
       <div className={`bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover ${mobile ? "" : "flex-1 overflow-hidden"}`}
            data-testid="schedule-grid-wrap">
-        {/* Mobile: explicit width + height so FullCalendar can lay out, then
-            wrap in a horizontally scrollable container so the user can pan
-            across the whole month. Desktop is untouched. */}
-        <div className={mobile ? "overflow-x-auto -mx-1" : "h-full"}
-             style={mobile ? { WebkitOverflowScrolling: "touch" } : undefined}>
-          <div style={mobile ? { width: 780, height: 720 } : { height: "100%" }}>
+        {/* Sprint 110di-43 — on mobile/tablet (<1024px) we swap the cramped
+            month grid for a clean LIST view: dates flow vertically with one
+            booking per row, each row tappable. Tap "Month" to flip back to
+            the grid mode when needed (kept as an option for power users). */}
+        <div className={mobile ? "" : "h-full"}>
+          <div className={mobile ? "" : "h-full"} style={mobile ? undefined : { height: "100%" }}>
             <FullCalendar
               ref={calRef}
-              plugins={[dayGridPlugin, interactionPlugin]}
-              initialView="dayGridMonth"
-              height={mobile ? 720 : "100%"}
+              plugins={[dayGridPlugin, listPlugin, interactionPlugin]}
+              initialView={mobile ? "listMonth" : "dayGridMonth"}
+              height={mobile ? "auto" : "100%"}
               events={events}
-              editable={true}
-              eventStartEditable={true}
-              eventDurationEditable={true}
+              editable={!mobile}
+              eventStartEditable={!mobile}
+              eventDurationEditable={!mobile}
               eventDrop={onDrop}
               eventResize={onDrop}
               dateClick={onDateClick}
@@ -194,16 +198,18 @@ export default function Schedule() {
               displayEventTime={true}
               eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
               eventDisplay="block"
+              noEventsContent={mobile ? "No bookings in this month — tap Today to jump to today's date." : undefined}
               headerToolbar={mobile
-                ? { left: "prev,next", center: "title", right: "today" }
+                ? { left: "prev,next", center: "title", right: "today,listMonth,dayGridMonth" }
                 : { left: "prev,next today", center: "title", right: "" }}
+              buttonText={mobile ? { listMonth: "List", dayGridMonth: "Grid", today: "Today" } : undefined}
               titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
             />
           </div>
         </div>
         {mobile && (
           <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
-            <i className="fas fa-arrows-left-right mr-1"/>Swipe sideways to pan · tap any day to see the full roster
+            <i className="fas fa-list-ul mr-1"/>Showing list view · tap any booking to open it · use &ldquo;Grid&rdquo; for the month overview
           </p>
         )}
       </div>
