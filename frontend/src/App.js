@@ -146,21 +146,49 @@ function AdminShell() {
     <>
       {/* Sprint 110u — branded sidebar header. Logo gets a soft brand-color
           halo so it pops the way the landing-page hero logo does.
-          Sprint 110di-41 — when collapsed (desktop icon-only mode) the
-          marketing tagline + tall logo halo are dropped to claw back
-          vertical real estate. */}
-      <div className={`relative border-b border-bgHover text-center overflow-hidden ${collapsed ? "p-2" : "p-5"}`}>
+          Sprint 110di-41 — collapsed mode drops the marketing tagline + tall
+          logo halo to claw back vertical real estate.
+          Sprint 110di-42 — top action row: close (×) on the mobile drawer
+          (so the user has an in-drawer way out, not just backdrop-tap), and
+          a collapse chevron on the desktop sidebar (always visible at the
+          top regardless of viewport height). */}
+      <div className={`relative shrink-0 border-b border-bgHover overflow-hidden ${collapsed ? "p-2" : "p-3"}`}>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          {/* Desktop-only collapse toggle (chevron). Hidden in mobile
+              drawer because the mobile drawer uses the close × instead. */}
+          {prefix === "" && (
+            <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
+                    title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    className="hidden md:inline-flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-shGreen hover:bg-bgPanel transition">
+              <i className={`fas ${collapsed ? "fa-chevron-right" : "fa-chevron-left"} text-[14px]`}/>
+            </button>
+          )}
+          {/* Mobile drawer close button — only rendered for the mobile
+              drawer instance so the desktop sidebar isn't littered. */}
+          {prefix === "mobile-" && (
+            <button onClick={()=>setDrawerOpen(false)} data-testid="drawer-close"
+                    title="Close menu"
+                    className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-shGreen hover:bg-bgPanel transition">
+              <i className="fas fa-times text-[16px]"/>
+            </button>
+          )}
+        </div>
         {!collapsed && (
-          <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
-               style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
+          <div className="relative text-center">
+            <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
+                 style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
+            <img src="/logo.png" alt="Sit Happens"
+                 className="relative h-16 mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]"
+                 data-testid={`${prefix}sidebar-logo`} />
+            <p className="relative text-[10px] text-gray-400 font-black uppercase tracking-[0.25em] mt-1.5 leading-tight">
+              Dog Training · Daycare · Boarding · Photography
+            </p>
+          </div>
         )}
-        <img src="/logo.png" alt="Sit Happens"
-             className={`relative mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)] ${collapsed ? "h-10" : "h-24"}`}
-             data-testid={`${prefix}sidebar-logo`} />
-        {!collapsed && (
-          <p className="relative text-[11px] text-gray-400 font-black uppercase tracking-[0.3em] mt-2">
-            Dog Training · Daycare · Boarding · Photography
-          </p>
+        {collapsed && (
+          <img src="/logo.png" alt="Sit Happens"
+               className="h-8 mx-auto drop-shadow-[0_4px_12px_rgba(0,0,0,0.55)]"
+               data-testid={`${prefix}sidebar-logo`} />
         )}
       </div>
       <nav className={`flex-grow space-y-1 overflow-y-auto ${collapsed ? "p-2" : "p-3"}`}>
@@ -199,15 +227,6 @@ function AdminShell() {
                   title="Logout"
                   className="w-full py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition">
             <i className="fas fa-right-from-bracket"/>
-          </button>
-        )}
-        {/* Sprint 110di-41 — desktop-only sidebar collapse / expand toggle. */}
-        {prefix === "" && (
-          <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
-                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                  className={`hidden md:flex items-center justify-center w-full py-2 rounded-lg bg-bgBase/40 border border-bgHover hover:border-shGreen hover:text-shGreen text-gray-500 transition ${collapsed ? "" : "gap-2"}`}>
-            <i className={`fas ${collapsed ? "fa-chevron-right" : "fa-chevron-left"} text-[12px]`}/>
-            {!collapsed && <span className="text-[11px] font-black uppercase tracking-widest">Collapse</span>}
           </button>
         )}
       </div>

@@ -4503,3 +4503,21 @@ The new multi-dog block in Sprint 110di-38 introduced a chip-style add-on select
 
 ### Service Worker
 - ✅ Bumped to `sh-v39-110di-41-sidebar-collapse-desktop`.
+
+
+## Sprint 110di-42 — Sidebar Controls Polished (2026-02-20)
+**User report**: "no hamburger button and logo is now half covered" (screenshot showed the mobile drawer open with logo clipped at top, and noted the collapse toggle wasn't reachable on small heights).
+
+### Fixes (`App.js`)
+- ✅ **Mobile drawer close (×)** — new top-right close button in the drawer header (`data-testid="drawer-close"`). Previously the only way to dismiss was tapping the backdrop, which the user couldn't always reach.
+- ✅ **Logo size reduced** — expanded sidebar logo `h-24` → `h-16`; collapsed sidebar `h-10` → `h-8`. Padding around it tightened from `p-5` → `p-3`. No more overflow under mobile URL bars.
+- ✅ **Desktop collapse toggle moved to the TOP** of the sidebar — was at the bottom, off-screen on short viewports. Now sits as a compact chevron icon in the sidebar header row (verified position y=12px at top). Always reachable.
+- ✅ Marketing tagline tightened from `tracking-[0.3em]` `text-[11px]` to `tracking-[0.25em]` `text-[10px]` to keep the header compact at the new logo size.
+
+### Verified
+- Mobile 390×844: hamburger ☰ shows in header, drawer slides in with ✕ close button top-right, ✕ click closes the drawer cleanly (drawer state `translate-x-0 → -translate-x-full`).
+- Desktop 1440×900: chevron toggle visible at sidebar top (y=12), click → sidebar collapses to 64px showing icon-only nav with expand chevron, click again → expands.
+- All `data-testid`s preserved (`drawer-toggle`, `drawer-close`, `sidebar-toggle-collapse`).
+
+### Service Worker
+- ✅ Bumped to `sh-v40-110di-42-sidebar-top-controls`.
