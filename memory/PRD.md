@@ -4472,3 +4472,34 @@ The new multi-dog block in Sprint 110di-38 introduced a chip-style add-on select
 
 ### Service Worker
 - ✅ Bumped to `sh-v38-110di-40-mobile-pass`.
+
+
+## Sprint 110di-41 — Desktop Sidebar Collapse to Icons (2026-02-20)
+**User ask**: "Let's collapse [the sidebar] on desktop as well."
+
+### Implementation (`App.js`)
+- New state `sidebarCollapsed` (boolean) persisted in `localStorage` under `sh_sidebar_collapsed`. Operator preference survives page reloads.
+- New `toggleSidebar()` helper.
+- `sidebarContent(prefix, collapsed=false)` now takes a second arg. When `collapsed=true`:
+  - Logo halo + tagline + "Sit Happens Admin" card hidden
+  - Logo shrinks from `h-24` → `h-10`
+  - Nav buttons drop labels — icons-only with `title` tooltip for hover discovery
+  - Unread-messages badge collapses to a single bright dot in the corner of the messages icon
+  - Logout becomes a single icon button instead of the full "Signed in" card
+- Desktop `<aside>` width animates between `w-64` (256px) and `w-16` (64px) with `transition-[width] duration-200`.
+- New `<button data-testid="sidebar-toggle-collapse">` at the bottom of the desktop sidebar — chevron-left + "Collapse" when expanded, chevron-right when collapsed. `hidden md:flex` so mobile drawer keeps the existing hamburger UX untouched.
+- Mobile drawer (`md:hidden`) always renders the full expanded sidebar — unchanged.
+
+### Verified
+- Smoke-tested at 1440 × 900 desktop width:
+  - Expanded sidebar 256px wide, full labels visible ✅
+  - Click toggle → collapses to 64px, only icons shown ✅
+  - `localStorage` persists value `"1"` after collapse ✅
+  - Page reload → sidebar stays collapsed (width measured = 64px) ✅
+  - Toggle again → expands back to 256px ✅
+  - Dashboard content auto-reflows: Operations Quick Links cards become noticeably wider when collapsed
+- Mobile drawer (`<768px`) unaffected — still slides in/out, still auto-closes on nav click.
+- Lint: ✅ clean.
+
+### Service Worker
+- ✅ Bumped to `sh-v39-110di-41-sidebar-collapse-desktop`.

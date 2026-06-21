@@ -49,6 +49,19 @@ function AdminShell() {
   const featureOn = (key) => fv[key] !== false;
   const [tab, setTab] = useState("dashboard");
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Sprint 110di-41 — Desktop sidebar collapse to icons-only. Persisted in
+  // localStorage so the operator's preference survives reloads.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("sh_sidebar_collapsed") === "1"; }
+    catch { return false; }
+  });
+  const toggleSidebar = () => {
+    setSidebarCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem("sh_sidebar_collapsed", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState(null);
   const [messagesUnread, setMessagesUnread] = useState(0);
@@ -129,54 +142,85 @@ function AdminShell() {
 
   const handleNav = (id) => { setTab(id); setDrawerOpen(false); };
 
-  const sidebarContent = (prefix) => (
+  const sidebarContent = (prefix, collapsed = false) => (
     <>
       {/* Sprint 110u — branded sidebar header. Logo gets a soft brand-color
-          halo so it pops the way the landing-page hero logo does. */}
-      <div className="relative p-5 border-b border-bgHover text-center overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
-             style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
+          halo so it pops the way the landing-page hero logo does.
+          Sprint 110di-41 — when collapsed (desktop icon-only mode) the
+          marketing tagline + tall logo halo are dropped to claw back
+          vertical real estate. */}
+      <div className={`relative border-b border-bgHover text-center overflow-hidden ${collapsed ? "p-2" : "p-5"}`}>
+        {!collapsed && (
+          <div className="absolute inset-0 pointer-events-none opacity-60 blur-2xl"
+               style={{ background: "radial-gradient(circle at 50% 30%, rgba(140,198,63,0.35) 0%, rgba(0,169,224,0.22) 45%, transparent 75%)" }}/>
+        )}
         <img src="/logo.png" alt="Sit Happens"
-             className="relative h-24 mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]"
+             className={`relative mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)] ${collapsed ? "h-10" : "h-24"}`}
              data-testid={`${prefix}sidebar-logo`} />
-        <p className="relative text-[11px] text-gray-400 font-black uppercase tracking-[0.3em] mt-2">
-          Dog Training · Daycare · Boarding · Photography
-        </p>
+        {!collapsed && (
+          <p className="relative text-[11px] text-gray-400 font-black uppercase tracking-[0.3em] mt-2">
+            Dog Training · Daycare · Boarding · Photography
+          </p>
+        )}
       </div>
-      <nav className="flex-grow p-3 space-y-1 overflow-y-auto">
+      <nav className={`flex-grow space-y-1 overflow-y-auto ${collapsed ? "p-2" : "p-3"}`}>
         {navItems.filter(n => (!n.perm || can(n.perm)) && (!n.feature || featureOn(n.feature))).map(n => (
           <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
-                  className={`group w-full text-left py-2.5 px-3 rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
-            <i className={`fas ${n.icon} mr-3 w-4 ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} /> {n.label}
+                  title={collapsed ? n.label : undefined}
+                  className={`group w-full ${collapsed ? "text-center py-2.5 px-0" : "text-left py-2.5 px-3"} rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
+            <i className={`fas ${n.icon} ${collapsed ? "" : "mr-3 w-4"} ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} />
+            {!collapsed && n.label}
             {n.id === "messages" && messagesUnread > 0 && (
-              <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
-                    data-testid={`${prefix}nav-messages-badge`}>{messagesUnread}</span>
+              <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle`}
+                    data-testid={`${prefix}nav-messages-badge`}>{collapsed ? "•" : messagesUnread}</span>
             )}
           </button>
         ))}
       </nav>
-      <div className="p-4 border-t border-bgHover space-y-3">
-        <TextSizePicker testid={`${prefix}text-size`} compact />
-        <InstallAppButton testid={`${prefix}install-app-nav`} />
-        <div className="bg-bgPanel rounded-lg p-3 border border-bgHover">
-          <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">
-            <i className="fas fa-user-shield text-shGreen mr-1"/>Signed in
-          </p>
-          <p className="text-xs text-white font-black truncate mt-0.5">{user.name}</p>
-          <button onClick={logout} data-testid={`${prefix}admin-logout`}
-                  className="mt-2 w-full text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition">
-            <i className="fas fa-right-from-bracket mr-1"/>Logout
+      <div className={`border-t border-bgHover ${collapsed ? "p-2 space-y-2" : "p-4 space-y-3"}`}>
+        {!collapsed && (
+          <>
+            <TextSizePicker testid={`${prefix}text-size`} compact />
+            <InstallAppButton testid={`${prefix}install-app-nav`} />
+            <div className="bg-bgPanel rounded-lg p-3 border border-bgHover">
+              <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">
+                <i className="fas fa-user-shield text-shGreen mr-1"/>Signed in
+              </p>
+              <p className="text-xs text-white font-black truncate mt-0.5">{user.name}</p>
+              <button onClick={logout} data-testid={`${prefix}admin-logout`}
+                      className="mt-2 w-full text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition">
+                <i className="fas fa-right-from-bracket mr-1"/>Logout
+              </button>
+            </div>
+          </>
+        )}
+        {collapsed && (
+          <button onClick={logout} data-testid={`${prefix}admin-logout-collapsed`}
+                  title="Logout"
+                  className="w-full py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition">
+            <i className="fas fa-right-from-bracket"/>
           </button>
-        </div>
+        )}
+        {/* Sprint 110di-41 — desktop-only sidebar collapse / expand toggle. */}
+        {prefix === "" && (
+          <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
+                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  className={`hidden md:flex items-center justify-center w-full py-2 rounded-lg bg-bgBase/40 border border-bgHover hover:border-shGreen hover:text-shGreen text-gray-500 transition ${collapsed ? "" : "gap-2"}`}>
+            <i className={`fas ${collapsed ? "fa-chevron-right" : "fa-chevron-left"} text-[12px]`}/>
+            {!collapsed && <span className="text-[11px] font-black uppercase tracking-widest">Collapse</span>}
+          </button>
+        )}
       </div>
     </>
   );
 
   return (
     <div className="h-screen w-screen flex bg-bgBase overflow-hidden">
-      {/* Desktop sidebar */}
-      <aside className="bg-bgHeader w-64 border-r border-bgHover flex-col hidden md:flex">
-        {sidebarContent("")}
+      {/* Desktop sidebar — Sprint 110di-41: width responds to collapsed
+          state (w-16 icon-only / w-64 full). Transition kept short so the
+          page reflow feels snappy. */}
+      <aside className={`bg-bgHeader border-r border-bgHover flex-col hidden md:flex transition-[width] duration-200 ${sidebarCollapsed ? "w-16" : "w-64"}`}>
+        {sidebarContent("", sidebarCollapsed)}
       </aside>
 
       {/* Mobile drawer */}
