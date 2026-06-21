@@ -4403,3 +4403,34 @@ Added a comprehensive `@media print` block that:
 
 ### Service Worker
 - ✅ Bumped to `sh-v35-110di-37-pdf-export-boarding-filter`.
+
+
+## Sprint 110di-38 — Multi-Dog Group Bookings (2026-02-20)
+**User ask**: "When customers or the admin are booking dogs we need to be able to add additional dogs to the same booking. This goes for all services. Set the booking → ask if they have more dogs → show add-ons → complete. Don't change or break anything that already works as this is in production."
+
+**User-locked product decisions**: (1) extra dogs share same dates+service; (2) addons per-dog; (3) one combined total estimate; (4) each dog its own row + small "🔗 Group · N" badge in admin Bookings list; (5) portal + admin shipped simultaneously.
+
+### Backend (additive only — zero changes to existing behaviour)
+- ✅ New `POST /api/bookings/group` — accepts `{dogs: [{dog_id, addon_service_ids?, notes?, kennel?, time?}], date, service_type, end_date?, dropoff_time?, pickup_time?, grooming_type?, override_*}`. Internally **reuses `create_booking()` as a library call for each dog**, so every existing validation rule (vaccines, capacity, lead-time, Board-and-Train auto-enroll, etc.) keeps firing — no risk of subtle drift.
+- ✅ **Atomic rollback**: if any dog fails (404 on dog id, capacity, vaccines, etc.), all rows already inserted in this group are deleted before re-raising. Operator never ends up with a half-committed booking.
+- ✅ One summary admin email per group (per-booking emails suppressed via the existing `_suppress_admin_booking_email` ContextVar pattern).
+- ✅ Safety caps: max 12 dogs per group; duplicate dog rejection.
+- ✅ New `GET /api/bookings/group/{group_id}` — returns the cluster (clients only see their own).
+- ✅ `BookingOut.group_id` added (`Optional[str]`, defaults to `None`). Legacy single-dog rows return `None` — no DB migration needed.
+- ✅ `create_booking()` now persists `body.group_id` so single-dog calls with a group_id pre-set are honoured (and group-endpoint calls double-stamp via `update_one` belt-and-braces).
+- ✅ Regression suite: `tests/test_booking_group.py` — 8 tests, all green (happy path · per-dog notes round-trip · rollback on partial failure · duplicate rejection · empty rejection · GET cluster · 404 unknown · legacy single-dog flow still works).
+
+### Frontend
+- ✅ `PortalBookWizard.jsx` — `extraDogs` state + handlers + "More dogs on this booking?" block on Step 3 (data-testid `wiz-multidog`, `wiz-add-dog`, `wiz-extra-dog-{i}`, `wiz-extra-addon-{i}-{addonId}`, `wiz-group-count`). Hidden when client has only 1 dog or in multi-date daycare mode. Step 3 Confirm button label switches to "Confirm booking · N dogs". Step 4 acknowledgement shows "N dogs booked together".
+- ✅ `AdminBookingModal.jsx` — same pattern with `ab-*` data-testids. Hidden in edit mode, multi-date mode, or when selected client has <2 dogs. Submit button label switches to "Create N bookings".
+- ✅ `BookingPriceEstimate.jsx` — new prop `addonsPerDog`. When true, addon math skips the per-dog multiplier so combined-total doesn't double-count when each addon already belongs to a specific dog.
+- ✅ `Bookings.jsx` — module-scoped `GroupBadge` component + `groupCounts` memo. Renders "🔗 Group · N" chip (data-testid `group-badge-{group_id}`) in all four list rendering modes (history, active grouped, table, mobile cards).
+
+### Verified
+- 8 backend pytests pass; full focused suite 29/29 pass.
+- testing_agent_v3_fork ran full UI regression — **100% (11/11 acceptance criteria)**. Both admin + portal flows verified end-to-end with real network traffic; legacy single-dog flow confirmed untouched; visibility gating verified; pricing math verified ($22 + $22 additional dog = $44, no double-count).
+- Frontend compiles clean (only pre-existing benign lint warnings unrelated to this feature).
+- Service worker bumped to `sh-v36-110di-38-multi-dog-bookings`.
+
+### Service Worker
+- ✅ Bumped to `sh-v36-110di-38-multi-dog-bookings`.
