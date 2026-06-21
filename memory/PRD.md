@@ -4630,3 +4630,29 @@ Meant to convert ordinary data tables into mobile card stacks. Unscoped → it *
 
 ### Service Worker
 - ✅ Bumped to `sh-v45-110di-47-booking-detail-estimate`.
+
+
+## Sprint 110di-48 — Multi-Dog Discount Activated (2026-02-20)
+**User ask**: "don't we have a multi-dog discount? First dog full price, each additional dog half price, daycare and boarding only."
+
+### Status
+The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247, built in Sprints 110/110h) but was disabled in production settings.
+
+### Activation (DB settings update only)
+- ✅ `multi_dog_discount_enabled: True`
+- ✅ `daycare`: enabled, mode=percent, value=50
+- ✅ `boarding`: enabled, mode=percent, value=50
+- ✅ training / grooming / photography left disabled per the user's scope
+
+### How it works
+- First dog of the household checks out → full price
+- Subsequent dogs check out → 50% off that dog's service total
+- Logic fires automatically in the existing checkout flow (no code change)
+- Operator can adjust via **Settings → Pricing → Multi-dog discount**
+
+### Verified
+- Settings doc shows: master True, daycare/boarding both enabled with mode=percent value=50.
+- `/api/bookings/{id}/discount-preview` endpoint correctly returns `eligible: false` until a sibling on the same date has been checked out (intended existing rule).
+
+### Service Worker
+- Not bumped (no frontend code change).
