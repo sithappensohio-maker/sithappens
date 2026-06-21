@@ -57,6 +57,51 @@ function pretty(iso) {
 
 export default function Schedule() {
   const [events, setEvents] = useState([]);
+  // Sprint 110di-50 — Collapse grouped bookings (same group_id, same date,
+  // same service) into ONE event on the calendar. Each dog still has its own
+  // backing booking row so kennel / vaccines / per-dog details keep working;
+  // the calendar just shows ONE colored card per family booking now.
+  const groupedEvents = useMemo(() => {
+    const groups = {};
+    const singles = [];
+    (events || []).forEach((ev) => {
+      const gid = ev?.extendedProps?.group_id;
+      if (!gid) { singles.push(ev); return; }
+      // Bucket by group_id + start date so simultaneous groups on different
+      // days stay separate (boarding spans multiple days but each event still
+      // has the same start anchor).
+      const key = `${gid}|${ev.start || ""}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(ev);
+    });
+    const merged = Object.values(groups).map((arr) => {
+      if (arr.length === 1) return arr[0];
+      // Sort by dog_name so the title is deterministic
+      arr.sort((a, b) => (a.extendedProps?.dog_name || "").localeCompare(b.extendedProps?.dog_name || ""));
+      const names = arr.map((e) => e.extendedProps?.dog_name || "").filter(Boolean);
+      const svcType = arr[0].extendedProps?.service_type || "";
+      const svcLabel = arr[0].extendedProps?.grooming_type
+        ? `${svcType} · ${arr[0].extendedProps.grooming_type === "bath" ? "bath" : "nail trim"}`
+        : svcType;
+      // Title shows the family at a glance, e.g. "Rex + Daisy (boarding)".
+      // Cap to first 3 names + "+N more" so very large groups stay readable.
+      const head = names.slice(0, 3).join(" + ");
+      const tail = names.length > 3 ? ` +${names.length - 3} more` : "";
+      const title = `${head}${tail} (${svcLabel})`;
+      return {
+        ...arr[0],
+        title,
+        extendedProps: {
+          ...arr[0].extendedProps,
+          // Pass the full child list so onClick / day-roster can find every
+          // member of the group.
+          group_members: arr.map((e) => ({ id: e.id, dog_name: e.extendedProps?.dog_name })),
+          group_count: arr.length,
+        },
+      };
+    });
+    return [...singles, ...merged];
+  }, [events]);
   const [msg, setMsg] = useState("");
   const [mobile, setMobile] = useState(isMobile());
   // Selected date → opens a Day Roster modal listing every booking that day
@@ -239,7 +284,7 @@ export default function Schedule() {
               plugins={[dayGridPlugin, listPlugin, interactionPlugin]}
               initialView={mobile ? (mobileView === "list" ? "listMonth" : "dayGridMonth") : "dayGridMonth"}
               height={mobile ? "auto" : "100%"}
-              events={events}
+              events={groupedEvents}
               editable={!mobile}
               eventStartEditable={!mobile}
               eventDurationEditable={!mobile}

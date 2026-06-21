@@ -9387,6 +9387,11 @@ async def calendar_events(_: dict = Depends(require_admin)):
                 "service_type": b["service_type"],
                 "grooming_type": b.get("grooming_type"),
                 "time": appt_time,
+                # Sprint 110di-50 — surface group_id + dog name so the
+                # schedule can collapse N grouped bookings into one event.
+                "group_id": b.get("group_id"),
+                "dog_id": b.get("dog_id"),
+                "dog_name": b.get("dog_name"),
             },
         }
         if is_timed:

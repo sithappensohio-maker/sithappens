@@ -34,7 +34,7 @@ function fmtMoney(n) {
   return `$${v.toFixed(2)}`;
 }
 
-function Pill({ icon, label, value, tone = "default" }) {
+function Pill({ icon, label, value, tone = "default", ...rest }) {
   const tones = {
     default: "bg-bgBase/60 border-bgHover text-gray-300",
     green: "bg-shGreen/10 border-shGreen/40 text-shGreen",
@@ -45,7 +45,7 @@ function Pill({ icon, label, value, tone = "default" }) {
     purple: "bg-purple-500/10 border-purple-500/40 text-purple-300",
   };
   return (
-    <div className={`rounded-lg border px-3 py-2 ${tones[tone] || tones.default}`}>
+    <div className={`rounded-lg border px-3 py-2 ${tones[tone] || tones.default}`} {...rest}>
       <div className="text-[10px] uppercase tracking-widest font-black opacity-70">
         {icon && <i className={`fas ${icon} mr-1`}/>}{label}
       </div>
@@ -63,6 +63,14 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   // price ESTIMATE for unpaid bookings so the modal stops showing $0 as
   // the "Service total" before checkout.
   const [services, setServices] = useState([]);
+  // Sprint 110di-50 — When the booking belongs to a multi-dog group, fetch
+  // the sibling bookings so the modal can show ONE combined estimate with
+  // the multi-dog discount applied (mirrors what the customer sees on the
+  // portal estimate). Backed by GET /api/bookings/group/{group_id}.
+  const [groupMembers, setGroupMembers] = useState([]);
+  // Multi-dog discount config from /settings/public — same source of truth
+  // as the portal estimate + the checkout flow.
+  const [mdCfg, setMdCfg] = useState({ enabled: false, by_service: {}, label: "Multi-dog discount" });
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -71,17 +79,31 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
     (async () => {
       setLoading(true);
       try {
-        const [b, d, c, s] = await Promise.all([
+        const [b, d, c, s, settRes] = await Promise.all([
           api.get(`/bookings/${initial.id}`).catch(() => ({ data: initial })),
           initial.dog_id ? api.get(`/dogs/${initial.dog_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
           initial.client_id ? api.get(`/clients/${initial.client_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
           api.get(`/services`).catch(() => ({ data: [] })),
+          api.get(`/settings/public`).catch(() => ({ data: {} })),
         ]);
         if (cancelled) return;
         setBooking(b.data || initial);
         setDog(d.data);
         setClient(c.data);
         setServices(Array.isArray(s.data) ? s.data : []);
+        setMdCfg({
+          enabled: !!settRes.data?.multi_dog_discount_enabled,
+          mode: settRes.data?.multi_dog_discount_mode || "percent",
+          value: Number(settRes.data?.multi_dog_discount_value || 0),
+          label: settRes.data?.multi_dog_discount_label || "Multi-dog discount",
+          by_service: settRes.data?.multi_dog_discount_by_service || {},
+        });
+        // If grouped, fan out to fetch siblings for the combined estimate.
+        const gid = (b.data || initial).group_id;
+        if (gid) {
+          const gRes = await api.get(`/bookings/group/${gid}`).catch(() => ({ data: { bookings: [] } }));
+          if (!cancelled) setGroupMembers(gRes.data?.bookings || []);
+        }
       } catch (e) {
         if (!cancelled) setErr(e?.response?.data?.detail || "Could not load booking details");
       } finally {
@@ -107,32 +129,74 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   // total. We do NOT mutate booking.actual_price — the accounting flow is
   // untouched. This estimate is purely for display so the operator sees a
   // sensible number on the schedule modal before checkout completes.
-  const estimateBase = (() => {
+  const baseForBooking = (b) => {
     if (!services.length) return 0;
-    const t = booking.service_type;
-    // Best-match: same service_type AND (matching grooming_type when set)
+    const t = b.service_type;
     const candidates = services.filter((sv) => sv.service_type === t && !sv.is_addon && sv.active !== false);
-    const exact = booking.grooming_type
-      ? candidates.find((sv) => (sv.grooming_type || "") === booking.grooming_type)
+    const exact = b.grooming_type
+      ? candidates.find((sv) => (sv.grooming_type || "") === b.grooming_type)
       : null;
     const svc = exact || candidates[0];
     const base = Number(svc?.base_price || 0);
     if (t === "boarding") {
-      // Nights = (end_date - date), minimum 1. Mirrors backend snapshot logic.
       try {
-        const d1 = new Date(booking.date + "T00:00:00");
-        const d2 = new Date((booking.end_date || booking.date) + "T00:00:00");
+        const d1 = new Date(b.date + "T00:00:00");
+        const d2 = new Date((b.end_date || b.date) + "T00:00:00");
         const nights = Math.max(1, Math.round((d2 - d1) / 86400000));
         return base * nights;
       } catch { return base; }
     }
     return base;
-  })();
-  const estimatedTotal = estimateBase + addOnTotal;
+  };
+  const addOnTotalFor = (b) => (b.add_ons || []).reduce(
+    (s, a) => s + (Number(a.price || 0) * (a.qty || 1)), 0
+  );
+
+  // Sprint 110di-50 — Group-aware estimate. When this booking belongs to a
+  // multi-dog group, sum every sibling's base + add-ons and apply the
+  // configured multi-dog discount to the extra dogs (mirrors the portal
+  // estimate so the operator sees the same combined number the customer
+  // saw at booking time).
+  const isGrouped = (groupMembers || []).length > 1;
+  const estimateBase = baseForBooking(booking);
+  const estimatedSingleTotal = estimateBase + addOnTotal;
+
+  let groupSubtotal = 0;
+  let groupMdDiscount = 0;
+  let groupTotal = 0;
+  if (isGrouped) {
+    // Sort by created_at so the "primary" dog (full price) is deterministic.
+    const sorted = [...groupMembers].sort(
+      (a, b) => (a.created_at || "").localeCompare(b.created_at || "")
+    );
+    const perDog = sorted.map((b) => ({
+      base: baseForBooking(b),
+      addons: addOnTotalFor(b),
+      dog_name: b.dog_name,
+    }));
+    groupSubtotal = perDog.reduce((s, p) => s + p.base + p.addons, 0);
+    // Apply discount on additional dogs' BASE only (not on their addons).
+    const t = booking.service_type;
+    const mdSvc = (mdCfg.by_service || {})[t] || {};
+    const mdEligibleSvc = (t === "daycare" || t === "boarding");
+    const mdActive = mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdCfg.enabled;
+    const mdMode  = mdSvc.mode || mdCfg.mode || "percent";
+    const mdValue = Number(mdSvc.value ?? mdCfg.value ?? 0);
+    if (mdEligibleSvc && mdActive && mdValue > 0 && perDog.length > 1) {
+      const extraDogsBase = perDog.slice(1).reduce((s, p) => s + p.base, 0);
+      groupMdDiscount = mdMode === "percent"
+        ? extraDogsBase * (mdValue / 100)
+        : Math.min(extraDogsBase, mdValue * (perDog.length - 1));
+    }
+    groupTotal = Math.max(0, groupSubtotal - groupMdDiscount);
+  }
+
   // Use actual_price when checkout has locked it in; otherwise show our
   // estimate so the operator never sees a misleading $0.
   const hasActualPrice = Number.isFinite(Number(booking.actual_price)) && Number(booking.actual_price) > 0;
-  const displayTotal = hasActualPrice ? Number(booking.actual_price) : estimatedTotal;
+  const displayTotal = hasActualPrice
+    ? Number(booking.actual_price)
+    : (isGrouped ? groupTotal : estimatedSingleTotal);
 
   const careNotes = [];
   if (dog?.feeding_schedule?.length) careNotes.push(`${dog.feeding_schedule.length} feeding(s)`);
@@ -320,16 +384,27 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
 
           {/* Pricing */}
           <section>
-            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Pricing</h3>
+            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">
+              Pricing{isGrouped && (
+                <span className="ml-2 text-shGreen normal-case tracking-normal">
+                  · Group of {groupMembers.length} dogs
+                </span>
+              )}
+            </h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               {/* Sprint 110di-47 — Shows the snapshotted actual_price once
                   checkout has locked it in; otherwise an inline ESTIMATE
                   computed from the services catalog so the modal stops
                   showing $0 for scheduled-but-not-yet-paid bookings.
                   Accounting/checkout flow is untouched — this is display
-                  only and is clearly labeled "(est.)" when synthetic. */}
+                  only and is clearly labeled "(est.)" when synthetic.
+                  Sprint 110di-50 — Group bookings show the COMBINED total
+                  with the multi-dog discount applied so the operator sees
+                  what the customer saw at portal-checkout time. */}
               <Pill icon="fa-dollar-sign"
-                    label={hasActualPrice ? "Service total" : "Service total (est.)"}
+                    label={hasActualPrice
+                      ? (isGrouped ? "Group total" : "Service total")
+                      : (isGrouped ? "Group total (est.)" : "Service total (est.)")}
                     value={fmtMoney(displayTotal)}
                     tone="green"
                     data-testid="booking-detail-service-total"/>
@@ -341,6 +416,49 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
               )}
               {booking.tip_amount > 0 && <Pill icon="fa-hand-holding-dollar" label="Tip" value={fmtMoney(booking.tip_amount)} tone="green"/>}
             </div>
+
+            {/* Group breakdown — shows each dog's line + multi-dog discount */}
+            {isGrouped && !hasActualPrice && (
+              <div className="mt-3 bg-bgBase/40 border border-bgHover rounded-lg p-3 space-y-1.5 text-[13px]"
+                   data-testid="booking-detail-group-breakdown">
+                {[...groupMembers]
+                  .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
+                  .map((m, idx) => {
+                    const b = baseForBooking(m);
+                    const ao = addOnTotalFor(m);
+                    return (
+                      <div key={m.id} className="flex justify-between items-center"
+                           data-testid={`booking-detail-group-member-${m.id}`}>
+                        <span className="text-gray-300">
+                          <i className="fas fa-dog text-shGreen mr-1.5 opacity-70"/>
+                          {m.dog_name || `Dog ${idx + 1}`}
+                          {idx === 0 && <span className="text-[10px] text-gray-500 uppercase tracking-widest ml-2">(primary)</span>}
+                          {ao > 0 && <span className="text-gray-500 ml-1">· {fmtMoney(b)} base + {fmtMoney(ao)} add-ons</span>}
+                        </span>
+                        <span className="text-white font-black">{fmtMoney(b + ao)}</span>
+                      </div>
+                    );
+                  })}
+                <div className="flex justify-between border-t border-bgHover pt-1.5"
+                     data-testid="booking-detail-group-subtotal">
+                  <span className="text-gray-400 uppercase tracking-widest font-black text-[11px]">Standard price</span>
+                  <span className="text-white font-black">{fmtMoney(groupSubtotal)}</span>
+                </div>
+                {groupMdDiscount > 0 && (
+                  <div className="flex justify-between"
+                       data-testid="booking-detail-group-md-discount">
+                    <span className="text-shGreen">
+                      <i className="fas fa-tag mr-1.5"/>{mdCfg.label || "Multi-dog discount"}
+                    </span>
+                    <span className="text-shGreen font-black">−{fmtMoney(groupMdDiscount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-bgHover pt-1.5">
+                  <span className="text-white font-black uppercase tracking-widest text-[12px]">Group total (est.)</span>
+                  <span className="text-shGreen font-black text-[15px]">{fmtMoney(groupTotal)}</span>
+                </div>
+              </div>
+            )}
           </section>
 
           {/* Report card */}
