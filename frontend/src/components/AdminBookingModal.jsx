@@ -499,17 +499,36 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                       </button>
                     </div>
                     {eligibleAddons.length > 0 && (
-                      <div className="pl-1">
-                        <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Add-ons for {(dogs.find(d=>d.id===extra.dog_id) || {}).name || "this dog"}</p>
-                        <div className="flex flex-wrap gap-1.5">
+                      <div className="pt-1">
+                        <p className="text-[12px] font-black uppercase tracking-widest text-amber-400 mb-2">
+                          <i className="fas fa-plus-circle mr-1"/>Add-ons for {(dogs.find(d=>d.id===extra.dog_id) || {}).name || "this dog"} (optional)
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
                           {eligibleAddons.map(a => {
                             const on = (extra.addon_service_ids || []).includes(a.id);
                             return (
                               <button key={a.id} type="button"
                                       onClick={()=>toggleExtraAddon(idx, a.id)}
                                       data-testid={`ab-extra-addon-${idx}-${a.id}`}
-                                      className={`rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest border transition ${on ? "bg-amber-500/25 border-amber-500/60 text-amber-300" : "bg-bgPanel border-bgHover text-gray-300 hover:border-amber-400/50"}`}>
-                                {on && <i className="fas fa-check mr-1 text-[10px]"/>}{a.name}
+                                      className={`flex items-center gap-3 p-3 rounded-lg border transition text-left ${
+                                        on
+                                          ? "bg-amber-500/15 border-amber-500/60 shadow"
+                                          : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                                      }`}>
+                                <div className="w-9 h-9 rounded grid place-items-center shrink-0"
+                                     style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+                                  <i className={`fas ${a.icon || "fa-plus"}`}/>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                                  {a.description && (
+                                    <div className="text-[12px] text-gray-400 truncate">{a.description}</div>
+                                  )}
+                                </div>
+                                <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                                  +${(a.base_price || 0).toFixed(2)}
+                                </div>
+                                {on && <i className="fas fa-check-circle text-amber-400"/>}
                               </button>
                             );
                           })}
@@ -535,7 +554,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <div data-testid="booking-addons-picker">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
-                  <i className="fas fa-plus-circle mr-1"/>Add-ons (optional){extraDogs.length > 0 ? " — for primary dog" : ""}
+                  <i className="fas fa-plus-circle mr-1"/>
+                  {extraDogs.length > 0
+                    ? `Add-ons for ${(dogs.find(d=>d.id===dogId) || {}).name || "primary dog"} (optional)`
+                    : "Add-ons (optional)"}
                 </label>
                 {selectedAddonIds.length > 0 && (
                   <span className="text-[12px] text-amber-300 font-black uppercase tracking-widest">

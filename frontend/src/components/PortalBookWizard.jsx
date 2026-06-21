@@ -544,11 +544,17 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             )}
 
             {/* Sprint 110an — eligible add-ons for the chosen base service.
-                Hidden when the base service has no add-ons configured. */}
+                Hidden when the base service has no add-ons configured.
+                Sprint 110di-39 — When extra dogs are added, the header
+                explicitly names which dog this picker is for so customers
+                don't think the addons apply to everyone. */}
             {eligibleAddons.length > 0 && (
               <div data-testid="portal-addons-picker">
                 <label className="text-[13px] uppercase tracking-widest text-amber-400 font-black">
-                  <i className="fas fa-plus-circle mr-1"/>Add a little extra (optional)
+                  <i className="fas fa-plus-circle mr-1"/>
+                  {extraDogs.length > 0
+                    ? `Add-ons for ${(dogs || []).find(d=>d.id===dogId)?.name || "this dog"} (optional)`
+                    : "Add a little extra (optional)"}
                 </label>
                 <div className="mt-2 space-y-2">
                   {eligibleAddons.map(a => {
@@ -687,17 +693,36 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                         </button>
                       </div>
                       {eligibleAddons.length > 0 && (
-                        <div className="pl-1">
-                          <p className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-1">Add-ons for {xDog?.name}</p>
-                          <div className="flex flex-wrap gap-1.5">
+                        <div className="pt-1">
+                          <p className="text-[12px] font-black uppercase tracking-widest text-amber-400 mb-2">
+                            <i className="fas fa-plus-circle mr-1"/>Add-ons for {xDog?.name || "this dog"} (optional)
+                          </p>
+                          <div className="space-y-2">
                             {eligibleAddons.map(a => {
                               const on = (extra.addon_service_ids || []).includes(a.id);
                               return (
-                                <button key={a.id}
+                                <button key={a.id} type="button"
                                         onClick={()=>toggleExtraAddon(idx, a.id)}
                                         data-testid={`wiz-extra-addon-${idx}-${a.id}`}
-                                        className={`rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest border transition ${on ? "bg-shGreen/25 border-shGreen text-shGreen" : "bg-bgPanel border-bgHover text-gray-300 hover:border-shBlue"}`}>
-                                  {on && <i className="fas fa-check mr-1 text-[10px]"/>}{a.name}
+                                        className={`w-full flex items-center gap-3 p-3 rounded-lg border transition text-left ${
+                                          on
+                                            ? "bg-amber-500/15 border-amber-500/60"
+                                            : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                                        }`}>
+                                  <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                                       style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
+                                    <i className={`fas ${a.icon || "fa-plus"}`}/>
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                                    {a.description && (
+                                      <div className="text-[12px] text-gray-400 line-clamp-2">{a.description}</div>
+                                    )}
+                                  </div>
+                                  <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                                    +${(a.base_price || 0).toFixed(2)}
+                                  </div>
+                                  {on && <i className="fas fa-check-circle text-amber-400"/>}
                                 </button>
                               );
                             })}

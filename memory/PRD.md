@@ -4434,3 +4434,24 @@ Added a comprehensive `@media print` block that:
 
 ### Service Worker
 - ✅ Bumped to `sh-v36-110di-38-multi-dog-bookings`.
+
+
+## Sprint 110di-39 — Per-Dog Add-On Tile Picker (2026-02-20)
+**User report**: "The booking worked for the two dogs but it did not show them the add-ons we had. The add-on system in place already. Don't change how the booking works now — just fix the add-on feature at the end right before they complete the book, same goes for the admin."
+
+### Diagnosis
+The new multi-dog block in Sprint 110di-38 introduced a chip-style add-on selector for the EXTRA dogs (small text chips with just the addon name). The PRIMARY dog kept the rich tile-style picker with icon + name + description + price + checkmark. Mismatch in UX — the user didn't recognise the small chips as "the add-ons we had".
+
+### Fix
+- ✅ `PortalBookWizard.jsx` — replaced the chip-style per-extra-dog add-on selector with the **same rich tile-style picker** the primary dog uses (icon · name · description · price · check-circle). Each extra dog now gets a full-fidelity tile per add-on.
+- ✅ `AdminBookingModal.jsx` — same upgrade (2-column grid of tile cards per extra dog, matching the primary picker).
+- ✅ Both modals: when extras are present, the primary picker label rewrites to "Add-ons for {PrimaryDogName} (optional)" so the customer / admin clearly understands which dog the upper picker applies to.
+- ✅ Data-testid surface unchanged — `wiz-extra-addon-{i}-{addonId}` / `ab-extra-addon-{i}-{addonId}` still fire (same selectors as 110di-38), no test changes needed.
+
+### Verified
+- Visual smoke test on a "Multi Dog Test 0859fd" booking with grooming service → both primary and extra dog show the BATH addon ($45) in the full tile UI (`Primary addon tiles: 1 | Extra-dog addon tiles: 1`).
+- Backend `test_booking_group.py`: 8/8 ✅ — addon contract untouched.
+- Single-dog flow byte-identical to before.
+
+### Service Worker
+- ✅ Bumped to `sh-v37-110di-39-per-dog-addon-tiles`.
