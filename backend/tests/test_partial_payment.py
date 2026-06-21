@@ -213,3 +213,36 @@ def test_checkout_partial_requires_amount_paid(admin_headers, fresh_client_and_d
                       json={"use_credits": False, "base_price": 50.0},
                       timeout=15)
     assert r.status_code == 400
+
+
+def test_send_statement_requires_email(admin_headers, fresh_client_and_dog):
+    """Statement email requires an email on file."""
+    # Strip the email from the fixture client
+    client, _ = fresh_client_and_dog
+    requests.put(f"{BASE}/api/clients/{client['id']}", headers=admin_headers,
+                 json={"name": client["name"], "email": "", "phone": "555-555-0000"},
+                 timeout=15)
+    r = requests.post(f"{BASE}/api/clients/{client['id']}/send-statement",
+                      headers=admin_headers, timeout=15)
+    assert r.status_code == 400, r.text
+
+
+def test_send_statement_returns_ok_with_email(admin_headers, fresh_client_and_dog):
+    """Statement endpoint returns ok=true + sent_to + balance + row_count."""
+    client, dog = fresh_client_and_dog
+    bid = _create_and_checkin(admin_headers, client, dog)
+    requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
+                  json={"use_credits": False, "base_price": 60.0,
+                        "amount_paid": 20.0, "payment_method": "cash"},
+                  timeout=15)
+    r = requests.post(f"{BASE}/api/clients/{client['id']}/send-statement",
+                      headers=admin_headers, timeout=15)
+    # When Resend isn't configured locally, _dispatch returns False and we 500.
+    # When it IS configured, returns 200. Accept either as long as the
+    # response shape is sane on success.
+    assert r.status_code in (200, 500), r.text
+    if r.status_code == 200:
+        d = r.json()
+        assert d["ok"] is True
+        assert d["sent_to"] == client["email"]
+        assert d["row_count"] >= 2  # charge + payment

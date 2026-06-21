@@ -3706,6 +3706,153 @@ async def get_accounts_receivable(_: dict = Depends(require_admin)):
     }
 
 
+@api.post("/clients/{client_id}/send-statement")
+async def send_client_statement(
+    client_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Sprint 110di-53 — Email the client a full account statement.
+
+    The email contains the entire ledger (charges + payments + adjustments,
+    newest-first), the current balance, and a friendly note about how to
+    settle up using whatever payment methods you already accept (cash,
+    check, card next visit, etc.). No payment gateway involvement — this
+    is purely an "open your records" email.
+    """
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if not client.get("email"):
+        raise HTTPException(status_code=400, detail="Client has no email on file")
+    rows_raw = await db.payment_ledger.find(
+        {"client_id": client_id}, {"_id": 0},
+    ).sort("created_at", -1).to_list(1000)
+    balance = float(client.get("account_balance") or 0)
+    settings = await db.settings.find_one({"_id": "global"}) or {}
+    brand_name = settings.get("name") or settings.get("brand_name") or "Sit Happens"
+    business_phone = settings.get("phone") or ""
+    business_email = settings.get("email") or ""
+    first_name = (client.get("name") or "").split(" ")[0] or "there"
+
+    # Build a styled HTML statement table. Inline styles only (some email
+    # clients strip <style> blocks).
+    def fmt_money_signed(v):
+        v = float(v)
+        sign = "+" if v > 0 else ("−" if v < 0 else "")
+        return f"{sign}${abs(v):.2f}"
+
+    type_labels = {
+        "charge": ("Charge", "#f8923a"),
+        "payment": ("Payment", "#7fdc73"),
+        "refund": ("Refund", "#ef6868"),
+        "adjustment": ("Adjustment", "#7ec2ff"),
+    }
+    rows_html_parts = []
+    for r in rows_raw:
+        label, color = type_labels.get(r.get("type", ""), (r.get("type", ""), "#aaa"))
+        when = r.get("created_at", "")[:10] or "—"
+        notes_html = (r.get("notes") or "").replace("<", "&lt;").replace(">", "&gt;")
+        method = r.get("method") or ""
+        method_html = f' · <span style="color:#888">{method}</span>' if method else ""
+        rows_html_parts.append(
+            f'<tr style="border-bottom:1px solid #2a2a2a">'
+            f'<td style="padding:8px 6px;color:#888;font-size:12px">{when}</td>'
+            f'<td style="padding:8px 6px"><span style="color:{color};font-weight:700;font-size:11px;'
+            f'letter-spacing:0.1em;text-transform:uppercase">{label}</span>{method_html}<br>'
+            f'<span style="color:#ccc;font-size:13px">{notes_html}</span></td>'
+            f'<td style="padding:8px 6px;text-align:right;color:{color};font-weight:800">'
+            f'{fmt_money_signed(r.get("amount", 0))}</td>'
+            f'</tr>'
+        )
+    rows_html = "\n".join(rows_html_parts) or (
+        '<tr><td colspan="3" style="padding:16px;text-align:center;color:#888">'
+        'No ledger entries yet.</td></tr>'
+    )
+
+    if balance > 0.005:
+        balance_html = (
+            f'<div style="background:#3a1f10;border:1px solid #f8923a;border-radius:8px;'
+            f'padding:14px;margin:16px 0">'
+            f'<div style="color:#f8923a;font-size:11px;font-weight:800;'
+            f'letter-spacing:0.18em;text-transform:uppercase">Current balance · owed</div>'
+            f'<div style="color:#fff;font-size:30px;font-weight:900;margin-top:4px">'
+            f'${balance:.2f}</div></div>'
+        )
+        cta_html = (
+            f'<p style="color:#ddd">When you have a chance, you can settle this '
+            f'next time you stop in — we accept cash, check, card on-file, or '
+            f'transfer. Reply to this email or give us a call'
+            f'{(" at " + business_phone) if business_phone else ""} and we can '
+            f'sort it however works best for you.</p>'
+        )
+        subject = f"{brand_name} · Account statement · balance ${balance:.2f}"
+        title = "🧾 Your account statement"
+    elif balance < -0.005:
+        balance_html = (
+            f'<div style="background:#102a1a;border:1px solid #7fdc73;border-radius:8px;'
+            f'padding:14px;margin:16px 0">'
+            f'<div style="color:#7fdc73;font-size:11px;font-weight:800;'
+            f'letter-spacing:0.18em;text-transform:uppercase">Pre-paid credit on file</div>'
+            f'<div style="color:#fff;font-size:30px;font-weight:900;margin-top:4px">'
+            f'${abs(balance):.2f}</div></div>'
+        )
+        cta_html = (
+            f'<p style="color:#ddd">You&rsquo;ve got <strong>${abs(balance):.2f}</strong> of pre-paid '
+            f'credit waiting on your account — we&rsquo;ll automatically apply it to your '
+            f'next visit.</p>'
+        )
+        subject = f"{brand_name} · Account statement · ${abs(balance):.2f} credit"
+        title = "🧾 Your account statement"
+    else:
+        balance_html = (
+            '<div style="background:#102a1a;border:1px solid #7fdc73;border-radius:8px;'
+            'padding:14px;margin:16px 0">'
+            '<div style="color:#7fdc73;font-size:11px;font-weight:800;'
+            'letter-spacing:0.18em;text-transform:uppercase">All settled up</div>'
+            '<div style="color:#fff;font-size:30px;font-weight:900;margin-top:4px">'
+            '$0.00</div></div>'
+        )
+        cta_html = (
+            "<p style=\"color:#ddd\">You're all paid up — thanks for being a great client! 🐾</p>"
+        )
+        subject = f"{brand_name} · Account statement · settled up"
+        title = "🧾 Your account statement"
+
+    intro_html = (
+        f'<p>Hi {first_name} — here&rsquo;s a copy of your account activity at '
+        f'<strong>{brand_name}</strong>. Reach out any time'
+        f'{(" (" + business_phone + ")") if business_phone else ""}'
+        f'{(" or " + business_email) if business_email else ""} if anything looks off.</p>'
+        f'{balance_html}'
+        f'<h3 style="color:#fff;font-size:14px;font-weight:800;letter-spacing:0.1em;'
+        f'text-transform:uppercase;margin:20px 0 8px">Recent activity</h3>'
+        f'<table style="width:100%;border-collapse:collapse;background:#161616;'
+        f'border:1px solid #2a2a2a;border-radius:8px;overflow:hidden">'
+        f'<thead><tr style="background:#1f1f1f">'
+        f'<th style="padding:8px 6px;text-align:left;color:#888;font-size:11px;'
+        f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Date</th>'
+        f'<th style="padding:8px 6px;text-align:left;color:#888;font-size:11px;'
+        f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Detail</th>'
+        f'<th style="padding:8px 6px;text-align:right;color:#888;font-size:11px;'
+        f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Amount</th>'
+        f'</tr></thead><tbody>{rows_html}</tbody></table>'
+        f'{cta_html}'
+    )
+
+    ok = await email_service._dispatch(
+        slug="client_account_statement",
+        to_email=client.get("email"),
+        ctx={"first_name": first_name, "brand_name": brand_name},
+        rows=[],  # we render our own table inside intro
+        fallback_subject=subject,
+        fallback_title=title,
+        fallback_intro=intro_html,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Email send failed (check Resend config)")
+    return {"ok": True, "sent_to": client.get("email"), "balance": balance, "row_count": len(rows_raw)}
+
+
 @api.post("/bookings/{booking_id}/checkout-partial", response_model=BookingOut)
 async def checkout_partial(
     booking_id: str,

@@ -33,6 +33,10 @@ export default function AccountsReceivableTab() {
   const [openLedger, setOpenLedger] = useState(null); // client row currently expanded
   const [payOpen, setPayOpen] = useState(null);       // client row for "apply payment"
   const [adjOpen, setAdjOpen] = useState(null);       // client row for "adjustment"
+  // Sprint 110di-53 — Send statement toast state. Keyed by client id so
+  // multiple rows can be in-flight at once without stomping each other.
+  const [sendingStatement, setSendingStatement] = useState({});
+  const [statementToast, setStatementToast] = useState("");
 
   const load = async () => {
     setLoading(true); setErr("");
@@ -44,6 +48,27 @@ export default function AccountsReceivableTab() {
     } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
+
+  // Sprint 110di-53 — Send a full ledger/statement email to the client.
+  // Uses the existing payment methods the business already accepts —
+  // no Stripe / payment gateway involvement.
+  const sendStatement = async (client) => {
+    if (!client.email) {
+      setStatementToast(`${client.name} has no email on file.`);
+      setTimeout(() => setStatementToast(""), 4000);
+      return;
+    }
+    setSendingStatement((s) => ({ ...s, [client.id]: true }));
+    try {
+      const { data } = await api.post(`/clients/${client.id}/send-statement`);
+      setStatementToast(`Statement sent to ${data.sent_to}.`);
+    } catch (e) {
+      setStatementToast(e?.response?.data?.detail || "Could not send statement.");
+    } finally {
+      setSendingStatement((s) => { const n = { ...s }; delete n[client.id]; return n; });
+      setTimeout(() => setStatementToast(""), 4500);
+    }
+  };
 
   if (loading) {
     return (
@@ -73,6 +98,13 @@ export default function AccountsReceivableTab() {
 
   return (
     <div className="space-y-4" data-testid="ar-tab">
+      {/* Sprint 110di-53 — Send-statement toast (also used for "no email" warnings) */}
+      {statementToast && (
+        <div className="bg-purple-500/15 border border-purple-500/40 text-purple-200 rounded-lg px-3 py-2 text-[13px] font-black"
+             data-testid="ar-statement-toast">
+          <i className="fas fa-envelope-circle-check mr-2 text-purple-300"/>{statementToast}
+        </div>
+      )}
       {/* Totals strip */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3" data-testid="ar-totals">
         <StatTile label="Owed to you" value={fmt(data.total_receivable)} tone="shOrange"
@@ -132,6 +164,14 @@ export default function AccountsReceivableTab() {
                             data-testid={`ar-adjust-${c.id}`}
                             className="bg-shBlue/15 border border-shBlue/40 text-shBlue px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shBlue/25 transition">
                       <i className="fas fa-sliders mr-1"/>Adjust
+                    </button>
+                    <button onClick={() => sendStatement(c)}
+                            disabled={!!sendingStatement[c.id] || !c.email}
+                            title={c.email ? `Email ledger statement to ${c.email}` : "No email on file"}
+                            data-testid={`ar-send-statement-${c.id}`}
+                            className="bg-purple-500/15 border border-purple-500/40 text-purple-300 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-purple-500/25 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                      <i className={`fas ${sendingStatement[c.id] ? "fa-circle-notch fa-spin" : "fa-envelope"} mr-1`}/>
+                      {sendingStatement[c.id] ? "Sending…" : "Send statement"}
                     </button>
                   </div>
                 </div>

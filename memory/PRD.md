@@ -4707,3 +4707,63 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 ### Service Worker
 - ✅ Bumped to `sh-v47-110di-50-group-modal-combined-estimate`.
 
+
+## Sprint 110di-51/52 — Partial Payments, Per-Client Tab, Accounts Receivable (2026-02-21)
+**User ask**: "If I sell something and a customer pays part of it, can I check them out (what they paid) and keep a recurring balance like a tab?"
+
+### Decisions (from user)
+- Tab sign convention: **positive = client owes**, negative = pre-paid credit on file
+- Overpayment → pre-paid credit on file
+- Payment methods: match existing checkout dropdown (cash, card, transfer, check, other)
+- AR location: new tab inside existing **Income** screen
+- Auto-email receipt on partial pay: **yes**
+
+### Backend (server.py — no refactor)
+- ✅ `Client.account_balance: float = 0.0` — running tab (positive = owed).
+- ✅ `BookingOut.amount_paid: Optional[float]` — what the client actually paid today on a partial-pay ticket.
+- ✅ `payment_status` literal extended with `paid_partial`.
+- ✅ `CheckoutIn.amount_paid: Optional[float]` — passed through to the existing `/bookings/{id}/check-out` handler. When < total → `paid_partial` + tab grows by the delta. When > total → `paid` + delta goes onto the tab as negative (pre-paid credit).
+- ✅ New endpoints:
+  - `GET /api/clients/{id}/ledger` → rows newest-first + current balance.
+  - `POST /api/clients/{id}/payment` (admin) → applies a payment to the tab (reduces balance), writes ledger row.
+  - `POST /api/clients/{id}/adjustment` (admin) → signed manual write-off / correction.
+  - `GET /api/admin/accounts-receivable` → every client with non-zero balance + totals (`total_receivable`, `total_credit_on_file`, `net`).
+  - `POST /api/bookings/{id}/checkout-partial` → alias for `check-out` that REQUIRES `amount_paid` (400 otherwise).
+- ✅ New collection: `payment_ledger` (append-only audit log; types: `charge`, `payment`, `refund`, `adjustment`).
+- ✅ Email service: registered `client_partial_payment_receipt` + `client_tab_payment_receipt` template slugs; fire-and-forget receipts on every partial / tab payment.
+
+### Frontend
+- ✅ `CheckoutModal.jsx` — prominent two-button toggle (`checkout-pay-mode-full` / `checkout-pay-mode-partial`). Selecting partial reveals an autofocused amount input with a live "Tab will increase by $X" / "Prepaid credit will be added" / "Paid in full" summary. Existing tab indicator (`checkout-existing-tab`) shows when client already has a non-zero balance.
+- ✅ `AccountsReceivable.jsx` (NEW) — totals strip, client table with **Apply payment / Adjust / Ledger** actions per row. Inline ledger drawer (timeline with type badges).
+- ✅ `Income.jsx` — top-level tab strip (`income-tab-transactions` / `income-tab-ar`).
+- ✅ `Clients.jsx` — new "Tab" pill on the client grid (`tab-balance-<id>`) showing the amount + "Owes you" / "Pre-paid" label.
+- ✅ `Portal.jsx` — balance banner above credits card. Shows `portal-balance-owes` when client owes, `portal-balance-credit` when they have pre-paid credit on file, NOTHING when balance is exactly zero.
+
+### Bug fixes shipped same sprint
+- ✅ **Clients-screen flicker** — `Clients.jsx:402` was passing `plans={plansByClient[c.id] || []}` which created a fresh empty array EVERY parent render. `AdminClientPaymentPlans` useEffect saw the new reference and re-fired `setPlans([])` on every render — causing a render loop across 95+ client rows. Surgical fix: drop the `|| []` fallback; `AdminClientPaymentPlans` now treats undefined as "no plans, no fetch" without trampolining state.
+- ✅ **PWA service-worker stale-cache** — bumped to `sh-v49-110di-52-partial-pay-toggle-portal-balance` so users get the new UI on next page load.
+
+### Verified
+- pytest `/app/backend/tests/test_partial_payment.py` → 9/9 PASS.
+- pytest `/app/backend/tests/test_booking_group.py` + `test_schedule_events_group_id.py` → 10/10 PASS (regression).
+- Testing agent (iteration_11.json): all 4 root causes confirmed fixed live. AR populates correctly after partial-pay; portal balance banner shows correct state in all 3 cases (owes / credit / zero); zero stray `/payment-plans` network calls on /clients (flicker fix).
+
+
+
+## Sprint 110di-53 — Send Account Statement (no Stripe) (2026-02-21)
+**User ask**: "That would be fine but no Stripe needed — use current payment stuff we have already."
+
+### Backend (server.py — no refactor)
+- ✅ `POST /api/clients/{id}/send-statement` (admin) — builds an inline-HTML statement table from the full `payment_ledger` and emails it via the existing `email_service._dispatch` pipeline (Resend). Renders a balance card (orange owed / green credit / green settled), a styled table of every charge / payment / refund / adjustment (newest-first, with type badges in brand colors), and a friendly settle-up CTA pointing to whatever payment methods the business already accepts (cash / check / card next visit / transfer) — no payment gateway in the loop. Pulls business `name`, `phone`, `email` from the settings doc.
+- ✅ Returns 400 when the client has no email on file (frontend disables the button + shows a toast).
+- ✅ Registered new template slug `client_account_statement` (variables: `first_name`, `brand_name`).
+
+### Frontend
+- ✅ `AccountsReceivable.jsx` — added "Send statement" button (`ar-send-statement-<id>`) per AR row, disabled when no email. In-flight spinner state per-client. Toast bar at top of the tab (`ar-statement-toast`) shows confirmation or "no email" warning. Auto-dismisses after ~4.5s.
+
+### Verified
+- 11/11 backend pytest pass (added 2 new cases: requires-email-400, returns-ok-with-email).
+- Live e2e: `POST /clients/{id}/send-statement` on a real client with $25 tab → `{ok: true, sent_to: "br-14dd9a@e.com", balance: 25.0, row_count: 1}`.
+
+### Service worker bumped to `sh-v50-110di-53-send-statement`.
+

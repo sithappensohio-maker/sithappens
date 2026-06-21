@@ -425,6 +425,17 @@ EMAIL_TEMPLATES = [
         "default_intro_html": "Thanks for your payment. Your account balance is shown below.",
         "variables": ["first_name"],
     },
+    {
+        "slug": "client_account_statement",
+        "name": "Account Statement",
+        "description": "Full ledger statement emailed to a client on demand — shows every charge, payment, and adjustment plus the current balance and how to settle up.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Your account statement",
+        "default_title": "🧾 Your account statement",
+        "default_intro_html": "Here is a copy of your recent account activity.",
+        "variables": ["first_name", "brand_name"],
+    },
 ]
 
 
