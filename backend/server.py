@@ -3769,7 +3769,7 @@ async def _send_account_statement(client_id: str) -> dict:
             f'${balance:.2f}</div></div>'
         )
         cta_html = (
-            f'<p style="color:#ddd">When you have a chance, you can settle this '
+            f'<p style="color:#334155;font-size:15px;line-height:1.5">When you have a chance, you can settle this '
             f'next time you stop in — we accept cash, check, card on-file, or '
             f'transfer. Reply to this email or give us a call'
             f'{(" at " + business_phone) if business_phone else ""} and we can '
@@ -3786,7 +3786,7 @@ async def _send_account_statement(client_id: str) -> dict:
             f'${abs(balance):.2f}</div></div>'
         )
         cta_html = (
-            f'<p style="color:#ddd">You&rsquo;ve got <strong>${abs(balance):.2f}</strong> of pre-paid '
+            f'<p style="color:#334155;font-size:15px;line-height:1.5">You&rsquo;ve got <strong>${abs(balance):.2f}</strong> of pre-paid '
             f'credit waiting on your account — we&rsquo;ll automatically apply it to your '
             f'next visit.</p>'
         )
@@ -3801,7 +3801,7 @@ async def _send_account_statement(client_id: str) -> dict:
             '$0.00</div></div>'
         )
         cta_html = (
-            "<p style=\"color:#ddd\">You're all paid up — thanks for being a great client! 🐾</p>"
+            '<p style="color:#334155;font-size:15px;line-height:1.5">You\'re all paid up — thanks for being a great client! 🐾</p>'
         )
         subject = f"{brand_name} · Account statement · settled up"
     title = "🧾 Your account statement"
