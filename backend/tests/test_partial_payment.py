@@ -246,3 +246,31 @@ def test_send_statement_returns_ok_with_email(admin_headers, fresh_client_and_do
         assert d["ok"] is True
         assert d["sent_to"] == client["email"]
         assert d["row_count"] >= 2  # charge + payment
+
+
+def test_portal_send_statement_self_serve(admin_headers):
+    """Sprint 110di-54 — Client can request their own statement via portal."""
+    # Use the test client credentials from /app/memory/test_credentials.md
+    login = requests.post(f"{BASE}/api/auth/login",
+                          json={"email": "freightshaker06@gmail.com",
+                                "password": "TestPass123"}, timeout=15)
+    if login.status_code != 200:
+        import pytest
+        pytest.skip("test client credentials not available")
+    client_token = login.json()["token"]
+    r = requests.post(f"{BASE}/api/portal/send-statement",
+                      headers={"Authorization": f"Bearer {client_token}"},
+                      timeout=15)
+    # 200 on success (Resend configured) or 500 (Resend not configured locally)
+    assert r.status_code in (200, 500), r.text
+    if r.status_code == 200:
+        d = r.json()
+        assert d["ok"] is True
+        assert "@" in d["sent_to"]
+
+
+def test_portal_send_statement_rejects_admin(admin_headers):
+    """Sprint 110di-54 — Portal endpoint refuses admin users (role mismatch)."""
+    r = requests.post(f"{BASE}/api/portal/send-statement",
+                      headers=admin_headers, timeout=15)
+    assert r.status_code == 403

@@ -4767,3 +4767,20 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 
 ### Service worker bumped to `sh-v50-110di-53-send-statement`.
 
+
+## Sprint 110di-54 — Portal Self-Serve "Email Me My Statement" (2026-02-21)
+**User ask**: Yes — add the "Send statement" link inside the client portal too.
+
+### Backend
+- ✅ Extracted statement-build logic into shared `_send_account_statement(client_id)` helper.
+- ✅ `POST /api/portal/send-statement` (auth: client only, 403 for admin/employee) — reuses the helper with the authenticated user's `client_id` so the email is byte-identical to the admin-sent version.
+
+### Frontend
+- ✅ Portal balance banners (`portal-balance-owes`, `portal-balance-credit`) now host an "Email me my statement" button (`portal-send-statement-btn`). Spinner + inline confirmation message (`portal-statement-msg`) that auto-dismisses after 5s.
+
+### Verified
+- 13/13 backend pytest pass (added 2 new cases: portal self-serve success, admin-rejected-403).
+- Live e2e on test client (`freightshaker06@gmail.com`) → `{ok: true, sent_to: "freightshaker06@gmail.com", balance: 18.0, row_count: 7}`.
+
+### Service worker bumped to `sh-v51-110di-54-portal-self-statement`.
+

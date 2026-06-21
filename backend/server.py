@@ -3706,18 +3706,11 @@ async def get_accounts_receivable(_: dict = Depends(require_admin)):
     }
 
 
-@api.post("/clients/{client_id}/send-statement")
-async def send_client_statement(
-    client_id: str,
-    user: dict = Depends(require_admin),
-):
-    """Sprint 110di-53 — Email the client a full account statement.
-
-    The email contains the entire ledger (charges + payments + adjustments,
-    newest-first), the current balance, and a friendly note about how to
-    settle up using whatever payment methods you already accept (cash,
-    check, card next visit, etc.). No payment gateway involvement — this
-    is purely an "open your records" email.
+async def _send_account_statement(client_id: str) -> dict:
+    """Sprint 110di-53/54 — Build + send the styled account-statement email.
+    Shared by the admin endpoint (`/clients/{id}/send-statement`) and the
+    portal endpoint (`/portal/send-statement`). Returns the response dict.
+    Raises HTTPException on validation / send failure.
     """
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
@@ -3734,8 +3727,6 @@ async def send_client_statement(
     business_email = settings.get("email") or ""
     first_name = (client.get("name") or "").split(" ")[0] or "there"
 
-    # Build a styled HTML statement table. Inline styles only (some email
-    # clients strip <style> blocks).
     def fmt_money_signed(v):
         v = float(v)
         sign = "+" if v > 0 else ("−" if v < 0 else "")
@@ -3768,7 +3759,6 @@ async def send_client_statement(
         '<tr><td colspan="3" style="padding:16px;text-align:center;color:#888">'
         'No ledger entries yet.</td></tr>'
     )
-
     if balance > 0.005:
         balance_html = (
             f'<div style="background:#3a1f10;border:1px solid #f8923a;border-radius:8px;'
@@ -3786,7 +3776,6 @@ async def send_client_statement(
             f'sort it however works best for you.</p>'
         )
         subject = f"{brand_name} · Account statement · balance ${balance:.2f}"
-        title = "🧾 Your account statement"
     elif balance < -0.005:
         balance_html = (
             f'<div style="background:#102a1a;border:1px solid #7fdc73;border-radius:8px;'
@@ -3802,7 +3791,6 @@ async def send_client_statement(
             f'next visit.</p>'
         )
         subject = f"{brand_name} · Account statement · ${abs(balance):.2f} credit"
-        title = "🧾 Your account statement"
     else:
         balance_html = (
             '<div style="background:#102a1a;border:1px solid #7fdc73;border-radius:8px;'
@@ -3816,8 +3804,7 @@ async def send_client_statement(
             "<p style=\"color:#ddd\">You're all paid up — thanks for being a great client! 🐾</p>"
         )
         subject = f"{brand_name} · Account statement · settled up"
-        title = "🧾 Your account statement"
-
+    title = "🧾 Your account statement"
     intro_html = (
         f'<p>Hi {first_name} — here&rsquo;s a copy of your account activity at '
         f'<strong>{brand_name}</strong>. Reach out any time'
@@ -3838,12 +3825,11 @@ async def send_client_statement(
         f'</tr></thead><tbody>{rows_html}</tbody></table>'
         f'{cta_html}'
     )
-
     ok = await email_service._dispatch(
         slug="client_account_statement",
         to_email=client.get("email"),
         ctx={"first_name": first_name, "brand_name": brand_name},
-        rows=[],  # we render our own table inside intro
+        rows=[],
         fallback_subject=subject,
         fallback_title=title,
         fallback_intro=intro_html,
@@ -3851,6 +3837,28 @@ async def send_client_statement(
     if not ok:
         raise HTTPException(status_code=500, detail="Email send failed (check Resend config)")
     return {"ok": True, "sent_to": client.get("email"), "balance": balance, "row_count": len(rows_raw)}
+
+
+@api.post("/clients/{client_id}/send-statement")
+async def send_client_statement(
+    client_id: str,
+    user: dict = Depends(require_admin),
+):
+    """Sprint 110di-53 — Admin-triggered statement email. See `_send_account_statement`."""
+    return await _send_account_statement(client_id)
+
+
+@api.post("/portal/send-statement")
+async def portal_send_statement(user: dict = Depends(get_current_user)):
+    """Sprint 110di-54 — Client-triggered self-statement. The authenticated
+    portal user requests a fresh copy of their own statement email.
+    Reuses the admin handler with the user's own client_id."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Portal users only")
+    client_id = user.get("client_id") or user.get("id")
+    if not client_id:
+        raise HTTPException(status_code=400, detail="No client record linked to this account")
+    return await _send_account_statement(client_id)
 
 
 @api.post("/bookings/{booking_id}/checkout-partial", response_model=BookingOut)

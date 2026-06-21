@@ -878,6 +878,25 @@ export default function Portal() {
 
   useEffect(() => { checkAvail(); }, [checkAvail]);
 
+  // Sprint 110di-54 — Client self-service "email me a statement" button.
+  // Reuses POST /portal/send-statement which proxies to the same handler
+  // the admin "Send statement" uses (so the message is identical to what
+  // the operator sends).
+  const [sendingStatement, setSendingStatement] = useState(false);
+  const [statementMsg, setStatementMsg] = useState("");
+  const requestStatement = async () => {
+    setSendingStatement(true); setStatementMsg("");
+    try {
+      const { data } = await api.post("/portal/send-statement");
+      setStatementMsg(`Statement on its way to ${data.sent_to}.`);
+    } catch (e) {
+      setStatementMsg(e?.response?.data?.detail || "Couldn’t send the statement — please try again later.");
+    } finally {
+      setSendingStatement(false);
+      setTimeout(() => setStatementMsg(""), 5000);
+    }
+  };
+
   const book = async () => {
     setErr(""); setSuccess("");
     if (bookType === "training") {
@@ -1174,6 +1193,17 @@ export default function Portal() {
                   </p>
                 </div>
               </div>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <button onClick={requestStatement} disabled={sendingStatement}
+                        data-testid="portal-send-statement-btn"
+                        className="bg-shOrange/30 border border-shOrange/50 text-shOrange px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shOrange/40 disabled:opacity-50 transition">
+                  <i className={`fas ${sendingStatement ? "fa-circle-notch fa-spin" : "fa-envelope"} mr-2`}/>
+                  {sendingStatement ? "Sending…" : "Email me my statement"}
+                </button>
+                {statementMsg && (
+                  <span className="text-[12px] text-gray-300" data-testid="portal-statement-msg">{statementMsg}</span>
+                )}
+              </div>
             </div>
           ) : (
             <div className="mb-4 sm:mb-6 bg-shGreen/10 border border-shGreen/40 rounded-xl p-4 sm:p-5 shadow-2xl"
@@ -1189,6 +1219,17 @@ export default function Portal() {
                     You overpaid on a recent visit — we&apos;ll apply this to your next ticket automatically.
                   </p>
                 </div>
+              </div>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <button onClick={requestStatement} disabled={sendingStatement}
+                        data-testid="portal-send-statement-btn"
+                        className="bg-shGreen/20 border border-shGreen/40 text-shGreen px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/30 disabled:opacity-50 transition">
+                  <i className={`fas ${sendingStatement ? "fa-circle-notch fa-spin" : "fa-envelope"} mr-2`}/>
+                  {sendingStatement ? "Sending…" : "Email me my statement"}
+                </button>
+                {statementMsg && (
+                  <span className="text-[12px] text-gray-300" data-testid="portal-statement-msg">{statementMsg}</span>
+                )}
               </div>
             </div>
           ))
