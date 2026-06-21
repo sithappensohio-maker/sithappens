@@ -4784,3 +4784,27 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 
 ### Service worker bumped to `sh-v51-110di-54-portal-self-statement`.
 
+
+## Sprint 110di-55 — Statement Email Body Fix (2026-02-21)
+**User report**: "Account statement emails look blank — nothing shows other than 'Account statement'."
+
+### Root cause (2 bugs stacked)
+1. `email_templates_registry.py` had a placeholder `default_intro_html` set on the 3 new transactional slugs (`client_partial_payment_receipt`, `client_tab_payment_receipt`, `client_account_statement`). The `_dispatch` `or` chain (`override.intro_html or reg.default_intro_html or fallback_intro`) short-circuited on the registry default — the dynamic per-send HTML was never reached.
+2. Even when the dynamic intro was rendered, `_wrap` puts intro inside `<p>...</p>`. The statement intro contained block elements (`<div>` balance card + `<table>` ledger) — most email clients strip block elements out of `<p>` tags, leaving the email blank.
+
+### Fix
+- ✅ Blanked `default_intro_html` to `""` on the 3 transactional registry entries (`""` is falsy in Python `or`, so the chain falls through to the dynamic `fallback_intro`).
+- ✅ Moved the balance-card + ledger-table + settle-up CTA from `fallback_intro` to the `body_html` parameter of `_dispatch`. `body_html` renders RAW (no `<p>` wrapper) so block elements survive.
+- ✅ Adjusted colors slightly so the balance card + ledger table render legibly inside the light-themed email wrapper.
+
+### Verified
+- 13/13 partial-payment pytest tests pass.
+- 58/58 critical-flow pytest tests pass (booking-group, schedule-events, checkout, employee, PnL, addons, cancel, income).
+- Direct HTML capture during send confirms: balance card present ("Current balance · owed", "$25.00"), ledger table renders ledger rows with Charge/Payment/Adjustment type badges, total HTML body 9028 chars. Settled-up state also renders correctly.
+- Live curl: admin login, /api/events with group_id, AR endpoint, /api/clients with account_balance — all OK.
+
+### Known suite flakiness (NOT a regression)
+- Full `pytest tests/` sweep shows 46F+80E mostly with `KeyError: 'token'` — pre-existing test pollution where earlier tests reset auth state for downstream tests. In isolation every test bucket I touched passes 100%. User chose to leave this alone.
+
+### Service worker bumped to `sh-v52-110di-55-statement-email-body-fix`.
+
