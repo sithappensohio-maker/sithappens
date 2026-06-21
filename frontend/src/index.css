@@ -281,6 +281,51 @@ button.bg-bgPanel {
 .fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: #94a3b8; text-decoration: none; font-weight: 700; font-size: 11px; text-transform: uppercase; }
 .fc .fc-event { padding: 2px 6px; font-weight: 700; font-size: 11px; cursor: pointer; }
 
+/* Sprint 110di-45 — Mobile month-view "smart dots". On mobile we render
+   each booking as a tiny colored dot instead of a full event chip so that
+   7 columns × N events still fit cleanly inside a phone-width day cell.
+   Color is set inline via style="" from dotColorFor() in Schedule.jsx;
+   we only handle sizing + spacing here. */
+.fc .fc-mobile-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin: 1px;
+  vertical-align: middle;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+/* Sprint 110di-45 — Mobile month-view visibility.
+   On dark theme the default border + text colours were too faint to see at
+   phone widths. These overrides make the grid actually readable: brighter
+   borders, larger day numbers, visible column headers. */
+@media (max-width: 1023px) {
+  .fc .fc-daygrid-event { padding: 0 !important; background: transparent !important; border: none !important; margin: 0 1px !important; }
+  .fc .fc-daygrid-event-harness { line-height: 1; }
+  .fc .fc-daygrid-day-frame { min-height: 60px !important; padding: 2px !important; }
+  /* Make day cell tappable feel: pointer cursor + subtle hover */
+  .fc .fc-daygrid-day { cursor: pointer; transition: background-color 120ms; }
+  .fc .fc-daygrid-day:hover, .fc .fc-daygrid-day:active { background-color: rgba(140, 198, 63, 0.10) !important; }
+  /* Brighter borders so the grid is actually visible */
+  .fc-theme-standard td, .fc-theme-standard th { border-color: #475569 !important; }
+  /* Column headers (Sun, Mon, ...) — high contrast */
+  .fc .fc-col-header-cell { background: rgba(0, 169, 224, 0.10) !important; }
+  .fc .fc-col-header-cell-cushion { font-size: 11px !important; padding: 6px 2px !important; color: #00a9e0 !important; font-weight: 900 !important; letter-spacing: 0.05em !important; }
+  /* Day numbers — bigger + brighter so they pop */
+  .fc .fc-daygrid-day-number { font-size: 13px !important; padding: 4px 6px !important; color: #cbd5e1 !important; font-weight: 800 !important; }
+  /* Today's date — extra emphasis */
+  .fc .fc-day-today .fc-daygrid-day-number { color: #00a9e0 !important; background: rgba(0, 169, 224, 0.20); border-radius: 4px; }
+  /* +N more link styled compact */
+  .fc .fc-mobile-dot + .fc-more-link-mobile, .fc .fc-more-link-mobile {
+    display: inline-block;
+    font-size: 10px !important;
+    font-weight: 900 !important;
+    color: #8cc63f !important;
+    padding: 0 2px !important;
+    vertical-align: middle;
+  }
+}
+
 /* Sprint 110di-44 — FullCalendar LIST VIEW dark-theme styling.
    The default list view uses light backgrounds + black text which become
    invisible on Sit Happens' dark UI. These overrides give:
@@ -981,16 +1026,30 @@ textarea {
   .grid.grid-cols-5 {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
   }
-  /* Tables → mobile cards: hide secondary columns. */
-  table thead { display: none; }
-  table tbody tr {
+  /* Tables → mobile cards: hide secondary columns.
+     Sprint 110di-45 — Exclude FullCalendar's tables (`.fc table`) so the
+     month-grid keeps its proper 7-column layout on mobile. Without this
+     scope, FC's <table>/<thead>/<tr>/<td> get blanket display:block and the
+     calendar collapses into a vertical stack of unstyled cells. */
+  table:not(.fc table):not(.fc-scrollgrid) thead { display: none; }
+  table:not(.fc table):not(.fc-scrollgrid) tbody tr {
     display: block;
     padding: 0.75rem;
     border-radius: 12px;
     margin-bottom: 0.5rem;
     background: rgba(3, 18, 33, 0.7) !important;
   }
-  table tbody td { display: block; padding: 0.15rem 0; }
+  table:not(.fc table):not(.fc-scrollgrid) tbody td { display: block; padding: 0.15rem 0; }
+  /* Explicitly RESTORE FullCalendar's table semantics in case anything
+     upstream has already nuked them. */
+  .fc table, .fc table thead, .fc table tbody, .fc table tr, .fc table td, .fc table th,
+  .fc-scrollgrid, .fc-scrollgrid thead, .fc-scrollgrid tbody, .fc-scrollgrid tr, .fc-scrollgrid td, .fc-scrollgrid th {
+    display: revert !important;
+    padding: revert;
+    background: revert !important;
+    margin-bottom: revert;
+    border-radius: revert;
+  }
 }
 
 /* Client portal — friendlier softer tone (subtle warm filter). The

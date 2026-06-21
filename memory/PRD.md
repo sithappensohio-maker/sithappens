@@ -4560,3 +4560,33 @@ Mobile breakpoint was `(max-width: 767px)` — anything wider (iPad portrait at 
 
 ### Service Worker
 - ✅ Bumped to `sh-v42-110di-44-schedule-list-dark-theme`.
+
+
+## Sprint 110di-45 — Mobile Calendar Grid Restored + Smart Event Dots (2026-02-20)
+**User ask**: keep list as option but default to a calendar layout — picked (a) "month grid with smart event dots".
+
+### Root cause found
+A global responsive rule in `index.css` (~line 1030):
+```
+table thead { display: none; }
+table tbody tr { display: block; ... }
+table tbody td { display: block; ... }
+```
+Meant to convert ordinary data tables into mobile card stacks. Unscoped → it **also nuked FullCalendar's table**, collapsing the 7-col month grid into a vertical strip. That's why the original calendar was empty on phones (predates my changes).
+
+### Fix
+- ✅ `index.css` — scoped that rule with `:not(.fc table):not(.fc-scrollgrid)` + explicit RESTORE block for FC tables.
+- ✅ Added mobile dark-theme FC styles: bright SUN/MON column headers, readable day numbers, today-cell accent, dot styling.
+- ✅ `Schedule.jsx` — new `mobileView` state ("month"|"list") with localStorage persistence (`sh_schedule_mobile_view`). Defaults to month.
+- ✅ Mobile MONTH view: `eventContent` returns colored 7px dots keyed by service type (shGreen/shBlue/amber/purple/pink). `dayMaxEvents={5}` with "+N more" overflow.
+- ✅ MONTH | LIST toggle bar with persistence.
+- ✅ Color legend below grid on mobile-month.
+
+### Verified
+- Mobile 414×896 MONTH: full 7-col grid renders (cell_w=51, body_h=609, 251 dots, today highlighted).
+- Today button works.
+- Toggle persists in localStorage.
+- Desktop unchanged.
+
+### Service Worker
+- ✅ Bumped to `sh-v43-110di-45-schedule-month-dots-mobile`.

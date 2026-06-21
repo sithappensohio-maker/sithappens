@@ -16,6 +16,30 @@ function isMobile() {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1023px)").matches;
 }
 
+// Sprint 110di-45 — Mobile month-view event renderer. Compresses each booking
+// into a single brand-colored dot inside its day cell. The dot color matches
+// the service type (daycare green, boarding blue, grooming amber, training
+// purple, photography pink). The event title is used as the dot's title=
+// attribute so long-press / hover gives a hint of which booking it is. The
+// user opens detail by clicking the dot OR the day cell (existing behavior).
+function dotColorFor(eventLike) {
+  const t = (eventLike?.service_type || eventLike?.extendedProps?.service_type || "").toLowerCase();
+  if (t === "daycare") return "#8cc63f";       // shGreen
+  if (t === "boarding") return "#00a9e0";      // shBlue
+  if (t === "grooming") return "#f59e0b";      // amber-500
+  if (t === "training") return "#a78bfa";      // purple-400
+  if (t === "photography") return "#f472b6";   // pink-400
+  return "#94a3b8";                            // slate-400 fallback
+}
+function renderMobileDot(arg) {
+  const c = dotColorFor(arg.event);
+  // Inline-style dot — render outside React's normal JSX path so FullCalendar
+  // handles measurement properly. domNodes pattern is documented and safe.
+  return {
+    html: `<span class="fc-mobile-dot" style="background:${c}" aria-label="${(arg.event.title || "").replace(/"/g, "&quot;")}"></span>`,
+  };
+}
+
 /** Cute service color chips, kept in sync with the calendar palette. */
 const SVC_META = {
   daycare: { color: "bg-shGreen/25 text-shGreen border-shGreen/50", label: "Daycare" },
@@ -47,6 +71,20 @@ export default function Schedule() {
   // Map of client_id → { credits, training_credits, boarding_credits } so the
   // day roster can show a "credits available" chip next to each dog.
   const [clientBalById, setClientBalById] = useState({});
+  // Sprint 110di-45 — Mobile view preference. User can toggle between the
+  // month-grid (default — at-a-glance overview with colored dots per booking)
+  // and the agenda list. Persisted to localStorage so the choice sticks.
+  const [mobileView, setMobileView] = useState(() => {
+    try { return localStorage.getItem("sh_schedule_mobile_view") || "month"; }
+    catch { return "month"; }
+  });
+  const setMobileViewPersist = (v) => {
+    setMobileView(v);
+    try { localStorage.setItem("sh_schedule_mobile_view", v); } catch { /* ignore */ }
+    // Also flip the FullCalendar view if the API is reachable.
+    const api = calRef.current?.getApi?.();
+    if (api) api.changeView(v === "list" ? "listMonth" : "dayGridMonth");
+  };
   const calRef = useRef(null);
 
   useEffect(() => {
@@ -176,16 +214,30 @@ export default function Schedule() {
       />
       <div className={`bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover ${mobile ? "" : "flex-1 overflow-hidden"}`}
            data-testid="schedule-grid-wrap">
-        {/* Sprint 110di-43 — on mobile/tablet (<1024px) we swap the cramped
-            month grid for a clean LIST view: dates flow vertically with one
-            booking per row, each row tappable. Tap "Month" to flip back to
-            the grid mode when needed (kept as an option for power users). */}
+        {/* Sprint 110di-45 — Mobile view toggle. Defaults to MONTH (grid with
+            colored dots per booking, color-coded by service). User can flip to
+            LIST for the agenda view; choice persists across reloads via
+            localStorage. Desktop unchanged. */}
+        {mobile && (
+          <div className="flex items-center justify-center gap-1 mb-2" data-testid="schedule-mobile-view-toggle">
+            <button onClick={()=>setMobileViewPersist("month")}
+                    data-testid="schedule-view-month"
+                    className={`px-3 py-1.5 rounded-l-lg text-[11px] font-black uppercase tracking-widest border transition ${mobileView==="month" ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/40 hover:text-shGreen"}`}>
+              <i className="fas fa-th mr-1"/>Month
+            </button>
+            <button onClick={()=>setMobileViewPersist("list")}
+                    data-testid="schedule-view-list"
+                    className={`px-3 py-1.5 rounded-r-lg text-[11px] font-black uppercase tracking-widest border transition -ml-px ${mobileView==="list" ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/40 hover:text-shGreen"}`}>
+              <i className="fas fa-list-ul mr-1"/>List
+            </button>
+          </div>
+        )}
         <div className={mobile ? "" : "h-full"}>
           <div className={mobile ? "" : "h-full"} style={mobile ? undefined : { height: "100%" }}>
             <FullCalendar
               ref={calRef}
               plugins={[dayGridPlugin, listPlugin, interactionPlugin]}
-              initialView={mobile ? "listMonth" : "dayGridMonth"}
+              initialView={mobile ? (mobileView === "list" ? "listMonth" : "dayGridMonth") : "dayGridMonth"}
               height={mobile ? "auto" : "100%"}
               events={events}
               editable={!mobile}
@@ -195,10 +247,14 @@ export default function Schedule() {
               eventResize={onDrop}
               dateClick={onDateClick}
               eventClick={(info) => { info.jsEvent?.preventDefault(); setDetailId(info.event.id); }}
-              displayEventTime={true}
+              displayEventTime={!(mobile && mobileView === "month")}
               eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
               eventDisplay="block"
-              noEventsContent={mobile ? "No bookings in this month — tap › to look ahead." : undefined}
+              dayMaxEvents={mobile && mobileView === "month" ? 5 : false}
+              moreLinkClassNames="fc-more-link-mobile"
+              moreLinkText={(n)=>`+${n}`}
+              eventContent={(mobile && mobileView === "month") ? renderMobileDot : undefined}
+              noEventsContent={mobile && mobileView === "list" ? "No bookings in this month — tap › to look ahead." : undefined}
               headerToolbar={mobile
                 ? { left: "prev,next", center: "title", right: "today" }
                 : { left: "prev,next today", center: "title", right: "" }}
@@ -207,7 +263,17 @@ export default function Schedule() {
             />
           </div>
         </div>
-        {mobile && (
+        {mobile && mobileView === "month" && (
+          <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
+            <i className="fas fa-circle text-shGreen mr-1 text-[8px] align-middle"/>Daycare
+            <i className="fas fa-circle text-shBlue ml-2 mr-1 text-[8px] align-middle"/>Boarding
+            <i className="fas fa-circle text-amber-500 ml-2 mr-1 text-[8px] align-middle"/>Grooming
+            <i className="fas fa-circle text-purple-400 ml-2 mr-1 text-[8px] align-middle"/>Training
+            <i className="fas fa-circle text-pink-400 ml-2 mr-1 text-[8px] align-middle"/>Photo
+            <span className="block mt-1">Tap any day to see the full roster.</span>
+          </p>
+        )}
+        {mobile && mobileView === "list" && (
           <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
             <i className="fas fa-list-ul mr-1"/>Tap any booking to open it · use prev / next arrows to jump months
           </p>
