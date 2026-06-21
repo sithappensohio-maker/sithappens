@@ -3806,24 +3806,26 @@ async def _send_account_statement(client_id: str) -> dict:
         subject = f"{brand_name} · Account statement · settled up"
     title = "🧾 Your account statement"
     intro_html = (
-        f'<p>Hi {first_name} — here&rsquo;s a copy of your account activity at '
+        f'Hi {first_name} — here&rsquo;s a copy of your account activity at '
         f'<strong>{brand_name}</strong>. Reach out any time'
         f'{(" (" + business_phone + ")") if business_phone else ""}'
-        f'{(" or " + business_email) if business_email else ""} if anything looks off.</p>'
+        f'{(" or " + business_email) if business_email else ""} if anything looks off.'
+    )
+    body_html = (
         f'{balance_html}'
-        f'<h3 style="color:#fff;font-size:14px;font-weight:800;letter-spacing:0.1em;'
+        f'<h3 style="color:#0f172a;font-size:14px;font-weight:800;letter-spacing:0.1em;'
         f'text-transform:uppercase;margin:20px 0 8px">Recent activity</h3>'
-        f'<table style="width:100%;border-collapse:collapse;background:#161616;'
+        f'<table style="width:100%;border-collapse:collapse;background:#0f1115;'
         f'border:1px solid #2a2a2a;border-radius:8px;overflow:hidden">'
         f'<thead><tr style="background:#1f1f1f">'
-        f'<th style="padding:8px 6px;text-align:left;color:#888;font-size:11px;'
+        f'<th style="padding:8px 6px;text-align:left;color:#aaa;font-size:11px;'
         f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Date</th>'
-        f'<th style="padding:8px 6px;text-align:left;color:#888;font-size:11px;'
+        f'<th style="padding:8px 6px;text-align:left;color:#aaa;font-size:11px;'
         f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Detail</th>'
-        f'<th style="padding:8px 6px;text-align:right;color:#888;font-size:11px;'
+        f'<th style="padding:8px 6px;text-align:right;color:#aaa;font-size:11px;'
         f'letter-spacing:0.1em;text-transform:uppercase;font-weight:800">Amount</th>'
         f'</tr></thead><tbody>{rows_html}</tbody></table>'
-        f'{cta_html}'
+        f'<div style="margin-top:18px">{cta_html}</div>'
     )
     ok = await email_service._dispatch(
         slug="client_account_statement",
@@ -3833,6 +3835,7 @@ async def _send_account_statement(client_id: str) -> dict:
         fallback_subject=subject,
         fallback_title=title,
         fallback_intro=intro_html,
+        body_html=body_html,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Email send failed (check Resend config)")

@@ -411,7 +411,9 @@ EMAIL_TEMPLATES = [
         "audience": "client",
         "default_subject": "Payment received · balance remaining",
         "default_title": "💳 Payment received",
-        "default_intro_html": "We received your payment. Your account balance is shown below.",
+        # NOTE: intro is built dynamically per-payment by the handler — keep
+        # this empty so the runtime fallback_intro is actually rendered.
+        "default_intro_html": "",
         "variables": ["first_name", "dog_name"],
     },
     {
@@ -422,7 +424,8 @@ EMAIL_TEMPLATES = [
         "audience": "client",
         "default_subject": "Payment received · thanks!",
         "default_title": "💳 Payment received",
-        "default_intro_html": "Thanks for your payment. Your account balance is shown below.",
+        # Intro built dynamically per-payment — keep blank.
+        "default_intro_html": "",
         "variables": ["first_name"],
     },
     {
@@ -433,7 +436,9 @@ EMAIL_TEMPLATES = [
         "audience": "client",
         "default_subject": "Your account statement",
         "default_title": "🧾 Your account statement",
-        "default_intro_html": "Here is a copy of your recent account activity.",
+        # Intro carries the entire styled balance card + ledger TABLE built
+        # at send time — MUST stay empty so the runtime fallback wins.
+        "default_intro_html": "",
         "variables": ["first_name", "brand_name"],
     },
 ]
