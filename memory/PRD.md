@@ -4686,3 +4686,24 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 
 ### Service Worker
 - Not bumped (no frontend code change).
+
+
+## Sprint 110di-50 — Multi-dog Schedule Collapse + Combined Estimate Modal (2026-02-21)
+**User ask**: "When a client books more than one dog the schedule should show them both on the same space as one booking and the total estimate with the discount should be shown — right now it shows as two different bookings."
+
+### Backend (server.py — no refactor)
+- ✅ `/api/events` extendedProps now surfaces `group_id`, `dog_id`, `dog_name` per booking so the schedule can collapse N grouped bookings into one event card without losing per-dog identity (line ~9390).
+- ✅ Existing `/api/bookings/group/{group_id}` returns sibling bookings (used by the modal to compute the combined estimate).
+
+### Frontend
+- ✅ `Schedule.jsx` — new `groupedEvents` useMemo buckets events by `${group_id}|${start_date}` and merges N siblings into ONE card titled like "Rex + Daisy (boarding)" (caps to first 3 names + "+N more"). Single-dog and ungrouped events render unchanged.
+- ✅ `BookingDetailModal.jsx` — when the opened booking has a `group_id`, modal fetches siblings via `/api/bookings/group/{gid}`, computes per-dog base + add-on totals, applies the multi-dog discount (from `/api/settings/public`) to additional dogs' BASE, and renders a new pricing breakdown section (`data-testid="booking-detail-group-breakdown"`) with one row per dog, a Standard price line, the discount line, and a Group total (est.) row. The headline "Service total" pill switches to "Group total" / "Group total (est.)" labeling.
+- ✅ `<Pill>` component — testing agent caught a latent bug where additional JSX props (like `data-testid`) weren't forwarded. Fixed by accepting `...rest` and spreading onto the wrapper. No visual change.
+
+### Verified
+- pytest `/app/backend/tests/test_booking_group.py` + `/app/backend/tests/test_schedule_events_group_id.py` → 10/10 PASS.
+- E2E by testing agent on https://sit-happens-crm.preview.emergentagent.com — admin /schedule shows 3 grouped cards (the 3 pre-existing groups on 2026-06-21), clicking renders the modal with group breakdown, discount line, and combined total. Math: $600 + $600×0.5 = $900 ✅. Zero console errors.
+
+### Service Worker
+- ✅ Bumped to `sh-v47-110di-50-group-modal-combined-estimate`.
+
