@@ -399,7 +399,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             />
             {/* Sprint 110ch — Payment plans for big-ticket items */}
             <div className="mt-3 pt-3 border-t border-bgHover">
-              <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id] || []} />
+              <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id]} />
             </div>
             <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">

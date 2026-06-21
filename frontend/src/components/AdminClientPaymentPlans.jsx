@@ -19,9 +19,15 @@ const STATUS_META = {
  * Sprint 110dc — Accept an optional `plans` prop. When provided (parent has
  * bulk-loaded all plans), we skip our own fetch to avoid an N+1 request
  * storm that was crippling the Clients screen on accounts with many clients.
+ *
+ * Sprint 110di-52 — Stop flicker on the Clients screen. The parent passes
+ * `plansByClient[c.id]` (undefined when this client has no plans yet) — we
+ * now treat undefined as "no plans" without re-firing setPlans on every
+ * parent render. Previously the parent passed `... || []`, creating a NEW
+ * empty array reference each render → useEffect dep changed → setPlans → re-render loop.
  */
 export default function AdminClientPaymentPlans({ clientId, plans: plansFromParent }) {
-  const [plans, setPlans] = useState(plansFromParent || []);
+  const [plans, setPlans] = useState(Array.isArray(plansFromParent) ? plansFromParent : []);
   const [creating, setCreating] = useState(false);
 
   const load = () => {
@@ -31,10 +37,11 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   };
   useEffect(() => {
     if (!clientId) return;
-    // Use parent-supplied plans when available; only hit the API if we have
-    // to fetch our own (legacy callers, or after a local create/update).
-    if (Array.isArray(plansFromParent)) {
-      setPlans(plansFromParent);
+    // Parent supplied plans → use them. Undefined means "parent has bulk
+    // data but this client has zero plans" → stay with [] (no fetch).
+    // Only fetch when the parent did NOT bulk-load at all (legacy caller).
+    if (plansFromParent !== undefined) {
+      setPlans(Array.isArray(plansFromParent) ? plansFromParent : []);
     } else {
       load();
     }

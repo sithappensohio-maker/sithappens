@@ -1154,6 +1154,46 @@ export default function Portal() {
           </h3>
         </div>
 
+        {/* Sprint 110di-51 — Account balance / tab banner. Shown only when the
+            client has an outstanding balance OR a pre-paid credit on file so
+            it stays out of the way for paid-in-full clients. POSITIVE = owes
+            the business, NEGATIVE = credit on file. */}
+        {client && Math.abs(Number(client.account_balance || 0)) > 0.005 && (
+          (Number(client.account_balance) > 0 ? (
+            <div className="mb-4 sm:mb-6 bg-shOrange/15 border border-shOrange/40 rounded-xl p-4 sm:p-5 shadow-2xl"
+                 data-testid="portal-balance-owes">
+              <div className="flex items-center gap-4">
+                <i className="fas fa-file-invoice-dollar text-shOrange text-3xl"/>
+                <div className="flex-1">
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">Balance on your account</p>
+                  <p className="text-3xl font-black text-white" data-testid="portal-balance-amount">
+                    ${Number(client.account_balance).toFixed(2)}
+                  </p>
+                  <p className="text-[13px] text-gray-300 mt-1">
+                    A previous visit was paid only in part. Settle up next time you stop in, or reach out — we&apos;ll send you a payment link.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-4 sm:mb-6 bg-shGreen/10 border border-shGreen/40 rounded-xl p-4 sm:p-5 shadow-2xl"
+                 data-testid="portal-balance-credit">
+              <div className="flex items-center gap-4">
+                <i className="fas fa-piggy-bank text-shGreen text-3xl"/>
+                <div className="flex-1">
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">Pre-paid credit on file</p>
+                  <p className="text-3xl font-black text-white" data-testid="portal-balance-amount">
+                    ${Math.abs(Number(client.account_balance)).toFixed(2)}
+                  </p>
+                  <p className="text-[13px] text-gray-300 mt-1">
+                    You overpaid on a recent visit — we&apos;ll apply this to your next ticket automatically.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+
         {/* Sprint 110ax — Daily dog fact, pinned above the main content.
             Sprint 110di-18 — Gated by Client Portal Controls. */}
         {sectionOn("dog_facts") && <div className="mb-6"><DogFactCard variant="big" /></div>}

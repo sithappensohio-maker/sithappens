@@ -39,7 +39,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Fetch client balance so we can offer "pay with credits" at checkout when
   // the booking was made without any pre-deduction (e.g. client had no credits
   // at booking time, then bought a pack later).
-  const [clientBal, setClientBal] = useState(null); // { credits, training_credits, boarding_credits }
+  const [clientBal, setClientBal] = useState(null); // { credits, training_credits, boarding_credits, account_balance }
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -49,6 +49,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           credits: data.credits || 0,
           training_credits: data.training_credits || 0,
           boarding_credits: data.boarding_credits || 0,
+          // Sprint 110di-51 — Running tab. Positive = owes, negative = prepaid credit.
+          account_balance: Number(data.account_balance || 0),
         });
       } catch (e) { console.warn("client balance fetch failed", e); }
     })();
@@ -122,7 +124,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const [err, setErr] = useState("");
   // Sprint 110di-51 — Partial-payment / tab. When the customer hands over
   // LESS than the total, this captures what they paid; the difference goes
-  // onto the client's running tab (account_balance). Blank = pay full.
+  // onto the client's running tab (account_balance). Mode toggle makes the
+  // feature DISCOVERABLE (the legacy "optional field" was being missed).
+  const [payMode, setPayMode] = useState("full"); // "full" | "partial"
   const [amountPaid, setAmountPaid] = useState("");
   // Sprint 110 — fetch multi-dog discount preview (only shows if 2nd+ dog of
   // the same client has already been checked out today).
@@ -213,9 +217,13 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         body.payment_method = payMethod;
         body.payment_status = "paid";
         if (basePrice !== "") body.base_price = Number(basePrice);
-        // Sprint 110di-51 — Partial pay. Only meaningful for cash-side
-        // checkouts. When blank, backend treats as full pay (legacy).
-        if (amountPaid !== "") body.amount_paid = Number(amountPaid);
+        // Sprint 110di-51 — Partial pay. Only meaningful when the operator
+        // explicitly toggled the "Partial / on tab" pill (payMode==="partial").
+        // Default is full pay; the backend treats absence of amount_paid as
+        // "client paid the whole ticket" (legacy behaviour preserved).
+        if (payMode === "partial" && amountPaid !== "") {
+          body.amount_paid = Number(amountPaid);
+        }
       } else if (!hadCredit) {
         if (basePrice !== "") body.base_price = notionalBaseForCredits;
       } else if (extraNightsCharge > 0) {
@@ -457,38 +465,82 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               </p>
             )}
           </div>
-          {/* Sprint 110di-51 — Partial-payment / tab. Only shown for cash-side
-              checkouts. Leaving blank = pay full. Less than total → remainder
-              goes onto the client's tab. More than total → overpay becomes
-              prepaid credit on file. */}
+          {/* Sprint 110di-51 — Partial-payment / tab toggle. Prominent
+              two-pill segmented control so the feature is DISCOVERABLE.
+              "Full" is the default. Selecting "Partial / on tab" reveals
+              an Amount Paid input prefilled with the full total. The
+              client's existing tab is surfaced here too so the operator
+              knows the running balance going into this checkout. */}
           {!useCredits && (
-            <div className="mt-3 pt-3 border-t border-bgHover">
-              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
-                <i className="fas fa-receipt mr-1 text-shGreen"/>Amount paid today
-                <span className="text-gray-600"> (blank = full · less = put on tab · more = prepay credit)</span>
+            <div className="mt-4 pt-3 border-t border-bgHover" data-testid="checkout-pay-mode-section">
+              {clientBal && Math.abs(clientBal.account_balance) > 0.005 && (
+                <div className={`mb-3 rounded p-2.5 text-[13px] font-black ${clientBal.account_balance > 0 ? "bg-shOrange/15 text-shOrange border border-shOrange/30" : "bg-shGreen/10 text-shGreen border border-shGreen/30"}`}
+                     data-testid="checkout-existing-tab">
+                  <i className={`fas ${clientBal.account_balance > 0 ? "fa-file-invoice-dollar" : "fa-piggy-bank"} mr-1.5`}/>
+                  Current tab:{" "}
+                  <span className="text-white">
+                    ${Math.abs(clientBal.account_balance).toFixed(2)}
+                  </span>{" "}
+                  <span className="opacity-80 uppercase tracking-widest text-[11px]">
+                    {clientBal.account_balance > 0 ? "owed" : "prepaid credit"}
+                  </span>
+                </div>
+              )}
+              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
+                <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
               </label>
-              <input type="number" step="0.01" value={amountPaid}
-                     onChange={(e)=>setAmountPaid(e.target.value)}
-                     data-testid="checkout-amount-paid"
-                     placeholder={`$${chargedToday.toFixed(2)}`}
-                     className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-              {amountPaid !== "" && Number(amountPaid) >= 0 && (
-                <div className="mt-2 text-[13px] font-black"
-                     data-testid="checkout-partial-pay-summary">
-                  {Number(amountPaid) < chargedToday ? (
-                    <span className="text-shOrange">
-                      <i className="fas fa-arrow-up mr-1"/>
-                      Tab will increase by ${(chargedToday - Number(amountPaid)).toFixed(2)}
-                    </span>
-                  ) : Number(amountPaid) > chargedToday ? (
-                    <span className="text-shGreen">
-                      <i className="fas fa-piggy-bank mr-1"/>
-                      ${(Number(amountPaid) - chargedToday).toFixed(2)} prepaid credit will be added
-                    </span>
-                  ) : (
-                    <span className="text-shGreen">
-                      <i className="fas fa-check mr-1"/>Paid in full
-                    </span>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button"
+                        onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
+                        data-testid="checkout-pay-mode-full"
+                        className={`p-3 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                  <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
+                  <div className="text-[12px] opacity-80 mt-0.5">Client paid the whole ticket today.</div>
+                </button>
+                <button type="button"
+                        onClick={()=>{ setPayMode("partial"); if (!amountPaid) setAmountPaid(""); }}
+                        data-testid="checkout-pay-mode-partial"
+                        className={`p-3 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                  <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
+                  <div className="text-[12px] opacity-80 mt-0.5">Pay some now, rest on a running tab.</div>
+                </button>
+              </div>
+              {payMode === "partial" && (
+                <div className="mt-3 bg-shOrange/5 border border-shOrange/30 rounded p-3"
+                     data-testid="checkout-partial-pay-block">
+                  <label className="text-[11px] uppercase tracking-widest text-shOrange font-black">
+                    Amount paid today
+                  </label>
+                  <input type="number" step="0.01" min="0" value={amountPaid}
+                         onChange={(e)=>setAmountPaid(e.target.value)}
+                         data-testid="checkout-amount-paid"
+                         autoFocus
+                         placeholder={`Total: $${chargedToday.toFixed(2)}`}
+                         className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                  {amountPaid !== "" && Number(amountPaid) >= 0 && (
+                    <div className="mt-2 text-[13px] font-black"
+                         data-testid="checkout-partial-pay-summary">
+                      {Number(amountPaid) < chargedToday ? (
+                        <span className="text-shOrange">
+                          <i className="fas fa-arrow-up mr-1"/>
+                          Tab will increase by ${(chargedToday - Number(amountPaid)).toFixed(2)}
+                          {clientBal && (
+                            <span className="text-gray-400 ml-2 normal-case text-[12px]">
+                              · new balance ${(clientBal.account_balance + (chargedToday - Number(amountPaid))).toFixed(2)}
+                            </span>
+                          )}
+                        </span>
+                      ) : Number(amountPaid) > chargedToday ? (
+                        <span className="text-shGreen">
+                          <i className="fas fa-piggy-bank mr-1"/>
+                          ${(Number(amountPaid) - chargedToday).toFixed(2)} prepaid credit will be added
+                        </span>
+                      ) : (
+                        <span className="text-shGreen">
+                          <i className="fas fa-check mr-1"/>Exact change — paid in full
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
