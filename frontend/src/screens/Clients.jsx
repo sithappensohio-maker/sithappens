@@ -335,6 +335,22 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
                 <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{c.boarding_credits || 0}</p>
               </div>
+              {/* Sprint 110di-51 — Running tab. Positive = client owes,
+                  negative = pre-paid credit on file. Hidden when balance is
+                  exactly zero (the common case for paid-in-full clients). */}
+              {Math.abs(Number(c.account_balance || 0)) > 0.001 ? (
+                <div>
+                  <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Tab</p>
+                  <p className={`text-xl font-black ${Number(c.account_balance) > 0 ? "text-shOrange" : "text-shGreen"}`}
+                     data-testid={`tab-balance-${c.id}`}>
+                    {Number(c.account_balance) > 0 ? "" : "+"}
+                    ${Math.abs(Number(c.account_balance || 0)).toFixed(2)}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-500">
+                    {Number(c.account_balance) > 0 ? "Owes you" : "Pre-paid"}
+                  </p>
+                </div>
+              ) : null}
               <div className="text-right">
                 <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
                 <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>

@@ -120,6 +120,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Sprint 110di-51 — Partial-payment / tab. When the customer hands over
+  // LESS than the total, this captures what they paid; the difference goes
+  // onto the client's running tab (account_balance). Blank = pay full.
+  const [amountPaid, setAmountPaid] = useState("");
   // Sprint 110 — fetch multi-dog discount preview (only shows if 2nd+ dog of
   // the same client has already been checked out today).
   const [discountPreview, setDiscountPreview] = useState(null);
@@ -209,6 +213,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         body.payment_method = payMethod;
         body.payment_status = "paid";
         if (basePrice !== "") body.base_price = Number(basePrice);
+        // Sprint 110di-51 — Partial pay. Only meaningful for cash-side
+        // checkouts. When blank, backend treats as full pay (legacy).
+        if (amountPaid !== "") body.amount_paid = Number(amountPaid);
       } else if (!hadCredit) {
         if (basePrice !== "") body.base_price = notionalBaseForCredits;
       } else if (extraNightsCharge > 0) {
@@ -450,6 +457,43 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               </p>
             )}
           </div>
+          {/* Sprint 110di-51 — Partial-payment / tab. Only shown for cash-side
+              checkouts. Leaving blank = pay full. Less than total → remainder
+              goes onto the client's tab. More than total → overpay becomes
+              prepaid credit on file. */}
+          {!useCredits && (
+            <div className="mt-3 pt-3 border-t border-bgHover">
+              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
+                <i className="fas fa-receipt mr-1 text-shGreen"/>Amount paid today
+                <span className="text-gray-600"> (blank = full · less = put on tab · more = prepay credit)</span>
+              </label>
+              <input type="number" step="0.01" value={amountPaid}
+                     onChange={(e)=>setAmountPaid(e.target.value)}
+                     data-testid="checkout-amount-paid"
+                     placeholder={`$${chargedToday.toFixed(2)}`}
+                     className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+              {amountPaid !== "" && Number(amountPaid) >= 0 && (
+                <div className="mt-2 text-[13px] font-black"
+                     data-testid="checkout-partial-pay-summary">
+                  {Number(amountPaid) < chargedToday ? (
+                    <span className="text-shOrange">
+                      <i className="fas fa-arrow-up mr-1"/>
+                      Tab will increase by ${(chargedToday - Number(amountPaid)).toFixed(2)}
+                    </span>
+                  ) : Number(amountPaid) > chargedToday ? (
+                    <span className="text-shGreen">
+                      <i className="fas fa-piggy-bank mr-1"/>
+                      ${(Number(amountPaid) - chargedToday).toFixed(2)} prepaid credit will be added
+                    </span>
+                  ) : (
+                    <span className="text-shGreen">
+                      <i className="fas fa-check mr-1"/>Paid in full
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Total summary */}

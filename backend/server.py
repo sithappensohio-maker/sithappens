@@ -255,6 +255,10 @@ class ClientIn(BaseModel):
     # `active` (or `rejected`).
     client_status: Optional[Literal["prospect", "evaluation_scheduled", "evaluated", "active", "rejected"]] = "active"
     evaluation_notes: Optional[str] = ""  # admin notes from the meet-n-greet
+    # Sprint 110di-51 — Per-client running tab. POSITIVE = client owes the
+    # business (accounts receivable). NEGATIVE = client has pre-paid credit
+    # on file. Moved by checkout partial-pay + manual ledger adjustments.
+    account_balance: float = 0.0
 
 class ClientOut(ClientIn):
     id: str
@@ -459,9 +463,15 @@ class BookingOut(BaseModel):
     service_id: Optional[str] = None
     service_name: Optional[str] = None
     actual_price: Optional[float] = None
-    payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
+    payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
     payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
     paid_at: Optional[str] = None
+    # Sprint 110di-51 — Partial-payment / tab support. When a booking is
+    # checked out and the client only paid part of the bill, `amount_paid`
+    # records how much hit the till today and `payment_status` becomes
+    # `paid_partial`. The remaining balance is also pushed onto
+    # `client.account_balance` via the payment_ledger (see helpers below).
+    amount_paid: Optional[float] = None
     # Sprint 17 — credit lot tracking. credit_value is accrued at approval,
     # promoted to actual_price at check-out.
     credit_value: Optional[float] = None
@@ -554,6 +564,12 @@ class CheckoutIn(BaseModel):
     payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
     add_ons: List[CheckoutAddOn] = []
+    # Sprint 110di-51 — Partial payment. When provided AND less than the
+    # computed total, the booking is marked `paid_partial` and the
+    # difference is pushed onto the client's account_balance (tab). When
+    # GREATER than the total, the overpayment becomes pre-paid credit
+    # (negative tab balance). When equal or None, behaviour is unchanged.
+    amount_paid: Optional[float] = Field(default=None, ge=0)
     # ── Boarding stay extension ──
     # Number of EXTRA nights the dog actually stayed beyond the original end_date.
     # Defaults to 0 (no extension). Updates booking.end_date, optionally consumes
@@ -3369,6 +3385,341 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# Sprint 110di-51 — Partial Payments / Per-Client Tab / Accounts Receivable.
+#
+# Model:
+#   • Client.account_balance — float. POSITIVE = client owes the business
+#     (AR). NEGATIVE = client has pre-paid credit on file. Default 0.
+#   • Collection `payment_ledger` — append-only audit log. One row per
+#     event that moved the balance:
+#       type: "charge"     — booking checked out (debit; balance ↑)
+#       type: "payment"    — money received against tab (credit; balance ↓)
+#       type: "refund"     — money handed back (debit; balance ↑)
+#       type: "adjustment" — manual write-off / correction
+#     Each row: {id, client_id, type, amount (signed: + when balance goes up,
+#     − when it goes down), method, notes, booking_id?, created_at, created_by}.
+# ───────────────────────────────────────────────────────────────────────────
+
+async def _adjust_client_balance(client_id: str, delta: float) -> float:
+    """Add `delta` to client.account_balance atomically and return the new value.
+    `delta` is signed in BALANCE direction (positive = client owes more)."""
+    if not client_id or delta == 0:
+        c = await db.clients.find_one({"id": client_id}, {"account_balance": 1, "_id": 0})
+        return float((c or {}).get("account_balance") or 0)
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$inc": {"account_balance": float(delta)}},
+    )
+    fresh = await db.clients.find_one({"id": client_id}, {"account_balance": 1, "_id": 0})
+    return float((fresh or {}).get("account_balance") or 0)
+
+
+async def _write_ledger_row(
+    *,
+    client_id: str,
+    type_: str,
+    amount: float,
+    method: str = "",
+    notes: str = "",
+    booking_id: Optional[str] = None,
+    created_by: str = "system",
+    ts: Optional[str] = None,
+) -> dict:
+    """Append a ledger row. `amount` is signed (see header). Returns the row."""
+    row = {
+        "id": str(uuid.uuid4()),
+        "client_id": client_id,
+        "type": type_,
+        "amount": round(float(amount), 2),
+        "method": method or "",
+        "notes": notes or "",
+        "booking_id": booking_id,
+        "created_by": created_by,
+        "created_at": ts or now_iso(),
+    }
+    await db.payment_ledger.insert_one(row.copy())
+    return row
+
+
+async def _apply_booking_partial_payment(
+    *,
+    booking: dict,
+    total_owed: float,
+    paid_now: float,
+    method: str,
+    ts: str,
+) -> None:
+    """Wire a partial / over / exact payment into the ledger + client balance.
+    Always writes TWO rows (the charge and the payment) so the ledger reads
+    naturally; the client's balance moves by the NET delta."""
+    client_id = booking.get("client_id") or ""
+    if not client_id:
+        return
+    delta = round(total_owed - paid_now, 2)  # what STAYS on the tab
+    dog_name = booking.get("dog_name") or ""
+    svc = booking.get("service_type") or ""
+    # 1) Charge row (debit — client owes the full ticket)
+    await _write_ledger_row(
+        client_id=client_id,
+        type_="charge",
+        amount=round(total_owed, 2),
+        method="",
+        notes=f"Service · {svc} · {dog_name}",
+        booking_id=booking.get("id"),
+        ts=ts,
+    )
+    # 2) Payment row (credit — what they paid today)
+    if paid_now > 0:
+        await _write_ledger_row(
+            client_id=client_id,
+            type_="payment",
+            amount=-round(paid_now, 2),
+            method=method,
+            notes=f"Paid at checkout · {svc} · {dog_name}",
+            booking_id=booking.get("id"),
+            ts=ts,
+        )
+    # 3) Move client balance by the net delta
+    new_bal = await _adjust_client_balance(client_id, delta)
+    # 4) Fire receipt email (fire-and-forget so checkout stays snappy)
+    try:
+        asyncio.create_task(_send_partial_payment_receipt(
+            client_id=client_id,
+            booking=booking,
+            total_owed=total_owed,
+            paid_now=paid_now,
+            new_balance=new_bal,
+        ))
+    except Exception as exc:
+        logger.warning("partial-pay receipt task spawn failed: %s", exc)
+
+
+async def _send_partial_payment_receipt(
+    *,
+    client_id: str,
+    booking: dict,
+    total_owed: float,
+    paid_now: float,
+    new_balance: float,
+) -> None:
+    """Email the client a receipt confirming the partial payment + remaining
+    balance. Honors Resend availability — silently no-ops when email is off."""
+    try:
+        client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if not client or not client.get("email"):
+            return
+        delta = round(total_owed - paid_now, 2)
+        first_name = (client.get("name") or "").split(" ")[0] or "there"
+        svc = booking.get("service_type") or "service"
+        dog_name = booking.get("dog_name") or "your dog"
+        if delta > 0:
+            subject = f"Payment received · balance ${delta:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{dog_name}'s {svc}. Remaining balance on your account: "
+                f"<strong>${delta:.2f}</strong>."
+            )
+        elif delta < 0:
+            subject = f"Thanks {first_name}! Credit on file: ${-delta:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{dog_name}'s {svc}. The extra <strong>${-delta:.2f}</strong> is now on your "
+                f"account as pre-paid credit for next time."
+            )
+        else:
+            subject = f"Payment received · ${paid_now:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid_now:.2f}</strong> payment for "
+                f"{dog_name}'s {svc}. You're all settled up — thank you!"
+            )
+        rows = [
+            ("Service", f"{svc.title()} · {dog_name}"),
+            ("Total", f"${total_owed:.2f}"),
+            ("Paid today", f"${paid_now:.2f}"),
+            ("Balance", f"${new_balance:.2f}"),
+        ]
+        await email_service._dispatch(
+            slug="client_partial_payment_receipt",
+            to_email=client.get("email"),
+            ctx={"first_name": first_name, "dog_name": dog_name},
+            rows=rows,
+            fallback_subject=subject,
+            fallback_title="💳 Payment received",
+            fallback_intro=intro,
+        )
+    except Exception as exc:
+        logger.warning("partial-pay receipt email failed: %s", exc)
+
+
+class TabPaymentIn(BaseModel):
+    """Apply a payment directly against a client's tab (NOT tied to a booking).
+    Used by the 'Pay tab' button on the client detail page."""
+    amount: float = Field(gt=0)
+    method: Literal["cash", "card", "transfer", "credits", "check", "other"] = "cash"
+    notes: Optional[str] = ""
+
+
+@api.get("/clients/{client_id}/ledger")
+async def get_client_ledger(client_id: str, _: dict = Depends(require_admin)):
+    """Return the per-client payment ledger + current balance.
+    Sorted newest-first so the UI can render a timeline."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    rows = await db.payment_ledger.find(
+        {"client_id": client_id}, {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    return {
+        "client_id": client_id,
+        "client_name": client.get("name", ""),
+        "balance": float(client.get("account_balance") or 0),
+        "rows": rows,
+        "count": len(rows),
+    }
+
+
+@api.post("/clients/{client_id}/payment")
+async def apply_tab_payment(
+    client_id: str,
+    body: TabPaymentIn,
+    user: dict = Depends(require_admin),
+):
+    """Apply a payment against the running tab (or top up pre-paid credit).
+    Reduces the client's account_balance by `amount` and writes a ledger row."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    ts = now_iso()
+    row = await _write_ledger_row(
+        client_id=client_id,
+        type_="payment",
+        amount=-round(body.amount, 2),  # negative = balance goes down
+        method=body.method,
+        notes=body.notes or "Tab payment",
+        ts=ts,
+        created_by=user.get("email", "admin"),
+    )
+    new_balance = await _adjust_client_balance(client_id, -round(body.amount, 2))
+    # Receipt email — fire-and-forget
+    try:
+        asyncio.create_task(_send_tab_payment_receipt(
+            client_id=client_id, paid_now=body.amount, new_balance=new_balance,
+        ))
+    except Exception as exc:
+        logger.warning("tab-pay receipt spawn failed: %s", exc)
+    return {"ok": True, "balance": new_balance, "row": row}
+
+
+async def _send_tab_payment_receipt(
+    *, client_id: str, paid_now: float, new_balance: float,
+) -> None:
+    try:
+        client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if not client or not client.get("email"):
+            return
+        first_name = (client.get("name") or "").split(" ")[0] or "there"
+        if new_balance > 0:
+            subject = f"Payment received · balance ${new_balance:.2f}"
+            intro = (
+                f"Hi {first_name} — thanks for your <strong>${paid_now:.2f}</strong> payment. "
+                f"Remaining balance on your account: <strong>${new_balance:.2f}</strong>."
+            )
+        elif new_balance < 0:
+            subject = f"Thanks {first_name}! Credit on file: ${-new_balance:.2f}"
+            intro = (
+                f"Hi {first_name} — we received <strong>${paid_now:.2f}</strong>. "
+                f"You now have <strong>${-new_balance:.2f}</strong> pre-paid credit on your account."
+            )
+        else:
+            subject = "All settled up — thank you!"
+            intro = (
+                f"Hi {first_name} — thanks for your <strong>${paid_now:.2f}</strong> payment. "
+                f"You're all settled up. 🐾"
+            )
+        await email_service._dispatch(
+            slug="client_tab_payment_receipt",
+            to_email=client.get("email"),
+            ctx={"first_name": first_name},
+            rows=[("Paid", f"${paid_now:.2f}"), ("Balance", f"${new_balance:.2f}")],
+            fallback_subject=subject,
+            fallback_title="💳 Payment received",
+            fallback_intro=intro,
+        )
+    except Exception as exc:
+        logger.warning("tab-pay receipt email failed: %s", exc)
+
+
+class TabAdjustmentIn(BaseModel):
+    """Manual ledger adjustment — write-off, comp, correction. Signed amount
+    in BALANCE direction (positive = client owes more, negative = forgive)."""
+    amount: float
+    notes: str = Field(min_length=1)
+
+
+@api.post("/clients/{client_id}/adjustment")
+async def apply_tab_adjustment(
+    client_id: str,
+    body: TabAdjustmentIn,
+    user: dict = Depends(require_admin),
+):
+    """Manual write-off / correction. Logged as type=adjustment in the ledger."""
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    row = await _write_ledger_row(
+        client_id=client_id,
+        type_="adjustment",
+        amount=round(body.amount, 2),
+        method="",
+        notes=body.notes,
+        created_by=user.get("email", "admin"),
+    )
+    new_balance = await _adjust_client_balance(client_id, round(body.amount, 2))
+    return {"ok": True, "balance": new_balance, "row": row}
+
+
+@api.get("/admin/accounts-receivable")
+async def get_accounts_receivable(_: dict = Depends(require_admin)):
+    """Return every client with a non-zero account_balance, plus the totals.
+    POSITIVE balance = receivable (client owes us). NEGATIVE = pre-paid credit."""
+    clients = await db.clients.find(
+        {"account_balance": {"$ne": 0, "$exists": True}},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1, "account_balance": 1},
+    ).to_list(5000)
+    # Sort: largest owed first, then largest credit
+    clients.sort(key=lambda c: -float(c.get("account_balance") or 0))
+    total_receivable = sum(
+        float(c.get("account_balance") or 0) for c in clients
+        if (c.get("account_balance") or 0) > 0
+    )
+    total_credit = sum(
+        -float(c.get("account_balance") or 0) for c in clients
+        if (c.get("account_balance") or 0) < 0
+    )
+    return {
+        "clients": clients,
+        "count": len(clients),
+        "total_receivable": round(total_receivable, 2),
+        "total_credit_on_file": round(total_credit, 2),
+        "net": round(total_receivable - total_credit, 2),
+    }
+
+
+@api.post("/bookings/{booking_id}/checkout-partial", response_model=BookingOut)
+async def checkout_partial(
+    booking_id: str,
+    body: CheckoutIn,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Convenience alias — delegates to /check-out with `amount_paid` in body.
+    Exists so the frontend has a clearly-named endpoint for the partial-pay
+    flow even though the logic lives in the shared check_out handler."""
+    if body.amount_paid is None:
+        raise HTTPException(status_code=400, detail="amount_paid is required for partial checkout")
+    return await check_out(booking_id, body, user)
+
+
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
 async def check_out(
     booking_id: str,
@@ -3836,8 +4187,45 @@ async def check_out(
         if update.get("payment_status") == "paid":
             update["paid_at"] = ts
 
+    # Sprint 110di-51 — Partial-payment / tab. When `amount_paid` was passed
+    # in the request body AND there's a cash side to settle (not pure-credits
+    # checkout), record the actual payment, mark the booking accordingly,
+    # and push the delta onto the client's running tab via the ledger.
+    #   amount_paid <  total → paid_partial, tab += (total - paid)
+    #   amount_paid == total → paid (existing behaviour)
+    #   amount_paid >  total → paid + credit, tab -= (paid - total) (negative tab = prepaid)
+    partial_balance_delta = 0.0
+    partial_actual_paid = None
+    if body.amount_paid is not None and not is_paid_today and (update.get("actual_price") or 0) > 0:
+        total_owed = float(update.get("actual_price") or 0)
+        paid_now = float(body.amount_paid)
+        partial_balance_delta = round(total_owed - paid_now, 2)
+        partial_actual_paid = round(paid_now, 2)
+        update["amount_paid"] = partial_actual_paid
+        if partial_balance_delta > 0.0:
+            update["payment_status"] = "paid_partial"
+        else:
+            update["payment_status"] = "paid"
+            update["paid_at"] = ts
+        if body.payment_method:
+            update["payment_method"] = body.payment_method
+
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
+
+    # Sprint 110di-51 — Apply the tab delta + write ledger rows. Done AFTER
+    # the booking is persisted so the ledger always references a real row.
+    if partial_actual_paid is not None and (update.get("actual_price") or 0) > 0:
+        try:
+            await _apply_booking_partial_payment(
+                booking=booking,
+                total_owed=float(update.get("actual_price") or 0),
+                paid_now=partial_actual_paid,
+                method=update.get("payment_method") or "cash",
+                ts=ts,
+            )
+        except Exception as exc:
+            logger.warning("partial-pay ledger write failed for %s: %s", booking_id, exc)
 
     # 🎁 Referral reward: when the referred client COMPLETES their first-ever
     # appointment (any service), credit the referrer one free daycare day.

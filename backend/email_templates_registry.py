@@ -403,6 +403,28 @@ EMAIL_TEMPLATES = [
         "default_cta_text": "Open Client",
         "variables": ["client_name", "days", "reward_label", "perk_type", "earned_on"],
     },
+    {
+        "slug": "client_partial_payment_receipt",
+        "name": "Partial Payment Receipt",
+        "description": "Auto-sent on partial checkout payment — confirms what was paid and the remaining balance on the tab.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Payment received · balance remaining",
+        "default_title": "💳 Payment received",
+        "default_intro_html": "We received your payment. Your account balance is shown below.",
+        "variables": ["first_name", "dog_name"],
+    },
+    {
+        "slug": "client_tab_payment_receipt",
+        "name": "Tab Payment Receipt",
+        "description": "Auto-sent when a payment is applied directly to a client's running tab (not tied to a specific booking).",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Payment received · thanks!",
+        "default_title": "💳 Payment received",
+        "default_intro_html": "Thanks for your payment. Your account balance is shown below.",
+        "variables": ["first_name"],
+    },
 ]
 
 

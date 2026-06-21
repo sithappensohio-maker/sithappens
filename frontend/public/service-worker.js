@@ -1,5 +1,5 @@
 /* Sit Happens service worker — bump CACHE_VERSION to force-update clients. */
-const CACHE_VERSION = "sh-v47-110di-50-group-modal-combined-estimate";
+const CACHE_VERSION = "sh-v48-110di-51-partial-pay-tab-ar";
 const CACHE_NAME = `sit-happens-${CACHE_VERSION}`;
 const SHELL = [
   "/",

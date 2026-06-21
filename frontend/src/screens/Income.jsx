@@ -6,20 +6,26 @@ import PageHero from "../components/PageHero";
 import { compressImage } from "../lib/imageCompress";
 import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
+import AccountsReceivableTab from "./AccountsReceivable";
 
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
 
 const PAYMENT_STATUSES = [
-  { key: "unpaid",   label: "Unpaid",   color: "bg-shOrange/15 text-shOrange" },
-  { key: "paid",     label: "Paid",     color: "bg-shGreen/15 text-shGreen" },
-  { key: "comped",   label: "Comped",   color: "bg-shBlue/15 text-shBlue" },
-  { key: "refunded", label: "Refunded", color: "bg-red-500/15 text-red-400" },
+  { key: "unpaid",       label: "Unpaid",   color: "bg-shOrange/15 text-shOrange" },
+  { key: "paid",         label: "Paid",     color: "bg-shGreen/15 text-shGreen" },
+  { key: "paid_partial", label: "Partial",  color: "bg-amber-500/15 text-amber-300" },
+  { key: "comped",       label: "Comped",   color: "bg-shBlue/15 text-shBlue" },
+  { key: "refunded",     label: "Refunded", color: "bg-red-500/15 text-red-400" },
 ];
 
 const PAYMENT_METHODS = ["cash", "card", "transfer", "credits", "other"];
 
 export default function Income() {
   const confirm = useConfirm();
+  // Sprint 110di-51 — Top-level tabs. "transactions" is the existing
+  // ledger/range/expenses view. "ar" is the new Accounts Receivable
+  // (per-client tab / partial-pay summary) view.
+  const [tab, setTab] = useState("transactions");
   const [summary, setSummary] = useState(null);
   const [refDate, setRefDate] = useState(todayISO());
   const [rangeSummary, setRangeSummary] = useState(null);
@@ -301,6 +307,21 @@ export default function Income() {
           testid="income-hero"
         />
       </div>
+      {/* Sprint 110di-51 — Tab strip: Transactions vs Accounts Receivable */}
+      <div className="flex items-center gap-1 border-b border-bgHover" data-testid="income-tabs">
+        <button onClick={()=>setTab("transactions")} data-testid="income-tab-transactions"
+                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="transactions" ? "text-shGreen border-shGreen" : "text-gray-400 border-transparent hover:text-shGreen/80"}`}>
+          <i className="fas fa-list mr-1.5"/>Transactions
+        </button>
+        <button onClick={()=>setTab("ar")} data-testid="income-tab-ar"
+                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="ar" ? "text-shOrange border-shOrange" : "text-gray-400 border-transparent hover:text-shOrange/80"}`}>
+          <i className="fas fa-file-invoice-dollar mr-1.5"/>Accounts Receivable
+        </button>
+      </div>
+      {tab === "ar" ? (
+        <AccountsReceivableTab />
+      ) : (
+      <>
       {plMsg && (
         <div className="bg-shBlue/10 border border-shBlue/30 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">
           <i className="fas fa-circle-info mr-2"/>{plMsg} · range {rangeStart} → {rangeEnd}
@@ -706,6 +727,8 @@ export default function Income() {
       )}
 
       {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={load} dogs={dogs} services={services} />}
+      </>
+      )}
     </div>
   );
 }
