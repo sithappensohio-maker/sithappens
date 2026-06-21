@@ -4542,3 +4542,21 @@ Mobile breakpoint was `(max-width: 767px)` — anything wider (iPad portrait at 
 
 ### Service Worker
 - ✅ Bumped to `sh-v41-110di-43-schedule-list-mobile`.
+
+
+## Sprint 110di-44 — Schedule List View Dark Theme + Today Fix (2026-02-20)
+**User report**: "list doesn't show days or dates · grid still doesn't work right · today button doesn't work"
+
+### Fix
+- ✅ `index.css` — added full dark-theme block for FullCalendar list view: brand-green date-row header (uppercase, tracking-widest), white-on-dark event titles, hover state, styled empty-state. Today's date row gets a shBlue accent.
+- ✅ `index.css` — FC mobile media query widened from `767px` → `1023px` to match JS `isMobile()` detection.
+- ✅ `Schedule.jsx` — removed GRID toggle from mobile toolbar (it was unusable at <500px width). Mobile = list only; desktop = grid as before.
+- ✅ `Schedule.jsx` — empty-state copy + mobile hint updated.
+
+### Verified
+- Mobile (414×896): "JUNE 19, 2026 FRIDAY" row clearly visible in brand green; event rows readable.
+- Today button: Next → Jul 26, Today → Jun 26 (verified via title text).
+- Desktop (≥1024px): unchanged — month grid + drag-to-reschedule still works.
+
+### Service Worker
+- ✅ Bumped to `sh-v42-110di-44-schedule-list-dark-theme`.

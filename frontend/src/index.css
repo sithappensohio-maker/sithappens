@@ -281,12 +281,55 @@ button.bg-bgPanel {
 .fc .fc-col-header-cell-cushion, .fc .fc-daygrid-day-number { color: #94a3b8; text-decoration: none; font-weight: 700; font-size: 11px; text-transform: uppercase; }
 .fc .fc-event { padding: 2px 6px; font-weight: 700; font-size: 11px; cursor: pointer; }
 
-/* FullCalendar mobile: tighter toolbar so prev/next/title don't wrap */
-@media (max-width: 767px) {
+/* Sprint 110di-44 — FullCalendar LIST VIEW dark-theme styling.
+   The default list view uses light backgrounds + black text which become
+   invisible on Sit Happens' dark UI. These overrides give:
+   - Visible date-row headers (sticky, brand-green accent)
+   - Readable event rows with hover/active states
+   - Wider tap targets for mobile thumbs
+   - "No events" empty-state styled to fit the dark surface */
+.fc .fc-list { border-color: #334155 !important; background: transparent !important; }
+.fc .fc-list-day-cushion {
+  background: rgba(140, 198, 63, 0.10) !important;
+  color: #8cc63f !important;
+  font-weight: 900 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  font-size: 12px !important;
+  padding: 10px 12px !important;
+  border-top: 1px solid #334155 !important;
+  border-bottom: 1px solid #334155 !important;
+}
+.fc .fc-list-day-cushion a { color: #8cc63f !important; text-decoration: none !important; }
+.fc .fc-list-event-time { color: #94a3b8 !important; font-weight: 800 !important; font-size: 12px !important; padding: 10px 8px !important; }
+.fc .fc-list-event-title { color: #fff !important; font-weight: 800 !important; font-size: 14px !important; padding: 10px 8px !important; }
+.fc .fc-list-event-title a { color: #fff !important; text-decoration: none !important; }
+.fc .fc-list-event-graphic { padding: 10px 8px !important; }
+.fc .fc-list-event:hover td { background: rgba(0, 169, 224, 0.08) !important; cursor: pointer !important; }
+.fc .fc-list-event td { border-color: #1e293b !important; }
+.fc .fc-list-empty {
+  background: transparent !important;
+  color: #64748b !important;
+  font-weight: 800 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  padding: 40px 16px !important;
+}
+/* Highlight "today" row in list view too */
+.fc .fc-list-day.fc-day-today .fc-list-day-cushion {
+  background: rgba(0, 169, 224, 0.20) !important;
+  color: #00a9e0 !important;
+}
+.fc .fc-list-day.fc-day-today .fc-list-day-cushion a { color: #00a9e0 !important; }
+
+/* FullCalendar mobile/tablet: tighter toolbar so prev/next/title don't wrap.
+   Sprint 110di-43 — breakpoint widened to 1023px to match the JS-side
+   mobile detection (iPad portrait, landscape phones, small tablets). */
+@media (max-width: 1023px) {
   .fc .fc-toolbar { flex-wrap: wrap; gap: 6px; }
   .fc .fc-toolbar-title { font-size: 0.95rem; letter-spacing: 0; }
   .fc .fc-button { font-size: 10px; padding: 4px 8px; }
-  .fc .fc-toolbar-chunk { display: flex; align-items: center; }
+  .fc .fc-toolbar-chunk { display: flex; align-items: center; gap: 4px; }
   .fc .fc-col-header-cell-cushion { font-size: 9px; padding: 4px 2px; }
   .fc .fc-daygrid-day-number { font-size: 10px; padding: 2px 4px; }
   .fc .fc-event { font-size: 9px; padding: 1px 3px; }

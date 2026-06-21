@@ -198,18 +198,18 @@ export default function Schedule() {
               displayEventTime={true}
               eventTimeFormat={{ hour: "numeric", minute: "2-digit", meridiem: "short" }}
               eventDisplay="block"
-              noEventsContent={mobile ? "No bookings in this month — tap Today to jump to today's date." : undefined}
+              noEventsContent={mobile ? "No bookings in this month — tap › to look ahead." : undefined}
               headerToolbar={mobile
-                ? { left: "prev,next", center: "title", right: "today,listMonth,dayGridMonth" }
+                ? { left: "prev,next", center: "title", right: "today" }
                 : { left: "prev,next today", center: "title", right: "" }}
-              buttonText={mobile ? { listMonth: "List", dayGridMonth: "Grid", today: "Today" } : undefined}
+              buttonText={mobile ? { today: "Today" } : undefined}
               titleFormat={mobile ? { month: "short", year: "2-digit" } : undefined}
             />
           </div>
         </div>
         {mobile && (
           <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
-            <i className="fas fa-list-ul mr-1"/>Showing list view · tap any booking to open it · use &ldquo;Grid&rdquo; for the month overview
+            <i className="fas fa-list-ul mr-1"/>Tap any booking to open it · use prev / next arrows to jump months
           </p>
         )}
       </div>
