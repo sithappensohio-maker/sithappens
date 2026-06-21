@@ -4654,5 +4654,35 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 - Settings doc shows: master True, daycare/boarding both enabled with mode=percent value=50.
 - `/api/bookings/{id}/discount-preview` endpoint correctly returns `eligible: false` until a sibling on the same date has been checked out (intended existing rule).
 
+## Sprint 110di-49 — Multi-Dog Discount Surfaced UPFRONT (2026-02-20)
+**User ask**: "I would like for it to show the discount immediately to both me and the client so it's upfront."
+
+### Backend
+- ✅ `/api/settings/public` now exposes the multi-dog discount config (`multi_dog_discount_enabled`, `multi_dog_discount_by_service`, mode, value, label). Same source the checkout flow reads from → single source of truth.
+- ✅ Discovered + fixed a stale-doc bug: there were two `settings` documents in MongoDB. The canonical `id: "global"` doc didn't have the discount enabled. Updated it to: master ON, daycare + boarding 50% off additional dogs.
+
+### Frontend — `BookingPriceEstimate.jsx`
+- ✅ Pulls the new discount fields from `/settings/public` on mount alongside the existing services + portal-me fetch.
+- ✅ Math: when `additionalDogs > 0` and the per-service toggle is ON, computes `mdDiscountAmount = rawAdditionalDogPrice × (value/100)` (or flat $ if mode=flat). Subtracted from the running total.
+- ✅ Surfaces a dedicated savings line in the breakdown: `<i class="fa-tag"/> Multi-dog discount … -$X.XX` styled in brand green (`data-testid="booking-estimate-multi-dog-discount"`).
+- ✅ Additional-dog row keeps showing the **raw** subtotal so the customer sees both the line item AND the savings — matches receipt convention.
+
+### How it shows up
+- Portal `PortalBookWizard` Step 3 (Review): customer adds extra dogs → estimate live-recalculates → green savings line appears + grand total drops.
+- The discount label comes from `multi_dog_discount_label` so you can rename it from Settings → Pricing → Multi-dog discount any time.
+
+### Verified
+- `/api/settings/public` returns `enabled: true`, daycare + boarding both `mode=percent value=50`.
+- Lint clean.
+- Math: $30 × 1 + $30 × 1 = $60 base for 2 daycare dogs → with 50% off the second dog: $30 + ($30 × 0.5) = **$45** total (savings line shows -$15).
+
+### Service Worker
+- ✅ Bumped to `sh-v46-110di-49-multi-dog-discount-upfront`.
+
+### Notes
+- The checkout flow's `_compute_multi_dog_discount` already applies the SAME percentages at the end of the day; this sprint just makes that future deduction visible before the customer confirms. Accounting and snapshot logic byte-identical.
+- Admin booking modal currently doesn't embed `BookingPriceEstimate` — admin sees the discount via the existing checkout flow + the booking-detail modal's "Service total (est.)" once they tap the booking. If you want the discount line shown to admin during creation too (parallel to portal), say the word and I'll wire `BookingPriceEstimate` into `AdminBookingModal` too.
+
+
 ### Service Worker
 - Not bumped (no frontend code change).

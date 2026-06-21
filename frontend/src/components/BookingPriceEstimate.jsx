@@ -59,6 +59,10 @@ export default function BookingPriceEstimate({
   const [services, setServices] = useState([]);
   const [credits, setCredits] = useState({ daycare: 0, training: 0, boarding: 0 });
   const [rules, setRules] = useState({});
+  // Sprint 110di-49 — Multi-dog discount config, surfaced upfront in the
+  // estimate (matches what the checkout flow applies — single source of
+  // truth via /settings/public).
+  const [mdDiscount, setMdDiscount] = useState({ enabled: false, by_service: {}, label: "Multi-dog discount" });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -81,10 +85,18 @@ export default function BookingPriceEstimate({
           boarding: Number(c.boarding_credits || 0),
         });
         setRules(settRes.data?.booking_rules || {});
+        setMdDiscount({
+          enabled: !!settRes.data?.multi_dog_discount_enabled,
+          mode: settRes.data?.multi_dog_discount_mode || "percent",
+          value: Number(settRes.data?.multi_dog_discount_value || 0),
+          label: settRes.data?.multi_dog_discount_label || "Multi-dog discount",
+          by_service: settRes.data?.multi_dog_discount_by_service || {},
+        });
       })
       .catch(() => {
         if (!cancelled) {
           setServices([]); setCredits({ daycare: 0, training: 0, boarding: 0 }); setRules({});
+          setMdDiscount({ enabled: false, by_service: {} });
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -160,7 +172,26 @@ export default function BookingPriceEstimate({
     }
 
     const basePrice = base * units;
-    const additionalDogPrice = additionalDogs * extraDogRate * units;
+    // Sprint 110di-49 — Multi-dog discount applied UPFRONT (mirrors what
+    // the checkout flow will charge, so the customer + admin both see the
+    // accurate group total before they confirm). Per-service config wins;
+    // otherwise the global value is used.
+    const mdSvc = (mdDiscount?.by_service || {})[serviceType] || {};
+    const mdEligibleSvc = (serviceType === "daycare" || serviceType === "boarding"); // pre-existing scope
+    const mdActiveForSvc = mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdDiscount?.enabled;
+    const mdMode  = mdSvc.mode || mdDiscount?.mode || "percent";
+    const mdValue = Number(mdSvc.value ?? mdDiscount?.value ?? 0);
+    const applyMd = mdEligibleSvc && mdActiveForSvc && mdValue > 0 && additionalDogs > 0;
+    // Compute the additional-dog price WITHOUT the discount first, then
+    // subtract — that way the breakdown still shows the raw line and the
+    // discount as its own savings line (matches the receipt convention).
+    const rawAdditionalDogPrice = additionalDogs * extraDogRate * units;
+    const mdDiscountAmount = applyMd
+      ? (mdMode === "percent"
+          ? rawAdditionalDogPrice * (mdValue / 100)
+          : Math.min(rawAdditionalDogPrice, mdValue * additionalDogs))
+      : 0;
+    const additionalDogPrice = rawAdditionalDogPrice - mdDiscountAmount;
     // Sprint 110di-28 — sum selected add-ons. Each addon row carries its
     // own `base_price` from the catalog (uses /services/addons output)
     // so the math reuses the existing pricing surface — no new system.
@@ -205,8 +236,13 @@ export default function BookingPriceEstimate({
       balance_due: balanceDue,
       pool_key: poolKey,
       service_name: headlineService.name,
+      // Sprint 110di-49 — Expose the upfront multi-dog discount so the
+      // breakdown UI can render it as its own "you save" line.
+      md_discount_amount: mdDiscountAmount,
+      md_discount_label: mdDiscount?.label || "Multi-dog discount",
+      md_discount_applied: applyMd,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules, mdDiscount]);
 
   // Empty-state: nothing to estimate. Stay quiet rather than show $0 —
   // the operator might not have set up a service for this type yet.
@@ -275,7 +311,20 @@ export default function BookingPriceEstimate({
                 ({calc.additional_dogs} × {fmtUSD(calc.extraDogRate)}{calc.units > 1 ? ` × ${calc.units}` : ""})
               </span>
             </span>
-            <span className="text-white font-black">{fmtUSD(calc.additional_dog_price)}</span>
+            <span className="text-white font-black">{fmtUSD(calc.additional_dog_price + (calc.md_discount_amount || 0))}</span>
+          </div>
+        )}
+
+        {/* Sprint 110di-49 — Multi-dog discount surfaced UPFRONT so client
+            + admin see the savings line before checkout. The number is
+            negative-styled (green minus) and pulls its label from the
+            same settings doc the checkout flow reads from. */}
+        {calc.md_discount_applied && calc.md_discount_amount > 0 && (
+          <div className="flex justify-between" data-testid="booking-estimate-multi-dog-discount">
+            <span className="text-shGreen">
+              <i className="fas fa-tag mr-1.5"/>{calc.md_discount_label}
+            </span>
+            <span className="text-shGreen font-black">-{fmtUSD(calc.md_discount_amount)}</span>
           </div>
         )}
 

@@ -4921,6 +4921,14 @@ async def fetch_public_settings():
         "dashboard_widgets":      {**_default_dashboard_widgets(), **(s.get("dashboard_widgets") or {})},
         # Sprint 110di-29 — Payment Options
         "payment_options":        _merge_payment_options(s.get("payment_options")),
+        # Sprint 110di-49 — Multi-dog household discount config so the
+        # client booking-price estimate can show the savings UPFRONT
+        # (before checkout). Read-only for portal/booking calc.
+        "multi_dog_discount_enabled": bool(s.get("multi_dog_discount_enabled")),
+        "multi_dog_discount_mode":    s.get("multi_dog_discount_mode") or "percent",
+        "multi_dog_discount_value":   float(s.get("multi_dog_discount_value") or 0),
+        "multi_dog_discount_label":   s.get("multi_dog_discount_label") or "Multi-dog discount",
+        "multi_dog_discount_by_service": s.get("multi_dog_discount_by_service") or {},
     }
 
 @api.put("/settings")
