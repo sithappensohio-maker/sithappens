@@ -52,27 +52,32 @@ export default function PaymentOptionsCard({ compact = false }) {
         {rows.map((r) => (
           <div
             key={r.key}
-            className="bg-bgBase border border-bgHover rounded-lg p-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3"
+            className="bg-bgBase border border-bgHover rounded-lg p-3 overflow-hidden"
             data-testid={`portal-pay-${r.key}`}
           >
-            <div className="flex items-center gap-2 sm:min-w-[140px]">
-              <i className={`fas ${ICONS[r.key] || "fa-money-bill"} text-shGreen text-lg`}/>
-              <span className="text-white font-black uppercase tracking-widest text-[13px]">
+            {/* Header row: icon + label (label can be long like "@sit-happens"
+                so allow it to wrap and break inside words rather than push the
+                Open button off the card edge). */}
+            <div className="flex items-center gap-2 mb-1.5">
+              <i className={`fas ${ICONS[r.key] || "fa-money-bill"} text-shGreen text-lg shrink-0`}/>
+              <span className="text-white font-black uppercase tracking-wide text-[13px] leading-tight min-w-0 break-words">
                 {r.label || r.key}
               </span>
             </div>
-            <div className="flex-1 text-[12px] text-gray-400 leading-snug">
-              {r.instructions}
-            </div>
+            {r.instructions && (
+              <p className="text-[12px] text-gray-400 leading-snug break-words">
+                {r.instructions}
+              </p>
+            )}
             {r.link ? (
               <a
                 href={r.link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 shrink-0 text-center"
+                className="mt-2 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 inline-flex items-center justify-center gap-1.5 w-full sm:w-auto"
                 data-testid={`portal-pay-${r.key}-open`}
               >
-                <i className="fas fa-external-link-alt mr-1.5"/>Open
+                <i className="fas fa-external-link-alt"/>Open
               </a>
             ) : null}
           </div>

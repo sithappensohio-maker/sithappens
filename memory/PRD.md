@@ -4455,3 +4455,20 @@ The new multi-dog block in Sprint 110di-38 introduced a chip-style add-on select
 
 ### Service Worker
 - ✅ Bumped to `sh-v37-110di-39-per-dog-addon-tiles`.
+
+
+## Sprint 110di-40 — Mobile UX Pass (2026-02-20)
+**User report**: "How to pay" card in the client portal had text not fitting and buttons sitting outside the card edge on small screens. Also called out broader admin-side mobile pain.
+
+### PaymentOptionsCard fix (`components/PaymentOptionsCard.jsx`)
+- Replaced the horizontal `flex sm:flex-row` with a **vertical mobile-first stack** inside each payment row: header (icon + label), instructions paragraph, then full-width Open button.
+- Dropped the rigid `min-w-[140px]` (was forcing "VENMO TO @SIT-HAPPENS" labels to wrap into 3 lines).
+- `tracking-widest` → `tracking-wide` + `break-words` so long handles like `@sit-happens` don't overflow.
+- "OPEN" button full-width on mobile (`w-full sm:w-auto`).
+
+### Mobile sidebar audit
+- Verified hamburger drawer in `App.js` works correctly: hidden desktop sidebar `<768px`, hamburger toggle visible, drawer slides in from left, auto-closes after navigation.
+- Smoke-tested Dashboard, Bookings, Care Board, Settings at 390×844 and 414×896 widths — all stack cleanly.
+
+### Service Worker
+- ✅ Bumped to `sh-v38-110di-40-mobile-pass`.
