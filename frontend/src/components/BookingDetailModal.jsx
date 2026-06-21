@@ -59,6 +59,10 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   const [booking, setBooking] = useState(initial);
   const [dog, setDog] = useState(null);
   const [client, setClient] = useState(null);
+  // Sprint 110di-47 — Service catalog (id → service). Used to compute a
+  // price ESTIMATE for unpaid bookings so the modal stops showing $0 as
+  // the "Service total" before checkout.
+  const [services, setServices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -67,15 +71,17 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
     (async () => {
       setLoading(true);
       try {
-        const [b, d, c] = await Promise.all([
+        const [b, d, c, s] = await Promise.all([
           api.get(`/bookings/${initial.id}`).catch(() => ({ data: initial })),
           initial.dog_id ? api.get(`/dogs/${initial.dog_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
           initial.client_id ? api.get(`/clients/${initial.client_id}`).catch(() => ({ data: null })) : Promise.resolve({ data: null }),
+          api.get(`/services`).catch(() => ({ data: [] })),
         ]);
         if (cancelled) return;
         setBooking(b.data || initial);
         setDog(d.data);
         setClient(c.data);
+        setServices(Array.isArray(s.data) ? s.data : []);
       } catch (e) {
         if (!cancelled) setErr(e?.response?.data?.detail || "Could not load booking details");
       } finally {
@@ -94,6 +100,39 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
   const addOns = booking.add_ons || [];
   const addOnTotal = addOns.reduce((s, a) => s + (Number(a.price || 0) * (a.qty || 1)), 0);
   const reportCard = booking.report_card || null;
+
+  // Sprint 110di-47 — Inline price estimate. Picks the catalog row that
+  // matches this booking's service_type (+ grooming_type if applicable),
+  // multiplies by nights for boarding, then adds the snapshotted add-on
+  // total. We do NOT mutate booking.actual_price — the accounting flow is
+  // untouched. This estimate is purely for display so the operator sees a
+  // sensible number on the schedule modal before checkout completes.
+  const estimateBase = (() => {
+    if (!services.length) return 0;
+    const t = booking.service_type;
+    // Best-match: same service_type AND (matching grooming_type when set)
+    const candidates = services.filter((sv) => sv.service_type === t && !sv.is_addon && sv.active !== false);
+    const exact = booking.grooming_type
+      ? candidates.find((sv) => (sv.grooming_type || "") === booking.grooming_type)
+      : null;
+    const svc = exact || candidates[0];
+    const base = Number(svc?.base_price || 0);
+    if (t === "boarding") {
+      // Nights = (end_date - date), minimum 1. Mirrors backend snapshot logic.
+      try {
+        const d1 = new Date(booking.date + "T00:00:00");
+        const d2 = new Date((booking.end_date || booking.date) + "T00:00:00");
+        const nights = Math.max(1, Math.round((d2 - d1) / 86400000));
+        return base * nights;
+      } catch { return base; }
+    }
+    return base;
+  })();
+  const estimatedTotal = estimateBase + addOnTotal;
+  // Use actual_price when checkout has locked it in; otherwise show our
+  // estimate so the operator never sees a misleading $0.
+  const hasActualPrice = Number.isFinite(Number(booking.actual_price)) && Number(booking.actual_price) > 0;
+  const displayTotal = hasActualPrice ? Number(booking.actual_price) : estimatedTotal;
 
   const careNotes = [];
   if (dog?.feeding_schedule?.length) careNotes.push(`${dog.feeding_schedule.length} feeding(s)`);
@@ -283,7 +322,17 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           <section>
             <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Pricing</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              <Pill icon="fa-dollar-sign" label="Service total" value={fmtMoney(booking.actual_price ?? booking.base_price ?? 0)} tone="green"/>
+              {/* Sprint 110di-47 — Shows the snapshotted actual_price once
+                  checkout has locked it in; otherwise an inline ESTIMATE
+                  computed from the services catalog so the modal stops
+                  showing $0 for scheduled-but-not-yet-paid bookings.
+                  Accounting/checkout flow is untouched — this is display
+                  only and is clearly labeled "(est.)" when synthetic. */}
+              <Pill icon="fa-dollar-sign"
+                    label={hasActualPrice ? "Service total" : "Service total (est.)"}
+                    value={fmtMoney(displayTotal)}
+                    tone="green"
+                    data-testid="booking-detail-service-total"/>
               {booking.payment_method && <Pill icon="fa-credit-card" label="Payment" value={<span className="capitalize">{booking.payment_method}</span>}/>}
               {booking.payment_status && <Pill icon="fa-circle-check" label="Status" value={<span className="capitalize">{booking.payment_status}</span>}
                                               tone={booking.payment_status === "paid" ? "green" : "orange"}/>}

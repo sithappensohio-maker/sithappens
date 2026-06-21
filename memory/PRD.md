@@ -4614,3 +4614,19 @@ Meant to convert ordinary data tables into mobile card stacks. Unscoped → it *
 
 ### Service Worker
 - ✅ Bumped to `sh-v44-110di-46-self-hosting-security`.
+
+
+## Sprint 110di-47 — Booking Detail Service Total Estimate (2026-02-20)
+**User report**: "when I click an item in the schedule the service total always comes up zero — it should show me the pricing estimate of that booking. Don't change how things book for booking or accounting, just have it show the estimate."
+
+### Fix
+- ✅ `BookingDetailModal.jsx` — modal now fetches `/api/services` and computes a price ESTIMATE per booking: catalog `base_price` (matched on service_type + grooming_type) × nights (boarding only), plus snapshotted add-on total.
+- ✅ Pill shows `actual_price` (label: "Service total") when checkout has locked it in; otherwise shows the estimate (label: "Service total (est.)") — no more $0.
+- ✅ Accounting/checkout flow **untouched** — this is display only; `booking.actual_price` is never mutated by this change.
+- ✅ New `data-testid="booking-detail-service-total"` on the pill.
+
+### Verified
+- Smoke screenshot on a real boarding booking (5 nights × $30) shows **SERVICE TOTAL $150.00** where it previously showed $0.
+
+### Service Worker
+- ✅ Bumped to `sh-v45-110di-47-booking-detail-estimate`.
