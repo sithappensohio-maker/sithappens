@@ -3,7 +3,7 @@ import os, uuid, asyncio, pytest, requests
 from datetime import date, timedelta
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL",
-                      "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+                      os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 API = f"{BASE}/api"
 
 

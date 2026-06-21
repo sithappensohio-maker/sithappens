@@ -15,7 +15,7 @@ import requests
 import pytest
 from datetime import date, timedelta
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 ADMIN = {"email": "admin@sithappens.com", "password": "admin123"}
 TEST_CLIENT = {"email": "testclient@sithappens.com", "password": "test1234"}
 BUDDY_ID = "a1e63d21-2d4b-444f-8286-56f3324c4401"

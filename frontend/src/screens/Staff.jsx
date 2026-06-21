@@ -1142,7 +1142,10 @@ function QuarterlyTaxTab() {
   const downloadCpaPdf = async () => {
     try {
       const token = localStorage.getItem("sh_token") || "";
-      const url = `${process.env.REACT_APP_BACKEND_URL}/api/admin/quarterly-tax/cpa.pdf?year=${year}`;
+      // Sprint 110di-46 — same-origin safe fallback for self-hosted deploys
+      // where REACT_APP_BACKEND_URL may be blank.
+      const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+      const url = `${API_ROOT}/api/admin/quarterly-tax/cpa.pdf?year=${year}`;
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       if (!r.ok) { setErr(`PDF download failed (${r.status})`); return; }
       const blob = await r.blob();

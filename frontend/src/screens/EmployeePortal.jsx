@@ -463,8 +463,11 @@ function TimecardTab() {
   const fmt$ = (v) => `$${Number(v || 0).toFixed(2)}`;
   const downloadCsv = async () => {
     try {
-      const token = localStorage.getItem("auth_token") || "";
-      const url = `${process.env.REACT_APP_BACKEND_URL}/api/time-clock/me.csv?days=${days}`;
+      // Sprint 110di-46 — same-origin safe fallback + correct token key
+      // ("sh_token" matches what the rest of the app uses).
+      const token = localStorage.getItem("sh_token") || "";
+      const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+      const url = `${API_ROOT}/api/time-clock/me.csv?days=${days}`;
       const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
       const blob = await r.blob();
       const obj = URL.createObjectURL(blob);
@@ -473,7 +476,7 @@ function TimecardTab() {
       a.download = `my-timecard-${new Date().toISOString().slice(0,10)}.csv`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(obj), 5000);
-    } catch {}
+    } catch { /* no-op: surfaced via the resulting blank download */ }
   };
 
   return (

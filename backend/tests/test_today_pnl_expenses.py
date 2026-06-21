@@ -22,7 +22,7 @@ from datetime import date
 
 BASE = os.environ.get(
     "REACT_APP_BACKEND_URL",
-    "https://sit-happens-crm.preview.emergentagent.com",
+    os.environ.get("TEST_BACKEND_URL","http://localhost:8001"),
 ).rstrip("/")
 
 

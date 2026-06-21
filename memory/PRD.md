@@ -4590,3 +4590,27 @@ Meant to convert ordinary data tables into mobile card stacks. Unscoped → it *
 
 ### Service Worker
 - ✅ Bumped to `sh-v43-110di-45-schedule-month-dots-mobile`.
+
+
+## Sprint 110di-46 — Self-Hosting & Security Repair Pass (2026-02-20)
+**User ask**: tiny surgical pass — no UI, no refactor — to make self-hosting safer.
+
+### Fixes
+1. **Admin password no longer reset on every restart** (`server.py` ~L12694). Operator-rotated passwords used to be silently overwritten back to `ADMIN_PASSWORD`/`admin123` on reboot. Now: seed only if user doesn't exist; opt-in `FORCE_ADMIN_PASSWORD_SYNC=true` env flag for emergency re-sync.
+2. **`REACT_APP_BACKEND_URL` blank → same-origin** (`lib/api.js`). Was constructing `"undefined/api"`; now `"/api"` for same-origin Docker deploys.
+3. **Direct download URLs use safe fallback** — `Settings.jsx` (year-end payroll CSV), `Staff.jsx` (CPA PDF), `EmployeePortal.jsx` (timecard CSV).
+4. **Token key mismatch fixed** — `Settings.jsx` + `EmployeePortal.jsx` were reading `localStorage.getItem("auth_token")` (always empty → 401). Switched to `"sh_token"`.
+5. **Tests no longer default to preview URL** — `conftest.py` + 123 test files batch-updated. Precedence: `TEST_BACKEND_URL → API_URL → REACT_APP_BACKEND_URL → http://localhost:8001`. An accidental `pytest` run can't mutate production.
+6. **Hardcoded `/app/frontend/.env` removed** from `test_pnl_services.py` + `test_pnl_checkout_flow.py`. Helper checks env → repo-relative path → localhost.
+7. **Duplicate `@api.get("/admin/payroll/csv")`** removed (L15584-15585).
+8. Lockfile verified — `frontend/yarn.lock` already present.
+
+### Verified
+- `py_compile server.py` ✅ · health 200 ✅ · admin login 248-char token ✅
+- CSV download `/api/admin/payroll/csv` → HTTP 200, 2352 bytes (token auth working) ✅
+- Duplicate route count = 1 ✅
+- `pytest tests/test_employee_create.py` with `TEST_BACKEND_URL=localhost`: 4/4 ✅
+- Frontend `api.js` lint clean; webpack compiles.
+
+### Service Worker
+- ✅ Bumped to `sh-v44-110di-46-self-hosting-security`.

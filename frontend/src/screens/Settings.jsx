@@ -3987,12 +3987,16 @@ function YearEndPayrollPanel() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [detail, setDetail] = useState(false);
   const download = () => {
-    const url = `${process.env.REACT_APP_BACKEND_URL}/api/admin/payroll/year-end.csv?year=${year}&detail=${detail}`;
+    // Sprint 110di-46 — same-origin safe fallback + correct token key
+    // ("sh_token" matches what the rest of the app uses; the legacy
+    // "auth_token" key was always empty here so downloads 401'd).
+    const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+    const url = `${API_ROOT}/api/admin/payroll/year-end.csv?year=${year}&detail=${detail}`;
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";
     a.rel = "noopener";
-    const token = localStorage.getItem("auth_token") || "";
+    const token = localStorage.getItem("sh_token") || "";
     // The api interceptor adds the Authorization header to axios calls — for
     // direct anchor downloads we use a temporary fetch to attach the token.
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })

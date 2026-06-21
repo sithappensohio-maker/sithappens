@@ -3,7 +3,7 @@ Sprint 110di-16 — Catalog extended to 24 surface types covering every
 reusable card across the app."""
 import os, requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 
 
 def _admin_h():

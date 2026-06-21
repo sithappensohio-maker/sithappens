@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Sprint 110di-46 — Self-hosting safe BACKEND_URL fallback.
+// When REACT_APP_BACKEND_URL is missing/blank (e.g. same-origin Docker
+// deploy where the frontend is served from the same host as the API),
+// API_BASE becomes "/api" instead of the broken "undefined/api".
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
 export const API_BASE = `${BACKEND_URL}/api`;
 
 export const api = axios.create({ baseURL: API_BASE });

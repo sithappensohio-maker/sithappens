@@ -10,7 +10,25 @@ sys.path.insert(0, "/app/backend")
 
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
-API_URL = open("/app/frontend/.env").read().split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip()
+# Sprint 110di-46 — Repo-relative + env-friendly so tests run anywhere
+# (local, Docker, CI). Honour TEST_BACKEND_URL/API_URL first; only fall back
+# to the frontend .env file if it's actually present at the conventional
+# path; otherwise localhost.
+def _load_api_url():
+    for env_key in ("API_URL", "TEST_BACKEND_URL", "REACT_APP_BACKEND_URL"):
+        v = os.environ.get(env_key)
+        if v:
+            return v.rstrip("/")
+    _repo_env = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", ".env")
+    if os.path.exists(_repo_env):
+        try:
+            txt = open(_repo_env).read()
+            if "REACT_APP_BACKEND_URL=" in txt:
+                return txt.split("REACT_APP_BACKEND_URL=")[1].split("\n")[0].strip().rstrip("/")
+        except Exception:
+            pass
+    return "http://localhost:8001"
+API_URL = _load_api_url()
 
 
 async def get_admin_token():

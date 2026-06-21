@@ -18,7 +18,7 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv("/app/backend/.env")
-BASE = os.environ.get("API_URL", "https://sit-happens-crm.preview.emergentagent.com")
+BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001"))
 _MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
 _DB_NAME = os.environ.get("DB_NAME", "test_database")
 

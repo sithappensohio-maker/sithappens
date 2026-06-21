@@ -10,7 +10,7 @@ import requests
 import pytest
 
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 ADMIN_EMAIL = "admin@sithappens.com"
 ADMIN_PASSWORD = "admin123"
 

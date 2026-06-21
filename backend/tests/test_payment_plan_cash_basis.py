@@ -10,7 +10,7 @@ import os, uuid, pytest, requests
 from datetime import datetime, timezone
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL",
-                          "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+                          os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 API = f"{BASE_URL}/api"
 
 

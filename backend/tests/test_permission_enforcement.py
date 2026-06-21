@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime, timezone
 
-BASE = os.environ.get("API_URL", "https://sit-happens-crm.preview.emergentagent.com")
+BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001"))
 load_dotenv("/app/backend/.env")
 _MONGO = os.environ["MONGO_URL"]
 _DB_NAME = os.environ["DB_NAME"]

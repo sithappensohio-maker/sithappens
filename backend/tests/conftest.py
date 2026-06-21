@@ -7,7 +7,15 @@ import os
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+# Sprint 110di-46 — Tests default to localhost (never the prod/staging
+# preview) so an accidental `pytest` run can't mutate the live deployment.
+# Override with TEST_BACKEND_URL when targeting another host.
+BASE_URL = (
+    os.environ.get("TEST_BACKEND_URL")
+    or os.environ.get("API_URL")
+    or os.environ.get("REACT_APP_BACKEND_URL")
+    or "http://localhost:8001"
+).rstrip("/")
 ADMIN_EMAIL = "admin@sithappens.com"
 ADMIN_PASSWORD = "admin123"
 

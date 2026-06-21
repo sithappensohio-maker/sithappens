@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 import requests
 
-BASE = os.environ.get("API_URL", "https://sit-happens-crm.preview.emergentagent.com")
+BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001"))
 
 # 1×1 transparent PNG, base64 — enough to round-trip the upload flow.
 TINY_PNG = (

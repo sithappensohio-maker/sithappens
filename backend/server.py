@@ -12690,9 +12690,19 @@ async def startup():
             await coll.create_index(key, **opts)
         except Exception as e:
             logger.warning(f"Could not create index {key} on {coll.name}: {e}")
-    # Seed admin
+    # Seed admin — Sprint 110di-46 (security hardening):
+    #  - On FIRST run (no admin user yet) we seed with ADMIN_PASSWORD if set,
+    #    falling back to the dev default "admin123" only when nothing is
+    #    configured.
+    #  - On every subsequent restart we DO NOT touch the existing admin's
+    #    password — operator-rotated passwords (set via the UI) used to be
+    #    silently reset back to ADMIN_PASSWORD/admin123 on every reboot, which
+    #    is a real self-hosting footgun.
+    #  - Set FORCE_ADMIN_PASSWORD_SYNC=true to opt back into the legacy
+    #    "always overwrite from env" behaviour for emergency re-sync.
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
+    force_sync = os.environ.get("FORCE_ADMIN_PASSWORD_SYNC", "").lower() in ("1", "true", "yes")
     existing = await db.users.find_one({"email": admin_email})
     if not existing:
         await db.users.insert_one({
@@ -12705,9 +12715,9 @@ async def startup():
             "created_at": now_iso(),
         })
         logger.info("Seeded admin %s", admin_email)
-    elif not verify_password(admin_pw, existing["password_hash"]):
+    elif force_sync and not verify_password(admin_pw, existing["password_hash"]):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
-        logger.info("Updated admin password")
+        logger.warning("FORCE_ADMIN_PASSWORD_SYNC=true — overwrote existing admin password from env")
     # Seed settings (idempotent)
     await get_settings()
     # Seed trophies catalog (idempotent)
@@ -15571,7 +15581,6 @@ async def payroll_estimate(
     }
 
 
-@api.get("/admin/payroll/csv")
 @api.get("/admin/payroll/csv")
 async def payroll_csv(
     start_date: str, end_date: str, _: dict = Depends(require_admin),

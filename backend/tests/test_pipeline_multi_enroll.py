@@ -18,7 +18,7 @@ import os
 import requests
 import pytest
 
-BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://sit-happens-crm.preview.emergentagent.com").rstrip("/")
+BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("TEST_BACKEND_URL","http://localhost:8001")).rstrip("/")
 ADMIN = {"email": "admin@sithappens.com", "password": "admin123"}
 CLIENT = {"email": "testclient@sithappens.com", "password": "test1234"}
 

@@ -9,7 +9,7 @@ import os
 import pytest
 import requests
 
-BASE = os.environ.get("API_URL", "https://sit-happens-crm.preview.emergentagent.com")
+BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://localhost:8001"))
 
 CONFIG_COLLECTIONS = {
     "settings", "app_settings", "email_settings",
