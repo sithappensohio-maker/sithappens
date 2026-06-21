@@ -45,6 +45,34 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [eligibleAddons, setEligibleAddons] = useState([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState([]);
 
+  // Sprint 110di-38 — Multi-dog group booking (admin variant).
+  // Mirrors the portal wizard pattern: primary dog + extras share the same
+  // date / service / dropoff window; per-dog add-ons & notes. Disabled in
+  // edit and multi-date modes.
+  const [extraDogs, setExtraDogs] = useState([]);
+  const clientDogsForGroup = useMemo(
+    () => (dogs || []).filter(d => d.owner_id === clientId),
+    [dogs, clientId]
+  );
+  // Reset extras whenever client changes — selecting a new owner means the
+  // dog list changes and any previously-picked extras may not belong to
+  // them anymore.
+  useEffect(() => { setExtraDogs([]); }, [clientId]);
+  const addExtraDog = () => {
+    const used = new Set([dogId, ...extraDogs.map(e => e.dog_id)]);
+    const next = clientDogsForGroup.find(d => !used.has(d.id));
+    if (!next) return;
+    setExtraDogs([...extraDogs, { dog_id: next.id, addon_service_ids: [], notes: "" }]);
+  };
+  const removeExtraDog = (idx) => setExtraDogs(extraDogs.filter((_, i) => i !== idx));
+  const updateExtraDog = (idx, patch) =>
+    setExtraDogs(extraDogs.map((e, i) => i === idx ? { ...e, ...patch } : e));
+  const toggleExtraAddon = (idx, addonId) => {
+    const cur = extraDogs[idx].addon_service_ids || [];
+    const next = cur.includes(addonId) ? cur.filter(x => x !== addonId) : [...cur, addonId];
+    updateExtraDog(idx, { addon_service_ids: next });
+  };
+
   useEffect(() => {
     (async () => {
       try {
@@ -200,7 +228,36 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           check_in_now: checkInNow,
           addon_service_ids: selectedAddonIds,
         };
-        await api.post("/bookings", body);
+        // Sprint 110di-38 — Group booking branch. When admin has added extra
+        // dogs to this transaction, hit /bookings/group so all rows share a
+        // group_id and any per-dog failure rolls back atomically. The legacy
+        // single-dog path below stays untouched for the common case.
+        if (extraDogs.length > 0) {
+          const groupBody = {
+            dogs: [
+              { dog_id: dogId, addon_service_ids: selectedAddonIds, notes },
+              ...extraDogs.map(e => ({
+                dog_id: e.dog_id,
+                addon_service_ids: e.addon_service_ids || [],
+                notes: e.notes || "",
+              })),
+            ],
+            date,
+            end_date: serviceType === "boarding" ? (endDate || date) : null,
+            service_type: serviceType,
+            grooming_type: serviceType === "grooming" ? groomingType : null,
+            dropoff_time: dropoffTime || "",
+            pickup_time: pickupTime || "",
+            time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
+            notes,
+            override_vaccines: overrideVaccines,
+            override_capacity: overrideCapacity,
+            check_in_now: checkInNow,
+          };
+          await api.post("/bookings/group", groupBody);
+        } else {
+          await api.post("/bookings", body);
+        }
       }
       onCreated?.();
       onClose();
@@ -403,6 +460,73 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
           </div>
 
+          {/* Sprint 110di-38 — Multi-dog group booking (admin). Shown only
+              when not editing, not in multi-date mode, and the selected
+              client has >1 dog on file. Primary dog is `dogId`; extras are
+              tracked in `extraDogs` and share the booking's date/service. */}
+          {!isEdit && !isMultiDate && clientDogsForGroup.length > 1 && (
+            <div className="bg-bgBase/40 border border-shGreen/30 rounded-lg p-3 space-y-3" data-testid="ab-multidog">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
+                  <p className="text-gray-400 text-[14px] mt-0.5">Same date and service. Per-dog add-ons.</p>
+                </div>
+                {extraDogs.length + 1 < clientDogsForGroup.length && (
+                  <button type="button" onClick={addExtraDog} data-testid="ab-add-dog"
+                          className="bg-shGreen/20 border border-shGreen/40 text-shGreen px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap">
+                    <i className="fas fa-plus mr-1"/>Add dog
+                  </button>
+                )}
+              </div>
+              {extraDogs.map((extra, idx) => {
+                const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
+                const available = clientDogsForGroup.filter(d => !usedIds.has(d.id));
+                return (
+                  <div key={idx} className="border-t border-bgHover pt-3 space-y-2" data-testid={`ab-extra-dog-${idx}`}>
+                    <div className="flex gap-2 items-center">
+                      <select value={extra.dog_id}
+                              onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
+                              data-testid={`ab-extra-dog-select-${idx}`}
+                              className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]">
+                        {available.map(d => (
+                          <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>
+                        ))}
+                      </select>
+                      <button type="button" onClick={()=>removeExtraDog(idx)} data-testid={`ab-remove-dog-${idx}`}
+                              className="bg-red-500/15 border border-red-500/40 text-red-300 px-2 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition"
+                              title="Remove this dog">
+                        <i className="fas fa-times"/>
+                      </button>
+                    </div>
+                    {eligibleAddons.length > 0 && (
+                      <div className="pl-1">
+                        <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Add-ons for {(dogs.find(d=>d.id===extra.dog_id) || {}).name || "this dog"}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {eligibleAddons.map(a => {
+                            const on = (extra.addon_service_ids || []).includes(a.id);
+                            return (
+                              <button key={a.id} type="button"
+                                      onClick={()=>toggleExtraAddon(idx, a.id)}
+                                      data-testid={`ab-extra-addon-${idx}-${a.id}`}
+                                      className={`rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest border transition ${on ? "bg-amber-500/25 border-amber-500/60 text-amber-300" : "bg-bgPanel border-bgHover text-gray-300 hover:border-amber-400/50"}`}>
+                                {on && <i className="fas fa-check mr-1 text-[10px]"/>}{a.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {extraDogs.length > 0 && (
+                <p className="text-shGreen text-[13px] font-black uppercase tracking-widest pt-1 border-t border-bgHover" data-testid="ab-group-count">
+                  <i className="fas fa-link mr-1"/>Group booking · {extraDogs.length + 1} dogs share this booking
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Sprint 110an — add-ons picker. Only shown for new bookings (editing
               bookings should attach add-ons via the booking detail view).
               Tile-style multi-select so admins can quickly tack on a nail
@@ -411,7 +535,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <div data-testid="booking-addons-picker">
               <div className="flex items-center justify-between mb-2">
                 <label className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
-                  <i className="fas fa-plus-circle mr-1"/>Add-ons (optional)
+                  <i className="fas fa-plus-circle mr-1"/>Add-ons (optional){extraDogs.length > 0 ? " — for primary dog" : ""}
                 </label>
                 {selectedAddonIds.length > 0 && (
                   <span className="text-[12px] text-amber-300 font-black uppercase tracking-widest">
@@ -483,7 +607,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
             <button onClick={submit} disabled={saving || !dogId || (isMultiDate && multiDates.length === 0)} data-testid="ab-submit"
                     className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
-              {saving ? "Saving…" : (isEdit ? "Save Changes" : (isMultiDate ? `Book ${multiDates.length || ""} day${multiDates.length===1?"":"s"}` : (checkInNow ? "Book & Check In" : "Create Booking")))}
+              {saving ? "Saving…" : (isEdit
+                ? "Save Changes"
+                : (isMultiDate
+                    ? `Book ${multiDates.length || ""} day${multiDates.length===1?"":"s"}`
+                    : extraDogs.length > 0
+                      ? `Create ${1 + extraDogs.length} bookings`
+                      : (checkInNow ? "Book & Check In" : "Create Booking")))}
             </button>
           </div>
         </div>

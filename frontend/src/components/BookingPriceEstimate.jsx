@@ -48,6 +48,11 @@ export default function BookingPriceEstimate({
   isMultiDate = false,
   isWaitlist = false,
   addons = [],
+  // Sprint 110di-38 — when true, each addon in the `addons` array represents
+  // a SPECIFIC dog's selection (not a shared selection that should be
+  // multiplied by dogCount). Used by the multi-dog group flow which passes
+  // the union of all per-dog addons as a flat list.
+  addonsPerDog = false,
   dropoffTime = "",
   pickupTime = "",
 }) {
@@ -159,8 +164,12 @@ export default function BookingPriceEstimate({
     // Sprint 110di-28 — sum selected add-ons. Each addon row carries its
     // own `base_price` from the catalog (uses /services/addons output)
     // so the math reuses the existing pricing surface — no new system.
+    // Sprint 110di-38 — `addonsPerDog` flag: when the caller passes the
+    // union of per-dog selections, we DO NOT multiply by dog count
+    // (each entry already represents a single dog's choice).
+    const addonMultiplier = addonsPerDog ? 1 : Math.max(1, dogs);
     const addonTotal = (addons || []).reduce(
-      (sum, a) => sum + Number(a?.base_price || 0) * Math.max(1, dogs),
+      (sum, a) => sum + Number(a?.base_price || 0) * addonMultiplier,
       0
     );
     const total = basePrice + additionalDogPrice + addonTotal;
@@ -186,7 +195,7 @@ export default function BookingPriceEstimate({
       additional_dog_price: additionalDogPrice,
       addon_total: addonTotal,
       addon_lines: (addons || []).map(a => ({
-        id: a.id, name: a.name, price: Number(a?.base_price || 0) * Math.max(1, dogs),
+        id: a.id, name: a.name, price: Number(a?.base_price || 0) * addonMultiplier,
       })),
       units, unitLabel, unitsValid, halfDay,
       total,
@@ -197,7 +206,7 @@ export default function BookingPriceEstimate({
       pool_key: poolKey,
       service_name: headlineService.name,
     };
-  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, dropoffTime, pickupTime, rules]);
+  }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules]);
 
   // Empty-state: nothing to estimate. Stay quiet rather than show $0 —
   // the operator might not have set up a service for this type yet.

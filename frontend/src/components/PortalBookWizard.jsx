@@ -73,6 +73,30 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [isMultiDate, setIsMultiDate] = useState(false);
   const [multiDates, setMultiDates] = useState([]);
 
+  // Sprint 110di-38 — Multi-dog booking. The primary dog (`dogId`) is the
+  // first member of the group; this state holds ADDITIONAL dogs the client
+  // wants to add to the same booking. Same date + same service for all
+  // (per product decision), but each dog can pick its own add-ons.
+  // Shape: [{ dog_id: string, addon_service_ids: string[], notes?: string }]
+  const [extraDogs, setExtraDogs] = useState([]);
+  const addExtraDog = () => {
+    const used = new Set([dogId, ...extraDogs.map(e => e.dog_id)]);
+    const next = (dogs || []).find(d => !used.has(d.id));
+    if (!next) return;  // No more dogs available
+    setExtraDogs([...extraDogs, { dog_id: next.id, addon_service_ids: [], notes: "" }]);
+  };
+  const removeExtraDog = (idx) => {
+    setExtraDogs(extraDogs.filter((_, i) => i !== idx));
+  };
+  const updateExtraDog = (idx, patch) => {
+    setExtraDogs(extraDogs.map((e, i) => i === idx ? { ...e, ...patch } : e));
+  };
+  const toggleExtraAddon = (idx, addonId) => {
+    const cur = extraDogs[idx].addon_service_ids || [];
+    const next = cur.includes(addonId) ? cur.filter(x => x !== addonId) : [...cur, addonId];
+    updateExtraDog(idx, { addon_service_ids: next });
+  };
+
   // Date guard rails
   const minDate = todayISO();
 
@@ -230,6 +254,46 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       }
       if (TIME_SLOTTED.has(serviceType)) body.time = time;
       if (serviceType === "grooming") body.grooming_type = groomingType;
+
+      // Sprint 110di-38 — Multi-dog branch. When the user has added one or
+      // more extra dogs to the same booking, ship the group endpoint so all
+      // rows share one group_id (and so partial-failure rolls back atomically
+      // on the server). The single-dog branch below stays untouched.
+      if (extraDogs.length > 0) {
+        const groupBody = {
+          dogs: [
+            { dog_id: dogId, addon_service_ids: selectedAddonIds, notes },
+            ...extraDogs.map(e => ({
+              dog_id: e.dog_id,
+              addon_service_ids: e.addon_service_ids || [],
+              notes: e.notes || "",
+            })),
+          ],
+          date,
+          service_type: serviceType,
+          notes,
+        };
+        if (serviceType === "boarding") {
+          groupBody.end_date = endDate;
+          groupBody.dropoff_time = dropoffTime;
+          groupBody.pickup_time  = pickupTime;
+        }
+        if (TIME_SLOTTED.has(serviceType)) groupBody.time = time;
+        if (serviceType === "grooming") groupBody.grooming_type = groomingType;
+        const { data: groupResp } = await api.post("/bookings/group", groupBody);
+        onBooked && onBooked({ keepOpen: true });
+        setAcknowledgement({
+          kind: "group",
+          group_id: groupResp.group_id,
+          count: (groupResp.bookings || []).length,
+          bookings: groupResp.bookings || [],
+          booking: (groupResp.bookings || [])[0] || null,
+          waitlisted: !!willWaitlist,
+        });
+        setStep(4);
+        return;
+      }
+
       const { data: created } = await api.post("/bookings", body);
       onBooked && onBooked({ keepOpen: true });
       setAcknowledgement({
@@ -580,6 +644,81 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               )}
             </div>
 
+            {/* Sprint 110di-38 — Multi-dog group booking. Same date + same
+                service for every dog; per-dog add-ons. Hidden when the user
+                only has one dog on their profile, or when multi-date daycare
+                mode is active (that branch already books N days × 1 dog and
+                we don't want to combine the two complexities). */}
+            {(dogs || []).length > 1 && !(isMultiDate && serviceType === "daycare") && (
+              <div className="bg-bgBase border border-bgHover rounded-lg p-4 space-y-3" data-testid="wiz-multidog">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
+                    <p className="text-gray-400 text-[15px] mt-0.5">Add another dog to share the same date and service. Each dog can pick their own add-ons.</p>
+                  </div>
+                  {extraDogs.length + 1 < (dogs || []).length && (
+                    <button onClick={addExtraDog} data-testid="wiz-add-dog"
+                            className="bg-shGreen/20 border border-shGreen/40 text-shGreen px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap">
+                      <i className="fas fa-plus mr-1"/>Add dog
+                    </button>
+                  )}
+                </div>
+
+                {extraDogs.map((extra, idx) => {
+                  const xDog = (dogs || []).find(d => d.id === extra.dog_id);
+                  // Other dogs already in this group (so we don't show duplicates in the dropdown)
+                  const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
+                  const available = (dogs || []).filter(d => !usedIds.has(d.id));
+                  return (
+                    <div key={idx} className="border-t border-bgHover pt-3 space-y-2" data-testid={`wiz-extra-dog-${idx}`}>
+                      <div className="flex gap-2 items-center">
+                        <select value={extra.dog_id}
+                                onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
+                                data-testid={`wiz-extra-dog-select-${idx}`}
+                                className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]">
+                          {available.map(d => (
+                            <option key={d.id} value={d.id}>{d.name}</option>
+                          ))}
+                        </select>
+                        <button onClick={()=>removeExtraDog(idx)} data-testid={`wiz-remove-dog-${idx}`}
+                                className="bg-red-500/15 border border-red-500/40 text-red-300 px-2 py-2 rounded text-[13px] font-black hover:bg-red-500/25 transition"
+                                title="Remove this dog">
+                          <i className="fas fa-times"/>
+                        </button>
+                      </div>
+                      {eligibleAddons.length > 0 && (
+                        <div className="pl-1">
+                          <p className="text-[13px] font-black uppercase tracking-widest text-gray-500 mb-1">Add-ons for {xDog?.name}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {eligibleAddons.map(a => {
+                              const on = (extra.addon_service_ids || []).includes(a.id);
+                              return (
+                                <button key={a.id}
+                                        onClick={()=>toggleExtraAddon(idx, a.id)}
+                                        data-testid={`wiz-extra-addon-${idx}-${a.id}`}
+                                        className={`rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest border transition ${on ? "bg-shGreen/25 border-shGreen text-shGreen" : "bg-bgPanel border-bgHover text-gray-300 hover:border-shBlue"}`}>
+                                  {on && <i className="fas fa-check mr-1 text-[10px]"/>}{a.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {extraDogs.length === 0 && (
+                  <p className="text-gray-500 text-[14px] italic">No additional dogs yet.</p>
+                )}
+                {extraDogs.length > 0 && (
+                  <p className="text-shGreen text-[13px] font-black uppercase tracking-widest pt-1" data-testid="wiz-group-count">
+                    <i className="fas fa-link mr-1"/>This booking will cover {extraDogs.length + 1} dogs.
+                  </p>
+                )}
+              </div>
+            )}
+
             {err && <div className="text-[15px] font-black p-3 rounded uppercase tracking-widest bg-red-500/15 text-red-400 text-center">{err}</div>}
 
             {/* Sprint 110di-26 — Live booking estimate. Gated on the admin
@@ -589,13 +728,37 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             {showEstimate && (
               <BookingPriceEstimate
                 serviceType={serviceType}
-                dogCount={1}
+                dogCount={1 + extraDogs.length}
                 date={date}
                 endDate={endDate}
                 multiDates={multiDates}
                 isMultiDate={isMultiDate}
                 isWaitlist={!!willWaitlist}
-                addons={eligibleAddons.filter(a => selectedAddonIds.includes(a.id))}
+                addons={(() => {
+                  // Aggregate add-ons across all dogs so the combined estimate
+                  // reflects what every dog has selected (per-dog add-ons,
+                  // single combined total — per product decision).
+                  const allIds = [
+                    ...selectedAddonIds,
+                    ...extraDogs.flatMap(e => e.addon_service_ids || []),
+                  ];
+                  // Each entry in addonsForEstimate represents one dog's pick.
+                  // Don't dedupe — the same addon picked by 2 dogs costs 2×.
+                  const addonsForEstimate = [];
+                  selectedAddonIds.forEach(id => {
+                    const a = eligibleAddons.find(x => x.id === id);
+                    if (a) addonsForEstimate.push(a);
+                  });
+                  extraDogs.forEach(ed => {
+                    (ed.addon_service_ids || []).forEach(id => {
+                      const a = eligibleAddons.find(x => x.id === id);
+                      if (a) addonsForEstimate.push(a);
+                    });
+                  });
+                  return addonsForEstimate.length > 0 ? addonsForEstimate
+                    : eligibleAddons.filter(a => allIds.includes(a.id));
+                })()}
+                addonsPerDog={extraDogs.length > 0}
                 dropoffTime={dropoffTime}
                 pickupTime={pickupTime}
               />
@@ -609,7 +772,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </button>
               <button onClick={book} disabled={submitting} data-testid="wiz-confirm"
                       className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
-                {submitting ? "Booking…" : (isMultiDate && serviceType==="daycare" ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}` : "Confirm booking")}
+                {submitting ? "Booking…"
+                  : (isMultiDate && serviceType==="daycare"
+                      ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
+                      : extraDogs.length > 0
+                        ? `Confirm booking · ${1 + extraDogs.length} dogs`
+                        : "Confirm booking")}
               </button>
             </div>
           </div>
@@ -630,9 +798,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <p className="text-[13px] text-gray-400 mt-1">
                 {acknowledgement.kind === "multi"
                   ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.skipped?`, ${acknowledgement.skipped} skipped`:""}.`
-                  : (acknowledgement.waitlisted
-                      ? "We'll let you know when a spot opens up."
-                      : "We'll review and confirm your spot shortly.")}
+                  : acknowledgement.kind === "group"
+                    ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · we'll review and confirm shortly.`
+                    : (acknowledgement.waitlisted
+                        ? "We'll let you know when a spot opens up."
+                        : "We'll review and confirm your spot shortly.")}
               </p>
             </div>
 

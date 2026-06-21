@@ -366,6 +366,43 @@ class BookingIn(BaseModel):
     # Board-and-Train package). When set, the booking auto-enrolls the dog in
     # any linked training program after insert.
     service_id: Optional[str] = None
+    # Sprint 110di-38 — Multi-dog group booking. When a single transaction
+    # books N dogs together (same date / service / dropoff window), every
+    # resulting booking row shares this id so the UI can display a "🔗 Group
+    # · N dogs" badge and the operator can fan-out cancel/reschedule actions
+    # later. Optional + back-compat: existing single-dog bookings keep
+    # `group_id = None`.
+    group_id: Optional[str] = None
+
+
+# Sprint 110di-38 — Multi-dog booking group. Each dog block carries only
+# the fields that should differ from the group's shared base (currently
+# add-ons + free-text per-dog notes / kennel / appointment time). All other
+# fields (date, service_type, dropoff/pickup, end_date, etc.) come from the
+# top-level shared section so we can't accidentally ship two dogs with
+# inconsistent date ranges.
+class BookingGroupDog(BaseModel):
+    dog_id: str
+    addon_service_ids: List[str] = []
+    kennel: Optional[str] = ""
+    notes: Optional[str] = ""
+    time: Optional[str] = ""
+
+
+class BookingGroupIn(BaseModel):
+    dogs: List[BookingGroupDog]
+    date: str
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
+    end_date: Optional[str] = None
+    grooming_type: Optional[Literal["bath", "nail_trim"]] = None
+    notes: Optional[str] = ""
+    dropoff_time: Optional[str] = ""
+    pickup_time: Optional[str] = ""
+    time: Optional[str] = ""
+    override_vaccines: bool = False
+    override_capacity: bool = False
+    check_in_now: bool = False
+    service_id: Optional[str] = None
 
 class RecurringBookingIn(BaseModel):
     dog_id: str
@@ -414,6 +451,9 @@ class BookingOut(BaseModel):
     duration_minutes: Optional[int] = 0  # blocks the schedule for time-slotted services
     cost: Optional[int] = 0
     grooming_type: Optional[str] = None
+    # Sprint 110di-38 — Multi-dog booking group. Same id across every dog
+    # booked in one transaction; None for legacy single-dog rows.
+    group_id: Optional[str] = None
     # Income tracking (Sprint 16) — populated when the booking is logged as
     # a paid service. Backward-compatible; existing rows return None / "".
     service_id: Optional[str] = None
@@ -1768,6 +1808,10 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "pickup_time": body.pickup_time or "",
         "created_at": now_iso(),
         "cost": cost,
+        # Sprint 110di-38 — Multi-dog group booking. Persist the group_id
+        # so list/detail endpoints and the run sheet can render the "🔗
+        # Group · N dogs" badge. None for legacy single-dog flows.
+        "group_id": body.group_id,
     }
     if is_admin and body.check_in_now:
         doc["checked_in_at"] = now_iso()
@@ -2026,6 +2070,132 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
         except Exception:
             pass
     return {"created": created, "skipped": skipped}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 110di-38 — Multi-dog booking group.
+#
+# Customers (and admins) can now ship N dogs in one transaction sharing the
+# same date / service_type / dropoff window. Each dog still gets its own
+# booking row (so kennel assignment, run-sheet card, vaccines, meds and
+# check-in history continue to work unchanged) — they're stitched together
+# by a shared `group_id`.
+#
+# Implementation strategy: REUSE `create_booking()` as a library function so
+# every existing rule (vaccines, capacity, feature visibility, per-service
+# lead time, booking flow controls, Board-and-Train auto-enroll, etc.) keeps
+# firing for every dog. If any single dog fails validation, we delete the
+# rows already inserted in this group so the operator never ends up with a
+# half-committed booking. Per-booking admin emails are suppressed and one
+# summary "N dogs booked together" email goes out instead.
+# ─────────────────────────────────────────────────────────────────────────────
+@api.post("/bookings/group")
+async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_current_user)):
+    if not body.dogs:
+        raise HTTPException(status_code=400, detail="At least one dog required")
+    if len(body.dogs) > 12:
+        # Operational sanity cap — nobody books 12+ dogs in one transaction.
+        raise HTTPException(status_code=400, detail="Maximum 12 dogs per group booking")
+    # Reject obvious duplicates so the wizard can show a clear message instead
+    # of letting the second insert fail later with "already has a booking".
+    seen_ids = set()
+    for d in body.dogs:
+        if d.dog_id in seen_ids:
+            raise HTTPException(status_code=400, detail="Duplicate dog in group — each dog can only appear once")
+        seen_ids.add(d.dog_id)
+
+    group_id = str(uuid.uuid4())
+    created: List[dict] = []
+    client_doc_for_summary: Optional[dict] = None
+
+    # Suppress per-booking admin email; we send ONE summary at the end.
+    token = _suppress_admin_booking_email.set(True)
+    try:
+        for d in body.dogs:
+            # Construct a BookingIn for this dog using shared base + per-dog
+            # overrides. Note: addons + notes + kennel + time are per-dog;
+            # everything else is enforced from the group shared section so
+            # the operator can't accidentally split dates/services.
+            sub = BookingIn(
+                dog_id=d.dog_id,
+                date=body.date,
+                service_type=body.service_type,
+                end_date=body.end_date,
+                grooming_type=body.grooming_type,
+                # Per-dog notes win, otherwise fall back to the group note.
+                notes=(d.notes or body.notes or ""),
+                kennel=(d.kennel or ""),
+                dropoff_time=body.dropoff_time or "",
+                pickup_time=body.pickup_time or "",
+                # For time-slotted services (training/grooming/photography)
+                # all dogs share the same slot by default; per-dog override
+                # is allowed so admin can spread sessions across the morning.
+                time=(d.time or body.time or ""),
+                override_vaccines=body.override_vaccines,
+                override_capacity=body.override_capacity,
+                check_in_now=body.check_in_now,
+                addon_service_ids=list(d.addon_service_ids or []),
+                service_id=body.service_id,
+                group_id=group_id,
+            )
+            try:
+                bk = await create_booking(sub, user)
+            except HTTPException as e:
+                # Atomic rollback: undo everything we've inserted so far so
+                # the operator gets a clean "nothing was saved" experience.
+                if created:
+                    await db.bookings.delete_many({"group_id": group_id})
+                # Attach the failing dog id to the detail so the UI can
+                # highlight which row to fix.
+                fail_detail = e.detail
+                if isinstance(fail_detail, str):
+                    fail_detail = f"{fail_detail} (dog: {d.dog_id})"
+                raise HTTPException(status_code=e.status_code, detail=fail_detail)
+            # Stamp the group_id on the inserted row (create_booking() reads
+            # `body.group_id` and persists it, but we set it again here as a
+            # belt-and-braces guarantee for future edits to create_booking).
+            await db.bookings.update_one(
+                {"id": bk["id"]},
+                {"$set": {"group_id": group_id}},
+            )
+            bk["group_id"] = group_id
+            created.append(bk)
+            if client_doc_for_summary is None:
+                client_doc_for_summary = await db.clients.find_one(
+                    {"id": bk.get("client_id")}, {"_id": 0}
+                )
+    finally:
+        _suppress_admin_booking_email.reset(token)
+
+    # ONE summary email for portal-originated group bookings.
+    if user.get("role") != "admin" and created and client_doc_for_summary:
+        try:
+            await notify_admin_bulk_booking(
+                created,
+                client_doc_for_summary,
+                service_type=body.service_type,
+                skipped=[],
+                kind="group",
+            )
+        except Exception:
+            pass
+
+    return {"group_id": group_id, "bookings": created}
+
+
+@api.get("/bookings/group/{group_id}")
+async def get_booking_group(group_id: str, user: dict = Depends(get_current_user)):
+    """Return every booking row sharing this group_id. Clients only see their
+    own group members (defence-in-depth — the bookings are already filtered
+    by ownership when listed, but a direct id lookup bypasses that)."""
+    q: Dict = {"group_id": group_id}
+    if user.get("role") == "client":
+        q["client_id"] = user.get("client_id")
+    items = await db.bookings.find(q, {"_id": 0}).sort("created_at", 1).to_list(50)
+    if not items:
+        raise HTTPException(status_code=404, detail="Group not found")
+    return {"group_id": group_id, "bookings": items, "count": len(items)}
+
 
 
 @api.put("/bookings/{booking_id}/reschedule", response_model=BookingOut)

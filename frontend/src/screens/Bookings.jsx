@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import AdminBookingModal from "../components/AdminBookingModal";
@@ -9,6 +9,19 @@ import PageHero from "../components/PageHero";
 import RescheduleRequestsInbox from "../components/RescheduleRequestsInbox";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { toast } from "sonner";
+
+// Sprint 110di-38 — Multi-dog group badge. Module-scoped so it isn't
+// re-created on every render of the parent Bookings component.
+function GroupBadge({ gid, counts }) {
+  if (!gid) return null;
+  const n = counts?.[gid] || 0;
+  if (n < 2) return null;
+  return (
+    <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shGreen bg-shGreen/15 border border-shGreen/40 px-1.5 py-0.5 rounded whitespace-nowrap" data-testid={`group-badge-${gid}`} title={`Booked together with ${n - 1} other dog${n === 2 ? "" : "s"}`}>
+      <i className="fas fa-link mr-0.5 text-[9px]"/>Group · {n}
+    </span>
+  );
+}
 
 export default function Bookings() {
   const [bookings, setBookings] = useState([]);
@@ -47,6 +60,18 @@ export default function Bookings() {
   };
   useEffect(() => { load(); }, []);
   useLiveRefresh(load, { intervalMs: 30_000 });
+
+  // Sprint 110di-38 — Multi-dog group badge. Count how many rows share each
+  // group_id across the active+archived window so the UI can render a small
+  // "🔗 Group · N" chip next to grouped bookings. Single-dog bookings have
+  // `group_id == null` and are excluded.
+  const groupCounts = useMemo(() => {
+    const counts = {};
+    [...bookings, ...archived].forEach(b => {
+      if (b?.group_id) counts[b.group_id] = (counts[b.group_id] || 0) + 1;
+    });
+    return counts;
+  }, [bookings, archived]);
 
   const loadArchive = async () => {
     setArchiveLoading(true);
@@ -167,6 +192,7 @@ export default function Bookings() {
                     <p className="text-sm font-black text-white uppercase truncate">
                       {b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span>
                       {b._archived && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-shBlue bg-shBlue/15 border border-shBlue/30 px-1.5 py-0.5 rounded">Archived</span>}
+                      <GroupBadge gid={b.group_id} counts={groupCounts}/>
                     </p>
                     <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
                       {b.service_type} · {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
@@ -196,7 +222,7 @@ export default function Bookings() {
                      data-testid={`booking-grouped-row-${b.id}`}
                      onClick={()=>setDetailFor(b)}>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-black text-white uppercase truncate">{b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span></p>
+                    <p className="text-sm font-black text-white uppercase truncate">{b.dog_name} <span className="text-gray-500 normal-case text-[14px]">· {b.client_name}</span><GroupBadge gid={b.group_id} counts={groupCounts}/></p>
                     <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
                       {b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}
                       {b.end_date && b.end_date !== b.date ? ` · → ${b.end_date}` : ""}{b.time ? ` @ ${b.time}` : ""}
@@ -238,7 +264,7 @@ export default function Bookings() {
                   className={`border-t border-bgHover/40 ${rowAccent} hover:bg-bgHover/40 transition cursor-pointer`}
                   onClick={()=>setDetailFor(b)}
                   data-testid={`booking-row-${b.id}`}>
-                <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}</td>
+                <td className="px-6 py-4 text-white font-black uppercase text-xs">{b.dog_name}<GroupBadge gid={b.group_id} counts={groupCounts}/></td>
                 <td className="px-6 py-4 text-gray-300 text-xs">{b.client_name}</td>
                 <td className="px-6 py-4 text-[14px] font-black uppercase text-gray-300">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</td>
                 <td className="px-6 py-4 text-xs text-gray-300">
@@ -278,7 +304,7 @@ export default function Bookings() {
                  onKeyDown={(e)=>{ if (e.key==="Enter"||e.key===" ") { e.preventDefault(); setDetailFor(b); } }}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-black uppercase text-white">{b.dog_name}</p>
+                  <p className="text-sm font-black uppercase text-white">{b.dog_name}<GroupBadge gid={b.group_id} counts={groupCounts}/></p>
                   <p className="text-[13px] text-gray-400 truncate">{b.client_name}</p>
                 </div>
                 <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span>
