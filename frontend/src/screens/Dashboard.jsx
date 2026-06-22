@@ -8,6 +8,7 @@ import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
 import { DogFactCard } from "../components/DogFactCard";
+import { DailyTriviaCard } from "../components/DailyTriviaCard";
 import { MileageDashTile } from "../components/MileageDashTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
@@ -226,8 +227,11 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {/* Sprint 110ax / 110di-59 — Daily dog fact + trivia leaderboard.
           Promoted to BIG variant and moved above-the-fold (was previously
-          a tiny chip near the bottom that the operator never noticed). */}
+          a tiny chip near the bottom that the operator never noticed).
+          Sprint 110di-60 — Added playable Trivia Question of the Day so
+          staff can also play (separately tracked from clients). */}
       {widgetOn("dog_fact") && <DogFactCard variant="big" />}
+      {widgetOn("trivia") && <DailyTriviaCard />}
       {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
 
       {pendingVax.length > 0 && (

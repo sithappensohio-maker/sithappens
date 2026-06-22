@@ -3002,6 +3002,30 @@ async def _require_client_with_record(user: dict) -> str:
         raise HTTPException(status_code=400, detail="No client record linked. Contact your trainer.")
     return cid
 
+
+def _trivia_participant_id(user: dict) -> str:
+    """Sprint 110di-60 — Trivia is fun for staff too.
+
+    Clients use their real client_id (joins to the leaderboard via the
+    `clients` collection). Admin / employee accounts use a `staff:{user_id}`
+    sentinel so their attempts are tracked separately and never pollute the
+    client-facing leaderboard (the leaderboard joins on the `clients`
+    collection which has no record matching the `staff:` prefix).
+    """
+    if user.get("role") == "client":
+        cid = user.get("client_id")
+        if not cid:
+            raise HTTPException(
+                status_code=400,
+                detail="No client record linked. Contact your trainer.",
+            )
+        return cid
+    # admin / employee / any other authenticated role
+    uid = user.get("id") or user.get("email")
+    if not uid:
+        raise HTTPException(status_code=400, detail="Cannot resolve account id")
+    return f"staff:{uid}"
+
 @api.put("/portal/me")
 async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)
@@ -11133,7 +11157,8 @@ def _strip_correct(q: dict) -> dict:
 
 @api.get("/portal/trivia/daily")
 async def portal_trivia_daily(user: dict = Depends(get_current_user)):
-    cid = await _require_client_with_record(user)
+    # Sprint 110di-60 — Staff/admin can also play (separately tracked).
+    cid = _trivia_participant_id(user)
     today_d = business_today()
     date_str = today_d.isoformat()
     q = await _get_or_create_today_question(date_str)
@@ -11167,7 +11192,8 @@ async def portal_trivia_daily_answer(
     body: TriviaAnswerIn,
     user: dict = Depends(get_current_user),
 ):
-    cid = await _require_client_with_record(user)
+    # Sprint 110di-60 — Staff/admin can also play (separately tracked).
+    cid = _trivia_participant_id(user)
     today_d = business_today()
     date_str = today_d.isoformat()
     q = await _get_or_create_today_question(date_str)
@@ -11188,7 +11214,10 @@ async def portal_trivia_daily_answer(
     })
     stats = await _compute_streak(cid, today_d)
     milestone = None
-    if correct:
+    # Sprint 110di-60 — Skip milestone-perk tracking for staff/admin (no
+    # real client record to stamp the milestone onto + no operator notify).
+    is_staff_attempt = cid.startswith("staff:")
+    if correct and not is_staff_attempt:
         rewards = await _get_trivia_rewards()
         match = next((r for r in rewards if int(r.get("days") or 0) == stats["current_streak"]), None)
         if match:
@@ -11482,7 +11511,8 @@ async def admin_trivia_leaderboard(_: dict = Depends(require_admin)):
     perks at next checkout."""
     today_d = business_today()
     attempts = await db.trivia_attempts.find(
-        {}, {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
+        {"client_id": {"$not": {"$regex": "^staff:"}}},  # Sprint 110di-60: staff scores excluded from client leaderboard
+        {"_id": 0, "client_id": 1, "date": 1, "correct": 1}
     ).to_list(50000)
     if not attempts:
         return {"players": [], "total_players": 0, "total_attempts": 0,
