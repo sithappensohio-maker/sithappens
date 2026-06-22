@@ -164,7 +164,7 @@ export default function AuditLog() {
       {err && <div className="text-[14px] text-red-300 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
       {loading ? <p className="text-gray-500 text-sm">Loading…</p> : visible.length === 0 ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center" data-testid="audit-empty">
+        <div className="card-default rounded-xl p-10 text-center" data-testid="audit-empty">
           <p className="text-gray-400 text-sm">No matching audit events. Try clearing the filters.</p>
         </div>
       ) : (

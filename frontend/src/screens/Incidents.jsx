@@ -113,9 +113,9 @@ export default function Incidents() {
       </div>
 
       <div className="space-y-3" data-testid="incidents-list">
-        {filtered.length === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center"><p className="text-shGreen font-black uppercase text-xs tracking-widest"><i className="fas fa-shield-heart mr-2"/>No incidents on record. Keep up the great work.</p></div>}
+        {filtered.length === 0 && <div className="card-warning rounded-xl p-10 text-center"><p className="text-shGreen font-black uppercase text-xs tracking-widest"><i className="fas fa-shield-heart mr-2"/>No incidents on record. Keep up the great work.</p></div>}
         {filtered.map(i => (
-          <div key={i.id} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg" data-testid={`incident-${i.id}`}>
+          <div key={i.id} className="card-warning rounded-xl p-5 shadow-lg" data-testid={`incident-${i.id}`}>
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-center gap-2 mb-2">

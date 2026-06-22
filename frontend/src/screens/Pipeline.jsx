@@ -99,7 +99,7 @@ export default function Pipeline({ onJumpToDog }) {
         </div>
       </div>
 
-      <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden shadow-lg">
+      <div className="card-stat rounded-xl overflow-hidden shadow-lg">
         {loading && <p className="p-8 text-center text-gray-500 text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
         {!loading && rows.length === 0 && (
           <p className="p-12 text-center text-gray-500 text-sm">No enrollments match these filters.</p>

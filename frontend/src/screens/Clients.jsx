@@ -255,7 +255,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
         {clients.length === 0 && <div className="col-span-full text-center text-gray-500 text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
         {clients.map(c => (
-          <div key={c.id} className="bg-bgPanel p-5 sm:p-6 rounded-xl border-l-4 border-shBlue group relative shadow-lg" data-testid={`client-card-${c.id}`}>
+          <div key={c.id} className="card-client p-5 sm:p-6 rounded-xl group relative shadow-lg" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
               {c.email && (
                 <button onClick={()=>setEmailClient(c)} className="text-gray-400 hover:text-shGreen p-2 -m-1"

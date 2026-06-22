@@ -280,7 +280,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
           const v = vaccineStatus(d.vaccines?.rabies);
           const careCount = (d.feeding_schedule?.length || 0) + (d.medications?.length || 0);
           return (
-            <div key={d.id} className="bg-bgPanel rounded-xl border border-bgHover relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
+            <div key={d.id} className="card-dog rounded-xl relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
               {d.photo
                 ? <div className="h-40 w-full bg-bgBase flex items-center justify-center overflow-hidden">
                     <img src={d.photo} alt={d.name} loading="lazy" decoding="async" className="max-h-40 max-w-full object-contain" />

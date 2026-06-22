@@ -366,7 +366,7 @@ export default function Income() {
 
       {/* Weekly tally tiles */}
       {summary && (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="weekly-summary">
+        <div className="card-finance rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">This Week (Mon–Sun)</p>
@@ -415,7 +415,7 @@ export default function Income() {
 
       {/* Range view (month / quarter / YTD / custom) */}
       {rangeSummary && (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="range-summary">
+        <div className="card-finance rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
               <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">Longer-Range View</p>
@@ -453,7 +453,7 @@ export default function Income() {
       )}
 
       {/* Retail Sales (external POS) — date range matches Range View above */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="retail-card">
+      <div className="card-finance rounded-xl p-5" data-testid="retail-card">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-purple-300 uppercase tracking-widest"><i className="fas fa-bag-shopping mr-2"/>Retail Sales</h4>

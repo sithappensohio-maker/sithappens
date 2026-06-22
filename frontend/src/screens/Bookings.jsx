@@ -172,7 +172,7 @@ export default function Bookings() {
         testid="bookings-hero"
       />
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
-      <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden">
+      <div className="card-booking rounded-xl overflow-hidden">
         {showHistory ? (
           <div className="p-4">
             <CollapsibleDateGroups

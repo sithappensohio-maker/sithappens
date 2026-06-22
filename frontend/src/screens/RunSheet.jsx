@@ -99,7 +99,7 @@ export default function RunSheet() {
       </div>
 
       <div ref={printRef}>
-      <div className="print-card bg-bgPanel border border-bgHover rounded-xl p-6 mb-6 shadow-2xl">
+      <div className="print-card card-booking rounded-xl p-6 mb-6 shadow-2xl">
         <div className="flex justify-between items-start mb-2">
           <div>
             <h2 className="text-2xl font-black uppercase italic text-shGreen">Sit Happens · Daily Sheet</h2>
@@ -109,7 +109,7 @@ export default function RunSheet() {
         </div>
       </div>
 
-      {visibleCount === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black" data-testid="rs-empty">No {boardingOnly ? "boarding " : ""}dogs scheduled for this day.</div>}
+      {visibleCount === 0 && <div className="card-booking rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black" data-testid="rs-empty">No {boardingOnly ? "boarding " : ""}dogs scheduled for this day.</div>}
 
       {groups.map(g => {
         const list = bookings.filter(b => b.service_type === g);
@@ -126,7 +126,7 @@ export default function RunSheet() {
                        role="button"
                        tabIndex={0}
                        onKeyDown={(e)=>{ if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailId(b.id); } }}
-                       className="print-card bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg cursor-pointer hover:border-shGreen/60 hover:bg-bgPanel/80 transition print:cursor-auto print:hover:border-bgHover"
+                       className="print-card card-booking rounded-xl p-5 shadow-lg cursor-pointer hover:border-shGreen/60 hover:bg-bgPanel/80 transition print:cursor-auto print:hover:border-bgHover"
                        data-testid={`rs-card-${b.id}`}>
                     <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-3">
                       <div>

@@ -104,7 +104,7 @@ export default function CareBoard() {
       {err && <div className="text-[14px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
       {loading ? <p className="text-gray-500 text-sm">Loading…</p> : rows.length === 0 ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center" data-testid="care-empty">
+        <div className="card-care rounded-xl p-10 text-center" data-testid="care-empty">
           <p className="text-shGreen font-black uppercase text-xs tracking-widest">
             <i className="fas fa-shield-heart mr-2"/>Nothing on the schedule for today. Either no dogs are on-site or none of them have feeding/med plans.
           </p>
@@ -133,7 +133,7 @@ export default function CareBoard() {
 
 function StatTile({ label, value, color, icon, testid }) {
   return (
-    <div className="bg-bgPanel border border-bgHover rounded-xl p-3 text-center" data-testid={testid}>
+    <div className="card-care rounded-xl p-3 text-center" data-testid={testid}>
       <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">
         <i className={`fas ${icon} mr-1`}/>{label}
       </p>

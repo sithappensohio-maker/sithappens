@@ -78,7 +78,7 @@ export default function KennelBoard() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {Object.entries(SERVICE_META).filter(([k]) => k !== "other").map(([k, m]) => (
-          <div key={k} className="bg-bgPanel border border-bgHover rounded-xl p-3 text-center" data-testid={`kennel-stat-${k}`}>
+          <div key={k} className="card-kennel rounded-xl p-3 text-center" data-testid={`kennel-stat-${k}`}>
             <p className="text-[10px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${m.icon} mr-1`}/>{m.label}</p>
             <p className={`text-2xl font-black mt-1 ${m.color}`}>{board?.summary?.[k] || 0}</p>
           </div>
@@ -89,7 +89,7 @@ export default function KennelBoard() {
 
       {loading ? <p className="text-gray-500 text-sm">Loading…</p> :
        (!board || board.on_site_count === 0) ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center" data-testid="kennel-empty">
+        <div className="card-kennel rounded-xl p-10 text-center" data-testid="kennel-empty">
           <p className="text-shGreen font-black uppercase text-xs tracking-widest">
             <i className="fas fa-shield-heart mr-2"/>No dogs on-site today. Quiet day for the team!
           </p>

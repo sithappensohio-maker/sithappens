@@ -185,7 +185,7 @@ export default function Waitlist() {
       {err && <div className="text-[14px] text-red-300 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
       {loading ? <p className="text-gray-500 text-sm">Loading…</p> : visible.length === 0 ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center" data-testid="waitlist-empty">
+        <div className="card-waitlist rounded-xl p-10 text-center" data-testid="waitlist-empty">
           <p className="text-shGreen font-black uppercase text-xs tracking-widest">
             <i className="fas fa-shield-heart mr-2"/>No entries match this filter.
           </p>
@@ -196,7 +196,7 @@ export default function Waitlist() {
             const meta = STATUS_META[e.status] || STATUS_META.waiting;
             const pmeta = PRIORITY_META[e.priority] || PRIORITY_META.normal;
             return (
-              <div key={e.id} className="bg-bgPanel border border-bgHover rounded-xl p-4 shadow-lg"
+              <div key={e.id} className="card-waitlist rounded-xl p-4 shadow-lg"
                    data-testid={`waitlist-row-${e.id}`}>
                 <div className="flex items-start justify-between gap-3 flex-wrap">
                   <div className="flex-1 min-w-0">

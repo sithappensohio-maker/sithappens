@@ -97,7 +97,7 @@ export default function Staff() {
       <OwnerDrawCard/>
 
       {/* Employee list */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="staff-list">
+      <div className="card-staff rounded-xl overflow-hidden" data-testid="staff-list">
         {paySnap && paySnap.totals.this_week_gross > 0 && (
           <div className="bg-bgBase/40 border-b border-bgHover px-4 py-2 flex flex-wrap items-baseline gap-x-4 gap-y-1" data-testid="staff-pay-totals">
             <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-hand-holding-dollar mr-1 text-shGreen"/>This week so far</p>
@@ -155,7 +155,7 @@ export default function Staff() {
       </>)}
 
       {subtab === "timecards" && (
-      <div className="bg-bgPanel border border-bgHover rounded-xl p-5 space-y-4" data-testid="timecard-viewer">
+      <div className="card-staff rounded-xl p-5 space-y-4" data-testid="timecard-viewer">
         <div>
           <h4 className="text-white font-black uppercase italic tracking-tight"><i className="fas fa-clock text-shBlue mr-2"/>Time Clock</h4>
           <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">Hours and payroll cost by employee</p>

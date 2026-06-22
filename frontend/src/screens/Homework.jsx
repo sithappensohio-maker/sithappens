@@ -145,7 +145,7 @@ export default function Homework() {
       </div>
 
       <div className="space-y-3" data-testid="homework-list">
-        {filtered.length === 0 && <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black">No homework {filter !== "all" ? `(${filter})` : "yet"}.</div>}
+        {filtered.length === 0 && <div className="card-default rounded-xl p-10 text-center text-xs text-gray-500 uppercase font-black">No homework {filter !== "all" ? `(${filter})` : "yet"}.</div>}
         {filtered.map(h => {
           const snap = h.template_snapshot;
           const tm = snap ? tierMeta(snap.tier) : null;
