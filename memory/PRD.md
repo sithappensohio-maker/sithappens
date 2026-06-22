@@ -4975,3 +4975,42 @@ Sample CSV updated with realistic examples. Back-compat tested: old CSVs without
 ### Note for future
 `DailyTrackerBuilder.jsx` is now ~625 lines, approaching the 700-line guideline. A future cleanup pass should split out the Step-2 day editor into its own component.
 
+
+## Sprint 110di-66 / 66b — Per-step Directions UI + step_minutes CSV col + submit() bug fix (2026-02-22)
+
+### User asks (combined)
+1. "in our daily tracker we need to add a step directions field after each step so the client can read the instructions not just the step this also needs included in the csv upload"
+2. "how about we ad the steps to log to the csv" (i.e. add the step duration/minutes column to CSV)
+
+### Implementation
+**DailyTrackerBuilder.jsx**
+- Each step row now has an always-visible directions textarea below the existing label/minutes/X row (data-testid `dtb-step-description-{id}`).
+- **CRITICAL BUG FIX**: `submit()` was omitting `s.description` from the POST payload — meaning directions typed in the builder (or imported from CSV) were lost on save. Fixed at line 227.
+
+**TodayPlanCard.jsx** (client-facing daily plan)
+- Description now renders ALWAYS inline below each step label in lighter gray, with strike-through when the step is done. Removed the chevron-to-expand UX that was hiding it. (Notes stay in their own bordered section since they're optional/edge-case content.)
+- Removed unused `expanded`/`toggleExpand`/`hasMore`/`isOpen` state.
+
+**csvImport.js** (sprint 66b)
+- `parseDailyTrackerCsv` now reads an optional `step_minutes` column. Empty cell → null (untimed), valid integer → parsed, non-numeric → null (no crash), negative → clamped to 0.
+- `DAILY_TRACKER_CSV_SAMPLE` updated to include the new column.
+- Help text on the import button updated to list step_minutes.
+- Back-compat: CSVs without `step_minutes` still parse cleanly (all steps get minutes=null).
+
+### Verification (testing agent iteration_16)
+- Backend regression: 13/13 (new pytest `test_step_description_persist.py` confirms description+minutes round-trip through POST→GET).
+- Frontend E2E: typed unique description + minutes=7 in builder → Save & Assign → GET on the saved homework returned exactly `{label:'Step Alpha', minutes:7, description:'THIS_IS_THE_PERSISTED_DESCRIPTION'}`.
+- CSV download produces correct header order: `day_number,day_focus,day_instructions,day_equipment,step_label,step_minutes,step_description`.
+- CSV upload of legacy file (no step_minutes col) imports descriptions correctly; minutes fields stay empty.
+- Service worker bumped to `sh-v66-110di-66b-step-minutes-csv`.
+
+### Files touched
+- `frontend/src/components/DailyTrackerBuilder.jsx` — added textarea per step, fixed submit() to include description, updated import helpText.
+- `frontend/src/components/TodayPlanCard.jsx` — always-visible description rendering, dead-code removal.
+- `frontend/src/lib/csvImport.js` — step_minutes column, updated sample.
+- `frontend/public/service-worker.js` — CACHE_VERSION bumped.
+- NEW `backend/tests/test_step_description_persist.py` — pytest for round-trip persistence (added by testing agent).
+
+### Note for future
+DailyTrackerBuilder.jsx is now ~639 lines, just under the 700-line guideline. Testing agent recommended splitting Step1/Step2 panels into sub-components on the next cleanup pass — not urgent.
+
