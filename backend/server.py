@@ -8758,7 +8758,8 @@ def _enrollment_summary(enrollment: dict) -> dict:
     total = 0
     mastered = 0
     in_progress = 0
-    for m in (enrollment.get("program_snapshot", {}).get("modules") or []):
+    modules = (enrollment.get("program_snapshot", {}).get("modules") or [])
+    for m in modules:
         for g in (m.get("goals") or []):
             total += 1
             p = (enrollment.get("goal_progress") or {}).get(g["id"]) or {}
@@ -8767,8 +8768,30 @@ def _enrollment_summary(enrollment: dict) -> dict:
             elif p.get("status") == "in_progress" or int(p.get("score") or 0) >= 1:
                 in_progress += 1
     pct = int(round(100 * mastered / total)) if total else 0
+
+    # Sprint 110di-64 — Trainer-only weekly-plan pointer. Reuses modules as
+    # "weeks": module #1 = week 1, etc. The trainer can bump the pointer
+    # forward via /current-module; we also derive the week number for the UI.
+    modules_sorted = sorted(modules, key=lambda m: (m.get("order", 0), m.get("name") or ""))
+    total_weeks = len(modules_sorted)
+    current_module_id = enrollment.get("current_module_id")
+    current_module = None
+    current_week = 1
+    if total_weeks > 0:
+        if current_module_id:
+            for idx, m in enumerate(modules_sorted):
+                if m.get("id") == current_module_id:
+                    current_module = m
+                    current_week = idx + 1
+                    break
+        if current_module is None:
+            current_module = modules_sorted[0]
+            current_week = 1
+
     return {**enrollment, "total_goals": total, "mastered_goals": mastered,
-            "in_progress_goals": in_progress, "mastered_pct": pct}
+            "in_progress_goals": in_progress, "mastered_pct": pct,
+            "total_weeks": total_weeks, "current_week": current_week,
+            "current_module": current_module}
 
 
 async def _check_completion_rule(enrollment: dict, *, sessions_logged: int = 0) -> bool:
@@ -8874,6 +8897,10 @@ async def enroll_dog(dog_id: str, body: EnrollIn, _: dict = Depends(require_admi
         "completed_at": None,
         "on_hold_at": None,
         "goal_progress": _empty_progress(program.get("modules") or []),
+        # Sprint 110di-64 — Trainer-driven "what module are we on" pointer.
+        # The current module is the "lesson plan week" the trainer is focused on.
+        # Falls back to the first module on display.
+        "current_module_id": (program.get("modules") or [{}])[0].get("id"),
         "sessions_count": 0,
         "trainer_notes": body.trainer_notes or "",
         "created_at": now_iso(),
@@ -8941,6 +8968,32 @@ async def update_enrollment(dog_id: str, enrollment_id: str, body: EnrollmentUpd
     if update:
         await db.dog_programs.update_one({"id": enrollment_id}, {"$set": update})
         enrollment.update(update)
+    return _enrollment_summary(enrollment)
+
+
+# ─── Sprint 110di-64 · Trainer's "what week are we on" pointer ────────────
+class EnrollmentCurrentModuleIn(BaseModel):
+    module_id: str
+
+
+@api.put("/dogs/{dog_id}/programs/{enrollment_id}/current-module")
+async def set_enrollment_current_module(
+    dog_id: str, enrollment_id: str, body: EnrollmentCurrentModuleIn,
+    _: dict = Depends(require_admin),
+):
+    """Bump the trainer's 'we are on this week/module' pointer for this dog's
+    enrollment. The module must exist in the enrollment's snapshotted modules
+    so stale client payloads can't pollute the document."""
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    modules = (enrollment.get("program_snapshot", {}).get("modules") or [])
+    if not any(m.get("id") == body.module_id for m in modules):
+        raise HTTPException(status_code=404, detail="Module not found in this enrollment")
+    await db.dog_programs.update_one(
+        {"id": enrollment_id}, {"$set": {"current_module_id": body.module_id}},
+    )
+    enrollment["current_module_id"] = body.module_id
     return _enrollment_summary(enrollment)
 
 

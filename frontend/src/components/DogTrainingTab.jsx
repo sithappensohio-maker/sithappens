@@ -74,6 +74,12 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
+  // Sprint 110di-64 — trainer bumps "this week" pointer (uses existing modules as weeks)
+  const setCurrentModule = async (eid, moduleId) => {
+    try { await api.put(`/dogs/${dogId}/programs/${eid}/current-module`, { module_id: moduleId }); load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to set current week"); }
+  };
+
   return (
     <div className="space-y-4" data-testid="dog-training-tab">
       {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-2 uppercase font-black">{err}</div>}
@@ -100,6 +106,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onStatus={(s)=>updateStatus(e.id, s)}
                           onUnenroll={()=>unenroll(e)}
                           onTargetDate={(d)=>updateTarget(e.id, d)}
+                          onCurrentModule={(mid)=>setCurrentModule(e.id, mid)}
                           onGoal={(gid, patch)=>setGoal(e.id, gid, patch)} />
         ))
       ) : (
@@ -150,11 +157,15 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onGoal }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const overdue = enrollment.target_completion_date && enrollment.target_completion_date < new Date().toISOString().slice(0,10);
+  // Sprint 110di-64 — Use the existing modules array as weekly lessons.
+  const totalWeeks = enrollment.total_weeks || (snap.modules || []).length;
+  const currentWeek = enrollment.current_week || 1;
   return (
     <div className="bg-bgBase/60 border border-bgHover rounded-lg overflow-hidden" data-testid={`enrollment-${enrollment.id}`}>
       <div className="px-3 sm:px-4 py-3 border-b border-bgHover" style={{background: color + "10"}}>
@@ -191,6 +202,14 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
               <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
             </button>
           )}
+          {/* Sprint 110di-64 — Trainer's "what week am I focused on" pill */}
+          {totalWeeks > 0 && (
+            <button onClick={()=>setPlanOpen(true)} data-testid={`week-pill-${enrollment.id}`}
+                    className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-3 py-0.5 rounded-full font-black text-[12px] uppercase tracking-widest hover:bg-shGreen/25 transition">
+              <i className="fas fa-calendar-week mr-1.5"/>Week {currentWeek} of {totalWeeks}
+              <span className="ml-1.5 text-[11px] opacity-70">· Plan</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -206,6 +225,94 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Sprint 110di-64 — Weekly lesson plan timeline (trainer-only) */}
+      {planOpen && (
+        <LessonPlanTimelineModal enrollment={enrollment} color={color}
+                                 onPickModule={(mid)=>{ onCurrentModule(mid); }}
+                                 onClose={()=>setPlanOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+
+function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
+  const snap = enrollment.program_snapshot || {};
+  const modules = (snap.modules || []).slice().sort((a,b)=>(a.order??0)-(b.order??0));
+  const currentId = enrollment.current_module?.id || enrollment.current_module_id;
+  return (
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+         onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
+         data-testid={`lesson-plan-modal-${enrollment.id}`}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
+        <div className="px-5 py-4 border-b border-bgHover flex items-center justify-between" style={{background: color + "10"}}>
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.3em]" style={{color}}>Lesson Plan · Trainer view</p>
+            <h3 className="text-lg font-black text-white uppercase tracking-tight">{snap.name}</h3>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl"><i className="fas fa-times"/></button>
+        </div>
+        <div className="overflow-y-auto p-5 space-y-3">
+          {modules.length === 0 && (
+            <p className="text-gray-500 text-center py-8 text-sm">No weeks defined yet — add modules to this program in Settings → Programs to build out your weekly plan.</p>
+          )}
+          {modules.map((m, idx) => {
+            const isCurrent = m.id === currentId;
+            const isPast = currentId && modules.findIndex(x=>x.id===currentId) > idx;
+            const goalCount = (m.goals || []).length;
+            const mastered = (m.goals || []).filter(g => {
+              const p = enrollment.goal_progress?.[g.id] || {};
+              return p.status === "mastered" || (p.score || 0) >= 4;
+            }).length;
+            return (
+              <div key={m.id} data-testid={`lesson-week-${enrollment.id}-${idx+1}`}
+                   className={`border rounded-lg p-3 transition ${isCurrent ? "bg-bgBase border-shGreen shadow-lg shadow-shGreen/10" : isPast ? "bg-bgBase/30 border-bgHover opacity-60" : "bg-bgBase/60 border-bgHover"}`}>
+                <div className="flex items-start gap-3">
+                  <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border-2 ${isCurrent ? "bg-shGreen text-bgHeader border-shGreen" : isPast ? "bg-bgHover text-gray-500 border-bgHover" : "text-shBlue border-shBlue/60"}`}>
+                    {isPast ? <i className="fas fa-check"/> : idx + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">Week {idx + 1}</p>
+                      {isCurrent ? (
+                        <span className="text-[11px] font-black uppercase tracking-widest text-shGreen bg-shGreen/15 px-2 py-0.5 rounded-full"><i className="fas fa-bullseye mr-1"/>Focus this week</span>
+                      ) : (
+                        <button onClick={()=>onPickModule(m.id)} data-testid={`lesson-week-set-${enrollment.id}-${idx+1}`}
+                                className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                          Set as current
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-sm font-black text-white mt-0.5">{m.name}</p>
+                    {m.description && <p className="text-[14px] text-gray-400 mt-1 leading-snug">{m.description}</p>}
+                    {goalCount > 0 && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">Skills · {mastered}/{goalCount} mastered</p>
+                        <ul className="text-[13px] text-gray-300 space-y-0.5">
+                          {(m.goals || []).map(g => {
+                            const p = enrollment.goal_progress?.[g.id] || {};
+                            const done = p.status === "mastered" || (p.score || 0) >= 4;
+                            return (
+                              <li key={g.id} className={`flex items-center gap-2 ${done ? "line-through text-gray-500" : ""}`}>
+                                <i className={`fas ${done ? "fa-circle-check text-shGreen" : "fa-circle text-gray-600"} text-[11px]`}/>
+                                <span>{g.name}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="px-5 py-3 border-t border-bgHover bg-bgBase/40 text-[12px] text-gray-500">
+          <i className="fas fa-circle-info mr-1"/>Tap <span className="text-shBlue font-black">Set as current</span> to bump the week pointer. Skills check off automatically when you mark a goal mastered on the main training tab.
+        </div>
       </div>
     </div>
   );
