@@ -4833,3 +4833,40 @@ User choices: (1) revenue recognition = **option C** cash-basis (only `amount_pa
 
 ### Service worker bumped to `sh-v59-110di-61-partial-sales-take-payment`.
 
+
+
+## Sprint 110di-62 — Tier 2 Custom Email Templates (Frontend complete) (2026-02-22)
+**User ask**: Operator wants to create custom email templates ad-hoc and bind them so they auto-fire when specific Training Programs or Credit Packs are sold (e.g. "Welcome to Puppy Basics" sent the moment the program is purchased).
+
+### Backend (already built in prior session, verified this sprint)
+- `POST /api/admin/email-templates/custom` — create with `{name, subject, intro_html, audience, cta_text?, title?}`. Slug auto-derived as `custom_<snake>`, deduped against system + existing customs.
+- `DELETE /api/admin/email-templates/custom/{slug}` — system templates rejected with 400; on success, auto-unbinds both `programs.welcome_email_template_slug` and `credit_packs.welcome_email_template_slug` via two `update_many` calls.
+- `_fire_product_welcome_email(client, slug, ctx)` — async helper that calls `email_service._dispatch` with the bound slug. Silent no-op if client has no email or slug missing.
+- Sell endpoints firing the welcome email: `sell-program` (line ~18265), `sell-pack` singular (~18686), `sell-packs` bulk (~18895) — bulk path dedupes slugs so 3× of the same pack only sends ONE welcome.
+
+### Frontend (finished this sprint)
+- **`EmailDesignerPanel.jsx`** — TemplatesCard now has a green `+ Create Custom` button (`template-create-btn`). Clicking opens `CreateCustomTemplateModal` with fields: name, audience (client/admin/staff), subject, body HTML. New rows show a purple `CUSTOM` badge + trash icon. New filter chip `template-filter-custom` narrows the list to custom-only.
+- **`Programs.jsx`** — ProgramEditor now loads `/admin/email-templates`, filters to `audience=client`, and renders a `Welcome email (auto-sent when program is sold)` dropdown (`prog-welcome-email`) bound to `program.welcome_email_template_slug`.
+- **`CreditPacksSettings.jsx`** — Pack edit modal loads templates and renders the same dropdown (`pack-welcome-email`) bound to `form.welcome_email_template_slug`. Stored on POST + PUT via existing `CreditPackIn` Pydantic model.
+- **Service worker** bumped to `sh-v60-110di-62-custom-email-templates` so the PWA refreshes.
+
+### Tests (`tests/test_custom_email_templates.py` — 6/6 pass)
+- create → list → delete custom template (verifies slug starts with `custom_`).
+- system template (`welcome`) cannot be deleted via custom endpoint (400/404).
+- program binding persists + auto-unbinds when the bound custom template is deleted.
+- **NEW** credit-pack binding persists via PUT + survives GET round-trip.
+- **NEW** credit-pack binding auto-unbinds when the bound custom template is deleted.
+- **NEW** bulk `sell-packs` with a welcome-bound pack returns 200 (no 500 from fire-and-forget dispatch).
+
+### Verified live (testing agent iteration_12)
+- Email Designer create modal, custom badge, trash icon, custom filter chip — all live-confirmed.
+- Pack edit modal dropdown populated with 25 system templates + 2 existing customs — live-confirmed.
+- Backend round-trip for program binding/unbind is pytest-proven (program modal nav was non-trivial via automation but the testid `prog-edit-{id}` exists on the pencil button for future runs).
+
+### Files touched
+- `backend/server.py` — `sell-packs` bulk path: added dedup'd `_fire_product_welcome_email` block (~18895).
+- `frontend/src/components/EmailDesignerPanel.jsx` — fixed stray `}` syntax error.
+- `frontend/src/components/Programs.jsx` — loads templates + adds `prog-welcome-email` dropdown.
+- `frontend/src/components/CreditPacksSettings.jsx` — loads templates + adds `pack-welcome-email` dropdown; `empty` form includes `welcome_email_template_slug: null`.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v60-110di-62-custom-email-templates`.
+- `backend/tests/test_custom_email_templates.py` — 3 new tests added by testing agent (credit-pack persist, credit-pack unbind, bulk-sell with welcome slug).
