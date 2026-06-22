@@ -4939,3 +4939,39 @@ User choices: (1) revenue recognition = **option C** cash-basis (only `amount_pa
 ### Note for future
 `DogTrainingTab.jsx` is now ~432 lines (still under 700-line guideline). The testing agent suggested splitting `LessonPlanTimelineModal` into its own file at a future cleanup pass — not urgent.
 
+
+## Sprint 110di-65 — CSV import for Programs & Daily Tracker (2026-02-22)
+**User ask**: "How difficult would it be to make our daily tracker homework and our training programs take CSV uploads so I can just upload from files instead of typing it all out?" → "do both but be cheap on credits."
+
+**Cheap-mode design**: Pure client-side parsing — zero new backend code. CSV is parsed in the browser into the exact state shape each builder already uses (`modules[]` for programs, `days[]` for daily tracker), then the existing `POST /api/programs` / `POST /api/homework/daily-tracker` endpoints handle persistence unchanged.
+
+### Implementation
+- **NEW `frontend/src/lib/csvImport.js`** — Tiny RFC-4180-ish parser (handles `""` escapes + embedded commas), plus two shape-mapping functions:
+  - `parseProgramCsv(text)` — required cols `module_name, goal_name`; optional `module_description, goal_description`. Rows grouped by `module_name`. Returns `{modules, errors}` with row-numbered errors like "Row 4: missing goal_name".
+  - `parseDailyTrackerCsv(text)` — required cols `day_number, day_focus, step_label`; optional `step_description, day_instructions, day_equipment`. `day_equipment` is semicolon-separated (e.g. `treat pouch; clicker; long line`). Rows grouped by `day_number` (first non-empty value for day-level fields wins). Returns `{days, errors}`.
+  - `PROGRAM_CSV_SAMPLE` + `DAILY_TRACKER_CSV_SAMPLE` constants — 6/7 example rows each, downloadable from the UI.
+- **NEW `frontend/src/components/CsvImportButton.jsx`** — Reusable button (~70 lines): hidden file input + visible pink trigger, parses on pick, displays success count and row-numbered errors. Includes a "Download sample" link that pushes a `.csv` blob to the browser.
+- **MODIFIED `Programs.jsx`** — Drops `<CsvImportButton testIdPrefix="program-csv">` into the "Modules & Goals" section header; `onImport` **appends** parsed modules to existing `program.modules` state.
+- **MODIFIED `DailyTrackerBuilder.jsx`** — Drops `<CsvImportButton testIdPrefix="dtb-csv">` under "Add a day" in the Step-2 sidebar; `onImport` **replaces** the days array (wizard semantic) and resets `activeDayIdx` to 0.
+
+### Sprint 110di-65b (same sprint, immediate iteration)
+**User feedback**: "the daily tracker csv needs places for the detailed instructions and equipment/treats needed otherwise its perfect"
+
+Added two more optional columns to `parseDailyTrackerCsv`:
+- `day_instructions` — free-text per day (first non-empty value per day wins).
+- `day_equipment` — semicolon-separated list, split into an array of trimmed strings.
+
+Sample CSV updated with realistic examples. Back-compat tested: old CSVs without these columns still parse cleanly (empty instructions, empty equipment array).
+
+### Verification
+- Node-side smoke tests confirm: 3 modules/6 goals from program sample, 3 days/7 steps from daily-tracker sample, quoted-with-comma values, row-numbered errors, missing-header validation throws, instructions+equipment columns populate correctly with semicolon-split arrays, back-compat preserved.
+- Testing agent did static review (Playwright early-terminated): all data-testids present, code matches spec.
+- Service worker bumped to `sh-v64-110di-65b-csv-instructions-equipment`.
+
+### Files touched
+- NEW: `frontend/src/lib/csvImport.js`, `frontend/src/components/CsvImportButton.jsx`
+- MODIFIED: `frontend/src/components/Programs.jsx`, `frontend/src/components/DailyTrackerBuilder.jsx`, `frontend/public/service-worker.js`
+
+### Note for future
+`DailyTrackerBuilder.jsx` is now ~625 lines, approaching the 700-line guideline. A future cleanup pass should split out the Step-2 day editor into its own component.
+

@@ -84,8 +84,10 @@ export function parseProgramCsv(text) {
 }
 
 /** Parse a daily-tracker CSV into the shape DailyTrackerBuilder expects.
- *  Required columns: day_number, day_focus, step_label. Optional: step_description.
- *  Rows are grouped by day_number (first occurrence sets day_focus). */
+ *  Required columns: day_number, day_focus, step_label.
+ *  Optional: step_description, day_instructions, day_equipment.
+ *  `day_equipment` is a semicolon-separated list (e.g. "treat pouch; clicker; long line").
+ *  Rows are grouped by day_number (first non-empty value for day-level fields wins). */
 export function parseDailyTrackerCsv(text) {
   const { headers, records } = csvToObjects(text);
   if (!headers.includes("day_number") || !headers.includes("day_focus") || !headers.includes("step_label")) {
@@ -115,6 +117,13 @@ export function parseDailyTrackerCsv(text) {
     }
     const day = byDay.get(dNum);
     if (!day.day_focus && dFocus) day.day_focus = dFocus;
+    // Day-level fields — first non-empty value wins
+    const dInstructions = (rec.day_instructions || "").trim();
+    if (!day.instructions && dInstructions) day.instructions = dInstructions;
+    const dEquipment = (rec.day_equipment || "").trim();
+    if (day.equipment.length === 0 && dEquipment) {
+      day.equipment = dEquipment.split(";").map(s => s.trim()).filter(Boolean);
+    }
     day.steps.push({
       id: `s-${dNum}-${day.steps.length + 1}`,
       label: sLabel,
@@ -140,14 +149,14 @@ Week 3 - Stay Duration,Build to 60 seconds,Sit-stay 30s,At 3 ft distance
 Week 3 - Stay Duration,Build to 60 seconds,Down-stay 60s,Trainer out of sight at end
 `;
 
-export const DAILY_TRACKER_CSV_SAMPLE = `day_number,day_focus,step_label,step_description
-1,Foundations,Charge the marker (10 reps),"Say ""Yes!"" then treat. No cue, no behaviour."
-1,Foundations,Sit (2 reps),Lure-based
-1,Foundations,Down (2 reps),From sit
-2,Loose Leash,Heel 5 steps,Indoor first
-2,Loose Leash,Turn left,Mark the pivot
-3,Stay Duration,Sit-stay 30s,At 3 ft distance
-3,Stay Duration,Down-stay 60s,Trainer out of sight at end
+export const DAILY_TRACKER_CSV_SAMPLE = `day_number,day_focus,day_instructions,day_equipment,step_label,step_description
+1,Foundations,"Keep sessions short — 3 to 5 min max. Quit while ahead.",treat pouch; clicker; soft treats,Charge the marker (10 reps),"Say ""Yes!"" then treat. No cue, no behaviour."
+1,Foundations,,,Sit (2 reps),Lure-based
+1,Foundations,,,Down (2 reps),From sit
+2,Loose Leash,"Pick a low-distraction area. Reward when leash stays slack.",6 ft leash; high-value treats; treat pouch,Heel 5 steps,Indoor first
+2,Loose Leash,,,Turn left,Mark the pivot
+3,Stay Duration,"Reward duration not distance yet. Release with a clear cue.",mat; long line; jackpot treats,Sit-stay 30s,At 3 ft distance
+3,Stay Duration,,,Down-stay 60s,Trainer out of sight at end
 `;
 
 /** Trigger a browser download of the given text as a CSV file. */

@@ -355,7 +355,7 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                   sampleText={DAILY_TRACKER_CSV_SAMPLE}
                   sampleFilename="daily-tracker-template.csv"
                   testIdPrefix="dtb-csv"
-                  helpText="Columns: day_number, day_focus, step_label, step_description (optional). Replaces the current days plan."
+                  helpText="Columns: day_number, day_focus, day_instructions (optional), day_equipment (optional, semicolons), step_label, step_description (optional). Replaces the current days plan."
                   onImport={(parsed) => {
                     if (!parsed?.days?.length) return;
                     setDays(parsed.days);
