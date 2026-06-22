@@ -485,6 +485,45 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
   const [audience, setAudience] = useState("client");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Sprint 110di-63 — live preview + send-test
+  const [preview, setPreview] = useState(null);   // { subject, html } | null
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [testTo, setTestTo] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const [testBusy, setTestBusy] = useState(false);
+
+  const canPreview = subject.trim() && introHtml.trim();
+
+  const loadPreview = async () => {
+    if (!canPreview) { setErr("Add a subject and body first to preview."); return; }
+    setPreviewBusy(true); setErr("");
+    try {
+      const { data } = await api.post("/admin/email-templates/test-preview", {
+        subject, intro_html: introHtml, mode: "render",
+      });
+      if (data?.ok) setPreview({ subject: data.subject, html: data.html });
+      else setErr(data?.reason || "Preview failed");
+    } catch (e) {
+      setErr(e?.response?.data?.detail || "Preview failed");
+    }
+    setPreviewBusy(false);
+  };
+
+  const sendTest = async () => {
+    if (!canPreview) { setErr("Add a subject and body first to send a test."); return; }
+    if (!testTo.trim() || !testTo.includes("@")) { setTestMsg("Enter a valid recipient email."); return; }
+    setTestBusy(true); setTestMsg("");
+    try {
+      const { data } = await api.post("/admin/email-templates/test-preview", {
+        subject, intro_html: introHtml, mode: "send", to_email: testTo.trim(),
+      });
+      if (data?.ok) setTestMsg(`Sent to ${data.sent_to} — check that inbox.`);
+      else setTestMsg(`Send failed · ${data?.reason || "unknown error"}`);
+    } catch (e) {
+      setTestMsg(e?.response?.data?.detail || "Send test failed");
+    }
+    setTestBusy(false);
+  };
 
   const submit = async () => {
     setBusy(true); setErr("");
@@ -502,7 +541,7 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid="template-create-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
         <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
           <i className="fas fa-envelope-open-text text-shGreen mr-2"/>Create Custom Template
         </h3>
@@ -521,16 +560,63 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
           <option value="staff">To Staff</option>
         </select>
         <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Subject line</label>
-        <input value={subject} onChange={(e)=>setSubject(e.target.value)}
-               data-testid="template-create-subject" placeholder="Welcome — here's what to expect"
+        <input value={subject} onChange={(e)=>{setSubject(e.target.value); setPreview(null);}}
+               data-testid="template-create-subject" placeholder="Welcome to {{program_name}}, {{first_name}}!"
                className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
         <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">
-          Body (HTML allowed · use <code className="text-shBlue">{`{{first_name}}`}</code>, <code className="text-shBlue">{`{{program_name}}`}</code>, <code className="text-shBlue">{`{{pack_name}}`}</code>)
+          Body (HTML allowed · use <code className="text-shBlue">{`{{first_name}}`}</code>, <code className="text-shBlue">{`{{program_name}}`}</code>, <code className="text-shBlue">{`{{pack_name}}`}</code>, <code className="text-shBlue">{`{{dog_name}}`}</code>)
         </label>
-        <textarea value={introHtml} onChange={(e)=>setIntroHtml(e.target.value)} rows={8}
+        <textarea value={introHtml} onChange={(e)=>{setIntroHtml(e.target.value); setPreview(null);}} rows={8}
                   data-testid="template-create-body"
                   placeholder="<p>Hi {{first_name}} — welcome to {{program_name}}! Here is what to expect in the coming weeks...</p>"
                   className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+
+        {/* Sprint 110di-63 — Preview + Send Test */}
+        <div className="border-t border-bgHover/70 mt-2 pt-4 mb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+              <i className="fas fa-eye mr-1.5"/>Preview &amp; Test
+            </p>
+            <button onClick={loadPreview} disabled={!canPreview || previewBusy}
+                    data-testid="template-create-preview-btn"
+                    className="bg-shBlue/15 text-shBlue border border-shBlue/40 px-3 py-1.5 rounded font-black text-[11px] uppercase tracking-widest disabled:opacity-50 hover:bg-shBlue/25">
+              {previewBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Rendering…</> : <><i className="fas fa-magnifying-glass mr-1"/>Render preview</>}
+            </button>
+          </div>
+          {preview && (
+            <div className="border border-bgHover rounded-lg overflow-hidden mb-3" data-testid="template-create-preview">
+              <div className="bg-bgBase px-3 py-2 border-b border-bgHover">
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Rendered subject</p>
+                <p className="text-sm text-white font-bold truncate" data-testid="template-create-preview-subject">{preview.subject}</p>
+              </div>
+              <div className="bg-gray-100 max-h-[280px] overflow-y-auto p-2">
+                <iframe title="email-preview" srcDoc={preview.html} sandbox=""
+                        className="w-full bg-white" style={{height: 260, border: 0}}/>
+              </div>
+              <p className="text-[10px] text-gray-500 px-3 py-2 normal-case">
+                Variables substituted with sample values · <code className="text-shBlue">first_name=Alex</code>, <code className="text-shBlue">program_name=Puppy Basics</code>, <code className="text-shBlue">pack_name=10-Day Daycare Pack</code>, <code className="text-shBlue">dog_name=Buddy</code>.
+              </p>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input type="email" value={testTo} onChange={(e)=>setTestTo(e.target.value)}
+                   placeholder="Send test to (your inbox)…"
+                   data-testid="template-create-test-to"
+                   className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            <button onClick={sendTest} disabled={!canPreview || testBusy}
+                    data-testid="template-create-test-send"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50 hover:bg-shGreen/80">
+              {testBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Sending…</> : <><i className="fas fa-paper-plane mr-1"/>Send test</>}
+            </button>
+          </div>
+          {testMsg && (
+            <p data-testid="template-create-test-msg"
+               className={`text-[12px] mt-2 font-bold ${testMsg.startsWith("Sent to") ? "text-shGreen" : "text-red-400"}`}>
+              <i className={`fas ${testMsg.startsWith("Sent to") ? "fa-circle-check" : "fa-circle-xmark"} mr-1`}/>{testMsg}
+            </p>
+          )}
+        </div>
+
         {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>

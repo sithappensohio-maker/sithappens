@@ -209,3 +209,44 @@ def test_bulk_sell_with_welcome_slug_does_not_500(admin_headers):
             requests.delete(f"{BASE}/api/credit-lots/{lot['id']}", headers=admin_headers, timeout=10)
     except Exception:
         pass
+
+
+def test_preview_endpoint_renders_merge_tags(admin_headers):
+    """Sprint 110di-63 — /admin/email-templates/test-preview in 'render' mode
+    must substitute {{first_name}}, {{program_name}}, {{pack_name}} and
+    {{dog_name}} with sample values WITHOUT persisting any template."""
+    r = requests.post(
+        f"{BASE}/api/admin/email-templates/test-preview",
+        headers=admin_headers,
+        json={
+            "subject": "Hi {{first_name}} — {{program_name}}",
+            "intro_html": "<p>{{dog_name}} is enrolled in {{program_name}}. Pack: {{pack_name}}.</p>",
+            "mode": "render",
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True
+    # Sample values from server.py preview_custom_email_draft
+    assert body["subject"] == "Hi Alex — Puppy Basics"
+    assert "Buddy" in body["html"]
+    assert "Puppy Basics" in body["html"]
+    assert "10-Day Daycare Pack" in body["html"]
+    # MUST NOT have persisted anything — list should not contain a draft slug
+    lr = requests.get(f"{BASE}/api/admin/email-templates", headers=admin_headers, timeout=15)
+    assert lr.status_code == 200
+    # Sanity: no slug got created from this preview call
+    assert not any("draft" in t.get("slug", "") for t in lr.json())
+
+
+def test_preview_endpoint_validates_required_fields(admin_headers):
+    """Empty subject or intro_html should 422 — protects the modal from
+    pinging Resend with an empty draft."""
+    r = requests.post(
+        f"{BASE}/api/admin/email-templates/test-preview",
+        headers=admin_headers,
+        json={"subject": "", "intro_html": "<p>x</p>", "mode": "render"},
+        timeout=15,
+    )
+    assert r.status_code == 422

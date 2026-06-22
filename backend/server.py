@@ -19305,6 +19305,75 @@ async def delete_custom_email_template(slug: str, _: dict = Depends(require_admi
     return {"ok": True}
 
 
+class EmailTemplatePreviewRequest(BaseModel):
+    """Sprint 110di-63 — Live preview/send-test of a draft custom template
+    before the operator commits + saves it."""
+    subject: str = Field(min_length=1, max_length=200)
+    intro_html: str = Field(min_length=1)
+    title: Optional[str] = ""
+    cta_text: Optional[str] = ""
+    to_email: Optional[str] = ""
+    mode: Literal["render", "send"] = "render"
+
+
+@api.post("/admin/email-templates/test-preview")
+async def preview_custom_email_draft(body: EmailTemplatePreviewRequest, current: dict = Depends(require_admin)):
+    """Render (and optionally send) a draft custom template using sample
+    merge values so operators can iterate inside the Create modal before
+    saving. Does NOT persist anything."""
+    sample_ctx = {
+        "first_name": "Alex",
+        "client_name": "Alex Rivera",
+        "dog_name": "Buddy",
+        "dog_name_or_dogs": "Buddy",
+        "program_name": "Puppy Basics",
+        "pack_name": "10-Day Daycare Pack",
+        "item_name": "Welcome Bundle",
+        "service_label": "Daycare",
+        "sold_by": "Jamie",
+        "sold_at": business_today().isoformat(),
+        "total_label": "$120.00",
+        "payment_method": "Card",
+    }
+    subject_rendered = email_service._substitute(body.subject, sample_ctx)
+    title_rendered = email_service._substitute(body.title or "🐾 Welcome!", sample_ctx)
+    intro_rendered = email_service._substitute(body.intro_html, sample_ctx)
+    cta_rendered = email_service._substitute(body.cta_text or "", sample_ctx) or None
+    settings = await email_service._get_email_settings()
+    html = email_service._wrap(
+        title=title_rendered,
+        intro=intro_rendered,
+        rows=[
+            ("Dog", "Buddy"),
+            ("Client", "Alex Rivera"),
+            ("Note", "Preview — real emails substitute live data."),
+        ],
+        cta_text=cta_rendered,
+        cta_url=os.environ.get("APP_PUBLIC_URL", "") or None,
+        show_install=False,
+        settings=settings,
+    )
+    if body.mode == "render":
+        return {"ok": True, "subject": subject_rendered, "html": html}
+    # mode == "send"
+    to = (
+        (body.to_email or "").strip()
+        or os.environ.get("ADMIN_NOTIFICATION_EMAIL", "")
+        or current.get("email")
+        or ""
+    )
+    if not to:
+        raise HTTPException(status_code=400, detail="No recipient email available")
+    ok = await email_service._send(to_email=to, subject=subject_rendered, html=html)
+    if ok:
+        return {"ok": True, "sent_to": to, "subject": subject_rendered}
+    return {
+        "ok": False,
+        "sent_to": to,
+        "reason": email_service.last_send_error or "Send failed — check Resend config",
+    }
+
+
 async def _fire_product_welcome_email(*, client: dict, slug: str, ctx: dict) -> None:
     """Sprint 110di-62 — Dispatch a bound welcome email after a product sale.
     Silent no-op if slug missing/invalid or client has no email."""
