@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api, formatErr } from "../lib/api";
+import CsvImportButton from "./CsvImportButton";
+import { parseDailyTrackerCsv, DAILY_TRACKER_CSV_SAMPLE } from "../lib/csvImport";
 
 /**
  * Admin-facing wizard for building a daily-tracker homework.
@@ -344,6 +346,24 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                       className="w-full bg-shGreen/10 text-shGreen border border-shGreen/30 rounded p-2 text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/20">
                 <i className="fas fa-plus mr-1" />Add a day
               </button>
+
+              {/* Sprint 110di-65 — bulk-import days + steps from CSV */}
+              <div className="border-t border-bgHover pt-3">
+                <CsvImportButton
+                  label="Import days from CSV"
+                  parse={parseDailyTrackerCsv}
+                  sampleText={DAILY_TRACKER_CSV_SAMPLE}
+                  sampleFilename="daily-tracker-template.csv"
+                  testIdPrefix="dtb-csv"
+                  helpText="Columns: day_number, day_focus, step_label, step_description (optional). Replaces the current days plan."
+                  onImport={(parsed) => {
+                    if (!parsed?.days?.length) return;
+                    setDays(parsed.days);
+                    setActiveDayIdx(0);
+                  }}
+                />
+              </div>
+
               <div className="border-t border-bgHover pt-3 mt-3 space-y-2">
                 <label className="flex items-start gap-2 cursor-pointer">
                   <input type="checkbox" checked={saveAsTemplate} onChange={(e) => setSaveAsTemplate(e.target.checked)} data-testid="dtb-save-template"

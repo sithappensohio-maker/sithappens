@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
+import CsvImportButton from "./CsvImportButton";
+import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
@@ -252,10 +254,24 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
 
           {/* Module builder */}
           <div className="border-t border-bgHover pt-3">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
               <p className="text-[15px] font-black uppercase tracking-widest text-shBlue">Modules & Goals</p>
-              <button onClick={addModule} data-testid="add-module"
-                      className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-1 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/15"><i className="fas fa-plus mr-1"/>Add Module</button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <CsvImportButton
+                  label="Import from CSV"
+                  parse={parseProgramCsv}
+                  sampleText={PROGRAM_CSV_SAMPLE}
+                  sampleFilename="program-template.csv"
+                  testIdPrefix="program-csv"
+                  helpText="Columns: module_name, module_description (optional), goal_name, goal_description (optional). Rows append to existing modules."
+                  onImport={(parsed) => {
+                    if (!parsed?.modules?.length) return;
+                    set({ modules: [...(program.modules || []), ...parsed.modules] });
+                  }}
+                />
+                <button onClick={addModule} data-testid="add-module"
+                        className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-1 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/15"><i className="fas fa-plus mr-1"/>Add Module</button>
+              </div>
             </div>
             {(program.modules||[]).length === 0 && <p className="text-[15px] text-gray-500 italic py-3">No modules yet. Add one to begin.</p>}
             <div className="space-y-3">
