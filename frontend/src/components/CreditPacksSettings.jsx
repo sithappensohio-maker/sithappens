@@ -8,7 +8,7 @@ import ColorSwatchRow from "./ColorSwatchRow";
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
  * Each pack stores qty + price; per-credit value is computed on the fly.
  */
-const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true };
+const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
 const DEFAULT_COLOR_BY_POOL = { daycare: "#8cc63f", training: "#a855f7", boarding: "#f26522" };
@@ -20,6 +20,9 @@ export default function CreditPacksSettings() {
   const [editing, setEditing] = useState(null);
   const [err, setErr] = useState("");
   const [open, setOpen] = useState(false); // controls the New/Edit modal
+  // Sprint 110di-62 — load all client-audience email templates so packs can
+  // bind a custom welcome email that fires the moment the pack is sold.
+  const [emailTemplates, setEmailTemplates] = useState([]);
 
   const load = async () => {
     // include_inactive=false (default) so soft-deleted default packs disappear from the list.
@@ -27,6 +30,11 @@ export default function CreditPacksSettings() {
     setPacks(data);
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => {
+    api.get("/admin/email-templates")
+      .then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client")))
+      .catch(() => setEmailTemplates([]));
+  }, []);
 
   const openNew = () => { setEditing(null); setForm(empty); setErr(""); setOpen(true); };
   const openEdit = (p) => { setEditing(p); setForm({ ...empty, ...p }); setErr(""); setOpen(true); };
@@ -191,6 +199,23 @@ export default function CreditPacksSettings() {
                 </div>
               </div>
               <p className="text-[14px] text-gray-500 mt-2">Per-credit value: <span className="text-shGreen font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
+
+              {/* Sprint 110di-62 — Welcome email: custom template that fires when the pack is sold */}
+              <div className="mt-4">
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Welcome email (auto-sent when pack is sold)</label>
+                <select value={form.welcome_email_template_slug||""}
+                        onChange={(e)=>setForm({...form, welcome_email_template_slug: e.target.value || null})}
+                        data-testid="pack-welcome-email"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  <option value="">— None (use default sale email) —</option>
+                  {emailTemplates.map(t => (
+                    <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>
+                  ))}
+                </select>
+                <p className="text-[13px] text-gray-500 mt-1">
+                  <i className="fas fa-paper-plane mr-1 text-shBlue"/>Sends this template the moment a client buys this pack. Create new templates from Settings → Email Designer.
+                </p>
+              </div>
               {/* Live preview — exactly how this pack will render in the catalog list. */}
               <div className="mt-4">
                 <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>

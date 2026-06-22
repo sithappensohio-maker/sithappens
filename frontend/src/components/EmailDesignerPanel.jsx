@@ -544,7 +544,6 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
     </div>
   );
 }
-}
 
 // ----------------------------- Template editor modal -----------------------------
 

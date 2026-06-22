@@ -111,10 +111,16 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
   // Sprint 110bx — load homework templates so we can pick which one auto-sends
   // on enrollment (welcome) and after a module is mastered.
   const [hwTemplates, setHwTemplates] = useState([]);
+  // Sprint 110di-62 — load all email templates so the operator can bind a custom
+  // welcome email that fires the moment the program is sold.
+  const [emailTemplates, setEmailTemplates] = useState([]);
   useEffect(() => {
     api.get("/homework-templates")
       .then(r => setHwTemplates(r.data || []))
       .catch(() => setHwTemplates([]));
+    api.get("/admin/email-templates")
+      .then(r => setEmailTemplates((r.data || []).filter(t => t.audience === "client")))
+      .catch(() => setEmailTemplates([]));
   }, []);
 
   const set = (patch) => setProgram(p => ({ ...p, ...patch }));
@@ -187,6 +193,22 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
             </select>
             <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
               <i className="fas fa-envelope mr-1 text-shGreen"/>Auto-creates a homework row + emails the client the moment a dog is enrolled in this program.
+            </p>
+          </Field>
+
+          {/* Sprint 110di-62 — Welcome email: custom template that fires when the program is sold */}
+          <Field label="Welcome email (auto-sent when program is sold)">
+            <select value={program.welcome_email_template_slug||""}
+                    onChange={(e)=>set({welcome_email_template_slug: e.target.value || null})}
+                    data-testid="prog-welcome-email"
+                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              <option value="">— None (use default sale email) —</option>
+              {emailTemplates.map(t => (
+                <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>
+              ))}
+            </select>
+            <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">
+              <i className="fas fa-paper-plane mr-1 text-shBlue"/>Sends this template (e.g. &ldquo;Welcome to Puppy Basics&rdquo;) the moment a client buys this program. Create new templates from Settings → Email Designer.
             </p>
           </Field>
 

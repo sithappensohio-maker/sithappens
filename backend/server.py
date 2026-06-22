@@ -18893,6 +18893,23 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     except Exception:
         pass
 
+    # Sprint 110di-62 — Fire each pack's bound welcome email if set. Dedupe
+    # by slug so buying 3× of the same pack only sends ONE welcome email.
+    fired_slugs: set = set()
+    for item in body.items:
+        p = packs[item.pack_id]
+        slug = p.get("welcome_email_template_slug")
+        if not slug or slug in fired_slugs:
+            continue
+        fired_slugs.add(slug)
+        try:
+            asyncio.create_task(_fire_product_welcome_email(
+                client=client, slug=slug,
+                ctx={"pack_name": p.get("name", "")},
+            ))
+        except Exception as exc:
+            logger.warning("bulk pack welcome email spawn failed: %s", exc)
+
     return {
         "lots": new_lots,
         "totals": totals_by_pool,
