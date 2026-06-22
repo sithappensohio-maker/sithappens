@@ -224,6 +224,12 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {widgetOn("quick_links") && <DashboardQuickLinks onNavigate={onNavigate} can={can} />}
       {widgetOn("today_tasks") && <ReadinessChecklist onNavigate={onNavigate} />}
 
+      {/* Sprint 110ax / 110di-59 — Daily dog fact + trivia leaderboard.
+          Promoted to BIG variant and moved above-the-fold (was previously
+          a tiny chip near the bottom that the operator never noticed). */}
+      {widgetOn("dog_fact") && <DogFactCard variant="big" />}
+      {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
+
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
           <div className="flex items-center justify-between mb-3">
@@ -370,9 +376,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         }
       }} />
 
-      {/* Sprint 110ax — Daily dog fact (matches what clients see in their portal)
-          Sprint 110di-19 — gated by Dashboard Widget Controls */}
-      {widgetOn("dog_fact") && <DogFactCard variant="chip" />}
+      {/* Sprint 110ax / 110di-59 — Dog fact + Trivia tile moved to top of
+          dashboard (see above). Originally rendered here as a chip — removed
+          to avoid duplicate render. */}
 
       {(widgetOn("daycare_stats") || widgetOn("boarding_stats") || widgetOn("total_dogs")) && (
       <div className="grid grid-cols-3 gap-3 md:gap-6">
@@ -387,8 +393,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {/* Sprint 110bq — Daily mileage quick-log */}
       {widgetOn("mileage") && <MileageDashTile onNavTax={()=>onNavigate("staff")} />}
 
-      {/* Sprint 110bk — Trivia leaderboard at-a-glance */}
-      {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
+      {/* Sprint 110bk — Trivia leaderboard moved to top of dashboard (see above). */}
 
       {/* Sprint 110di-33 — Client help requests inbox. Self-hides when
           there are no open requests. No new dashboard-widget setting —
