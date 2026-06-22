@@ -4900,3 +4900,42 @@ User choices: (1) revenue recognition = **option C** cash-basis (only `amount_pa
 - `frontend/public/service-worker.js` — `CACHE_VERSION` bumped.
 - `backend/tests/test_custom_email_templates.py` — 2 new tests appended.
 
+
+## Sprint 110di-64 — Weekly Lesson Plan (current-week pointer + timeline) (2026-02-22)
+**User ask**: "Make lesson plans that detail what gets done each week in order... like our daily tracker homework but this is for me instead where I can pull it up and see what I need to focus on that week. It helps me keep track where the dog is at. Should be something simple."
+
+**User-driven design decision**: After discussing, the user pointed out "we already have the modals and goals so I could just work into that system" — so we **deliberately did NOT add a new lesson_plan schema**. Instead, the existing Program → Modules → Goals structure IS the weekly plan (each module = 1 week, each goal = 1 skill). The only new piece is a per-dog "what week are we on" pointer.
+
+### Backend
+- New field on `dog_programs`: `current_module_id` — seeded to the first module's id on enrollment create.
+- New endpoint: `PUT /api/dogs/{dog_id}/programs/{enrollment_id}/current-module` (body `{module_id}`). Validates the module belongs to the enrollment's snapshotted plan; 404 if alien.
+- `_enrollment_summary` now derives `total_weeks` (count of modules), `current_week` (1-indexed ordinal of current module by `order`), and `current_module` (the full module dict) — surfaces everything the UI needs in one call.
+
+### Frontend
+- `DogTrainingTab.jsx` → `EnrollmentCard` now shows a green **"Week X of Y · Plan"** pill (`week-pill-{id}`) on every active enrollment, next to the Started/Target row.
+- Clicking the pill opens **`LessonPlanTimelineModal`** (`lesson-plan-modal-{id}`) — lists every module in order:
+  - Past weeks: dimmed with green check icon.
+  - Current week: highlighted green with "Focus this week" badge.
+  - Future weeks: neutral, each with a **"Set as current"** button (`lesson-week-set-{id}-{n}`) that bumps the pointer via PUT.
+  - Each row lists the module's goals as a skills checklist — goals already at `mastered`/`score>=4` appear with green check + strike-through; others with hollow circles. The check state IS the existing goal-progress data — no new tracking storage.
+- Trainer-only because the modal lives inside the admin-only Dog Training Tab.
+
+### Tests (`tests/test_lesson_plan.py` — 4/4 pass)
+- `test_enrollment_seeds_first_module_and_week` — fresh enrollment has total_weeks=3, current_week=1.
+- `test_set_current_module_bumps_week_pointer` — PUT bumps the pointer; persists across GET reload.
+- `test_set_current_module_rejects_alien_module_id` — 404 for module_ids outside the snapshot.
+- `test_summary_includes_week_pointer_fields` — listing endpoint exposes total_weeks/current_week/current_module.
+- All 8 prior custom-email-template tests still pass (no regression).
+
+### Verified live (testing agent iteration_14)
+100% backend, 100% frontend. Full Playwright flow: login → Dogs → open dog → Training tab → Week pill visible → click pill → modal shows 3 weeks with current highlighted → click "Set as current" on Week 2 → pill bumps to Week 2 → re-open modal → Week 1 now past-checked, Week 2 has Focus badge.
+
+### Files touched
+- `backend/server.py` — `_enrollment_summary` augmented; new `EnrollmentCurrentModuleIn` + `set_enrollment_current_module` endpoint; enrollment create seeds `current_module_id`.
+- `frontend/src/components/DogTrainingTab.jsx` — `setCurrentModule` handler, EnrollmentCard week-pill, new `LessonPlanTimelineModal` component (~80 lines).
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v62-110di-64-weekly-lesson-plan`.
+- `backend/tests/test_lesson_plan.py` — NEW file with 4 tests.
+
+### Note for future
+`DogTrainingTab.jsx` is now ~432 lines (still under 700-line guideline). The testing agent suggested splitting `LessonPlanTimelineModal` into its own file at a future cleanup pass — not urgent.
+
