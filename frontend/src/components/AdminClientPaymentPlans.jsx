@@ -263,10 +263,14 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-lg shadow-2xl"
+      {/* Sprint 110di-57 — Constrain modal to viewport so the form body
+          scrolls inside the card on small screens. Previously the bottom
+          action row (Cancel / Create Plan) overflowed past the bottom and
+          visually bled into the page underneath. */}
+      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
            onClick={e => e.stopPropagation()}
            data-testid="create-plan-modal">
-        <div className="px-6 py-4 border-b border-bgHover flex items-baseline justify-between">
+        <div className="px-6 py-4 border-b border-bgHover flex items-baseline justify-between shrink-0">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-0.5">
               <i className="fas fa-plus mr-1.5"/>New payment plan
@@ -275,7 +279,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl leading-none">×</button>
         </div>
-        <div className="px-6 py-5 space-y-3">
+        <div className="px-6 py-5 space-y-3 overflow-y-auto flex-1 min-h-0">
           <label className="block">
             <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Program / Item Name</span>
             <input value={programName} onChange={e => setProgramName(e.target.value)}
@@ -382,18 +386,18 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               <i className="fas fa-circle-exclamation mr-1"/>{error}
             </p>
           )}
-
-          <div className="flex gap-2 pt-2">
-            <button onClick={onClose}
-                    className="flex-1 text-gray-400 hover:text-white py-2 text-[12px] font-black uppercase tracking-widest">
-              Cancel
-            </button>
-            <button onClick={submit} disabled={busy}
-                    data-testid="create-plan-submit"
-                    className="flex-1 bg-shGreen hover:bg-shGreen/80 text-bgDark py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
-              {busy ? "Creating…" : "Create Plan & Email Client"}
-            </button>
-          </div>
+        </div>
+        {/* Sticky footer — buttons always visible regardless of scroll position. */}
+        <div className="px-6 py-3 border-t border-bgHover bg-bgPanel flex gap-2 shrink-0 rounded-b-xl">
+          <button onClick={onClose}
+                  className="flex-1 text-gray-400 hover:text-white py-2 text-[12px] font-black uppercase tracking-widest">
+            Cancel
+          </button>
+          <button onClick={submit} disabled={busy}
+                  data-testid="create-plan-submit"
+                  className="flex-1 bg-shGreen hover:bg-shGreen/80 text-bgDark py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+            {busy ? "Creating…" : "Create Plan & Email Client"}
+          </button>
         </div>
       </div>
     </div>

@@ -551,7 +551,7 @@ function CatchUpModal({ target, onApply, onClose }) {
   };
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="catch-up-modal">
-      <div className="bg-bgPanel border border-shOrange/40 rounded-2xl w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-shOrange/40 rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h4 className="text-lg font-black text-white uppercase italic tracking-tight">
           <i className="fas fa-clock-rotate-left text-shOrange mr-2"/>Catch up — {target.dog_name}
         </h4>

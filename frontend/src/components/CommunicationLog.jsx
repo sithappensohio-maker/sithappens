@@ -191,7 +191,7 @@ function Pill({ active, onClick, label, accent = "shGreen" }) {
 function AddModal({ form, setForm, onSave, onCancel }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in" data-testid="comm-add-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in max-h-[calc(100vh-2rem)] overflow-y-auto" data-testid="comm-add-modal">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Log Communication</h4>
           <button onClick={onCancel} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
