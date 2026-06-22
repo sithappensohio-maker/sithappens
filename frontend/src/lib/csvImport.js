@@ -85,8 +85,9 @@ export function parseProgramCsv(text) {
 
 /** Parse a daily-tracker CSV into the shape DailyTrackerBuilder expects.
  *  Required columns: day_number, day_focus, step_label.
- *  Optional: step_description, day_instructions, day_equipment.
+ *  Optional: step_description, step_minutes, day_instructions, day_equipment.
  *  `day_equipment` is a semicolon-separated list (e.g. "treat pouch; clicker; long line").
+ *  `step_minutes` is an integer (e.g. 3) — blank = untimed.
  *  Rows are grouped by day_number (first non-empty value for day-level fields wins). */
 export function parseDailyTrackerCsv(text) {
   const { headers, records } = csvToObjects(text);
@@ -128,6 +129,10 @@ export function parseDailyTrackerCsv(text) {
       id: `s-${dNum}-${day.steps.length + 1}`,
       label: sLabel,
       description: (rec.step_description || "").trim() || undefined,
+      // Sprint 110di-66b — Optional per-step duration. Empty cell → null (untimed step).
+      minutes: rec.step_minutes && rec.step_minutes.trim() !== ""
+        ? (Number.isFinite(parseInt(rec.step_minutes, 10)) ? Math.max(0, parseInt(rec.step_minutes, 10)) : null)
+        : null,
     });
   });
   const days = Array.from(byDay.values()).sort((a, b) => a.day_number - b.day_number);
@@ -149,14 +154,14 @@ Week 3 - Stay Duration,Build to 60 seconds,Sit-stay 30s,At 3 ft distance
 Week 3 - Stay Duration,Build to 60 seconds,Down-stay 60s,Trainer out of sight at end
 `;
 
-export const DAILY_TRACKER_CSV_SAMPLE = `day_number,day_focus,day_instructions,day_equipment,step_label,step_description
-1,Foundations,"Keep sessions short — 3 to 5 min max. Quit while ahead.",treat pouch; clicker; soft treats,Charge the marker (10 reps),"Say ""Yes!"" then treat. No cue, no behaviour."
-1,Foundations,,,Sit (2 reps),Lure-based
-1,Foundations,,,Down (2 reps),From sit
-2,Loose Leash,"Pick a low-distraction area. Reward when leash stays slack.",6 ft leash; high-value treats; treat pouch,Heel 5 steps,Indoor first
-2,Loose Leash,,,Turn left,Mark the pivot
-3,Stay Duration,"Reward duration not distance yet. Release with a clear cue.",mat; long line; jackpot treats,Sit-stay 30s,At 3 ft distance
-3,Stay Duration,,,Down-stay 60s,Trainer out of sight at end
+export const DAILY_TRACKER_CSV_SAMPLE = `day_number,day_focus,day_instructions,day_equipment,step_label,step_minutes,step_description
+1,Foundations,"Keep sessions short — 3 to 5 min max. Quit while ahead.",treat pouch; clicker; soft treats,Charge the marker (10 reps),3,"Say ""Yes!"" then treat. No cue, no behaviour."
+1,Foundations,,,Sit (2 reps),2,Lure-based
+1,Foundations,,,Down (2 reps),2,From sit
+2,Loose Leash,"Pick a low-distraction area. Reward when leash stays slack.",6 ft leash; high-value treats; treat pouch,Heel 5 steps,5,Indoor first
+2,Loose Leash,,,Turn left,3,Mark the pivot
+3,Stay Duration,"Reward duration not distance yet. Release with a clear cue.",mat; long line; jackpot treats,Sit-stay 30s,4,At 3 ft distance
+3,Stay Duration,,,Down-stay 60s,5,Trainer out of sight at end
 `;
 
 /** Trigger a browser download of the given text as a CSV file. */

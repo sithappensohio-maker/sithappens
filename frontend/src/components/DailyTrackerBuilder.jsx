@@ -223,6 +223,8 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
               id: s.id,
               label: s.label.trim(),
               minutes: s.minutes ? Number(s.minutes) || null : null,
+              // Sprint 110di-66 — per-step directions the client reads under the checkbox
+              description: (s.description || "").trim() || undefined,
             })),
           resources: (d.resources || [])
             .filter((r) => ((r.url || "").trim() || (r.media_id || "").trim()) && (r.name || "").trim())
@@ -355,7 +357,7 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                   sampleText={DAILY_TRACKER_CSV_SAMPLE}
                   sampleFilename="daily-tracker-template.csv"
                   testIdPrefix="dtb-csv"
-                  helpText="Columns: day_number, day_focus, day_instructions (optional), day_equipment (optional, semicolons), step_label, step_description (optional). Replaces the current days plan."
+                  helpText="Columns: day_number, day_focus, day_instructions (optional), day_equipment (optional, semicolons), step_label, step_minutes (optional), step_description (optional). Replaces the current days plan."
                   onImport={(parsed) => {
                     if (!parsed?.days?.length) return;
                     setDays(parsed.days);
