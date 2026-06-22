@@ -5059,3 +5059,28 @@ Smoke screenshot:
 - `frontend/src/screens/Portal.jsx`
 - `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v67-110di-67-card-types-wired`
 
+
+## Sprint 110di-68 — Accounts Receivable rolled into Income "Unpaid" tile (2026-02-22)
+
+**User ask**: "shouldn't open balances in the accounts receivable show in unpaid in our income"
+
+**Diagnosis**: After Sprint 110di-51 added partial-payment support for retail/credit-pack/program sales, the unpaid remainder went into the client's `account_balance` (which AR displays) but the weekly Income summary endpoint never queried `account_balance` — so tabs sitting on client accounts showed `$0.00` in the UNPAID tile while AR correctly showed them. The operator was getting a misleading "all paid up" signal.
+
+### Backend
+- `GET /api/transactions/weekly-summary` now also queries `clients` where `account_balance > 0`, sums to `ar_outstanding_total`, counts to `ar_outstanding_count`, and **adds it to the headline `unpaid_total`**. Single source of truth: same query the AR endpoint uses.
+
+### Frontend
+- Income screen's Unpaid `StatTile` sub-label now reads `"outstanding · incl. $50.00 on tabs (1)"` when AR has open balances, falling back to plain `"outstanding"` when zero.
+
+### Verified
+- End-to-end curl test: created a $50 client adjustment → income summary returned `ar_outstanding_total=50.00, ar_outstanding_count=1, unpaid_total=50.00` exactly matching the AR endpoint's `total_receivable`. Cleanup restored to zero.
+- New pytest `test_income_ar_rollup.py` — 3 tests pass (exposes fields, matches AR endpoint, zero-state).
+- Full regression: 15/15 across email templates, lesson plan, and AR rollup.
+- Service worker bumped to `sh-v68-110di-68-income-ar-rollup`.
+
+### Files touched
+- `backend/server.py` — `/transactions/weekly-summary` query at ~line 14104, new response fields.
+- `frontend/src/screens/Income.jsx` — Unpaid StatTile sub-label dynamic.
+- `frontend/public/service-worker.js` — CACHE_VERSION bumped.
+- NEW `backend/tests/test_income_ar_rollup.py`.
+

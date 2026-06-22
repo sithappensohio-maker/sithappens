@@ -395,7 +395,11 @@ export default function Income() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} transaction${summary.completed_count===1?"":"s"}`} color="text-shGreen" icon="fa-circle-check" big data-testid="tile-completed" />
             <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shBlue" icon="fa-dollar-sign" />
-            <StatTile label="Unpaid" value={fmt(summary.unpaid_total)} sub="outstanding" color="text-shOrange" icon="fa-hourglass-half" />
+            <StatTile label="Unpaid" value={fmt(summary.unpaid_total)}
+                      sub={summary.ar_outstanding_total > 0
+                        ? `outstanding · incl. ${fmt(summary.ar_outstanding_total)} on tabs (${summary.ar_outstanding_count})`
+                        : "outstanding"}
+                      color="text-shOrange" icon="fa-hourglass-half" />
             <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
           </div>
           {summary.by_service?.length > 0 && (

@@ -14101,6 +14101,22 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
     completed_count += retail_count + credit_pack_sales_count + training_revenue_count + plan_revenue_count
     paid_total += other_revenue_total
 
+    # Sprint 110di-68 — Roll Accounts Receivable open balances into the Unpaid
+    # tile so partial-pay tabs sitting on client accounts (from Sprint 110di-51
+    # retail/pack/program partial payments) are visible alongside unpaid
+    # bookings instead of silently hiding in AR. We surface AR as its OWN
+    # number on the response (so the frontend can show "incl. AR" sub-label)
+    # AND add it to the headline `unpaid_total`.
+    ar_clients = await db.clients.find(
+        {"account_balance": {"$gt": 0, "$exists": True}},
+        {"_id": 0, "account_balance": 1, "id": 1},
+    ).to_list(5000)
+    ar_outstanding_total = round(
+        sum(float(c.get("account_balance") or 0) for c in ar_clients), 2,
+    )
+    ar_outstanding_count = len(ar_clients)
+    unpaid_total += ar_outstanding_total
+
     return {
         "week_start": monday_iso,
         "week_end": sunday_iso,
@@ -14108,6 +14124,8 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         "booked_total": round(booked_total, 2),
         "paid_total": round(paid_total, 2),
         "unpaid_total": round(unpaid_total, 2),
+        "ar_outstanding_total": ar_outstanding_total,
+        "ar_outstanding_count": ar_outstanding_count,
         "credits_redeemed": credits_redeemed,
         "completed_count": completed_count,
         "booked_count": booked_count,
