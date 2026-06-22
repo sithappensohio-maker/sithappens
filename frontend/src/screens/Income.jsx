@@ -7,6 +7,7 @@ import { compressImage } from "../lib/imageCompress";
 import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
 import AccountsReceivableTab from "./AccountsReceivable";
+import TakePaymentModal from "../components/TakePaymentModal";
 
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
 
@@ -57,6 +58,8 @@ export default function Income() {
   const [retailSales, setRetailSales] = useState([]);
   const [retailCategories, setRetailCategories] = useState([]);
   const [retailOpen, setRetailOpen] = useState(false);
+  // Sprint 110di-61 — Cash-register "Take Payment" modal (standalone).
+  const [takePaymentOpen, setTakePaymentOpen] = useState(false);
   const [retailEditing, setRetailEditing] = useState(null);
   const [clients, setClients] = useState([]);
 
@@ -463,6 +466,11 @@ export default function Income() {
                   className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30">
             <i className="fas fa-plus mr-1.5"/>Log Sale
           </button>
+          {/* Sprint 110di-61 — Standalone "Take Payment" entry point. */}
+          <button onClick={()=>setTakePaymentOpen(true)} data-testid="take-payment-open-btn"
+                  className="bg-shGreen/20 text-shGreen border border-shGreen/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/30 ml-2">
+            <i className="fas fa-cash-register mr-1.5"/>Take Payment
+          </button>
         </div>
         {retailSales.length === 0 ? (
           <div className="text-center py-6 text-gray-500 text-[15px]">
@@ -727,6 +735,10 @@ export default function Income() {
       )}
 
       {logOpen && <LogServiceModal onClose={()=>setLogOpen(false)} onSaved={load} dogs={dogs} services={services} />}
+      {takePaymentOpen && (
+        <TakePaymentModal onClose={()=>setTakePaymentOpen(false)}
+                          onSuccess={()=>{ setTakePaymentOpen(false); refreshAfterRetailChange(); }} />
+      )}
       </>
       )}
     </div>
@@ -1104,6 +1116,10 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
   });
   const [busy, setBusy] = useState(false);
   const [clientQuery, setClientQuery] = useState("");
+  // Sprint 110di-61 — Partial-pay toggle (cash-basis, option 1c).
+  // Only meaningful when a client is selected (no tab without a client).
+  const [payMode, setPayMode] = useState("full"); // "full" | "partial"
+  const [amountPaid, setAmountPaid] = useState("");
 
   const selectedClient = clients?.find(c => c.id === form.client_id);
   const clientResults = clientQuery.trim()
@@ -1126,6 +1142,10 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
         payment_method: form.payment_method,
         client_id: form.client_id || null,
       };
+      // Sprint 110di-61 — Partial pay (requires a linked client).
+      if (form.client_id && payMode === "partial" && amountPaid !== "") {
+        body.amount_paid = Number(amountPaid);
+      }
       if (isEdit) await api.put(`/retail-sales/${sale.id}`, body);
       else await api.post("/retail-sales", body);
       onSaved && onSaved();
@@ -1229,6 +1249,51 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" data-testid="retail-notes" />
         </div>
+
+        {/* Sprint 110di-61 — Partial-pay toggle. Only available when a
+            client is selected (tab requires a client to attach to). */}
+        {form.client_id && !isEdit && Number(form.amount) > 0 && (
+          <div className="border-t border-bgHover pt-3">
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
+              <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
+                      data-testid="retail-pay-full"
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
+              </button>
+              <button type="button" onClick={()=>setPayMode("partial")}
+                      data-testid="retail-pay-partial"
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
+              </button>
+            </div>
+            {payMode === "partial" && (
+              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3" data-testid="retail-partial-block">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
+                  <p className="text-xl font-black text-white mt-1">${Number(form.amount).toFixed(2)}</p>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                  <input type="number" step="0.01" min="0" value={amountPaid}
+                         onChange={(e)=>setAmountPaid(e.target.value)}
+                         data-testid="retail-amount-paid" placeholder="$0.00"
+                         className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                  <p className="text-xl font-black mt-1">
+                    <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < Number(form.amount) ? "text-shOrange" : (Number(amountPaid) > Number(form.amount) ? "text-shGreen" : "text-gray-400"))}>
+                      {amountPaid === "" ? `+$${Number(form.amount).toFixed(2)}` : Number(amountPaid) < Number(form.amount) ? `+$${(Number(form.amount) - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > Number(form.amount) ? `−$${(Number(amountPaid) - Number(form.amount)).toFixed(2)}` : "$0.00"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="flex gap-2 justify-end pt-2">
           <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>

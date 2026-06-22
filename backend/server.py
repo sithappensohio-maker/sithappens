@@ -3425,6 +3425,112 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
 #     − when it goes down), method, notes, booking_id?, created_at, created_by}.
 # ───────────────────────────────────────────────────────────────────────────
 
+async def _apply_sale_partial_payment(
+    *,
+    client_id: str,
+    total: float,
+    paid: float,
+    sale_kind: str,        # "credit_pack" | "training_program" | "retail"
+    sale_id: Optional[str],
+    label: str,            # human-readable, e.g. "Credit pack · 10-pack daycare"
+    method: str,
+    ts: Optional[str] = None,
+) -> dict:
+    """Sprint 110di-61 — Universal partial-pay handler for non-booking sales.
+
+    Used by sell-pack, sell-program, and retail-sale endpoints. Mirrors the
+    booking partial-pay flow but tagged so the ledger reads naturally.
+
+    Behaviour:
+      - paid <  total → charge=total, payment=paid, delta=total-paid added to tab
+      - paid == total → no ledger movement (full pay; caller handles revenue normally)
+      - paid >  total → charge=total, payment=paid, delta becomes prepaid credit
+
+    Returns:
+      {"delta": float (tab change, positive = tab grew),
+       "balance_after": float}
+
+    NOTE: This helper does NOT touch retail_sales / revenue recognition.
+    Callers are responsible for inserting the cash-basis revenue row
+    (amount = paid, not total) per option 1c.
+    """
+    ts = ts or now_iso()
+    delta = round(total - paid, 2)
+    # Always write the charge row (audit trail for FULL ticket).
+    await _write_ledger_row(
+        client_id=client_id, type_="charge", amount=round(total, 2),
+        method="", notes=label, booking_id=None, ts=ts,
+    )
+    if paid > 0:
+        await _write_ledger_row(
+            client_id=client_id, type_="payment", amount=-round(paid, 2),
+            method=method or "cash",
+            notes=f"Paid at sale · {label}", booking_id=None, ts=ts,
+        )
+    new_balance = await _adjust_client_balance(client_id, delta)
+
+    # Fire receipt email when there's a tab change worth reporting.
+    if abs(delta) > 0.005 and paid >= 0:
+        try:
+            asyncio.create_task(_send_sale_partial_receipt(
+                client_id=client_id, label=label, total=total,
+                paid=paid, new_balance=new_balance,
+            ))
+        except Exception as exc:
+            logger.warning("sale-partial receipt spawn failed: %s", exc)
+    return {"delta": delta, "balance_after": new_balance}
+
+
+async def _send_sale_partial_receipt(
+    *, client_id: str, label: str, total: float, paid: float, new_balance: float,
+) -> None:
+    """Reuses the partial-payment receipt template — same look as a booking
+    partial-pay receipt, just with a non-booking label in the body."""
+    try:
+        client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+        if not client or not client.get("email"):
+            return
+        first_name = (client.get("name") or "").split(" ")[0] or "there"
+        delta = round(total - paid, 2)
+        if delta > 0:
+            subject = f"Payment received · balance ${delta:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid:.2f}</strong> payment "
+                f"toward <em>{label}</em>. Remaining balance on your account: "
+                f"<strong>${delta:.2f}</strong>."
+            )
+        elif delta < 0:
+            subject = f"Thanks {first_name}! Credit on file: ${-delta:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid:.2f}</strong> payment "
+                f"toward <em>{label}</em>. The extra <strong>${-delta:.2f}</strong> is now "
+                f"on your account as pre-paid credit for next time."
+            )
+        else:
+            subject = f"Payment received · ${paid:.2f}"
+            intro = (
+                f"Hi {first_name} — we received your <strong>${paid:.2f}</strong> payment "
+                f"toward <em>{label}</em>. You're all settled up — thank you!"
+            )
+        rows = [
+            ("Item", label),
+            ("Total", f"${total:.2f}"),
+            ("Paid today", f"${paid:.2f}"),
+            ("Balance", f"${new_balance:.2f}"),
+        ]
+        await email_service._dispatch(
+            slug="client_partial_payment_receipt",
+            to_email=client.get("email"),
+            ctx={"first_name": first_name, "dog_name": ""},
+            rows=rows,
+            fallback_subject=subject,
+            fallback_title="💳 Payment received",
+            fallback_intro=intro,
+        )
+    except Exception as exc:
+        logger.warning("sale-partial receipt email failed: %s", exc)
+
+
 async def _adjust_client_balance(client_id: str, delta: float) -> float:
     """Add `delta` to client.account_balance atomically and return the new value.
     `delta` is signed in BALANCE direction (positive = client owes more)."""
@@ -3610,7 +3716,13 @@ async def apply_tab_payment(
     user: dict = Depends(require_admin),
 ):
     """Apply a payment against the running tab (or top up pre-paid credit).
-    Reduces the client's account_balance by `amount` and writes a ledger row."""
+    Reduces the client's account_balance by `amount` and writes a ledger row.
+
+    Sprint 110di-61 — Under cash-basis (option 1c), a tab payment IS revenue
+    on the day it's collected. We also insert a `retail_sales` row so the
+    Income / P&L picks it up. The row is tagged `source_kind="tab_payment"`
+    for clean audit + so it can be excluded from sales-tax math (tax was
+    already booked at the original sale)."""
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -3625,6 +3737,26 @@ async def apply_tab_payment(
         created_by=user.get("email", "admin"),
     )
     new_balance = await _adjust_client_balance(client_id, -round(body.amount, 2))
+    # Sprint 110di-61 — Cash-basis revenue recognition for the tab payment.
+    # Insert a retail_sales row so the Income screen + P&L include it.
+    try:
+        await db.retail_sales.insert_one({
+            "id": str(uuid.uuid4()),
+            "date": business_today().isoformat(),
+            "description": (body.notes or "Tab payment"),
+            "amount": round(body.amount, 2),
+            "category": "Tab Payment",
+            "notes": body.notes or "",
+            "payment_method": body.method,
+            "client_id": client_id,
+            "client_name": client.get("name") or "",
+            "source_kind": "tab_payment",
+            "ledger_id": row.get("id"),
+            "created_at": ts,
+            "created_by": user.get("id"),
+        })
+    except Exception as exc:
+        logger.warning("tab-pay revenue row insert failed: %s", exc)
     # Receipt email — fire-and-forget
     try:
         asyncio.create_task(_send_tab_payment_receipt(
@@ -17241,6 +17373,12 @@ class RetailSaleIn(BaseModel):
     # paid (incl. tax) and the backend back-calculates the tax slice. If false
     # or absent, the line is tax-exempt (e.g. a wholesale item).
     apply_tax: Optional[bool] = None
+    # Sprint 110di-61 — Partial-pay support for retail. When provided AND
+    # less than `amount`, the difference goes onto the client's running tab
+    # (account_balance) and today's revenue records ONLY the amount paid
+    # (cash-basis recognition — option 1c). Requires `client_id` to be set
+    # (no tab without a client to attach it to).
+    amount_paid: Optional[float] = Field(default=None, ge=0)
 
 
 @api.get("/retail-sales")
@@ -17301,6 +17439,39 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
                 doc["pre_tax_amount"] = pre_tax
     except Exception as exc:
         logger.warning("retail tax calc failed: %s", exc)
+    # Sprint 110di-61 — Partial-pay branch for retail (cash-basis option 1c).
+    # When `amount_paid` is provided AND < the ticket amount AND we have a
+    # client to attach the tab to, the unpaid remainder lands on the client's
+    # balance and the recorded retail-sale `amount` is reduced to what was
+    # actually paid (so today's income reflects cash received).
+    full_amount = doc["amount"]
+    is_partial = (
+        body.amount_paid is not None
+        and full_amount > 0
+        and body.client_id
+        and abs(float(body.amount_paid) - full_amount) > 0.005
+    )
+    if is_partial:
+        revenue_today = max(0.0, min(float(body.amount_paid), full_amount))
+        await _apply_sale_partial_payment(
+            client_id=body.client_id,
+            total=full_amount,
+            paid=float(body.amount_paid),
+            sale_kind="retail",
+            sale_id=doc["id"],
+            label=f"Retail · {doc['description']}",
+            method=body.payment_method or "cash",
+        )
+        # Rewrite the cash-side fields to only count today's actual payment.
+        doc["amount"] = round(revenue_today, 2)
+        doc["full_ticket_amount"] = round(full_amount, 2)  # audit trail
+        doc["partial_pay"] = True
+        # Recompute tax slice against the actual cash received (pre-tax + tax
+        # ratios stay proportional).
+        if "tax_amount" in doc and full_amount > 0:
+            ratio = revenue_today / full_amount
+            doc["tax_amount"] = round(doc["tax_amount"] * ratio, 2)
+            doc["pre_tax_amount"] = round(doc["pre_tax_amount"] * ratio, 2)
     await db.retail_sales.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -17632,6 +17803,9 @@ class SellCreditPackIn(BaseModel):
     pack_id: str
     payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
     note: Optional[str] = ""
+    # Sprint 110di-61 — Partial pay. When < pack price, the delta lands on
+    # client.account_balance and today's recognized revenue = amount_paid.
+    amount_paid: Optional[float] = Field(default=None, ge=0)
 
 
 class SellCreditPackItem(BaseModel):
@@ -17643,6 +17817,8 @@ class SellCreditPacksBulkIn(BaseModel):
     items: List[SellCreditPackItem] = Field(min_length=1, max_length=20)
     payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
     note: Optional[str] = ""
+    # Sprint 110di-61 — Partial pay across the whole bulk-sale cart.
+    amount_paid: Optional[float] = Field(default=None, ge=0)
 
 
 @api.get("/credit-packs")
@@ -17820,6 +17996,10 @@ class SellProgramIn(BaseModel):
     schedule_time: Optional[str] = None  # HH:MM (24h)
     schedule_start_date: Optional[str] = None  # YYYY-MM-DD, defaults to next instance of weekday from today
     schedule_override_closures: bool = False  # set to True to ignore closed-day warnings
+    # Sprint 110di-61 — Partial pay support. When < effective_price, the
+    # difference lands on client.account_balance and only amount_paid is
+    # recognized as revenue today (cash-basis — option 1c).
+    amount_paid: Optional[float] = Field(default=None, ge=0)
 
 
 @api.post("/clients/{client_id}/sell-program")
@@ -17895,12 +18075,31 @@ async def sell_training_program(
     # operator wants the full sale price on the books on sale day. We write to
     # `retail_sales` because that's the collection the Income screen + monthly
     # P&L PDF + year-end CSV already aggregate.
-    if effective_price > 0:
+    # Sprint 110di-61 — Partial-pay branch (cash-basis recognition).
+    is_partial = (
+        body.amount_paid is not None
+        and effective_price > 0
+        and abs(float(body.amount_paid) - effective_price) > 0.005
+    )
+    revenue_today = effective_price
+    if is_partial:
+        revenue_today = max(0.0, min(float(body.amount_paid), effective_price))
+        await _apply_sale_partial_payment(
+            client_id=client_id,
+            total=effective_price,
+            paid=float(body.amount_paid),
+            sale_kind="training_program",
+            sale_id=lot["id"],
+            label=f"Training Program · {program['name']}",
+            method=body.payment_method or "cash",
+        )
+
+    if revenue_today > 0:
         income_doc = {
             "id": str(uuid.uuid4()),
             "date": business_today().isoformat(),
             "description": f"Training Program · {program['name']}",
-            "amount": round(effective_price, 2),
+            "amount": round(revenue_today, 2),
             "category": "Training Program",
             "notes": body.note or "",
             "payment_method": body.payment_method or "card",
@@ -18443,14 +18642,37 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     balance_field = _credit_balance_field(svc_type) or "credits"
     await db.clients.update_one({"id": client_id}, {"$inc": {balance_field: qty}})
 
+    # Sprint 110di-61 — Partial-pay branch. When `amount_paid` is provided
+    # AND less than the pack price, only the paid portion hits today's
+    # revenue (option 1c — cash basis); the rest goes onto the client's
+    # running tab via the universal ledger helper.
+    is_partial = (
+        body.amount_paid is not None
+        and effective_price > 0
+        and abs(float(body.amount_paid) - effective_price) > 0.005
+    )
+    revenue_today = effective_price
+    if is_partial:
+        revenue_today = max(0.0, min(float(body.amount_paid), effective_price))
+        await _apply_sale_partial_payment(
+            client_id=client_id,
+            total=effective_price,
+            paid=float(body.amount_paid),
+            sale_kind="credit_pack",
+            sale_id=lot["id"],
+            label=f"Credit pack · {pack['name']}",
+            method=body.payment_method or "cash",
+        )
+
     # Sprint 110cs — Insert matching retail_sales row so income reports show
-    # the sale on the day cash came in (not piecemeal at redemption).
-    if effective_price > 0:
+    # the sale on the day cash came in. Sprint 110di-61: under partial-pay,
+    # `amount` records ONLY what was paid today (cash-basis recognition).
+    if revenue_today > 0:
         await db.retail_sales.insert_one({
             "id": str(uuid.uuid4()),
             "client_id": client_id,
             "client_name": client.get("name", ""),
-            "amount": effective_price,
+            "amount": round(revenue_today, 2),
             "date": business_today().isoformat(),
             "payment_method": body.payment_method,
             "source_kind": "credit_pack_sale",
@@ -18530,17 +18752,50 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             totals_by_pool[pool_key]["price"] += effective_price
 
     await db.credit_lots.insert_many(new_lots)
+    # Sprint 110di-61 — Partial-pay across the bulk cart. The cart's
+    # `body.amount_paid` represents what the client handed over for the
+    # ENTIRE order. Under option 1c, today's revenue (across all retail_sales
+    # rows we're about to insert) is capped at amount_paid; the unpaid
+    # remainder goes onto the client's tab via ONE charge/payment pair on
+    # the ledger labelled with the order summary.
+    grand_total_full = round(sum(float(lot.get("price_paid") or 0) for lot in new_lots), 2)
+    is_partial = (
+        body.amount_paid is not None
+        and grand_total_full > 0
+        and abs(float(body.amount_paid) - grand_total_full) > 0.005
+    )
+    revenue_cap = grand_total_full
+    if is_partial:
+        revenue_cap = max(0.0, min(float(body.amount_paid), grand_total_full))
+        # Build a human label like "Credit packs · 1× 10-pack Daycare, 2× 5-pack Training"
+        label_parts = []
+        for it in body.items:
+            p = packs[it.pack_id]
+            label_parts.append(f"{it.quantity}× {p['name']}")
+        order_label = "Credit packs · " + ", ".join(label_parts)
+        await _apply_sale_partial_payment(
+            client_id=client_id,
+            total=grand_total_full,
+            paid=float(body.amount_paid),
+            sale_kind="credit_pack",
+            sale_id=new_lots[0]["id"] if new_lots else None,
+            label=order_label,
+            method=body.payment_method or "cash",
+        )
     # Sprint 110cs — Bulk-sell mirrors the singular path: log every lot as a
     # `retail_sales` row on today's business date so the operator sees the
     # money land in Income / P&L immediately. One row per lot keeps audit
-    # easy (matches qty + price 1:1 with credit_lots).
+    # easy (matches qty + price 1:1 with credit_lots). Sprint 110di-61:
+    # under partial-pay, we PRORATE each row's amount so the sum equals
+    # revenue_cap (today's recognized cash).
     today_iso = business_today().isoformat()
+    payment_ratio = (revenue_cap / grand_total_full) if grand_total_full > 0 else 0
     retail_rows = [
         {
             "id": str(uuid.uuid4()),
             "client_id": client_id,
             "client_name": client.get("name", ""),
-            "amount": float(lot["price_paid"]),
+            "amount": round(float(lot["price_paid"]) * payment_ratio, 2),
             "date": today_iso,
             "payment_method": body.payment_method,
             "source_kind": "credit_pack_sale",
@@ -18551,7 +18806,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             "logged_by": user.get("name", "Admin"),
             "created_at": now,
         }
-        for lot in new_lots if float(lot.get("price_paid") or 0) > 0
+        for lot in new_lots if float(lot.get("price_paid") or 0) > 0 and payment_ratio > 0
     ]
     if retail_rows:
         await db.retail_sales.insert_many(retail_rows)

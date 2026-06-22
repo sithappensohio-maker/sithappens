@@ -4808,3 +4808,28 @@ The feature ALREADY EXISTS (`_compute_multi_dog_discount` in `server.py` ~L3247,
 
 ### Service worker bumped to `sh-v52-110di-55-statement-email-body-fix`.
 
+
+## Sprint 110di-61 — Partial pay on retail / packs / programs + Take Payment (2026-02-22)
+**User ask**: "Any time I sell a retail item, a credit pack, or a training program it needs to open the checkout so I can place the amount paid... and have the remaining go to AR. I also need to be able to open the checkout to register payments they make."
+User choices: (1) revenue recognition = **option C** cash-basis (only `amount_paid` hits today's P&L; remainder is AR receivable that becomes revenue when the tab is paid). (2) entry-point = "Take Payment" button next to Sell Pack / Sell Program / Add Retail Sale. (3) All partial-pay tabs land in the same AR view.
+
+### Backend
+- ✅ `_apply_sale_partial_payment()` — universal helper that writes charge + payment ledger rows, moves `client.account_balance`, and fires the partial-pay receipt email (reusing `client_partial_payment_receipt` template).
+- ✅ `RetailSaleIn.amount_paid`, `SellCreditPackIn.amount_paid`, `SellCreditPacksBulkIn.amount_paid`, `SellProgramIn.amount_paid` — all optional.
+- ✅ Each sell endpoint now branches on partial: under partial-pay, the `retail_sales` row records only `amount_paid` as today's revenue (option C); the bulk-pack endpoint pro-rates per-lot.
+- ✅ Retail-sale partial keeps the audit trail (`full_ticket_amount`, `partial_pay: true`) + recomputes tax slice proportionally.
+- ✅ `apply_tab_payment` now ALSO inserts a `retail_sales` row tagged `source_kind="tab_payment"` so future tab payments hit the Income / P&L on the day they're collected (option C).
+
+### Frontend
+- ✅ Identical "Paid in full / Partial on tab" 3-column toggle (Total / Paying today / On tab) added to: **SellPackModal** (bulk cart), **SellProgramModal**, **Retail Add-Sale modal** (requires client_id).
+- ✅ New `TakePaymentModal.jsx` — standalone "cash-register" modal with client search, amount, method, notes. Mounted in two places:
+  - **Income screen** — green "TAKE PAYMENT" button next to "Log Sale".
+  - **Each client card** — new "Take Payment" menu item next to "Sell Credit Pack" / "Sell Training Program" (preselects the client).
+
+### Verified
+- 5/5 new pytest (`test_partial_sales.py`): partial pack, partial program, partial retail, tab-payment revenue row, full-pay regression.
+- 13/13 booking-partial-pay (`test_partial_payment.py`).
+- 46/46 critical-flow regression bucket.
+
+### Service worker bumped to `sh-v59-110di-61-partial-sales-take-payment`.
+

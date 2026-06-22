@@ -17,6 +17,7 @@ import AdminClientPaymentPlans from "../components/AdminClientPaymentPlans";
 import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import CommunicationLog from "../components/CommunicationLog";
+import TakePaymentModal from "../components/TakePaymentModal";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import LazyMount from "../components/LazyMount";
 import SendClientEmailModal from "../components/SendClientEmailModal";
@@ -40,6 +41,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const [portalForm, setPortalForm] = useState({ email:"", password:"" });
   const [sellOpen, setSellOpen] = useState(null); // client object
   const [sellProgramOpen, setSellProgramOpen] = useState(null); // client object — Sprint 110bw
+  const [takePaymentOpen, setTakePaymentOpen] = useState(null); // client object — Sprint 110di-61
   const [adjustOpen, setAdjustOpen] = useState(null); // client object
   const [receiptsOpen, setReceiptsOpen] = useState(null); // client object — shows list of past receipts
   const [filesOpen, setFilesOpen] = useState(null); // client object — shows files/homework manager
@@ -410,6 +412,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               onSetPassword={()=>openPortal(c)}
               onSellPack={()=>setSellOpen(c)}
               onSellProgram={()=>setSellProgramOpen(c)}
+              onTakePayment={()=>setTakePaymentOpen(c)}
               onAdjustCredits={()=>setAdjustOpen(c)}
               onReceipts={()=>setReceiptsOpen(c)}
               onFiles={()=>setFilesOpen(c)}
@@ -628,6 +631,12 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                           onSold={()=>{ setSellProgramOpen(null); load(); }} />
       )}
 
+      {takePaymentOpen && (
+        <TakePaymentModal presetClientId={takePaymentOpen.id}
+                          onClose={()=>setTakePaymentOpen(null)}
+                          onSuccess={()=>{ setTakePaymentOpen(null); load(); }} />
+      )}
+
       {receipt && (
         <ReceiptModal data={receipt} onClose={()=>setReceipt(null)} />
       )}
@@ -743,6 +752,9 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   const [note, setNote] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // Sprint 110di-61 — Partial pay toggle on the bulk pack-sale cart.
+  const [payMode, setPayMode] = useState("full"); // "full" | "partial"
+  const [amountPaid, setAmountPaid] = useState("");
 
   const addToCart = (id) => setCart(c => ({ ...c, [id]: (c[id] || 0) + 1 }));
   const removeFromCart = (id) => setCart(c => {
@@ -768,7 +780,9 @@ function SellPackModal({ client, packs, onClose, onSold }) {
     setBusy(true); setErr("");
     try {
       const items = cartItems.map(it => ({ pack_id: it.pack.id, quantity: it.qty }));
-      const r = await api.post(`/clients/${client.id}/sell-packs`, { items, payment_method: method, note });
+      const body = { items, payment_method: method, note };
+      if (payMode === "partial" && amountPaid !== "") body.amount_paid = Number(amountPaid);
+      const r = await api.post(`/clients/${client.id}/sell-packs`, body);
       onSold?.(r.data);
     } catch (e) {
       setErr(e.response?.data?.detail || "Sale failed");
@@ -876,6 +890,52 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="e.g., birthday gift, returning customer"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
           </div>
+          {/* Sprint 110di-61 — Partial-pay toggle. Identical UX to the
+              CheckoutModal partial-pay flow. */}
+          {totalCharge > 0 && (
+            <div className="border-t border-bgHover pt-3">
+              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
+                <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
+                        data-testid="sell-pack-pay-full"
+                        className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                  <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
+                </button>
+                <button type="button" onClick={()=>{ setPayMode("partial"); }}
+                        data-testid="sell-pack-pay-partial"
+                        className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                  <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
+                </button>
+              </div>
+              {payMode === "partial" && (
+                <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3"
+                     data-testid="sell-pack-partial-block">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
+                    <p className="text-xl font-black text-white mt-1">${totalCharge.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                    <input type="number" step="0.01" min="0" value={amountPaid}
+                           onChange={(e)=>setAmountPaid(e.target.value)}
+                           data-testid="sell-pack-amount-paid"
+                           autoFocus placeholder="$0.00"
+                           className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                    <p className="text-xl font-black mt-1">
+                      <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < totalCharge ? "text-shOrange" : (Number(amountPaid) > totalCharge ? "text-shGreen" : "text-gray-400"))}>
+                        {amountPaid === "" ? `+$${totalCharge.toFixed(2)}` : Number(amountPaid) < totalCharge ? `+$${(totalCharge - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > totalCharge ? `−$${(Number(amountPaid) - totalCharge).toFixed(2)}` : "$0.00"}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           <p className="text-[13px] text-gray-500 italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
           {err && <p className="text-red-400 text-[15px]">{err}</p>}
           <div className="flex justify-end gap-3 pt-2">
@@ -909,6 +969,9 @@ function SellProgramModal({ client, onClose, onSold }) {
   const [scheduleTime, setScheduleTime] = useState("10:00");
   const [scheduleStart, setScheduleStart] = useState("");
   const [overrideClosures, setOverrideClosures] = useState(false);
+  // Sprint 110di-61 — Partial-pay toggle.
+  const [payMode, setPayMode] = useState("full"); // "full" | "partial"
+  const [amountPaid, setAmountPaid] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -943,6 +1006,8 @@ function SellProgramModal({ client, onClose, onSold }) {
       const body = { program_id: programId, payment_method: method, note };
       if (dogId) body.dog_id = dogId;
       if (overridePrice !== "") body.override_price = Number(overridePrice);
+      // Sprint 110di-61 — Partial pay.
+      if (payMode === "partial" && amountPaid !== "") body.amount_paid = Number(amountPaid);
       // Sprint 110ce — scheduling fields. Board & Train doesn't get bookings.
       const programType = selectedProgram?.type;
       if (dogId && scheduleEnabled && programType !== "board_train" && scheduleTime) {
@@ -1167,6 +1232,51 @@ function SellProgramModal({ client, onClose, onSold }) {
             <p className="text-gray-400 text-[12px] mt-1">
               ${effectivePrice.toFixed(2)} total · ${perEach.toFixed(2)} per {unit.replace(/s$/, "")}
             </p>
+          </div>
+        )}
+
+        {/* Sprint 110di-61 — Partial-pay toggle for program sales. */}
+        {selectedProgram && effectivePrice > 0 && (
+          <div className="border-t border-bgHover pt-3">
+            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
+              <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
+                      data-testid="sell-program-pay-full"
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
+              </button>
+              <button type="button" onClick={()=>setPayMode("partial")}
+                      data-testid="sell-program-pay-partial"
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
+              </button>
+            </div>
+            {payMode === "partial" && (
+              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3" data-testid="sell-program-partial-block">
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
+                  <p className="text-xl font-black text-white mt-1">${effectivePrice.toFixed(2)}</p>
+                </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                  <input type="number" step="0.01" min="0" value={amountPaid}
+                         onChange={(e)=>setAmountPaid(e.target.value)}
+                         data-testid="sell-program-amount-paid"
+                         autoFocus placeholder="$0.00"
+                         className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                  <p className="text-xl font-black mt-1">
+                    <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < effectivePrice ? "text-shOrange" : (Number(amountPaid) > effectivePrice ? "text-shGreen" : "text-gray-400"))}>
+                      {amountPaid === "" ? `+$${effectivePrice.toFixed(2)}` : Number(amountPaid) < effectivePrice ? `+$${(effectivePrice - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > effectivePrice ? `−$${(Number(amountPaid) - effectivePrice).toFixed(2)}` : "$0.00"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -1566,7 +1676,7 @@ function ClientStatusPill({ status, clientId, onChange }) {
 // (computed from the trigger's bounding rect) escapes all stacking contexts.
 function ClientActionsMenu({
   clientId, hasPortal,
-  onSendClaim, onSetPassword, onSellPack, onSellProgram,
+  onSendClaim, onSetPassword, onSellPack, onSellProgram, onTakePayment,
   onAdjustCredits, onReceipts, onFiles, onLegacy, onPackLots,
 }) {
   const [open, setOpen] = useState(false);
@@ -1625,6 +1735,9 @@ function ClientActionsMenu({
       onClick: onSellPack, testId: `menu-sell-pack-${clientId}` },
     { label: "Sell Training Program", icon: "fa-graduation-cap", color: "text-purple-300",
       onClick: onSellProgram, testId: `menu-sell-program-${clientId}` },
+    // Sprint 110di-61 — Take a standalone payment (settle a tab, prepay).
+    { label: "Take Payment", icon: "fa-cash-register", color: "text-shGreen",
+      onClick: onTakePayment, testId: `menu-take-payment-${clientId}` },
     { label: "Adjust Credits", icon: "fa-plus-minus", color: "text-shOrange",
       onClick: onAdjustCredits, testId: `menu-adjust-credits-${clientId}` },
     { divider: true },
