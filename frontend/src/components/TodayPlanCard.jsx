@@ -40,15 +40,13 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
   const [catchUpFor, setCatchUpFor] = useState(null);
   // Per-homework form state. Key: homework_id → { values, mood, photo, note, submitting }
   const [forms, setForms] = useState({});
-  // Sprint 110i — track which steps are expanded so clients can read the full
-  // label/description without truncation. Also which item is in fullscreen.
-  const [expanded, setExpanded] = useState({}); // key: `${hwid}:${stepid}` → bool
+  // Sprint 110di-66 — descriptions now render always-visible; the per-step
+  // expand state was removed. Fullscreen mode still toggled separately.
   const [fullscreenItem, setFullscreenItem] = useState(null);
   // Sprint 110q — celebratory advancement toast. Set right after a successful
   // day submit; auto-dismisses after a few seconds. Shape:
   //   { kind: "advance" | "complete", day_completed, next_day?, total_days, dog_name, title }
   const [celebration, setCelebration] = useState(null);
-  const toggleExpand = (key) => setExpanded((e) => ({ ...e, [key]: !e[key] }));
 
   useEffect(() => {
     if (!celebration) return;
@@ -378,8 +376,6 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                   {item.steps.map((s) => {
                     const id = `${item.homework_id}:${s.id}`;
                     const isBusy = busy === id;
-                    const hasMore = !!(s.description || s.notes);
-                    const isOpen = !!expanded[id];
                     return (
                       <div key={s.id}
                            data-testid={`today-plan-step-${item.homework_id}-${s.id}`}
@@ -392,38 +388,37 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                                   aria-label={s.done ? "Mark step incomplete" : "Mark step complete"}>
                             {isBusy ? <i className="fas fa-spinner fa-spin text-xs"/> : s.done ? <i className="fas fa-check text-xs"/> : null}
                           </button>
-                          <button onClick={() => hasMore ? toggleExpand(id) : toggleStep(item, s)}
-                                  disabled={isBusy || item.status === "submitted"}
-                                  data-testid={`today-plan-step-label-${item.homework_id}-${s.id}`}
-                                  className="flex-1 text-left disabled:opacity-60">
-                            <p className={`text-[15px] leading-snug break-words ${s.done ? "line-through text-gray-500" : "text-white"}`}>
-                              {s.label}
-                              {hasMore && (
-                                <i className={`fas ${isOpen ? "fa-chevron-up" : "fa-chevron-down"} ml-2 text-[11px] text-gray-500`}/>
-                              )}
+                        <button onClick={() => toggleStep(item, s)}
+                                disabled={isBusy || item.status === "submitted"}
+                                data-testid={`today-plan-step-label-${item.homework_id}-${s.id}`}
+                                className="flex-1 text-left disabled:opacity-60">
+                          <p className={`text-[15px] leading-snug break-words ${s.done ? "line-through text-gray-500" : "text-white"}`}>
+                            {s.label}
+                          </p>
+                          {/* Sprint 110di-66 — Always show per-step directions inline so the
+                              client can actually read them without tapping anything. */}
+                          {s.description && (
+                            <p data-testid={`today-plan-step-description-${item.homework_id}-${s.id}`}
+                               className={`text-[13px] leading-relaxed mt-1 whitespace-pre-wrap ${s.done ? "text-gray-600 line-through decoration-gray-600/40" : "text-gray-300"}`}>
+                              {s.description}
                             </p>
-                          </button>
-                          {s.minutes ? (
-                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
-                              {s.minutes} min
-                            </span>
-                          ) : null}
+                          )}
+                        </button>
+                        {s.minutes ? (
+                          <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
+                            {s.minutes} min
+                          </span>
+                        ) : null}
+                      </div>
+                      {/* Notes stay collapsible since they're optional/edge-case content. */}
+                      {s.notes && (
+                        <div className="px-3 pb-3 pt-1 border-t border-bgHover/60"
+                             data-testid={`today-plan-step-notes-${item.homework_id}-${s.id}`}>
+                          <p className="text-[13px] text-gray-400 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shBlue/40 pl-3 mt-2">
+                            <i className="fas fa-circle-info text-shBlue mr-1"/>{s.notes}
+                          </p>
                         </div>
-                        {hasMore && isOpen && (
-                          <div className="px-3 pb-3 pt-1 border-t border-bgHover/60 space-y-2"
-                               data-testid={`today-plan-step-detail-${item.homework_id}-${s.id}`}>
-                            {s.description && (
-                              <p className="text-[13px] text-gray-300 whitespace-pre-wrap leading-relaxed">
-                                {s.description}
-                              </p>
-                            )}
-                            {s.notes && (
-                              <p className="text-[12px] text-gray-400 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shBlue/40 pl-2">
-                                <i className="fas fa-circle-info mr-1 text-shBlue"/>{s.notes}
-                              </p>
-                            )}
-                          </div>
-                        )}
+                      )}
                       </div>
                     );
                   })}

@@ -477,37 +477,49 @@ export default function DailyTrackerBuilder({ dogs, defaultDogId = "", onClose, 
                 <p className="text-[13px] text-gray-400 mb-3">
                   Bite-sized checkboxes the client ticks off as they go. Add a minute target so you (and they) know how long the day takes. When every step is checked, the day auto-submits.
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {(activeDay.steps || []).map((s, i) => (
-                    <div key={s.id} className="flex items-center gap-2" data-testid={`dtb-step-${s.id}`}>
-                      <div className="flex flex-col">
-                        <button onClick={() => moveStep(activeDayIdx, s.id, -1)} disabled={i === 0} data-testid={`dtb-step-up-${s.id}`}
-                                className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3">
-                          <i className="fas fa-chevron-up"/>
-                        </button>
-                        <button onClick={() => moveStep(activeDayIdx, s.id, 1)} disabled={i === (activeDay.steps || []).length - 1} data-testid={`dtb-step-down-${s.id}`}
-                                className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3 mt-0.5">
-                          <i className="fas fa-chevron-down"/>
-                        </button>
+                    <div key={s.id} className="space-y-1.5" data-testid={`dtb-step-${s.id}`}>
+                      <div className="flex items-center gap-2">
+                        <div className="flex flex-col">
+                          <button onClick={() => moveStep(activeDayIdx, s.id, -1)} disabled={i === 0} data-testid={`dtb-step-up-${s.id}`}
+                                  className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3">
+                            <i className="fas fa-chevron-up"/>
+                          </button>
+                          <button onClick={() => moveStep(activeDayIdx, s.id, 1)} disabled={i === (activeDay.steps || []).length - 1} data-testid={`dtb-step-down-${s.id}`}
+                                  className="text-gray-500 hover:text-shGreen disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none h-3 mt-0.5">
+                            <i className="fas fa-chevron-down"/>
+                          </button>
+                        </div>
+                        <input value={s.label} onChange={(e) => updateStep(activeDayIdx, s.id, { label: e.target.value })}
+                               placeholder={`Step ${i + 1} · e.g., "Practice sit for 5 reps in the kitchen"`}
+                               className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                        <input
+                          type="number" min="0" max="180"
+                          value={s.minutes ?? ""}
+                          onChange={(e) => updateStep(activeDayIdx, s.id, { minutes: e.target.value === "" ? null : Math.max(0, parseInt(e.target.value) || 0) })}
+                          placeholder="min"
+                          title="Minutes for this step"
+                          data-testid={`dtb-step-minutes-${s.id}`}
+                          className="w-20 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center"
+                        />
+                        {(activeDay.steps || []).length > 1 && (
+                          <button onClick={() => removeStep(activeDayIdx, s.id)} data-testid={`dtb-remove-step-${s.id}`}
+                                  className="text-gray-400 hover:text-red-400 px-2">
+                            <i className="fas fa-times"/>
+                          </button>
+                        )}
                       </div>
-                      <input value={s.label} onChange={(e) => updateStep(activeDayIdx, s.id, { label: e.target.value })}
-                             placeholder={`Step ${i + 1} · e.g., "Practice sit for 5 reps in the kitchen"`}
-                             className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
-                      <input
-                        type="number" min="0" max="180"
-                        value={s.minutes ?? ""}
-                        onChange={(e) => updateStep(activeDayIdx, s.id, { minutes: e.target.value === "" ? null : Math.max(0, parseInt(e.target.value) || 0) })}
-                        placeholder="min"
-                        title="Minutes for this step"
-                        data-testid={`dtb-step-minutes-${s.id}`}
-                        className="w-20 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm text-center"
+                      {/* Sprint 110di-66 — per-step directions the client reads under the checkbox */}
+                      <textarea
+                        value={s.description || ""}
+                        onChange={(e) => updateStep(activeDayIdx, s.id, { description: e.target.value })}
+                        data-testid={`dtb-step-description-${s.id}`}
+                        placeholder="Directions for the client (how to actually do this step, what to mark, what to reward)…"
+                        rows={2}
+                        className="w-full ml-6 bg-bgPanel/60 border border-bgHover rounded p-2 text-gray-300 text-[13px] leading-snug"
+                        style={{ width: "calc(100% - 1.5rem)" }}
                       />
-                      {(activeDay.steps || []).length > 1 && (
-                        <button onClick={() => removeStep(activeDayIdx, s.id)} data-testid={`dtb-remove-step-${s.id}`}
-                                className="text-gray-400 hover:text-red-400 px-2">
-                          <i className="fas fa-times"/>
-                        </button>
-                      )}
                     </div>
                   ))}
                 </div>
