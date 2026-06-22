@@ -8589,6 +8589,9 @@ class ProgramIn(BaseModel):
     active: bool = True
     # Sprint 110bx — auto-assigned on enrollment ("welcome homework")
     welcome_homework_template_id: Optional[str] = None
+    # Sprint 110di-62 — Auto-fire email template slug on program sale.
+    # Pick any system or custom slug from the email-templates panel.
+    welcome_email_template_slug: Optional[str] = None
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -17797,6 +17800,9 @@ class CreditPackIn(BaseModel):
     icon: Optional[str] = ""
     color: Optional[str] = ""
     active: bool = True
+    active: bool = True
+    # Sprint 110di-62 — Auto-fire email template slug on pack sale.
+    welcome_email_template_slug: Optional[str] = None
 
 
 class SellCreditPackIn(BaseModel):
@@ -18258,6 +18264,15 @@ async def sell_training_program(
             scheduled_bookings.append(booking)
 
     lot.pop("_id", None)
+    # Sprint 110di-62 — Fire program's bound welcome email if set.
+    if program.get("welcome_email_template_slug"):
+        try:
+            asyncio.create_task(_fire_product_welcome_email(
+                client=client, slug=program["welcome_email_template_slug"],
+                ctx={"program_name": program.get("name", ""), "dog_name": ""},
+            ))
+        except Exception as exc:
+            logger.warning("program welcome email spawn failed: %s", exc)
     return {
         "lot": lot,
         "enrollment": enrollment_summary,  # null when dog_id not provided
@@ -18685,6 +18700,15 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
         })
 
     lot.pop("_id", None)
+    # Sprint 110di-62 — Fire pack's bound welcome email if set.
+    if pack.get("welcome_email_template_slug"):
+        try:
+            asyncio.create_task(_fire_product_welcome_email(
+                client=client, slug=pack["welcome_email_template_slug"],
+                ctx={"pack_name": pack.get("name", "")},
+            ))
+        except Exception as exc:
+            logger.warning("pack welcome email spawn failed: %s", exc)
     return lot
 
 
@@ -19162,21 +19186,23 @@ class EmailSettingsUpdate(BaseModel):
 @api.get("/admin/email-templates")
 async def list_email_templates(_: dict = Depends(require_admin)):
     """List every email Sit Happens sends along with the operator's custom
-    overrides (if any). The Settings UI uses this to drive the template editor."""
+    overrides (if any). Sprint 110di-62: also includes admin-created CUSTOM
+    templates (kind='custom') so they can be bound to product sales."""
     overrides = {}
+    customs = []
     async for row in db.email_templates.find({}, {"_id": 0}):
-        overrides[row.get("slug")] = row
+        if row.get("kind") == "custom":
+            customs.append(row)
+        else:
+            overrides[row.get("slug")] = row
     out = []
     for tpl in _EMAIL_REGISTRY:
         slug = tpl["slug"]
         ov = overrides.get(slug, {}) or {}
         out.append({
-            "slug": slug,
-            "name": tpl["name"],
-            "description": tpl["description"],
-            "category": tpl["category"],
-            "audience": tpl["audience"],
-            "variables": tpl.get("variables", []),
+            "slug": slug, "name": tpl["name"], "description": tpl["description"],
+            "category": tpl["category"], "audience": tpl["audience"],
+            "variables": tpl.get("variables", []), "kind": "system",
             "defaults": {
                 "subject": tpl.get("default_subject", ""),
                 "title": tpl.get("default_title", ""),
@@ -19184,16 +19210,100 @@ async def list_email_templates(_: dict = Depends(require_admin)):
                 "cta_text": tpl.get("default_cta_text", ""),
             },
             "override": {
-                "subject": ov.get("subject", ""),
-                "title": ov.get("title", ""),
-                "intro_html": ov.get("intro_html", ""),
-                "cta_text": ov.get("cta_text", ""),
-                "signoff_html": ov.get("signoff_html", ""),
-                "updated_at": ov.get("updated_at", ""),
+                "subject": ov.get("subject", ""), "title": ov.get("title", ""),
+                "intro_html": ov.get("intro_html", ""), "cta_text": ov.get("cta_text", ""),
+                "signoff_html": ov.get("signoff_html", ""), "updated_at": ov.get("updated_at", ""),
             },
             "is_customized": bool(ov),
         })
+    for c in customs:
+        out.append({
+            "slug": c["slug"], "name": c.get("name", c["slug"]),
+            "description": c.get("description", ""),
+            "category": c.get("category", "custom"),
+            "audience": c.get("audience", "client"),
+            "variables": c.get("variables", ["first_name", "dog_name", "program_name", "pack_name"]),
+            "kind": "custom",
+            "defaults": {"subject": "", "title": "", "intro_html": "", "cta_text": ""},
+            "override": {
+                "subject": c.get("subject", ""), "title": c.get("title", ""),
+                "intro_html": c.get("intro_html", ""), "cta_text": c.get("cta_text", ""),
+                "signoff_html": c.get("signoff_html", ""), "updated_at": c.get("updated_at", ""),
+            },
+            "is_customized": True,
+        })
     return out
+
+
+class EmailTemplateCreate(BaseModel):
+    """Sprint 110di-62 — Admin-defined custom email template."""
+    name: str = Field(min_length=2, max_length=80)
+    description: Optional[str] = ""
+    audience: Optional[Literal["client", "admin", "staff"]] = "client"
+    subject: str = Field(min_length=1, max_length=200)
+    title: Optional[str] = ""
+    intro_html: str = Field(min_length=1)
+    cta_text: Optional[str] = ""
+
+
+@api.post("/admin/email-templates/custom")
+async def create_custom_email_template(body: EmailTemplateCreate, _: dict = Depends(require_admin)):
+    """Create a new admin-defined template that can be bound to a product
+    (training program / credit pack) so it auto-fires on sale."""
+    import re
+    base = re.sub(r"[^a-z0-9]+", "_", body.name.lower()).strip("_")[:48] or "custom"
+    slug = f"custom_{base}"
+    # Ensure unique against both registry and existing custom rows
+    existing_slugs = {t["slug"] for t in _EMAIL_REGISTRY}
+    async for row in db.email_templates.find({}, {"slug": 1}):
+        existing_slugs.add(row.get("slug"))
+    final = slug; n = 2
+    while final in existing_slugs:
+        final = f"{slug}_{n}"; n += 1
+    doc = {
+        "slug": final, "kind": "custom",
+        "name": body.name, "description": body.description or "",
+        "audience": body.audience or "client", "category": "custom",
+        "subject": body.subject, "title": body.title or "",
+        "intro_html": body.intro_html, "cta_text": body.cta_text or "",
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.email_templates.insert_one(doc.copy())
+    email_service.invalidate_template_cache()
+    return {"ok": True, "slug": final, "template": doc}
+
+
+@api.delete("/admin/email-templates/custom/{slug}")
+async def delete_custom_email_template(slug: str, _: dict = Depends(require_admin)):
+    """Delete a CUSTOM template. System templates can only be reset, not deleted."""
+    if slug in {t["slug"] for t in _EMAIL_REGISTRY}:
+        raise HTTPException(status_code=400, detail="System templates cannot be deleted, only reset")
+    r = await db.email_templates.delete_one({"slug": slug, "kind": "custom"})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Custom template not found")
+    # Unbind from products that referenced it
+    await db.programs.update_many({"welcome_email_template_slug": slug}, {"$set": {"welcome_email_template_slug": None}})
+    await db.credit_packs.update_many({"welcome_email_template_slug": slug}, {"$set": {"welcome_email_template_slug": None}})
+    email_service.invalidate_template_cache()
+    return {"ok": True}
+
+
+async def _fire_product_welcome_email(*, client: dict, slug: str, ctx: dict) -> None:
+    """Sprint 110di-62 — Dispatch a bound welcome email after a product sale.
+    Silent no-op if slug missing/invalid or client has no email."""
+    if not slug or not client or not client.get("email"):
+        return
+    try:
+        first_name = (client.get("name") or "").split(" ")[0] or "there"
+        merged_ctx = {"first_name": first_name, **(ctx or {})}
+        await email_service._dispatch(
+            slug=slug, to_email=client["email"], ctx=merged_ctx, rows=[],
+            fallback_subject=f"Welcome — {ctx.get('program_name') or ctx.get('pack_name') or 'thanks for your purchase'}",
+            fallback_title="🐾 Welcome!",
+            fallback_intro=f"Hi {first_name} — thanks for signing up. We'll be in touch shortly with next steps.",
+        )
+    except Exception as exc:
+        logger.warning("welcome email %s send failed: %s", slug, exc)
 
 
 @api.get("/admin/email-templates/{slug}")

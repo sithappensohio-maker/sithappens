@@ -384,6 +384,7 @@ function TemplatesCard() {
   const [rows, setRows] = useState([]);
   const [editing, setEditing] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false); // Sprint 110di-62
 
   const load = () => {
     api.get("/admin/email-templates")
@@ -392,7 +393,19 @@ function TemplatesCard() {
   };
   useEffect(() => { load(); }, []);
 
-  const filtered = filter === "all" ? rows : rows.filter(r => r.category === filter);
+  const filtered = filter === "all" ? rows : (filter === "custom"
+    ? rows.filter(r => r.kind === "custom")
+    : rows.filter(r => r.audience === filter || r.category === filter));
+
+  const handleDelete = async (slug, name) => {
+    if (!window.confirm(`Delete the "${name}" template? Any product bound to it will be unbound.`)) return;
+    try {
+      await api.delete(`/admin/email-templates/custom/${slug}`);
+      load();
+    } catch (e) {
+      alert(e?.response?.data?.detail || "Delete failed");
+    }
+  };
 
   return (
     <div className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-xl" data-testid="email-templates-card">
@@ -404,36 +417,38 @@ function TemplatesCard() {
           <h3 className="text-xl font-black text-white">Email Templates</h3>
           <p className="text-xs text-gray-400 mt-1">Edit the subject, intro body, and CTA for each email Sit Happens sends. Variables like <code className="bg-bgHover px-1 rounded text-shBlue">{`{{first_name}}`}</code> are replaced automatically.</p>
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center flex-wrap">
           {[
             { id: "all", label: "All" },
             { id: "client", label: "To Clients" },
             { id: "admin", label: "To You" },
+            { id: "custom", label: "Custom" },
           ].map(f => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              data-testid={`template-filter-${f.id}`}
-              className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === f.id ? "bg-shBlue text-white" : "bg-bgHover text-gray-400 hover:text-white"}`}
-            >
+            <button key={f.id} onClick={() => setFilter(f.id)} data-testid={`template-filter-${f.id}`}
+              className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === f.id ? "bg-shBlue text-white" : "bg-bgHover text-gray-400 hover:text-white"}`}>
               {f.label}
             </button>
           ))}
+          <button onClick={() => setCreateOpen(true)} data-testid="template-create-btn"
+            className="ml-2 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest bg-shGreen text-bgHeader hover:bg-shGreen/80">
+            <i className="fas fa-plus mr-1"/>Create Custom
+          </button>
         </div>
       </div>
 
       <div className="space-y-2">
         {filtered.map(t => (
-          <button
-            key={t.slug}
-            onClick={() => setEditing(t.slug)}
-            data-testid={`template-row-${t.slug}`}
-            className="w-full text-left bg-bgBase hover:bg-bgHover border border-bgHover hover:border-shBlue/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4"
-          >
-            <div className="min-w-0 flex-1">
+          <div key={t.slug} data-testid={`template-row-${t.slug}`}
+               className="w-full bg-bgBase hover:bg-bgHover border border-bgHover hover:border-shBlue/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4">
+            <button onClick={() => setEditing(t.slug)} className="min-w-0 flex-1 text-left">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-sm font-black text-white truncate">{t.name}</span>
-                {t.is_customized && (
+                {t.kind === "custom" && (
+                  <span className="text-[9px] font-black uppercase tracking-widest bg-purple-500/15 text-purple-300 border border-purple-500/30 rounded px-1.5 py-0.5">
+                    Custom
+                  </span>
+                )}
+                {t.is_customized && t.kind !== "custom" && (
                   <span className="text-[9px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen border border-shGreen/30 rounded px-1.5 py-0.5">
                     Customized
                   </span>
@@ -443,23 +458,92 @@ function TemplatesCard() {
                 </span>
               </div>
               <div className="text-xs text-gray-400 truncate">{t.description}</div>
-            </div>
-            <i className="fas fa-chevron-right text-gray-500"/>
-          </button>
+            </button>
+            {t.kind === "custom" ? (
+              <button onClick={() => handleDelete(t.slug, t.name)} data-testid={`template-delete-${t.slug}`}
+                      className="text-red-400 hover:text-red-300 px-2"><i className="fas fa-trash"/></button>
+            ) : (
+              <i className="fas fa-chevron-right text-gray-500"/>
+            )}
+          </div>
         ))}
         {filtered.length === 0 && (
           <div className="text-center text-gray-500 text-sm py-6">No templates in this category.</div>
         )}
       </div>
 
-      {editing && (
-        <TemplateEditorModal
-          slug={editing}
-          onClose={() => { setEditing(null); load(); }}
-        />
-      )}
+      {editing && (<TemplateEditorModal slug={editing} onClose={() => { setEditing(null); load(); }} />)}
+      {createOpen && (<CreateCustomTemplateModal onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); load(); }} />)}
     </div>
   );
+}
+
+function CreateCustomTemplateModal({ onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [subject, setSubject] = useState("");
+  const [introHtml, setIntroHtml] = useState("");
+  const [audience, setAudience] = useState("client");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    setBusy(true); setErr("");
+    try {
+      await api.post("/admin/email-templates/custom", {
+        name, subject, intro_html: introHtml, audience,
+      });
+      onCreated();
+    } catch (e) {
+      setErr(e?.response?.data?.detail || "Create failed");
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+         onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
+         data-testid="template-create-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+        <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
+          <i className="fas fa-envelope-open-text text-shGreen mr-2"/>Create Custom Template
+        </h3>
+        <p className="text-[13px] text-gray-400 mb-4">
+          Build a custom email template that can be assigned to fire when a program or pack is sold.
+        </p>
+        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Template name</label>
+        <input value={name} onChange={(e)=>setName(e.target.value)}
+               data-testid="template-create-name" placeholder="Welcome to Puppy Basics"
+               className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Audience</label>
+        <select value={audience} onChange={(e)=>setAudience(e.target.value)} data-testid="template-create-audience"
+                className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+          <option value="client">To Client</option>
+          <option value="admin">To Admin</option>
+          <option value="staff">To Staff</option>
+        </select>
+        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Subject line</label>
+        <input value={subject} onChange={(e)=>setSubject(e.target.value)}
+               data-testid="template-create-subject" placeholder="Welcome — here's what to expect"
+               className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">
+          Body (HTML allowed · use <code className="text-shBlue">{`{{first_name}}`}</code>, <code className="text-shBlue">{`{{program_name}}`}</code>, <code className="text-shBlue">{`{{pack_name}}`}</code>)
+        </label>
+        <textarea value={introHtml} onChange={(e)=>setIntroHtml(e.target.value)} rows={8}
+                  data-testid="template-create-body"
+                  placeholder="<p>Hi {{first_name}} — welcome to {{program_name}}! Here is what to expect in the coming weeks...</p>"
+                  className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+          <button onClick={submit} disabled={busy || !name.trim() || !subject.trim() || !introHtml.trim()}
+                  data-testid="template-create-submit"
+                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
+            {busy ? "Creating…" : "Create template"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 }
 
 // ----------------------------- Template editor modal -----------------------------
