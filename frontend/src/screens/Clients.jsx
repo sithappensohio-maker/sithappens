@@ -293,6 +293,25 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                       <i className="fas fa-circle-check mr-1"/>Ready to Book
                     </span>
                   )}
+                  {/* Sprint 110di-56 — Outstanding-balance flag. Big and
+                      bright so the operator notices BEFORE booking another
+                      visit. Positive = owes, negative = pre-paid credit. */}
+                  {Math.abs(Number(c.account_balance || 0)) > 0.005 && (
+                    <span
+                      data-testid={`client-balance-flag-${c.id}`}
+                      title={Number(c.account_balance) > 0
+                        ? `This client owes $${Number(c.account_balance).toFixed(2)}`
+                        : `Pre-paid credit on file: $${Math.abs(Number(c.account_balance)).toFixed(2)}`}
+                      className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${
+                        Number(c.account_balance) > 0
+                          ? "bg-shOrange/20 text-shOrange border-shOrange/60 animate-pulse"
+                          : "bg-shGreen/15 text-shGreen border-shGreen/40"
+                      }`}
+                    >
+                      <i className={`fas ${Number(c.account_balance) > 0 ? "fa-file-invoice-dollar" : "fa-piggy-bank"} mr-1`}/>
+                      {Number(c.account_balance) > 0 ? "Owes" : "Credit"} ${Math.abs(Number(c.account_balance)).toFixed(2)}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

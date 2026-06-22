@@ -506,24 +506,53 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 </button>
               </div>
               {payMode === "partial" && (
-                <div className="mt-3 bg-shOrange/5 border border-shOrange/30 rounded p-3"
+                <div className="mt-3 bg-shOrange/5 border-2 border-shOrange/40 rounded-lg p-3"
                      data-testid="checkout-partial-pay-block">
-                  <label className="text-[11px] uppercase tracking-widest text-shOrange font-black">
-                    Amount paid today
-                  </label>
-                  <input type="number" step="0.01" min="0" value={amountPaid}
-                         onChange={(e)=>setAmountPaid(e.target.value)}
-                         data-testid="checkout-amount-paid"
-                         autoFocus
-                         placeholder={`Total: $${chargedToday.toFixed(2)}`}
-                         className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+                  {/* Sprint 110di-56 — Make the total VS amount-paid math
+                      unmistakable. Previously the input's placeholder showed
+                      the total, which users were typing back into the field
+                      (treating it like a confirmation), resulting in
+                      amount_paid = total → no tab created. */}
+                  <div className="grid grid-cols-3 gap-3 items-end">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Visit total</p>
+                      <p className="text-2xl font-black text-white mt-1" data-testid="checkout-visit-total">
+                        ${chargedToday.toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">
+                        <i className="fas fa-cash-register mr-1"/>Paying today
+                      </label>
+                      <input type="number" step="0.01" min="0" value={amountPaid}
+                             onChange={(e)=>setAmountPaid(e.target.value)}
+                             data-testid="checkout-amount-paid"
+                             autoFocus
+                             placeholder="$0.00"
+                             className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Goes on tab</p>
+                      <p className="text-2xl font-black mt-1" data-testid="checkout-tab-delta">
+                        <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < chargedToday ? "text-shOrange" : (Number(amountPaid) > chargedToday ? "text-shGreen" : "text-gray-400"))}>
+                          {amountPaid === ""
+                            ? `$${chargedToday.toFixed(2)}`
+                            : Number(amountPaid) < chargedToday
+                              ? `+$${(chargedToday - Number(amountPaid)).toFixed(2)}`
+                              : Number(amountPaid) > chargedToday
+                                ? `−$${(Number(amountPaid) - chargedToday).toFixed(2)}`
+                                : "$0.00"}
+                        </span>
+                      </p>
+                    </div>
+                  </div>
                   {amountPaid !== "" && Number(amountPaid) >= 0 && (
-                    <div className="mt-2 text-[13px] font-black"
+                    <div className="mt-3 pt-3 border-t border-shOrange/30 text-[13px] font-black"
                          data-testid="checkout-partial-pay-summary">
                       {Number(amountPaid) < chargedToday ? (
                         <span className="text-shOrange">
-                          <i className="fas fa-arrow-up mr-1"/>
-                          Tab will increase by ${(chargedToday - Number(amountPaid)).toFixed(2)}
+                          <i className="fas fa-file-invoice-dollar mr-1.5"/>
+                          ${(chargedToday - Number(amountPaid)).toFixed(2)} stays on the tab
                           {clientBal && (
                             <span className="text-gray-400 ml-2 normal-case text-[12px]">
                               · new balance ${(clientBal.account_balance + (chargedToday - Number(amountPaid))).toFixed(2)}
@@ -532,12 +561,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                         </span>
                       ) : Number(amountPaid) > chargedToday ? (
                         <span className="text-shGreen">
-                          <i className="fas fa-piggy-bank mr-1"/>
-                          ${(Number(amountPaid) - chargedToday).toFixed(2)} prepaid credit will be added
+                          <i className="fas fa-piggy-bank mr-1.5"/>
+                          ${(Number(amountPaid) - chargedToday).toFixed(2)} becomes pre-paid credit on file
                         </span>
                       ) : (
                         <span className="text-shGreen">
-                          <i className="fas fa-check mr-1"/>Exact change — paid in full
+                          <i className="fas fa-check mr-1.5"/>Exact change — paid in full
                         </span>
                       )}
                     </div>
