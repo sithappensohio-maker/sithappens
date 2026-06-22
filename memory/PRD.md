@@ -4870,3 +4870,33 @@ User choices: (1) revenue recognition = **option C** cash-basis (only `amount_pa
 - `frontend/src/components/CreditPacksSettings.jsx` — loads templates + adds `pack-welcome-email` dropdown; `empty` form includes `welcome_email_template_slug: null`.
 - `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v60-110di-62-custom-email-templates`.
 - `backend/tests/test_custom_email_templates.py` — 3 new tests added by testing agent (credit-pack persist, credit-pack unbind, bulk-sell with welcome slug).
+
+## Sprint 110di-63 — In-modal Preview & Send Test for Custom Email Templates (2026-02-22)
+**User ask**: Add a preview + send-test button inside the Create Custom Template modal so operators can verify merge-tag rendering ({{first_name}}, {{program_name}}, {{pack_name}}, {{dog_name}}) BEFORE saving — eliminates "oops, that variable was wrong" moments after binding to a product.
+
+### Backend
+- **NEW** `POST /api/admin/email-templates/test-preview` — accepts `{subject, intro_html, title?, cta_text?, to_email?, mode}` where mode is `"render"` (returns rendered subject + HTML) or `"send"` (dispatches via Resend with sample variables). Does NOT persist any template. Reuses `email_service._substitute / _wrap / _send / _get_email_settings` for full brand-consistency with real emails.
+- Sample ctx covers `first_name=Alex, dog_name=Buddy, program_name=Puppy Basics, pack_name=10-Day Daycare Pack` plus the rest of the standard merge variables.
+
+### Frontend
+- `EmailDesignerPanel.jsx` → `CreateCustomTemplateModal` now has:
+  - **Render preview** button (`template-create-preview-btn`) that fetches the rendered HTML and shows it in an `iframe` sandbox (`template-create-preview`) with the rendered subject displayed above (`template-create-preview-subject`).
+  - **Send test** input + button (`template-create-test-to` / `template-create-test-send`) that dispatches a one-off test email to the entered address with confirmation message (`template-create-test-msg`).
+  - Modal widened to `max-w-3xl` to fit the preview pane.
+  - Editing subject/body resets the preview so stale renders don't linger.
+- Service worker bumped to `sh-v61-110di-63-template-preview-test`.
+
+### Tests (8/8 pass)
+- `test_preview_endpoint_renders_merge_tags` — verifies double-brace substitution + sample HTML body + no persistence side-effect.
+- `test_preview_endpoint_validates_required_fields` — empty subject → 422.
+- Prior 6 tests unchanged (create/list/delete, system-protect, program-bind-unbind, pack-bind-persist, pack-bind-unbind, bulk-sell-no-500).
+
+### Verified live (testing agent iteration_13)
+- 100% backend, 100% frontend. Full UI flow confirmed end-to-end: login → Settings → Email Designer → Create Custom → fill → Render preview shows substituted subject "Welcome Alex to Puppy Basics!" with body referencing Buddy + Puppy Basics → Send test shows "Sent to qa-test@example.com — check that inbox" → Create template persists template with kind=custom.
+
+### Files touched
+- `backend/server.py` — added `EmailTemplatePreviewRequest` model + `preview_custom_email_draft` route (~75 lines).
+- `frontend/src/components/EmailDesignerPanel.jsx` — extended `CreateCustomTemplateModal` with preview + send-test UI.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped.
+- `backend/tests/test_custom_email_templates.py` — 2 new tests appended.
+
