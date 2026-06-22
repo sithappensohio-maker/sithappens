@@ -615,7 +615,7 @@ export default function Income() {
 
       {/* Spreadsheet table OR grouped-by-date view */}
       {groupByDate ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="income-grouped">
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4 card-table" data-testid="income-grouped">
           <CollapsibleDateGroups
             rows={filtered}
             getDate={(r) => r.date}

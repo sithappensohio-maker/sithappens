@@ -25,7 +25,7 @@ export default function ReadinessChecklist({ onNavigate = () => {} }) {
   const allDone = completed === total;
 
   return (
-    <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden" data-testid="readiness-checklist">
+    <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden card-task" data-testid="readiness-checklist">
       <button
         type="button"
         onClick={() => setCollapsed(c => !c)}

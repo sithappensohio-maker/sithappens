@@ -257,7 +257,7 @@ export default function IntakeForms() {
           ) : (
             <div className="grid gap-3" data-testid="templates-list">
               {visibleTemplates.map(t => (
-                <div key={t.id} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg" data-testid={`template-${t.id}`}>
+                <div key={t.id} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg card-intake" data-testid={`template-${t.id}`}>
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -331,7 +331,7 @@ export default function IntakeForms() {
                 const dog = dogs.find(d => d.id === s.dog_id);
                 return (
                   <button key={s.id} onClick={()=>setReviewer(s)} data-testid={`sub-${s.id}`}
-                          className="text-left bg-bgPanel border border-bgHover rounded-xl p-4 hover:border-shBlue transition flex items-center gap-3 flex-wrap">
+                          className="text-left bg-bgPanel border border-bgHover rounded-xl p-4 hover:border-shBlue transition flex items-center gap-3 flex-wrap card-intake">
                     <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${STATUS_STYLE[s.status] || "bg-bgHover"}`}>
                       {STATUS_LABEL[s.status] || s.status}
                     </span>

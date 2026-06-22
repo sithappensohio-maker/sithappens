@@ -80,7 +80,7 @@ export default function AccountsReceivableTab() {
   }
   if (err) {
     return (
-      <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl p-4" data-testid="ar-err">
+      <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-xl p-4 card-danger" data-testid="ar-err">
         {err}
       </div>
     );
@@ -116,7 +116,7 @@ export default function AccountsReceivableTab() {
       </div>
 
       {/* Clients table */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden"
+      <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden card-table"
            data-testid="ar-clients-table">
         <div className="px-4 py-3 border-b border-bgHover flex items-center justify-between">
           <h3 className="text-[13px] uppercase tracking-widest font-black text-gray-300">

@@ -202,7 +202,7 @@ export default function Login() {
 
           {/* Compact auth card */}
           <div id="landing-auth" className="lg:col-span-2 scroll-mt-24" data-testid="landing-auth-card">
-            <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl">
+            <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl card-form">
               <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
                 <button onClick={() => setMode("login")} data-testid="tab-login"
                         className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>

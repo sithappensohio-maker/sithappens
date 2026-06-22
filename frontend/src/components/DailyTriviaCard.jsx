@@ -255,7 +255,7 @@ export function DailyTriviaCard() {
   const answered = !!result;
 
   return (
-    <div className="relative overflow-hidden bg-bgPanel card-pop rounded-2xl border border-bgHover shadow-2xl" data-testid="daily-trivia-card">
+    <div className="relative overflow-hidden bg-bgPanel card-pop rounded-2xl border border-bgHover shadow-2xl card-fact" data-testid="daily-trivia-card">
       <div className="absolute inset-0 pointer-events-none opacity-30"
            style={{ background: "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
       <PawBackdrop />

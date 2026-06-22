@@ -5014,3 +5014,48 @@ Sample CSV updated with realistic examples. Back-compat tested: old CSVs without
 ### Note for future
 DailyTrackerBuilder.jsx is now ~639 lines, just under the 700-line guideline. Testing agent recommended splitting Step1/Step2 panels into sub-components on the next cleanup pass — not urgent.
 
+
+## Sprint 110di-67 — Wire all 24 Card Theme types to live components (2026-02-22)
+
+**User ask**: "can we actually wire these to the cards to actually work in the app not all are wired up" — referring to the Settings → Card Themes panel where 24 themed card variants are defined but several had no live wiring.
+
+### What I found
+Audit of every `.card-{type}` class showed 9 of 24 had **zero usage** in components: `task`, `fact`, `intake`, `waiver`, `report`, `payment`, `danger`, `form`, `table`. The CSS was already in place; the components just weren't adding the className.
+
+### Wired up this sprint
+| Card type | Now applied to |
+|---|---|
+| `card-task` | `ReadinessChecklist` — the orange "Operational Readiness" panel on the admin dashboard |
+| `card-fact` | `DogFactCard` (both `big` and `chip` variants) + `DailyTriviaCard` |
+| `card-intake` | `IntakeForms.jsx` template list cards + sent-form rows |
+| `card-waiver` | `WaiverModal` inner panel |
+| `card-report` | `ReportCardModal` inner panel |
+| `card-payment` | `TakePaymentModal` inner panel |
+| `card-danger` | `AccountsReceivable` error banner + Portal `waiver-status-card` when waiver is needed |
+| `card-success` | Portal `waiver-status-card` when waiver is signed |
+| `card-form` | `Login.jsx` auth panel |
+| `card-table` | `Income.jsx` grouped income panel + `AccountsReceivable.jsx` clients table |
+
+### Verified live
+Smoke screenshot: 
+- Login form shows a subtle blue glow (card-form CSS variables active).
+- Dashboard's Operational Readiness panel shows the orange task glow.
+- Zero console errors after login + dashboard render.
+
+### Result
+**All 24 card types now have ≥1 live wiring.** Editing any card-type colors in Settings → Card Themes → e.g. change "Task Card" border to red → instantly updates the Operational Readiness panel on the dashboard. Same for every other type.
+
+### Files touched
+- `frontend/src/components/ReadinessChecklist.jsx`
+- `frontend/src/components/DogFactCard.jsx`
+- `frontend/src/components/DailyTriviaCard.jsx`
+- `frontend/src/components/WaiverModal.jsx`
+- `frontend/src/components/ReportCardModal.jsx`
+- `frontend/src/components/TakePaymentModal.jsx`
+- `frontend/src/screens/IntakeForms.jsx`
+- `frontend/src/screens/Login.jsx`
+- `frontend/src/screens/Income.jsx`
+- `frontend/src/screens/AccountsReceivable.jsx`
+- `frontend/src/screens/Portal.jsx`
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v67-110di-67-card-types-wired`
+

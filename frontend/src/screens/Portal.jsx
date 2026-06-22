@@ -1341,7 +1341,7 @@ export default function Portal() {
           )}
 
           {sectionOn("waiver_documents") && (
-          <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40":"bg-shGreen/5 border-shGreen/30"}`} data-testid="waiver-status-card">
+          <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40 card-danger":"bg-shGreen/5 border-shGreen/30 card-success"}`} data-testid="waiver-status-card">
             <div className="flex items-center justify-between mb-2">
               <p className={`text-[14px] font-black uppercase tracking-widest ${waiverNeeded?"text-red-400":"text-shGreen"}`}>
                 <i className={`fas ${waiverNeeded?"fa-exclamation-triangle":"fa-file-signature"} mr-2`} /> Client Waiver
