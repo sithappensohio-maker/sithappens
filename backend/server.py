@@ -5167,6 +5167,7 @@ def _default_dashboard_widgets() -> dict:
         "hero_card":         True,
         "today_tasks":       False,  # Sprint 110di-72 — hidden by default; operator can re-enable in Settings → Dashboard widgets
         "dog_fact":          True,
+        "training_tip":      True,
         "trivia":            True,
         "daycare_stats":     True,
         "boarding_stats":    True,

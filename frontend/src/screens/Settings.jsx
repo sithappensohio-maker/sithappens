@@ -1385,6 +1385,7 @@ const DASHBOARD_WIDGET_META = [
   { id: "grooming_stats",    label: "Grooming stats",       desc: "Upcoming grooms tile.",      master: "grooming" },
   { id: "total_dogs",        label: "Total dogs",           desc: "Lifetime dog count tile." },
   { id: "dog_fact",          label: "Dog Fact of the Day",  desc: "Admin-view of the daily breed fact." },
+  { id: "training_tip",      label: "Training Tip of the Day", desc: "One daily training tip on the admin dashboard. Same pool as the Training Hub." },
   { id: "trivia",            label: "Daily trivia",         desc: "Admin trivia card.", master: "trivia" },
   { id: "pnl",               label: "P&L summary",          desc: "Month-to-date revenue / expenses / net." },
   { id: "mileage",           label: "Mileage",              desc: "MTD logged miles + IRS rate." },

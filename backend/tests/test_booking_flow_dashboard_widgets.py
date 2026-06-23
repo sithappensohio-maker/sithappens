@@ -37,7 +37,7 @@ def test_branding_exposes_booking_flow_controls_and_dashboard_widgets():
             assert k in per[svc], f"{svc}.{k} missing"
     dw = body.get("dashboard_widgets")
     assert dw and isinstance(dw, dict)
-    for k in ["hero_card", "today_tasks", "dog_fact", "trivia",
+    for k in ["hero_card", "today_tasks", "dog_fact", "training_tip", "trivia",
               "daycare_stats", "boarding_stats", "training_stats", "grooming_stats",
               "total_dogs", "pnl", "mileage", "owner_clock",
               "closing_routine", "quick_links", "upcoming_bookings"]:

@@ -9,6 +9,7 @@ import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import TodaysBrainTile from "../components/TodaysBrainTile";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
+import AdminTrainingTipCard from "../components/AdminTrainingTipCard";
 import { MileageDashTile } from "../components/MileageDashTile";
 import usePullToRefresh, { RefreshSpinner } from "../lib/usePullToRefresh";
 import { useConfirm } from "../lib/useConfirm";
@@ -251,6 +252,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           Sprint 110di-60 — Added playable Trivia Question of the Day so
           staff can also play (separately tracked from clients). */}
       {widgetOn("dog_fact") && <DogFactCard variant="big" />}
+      {widgetOn("training_tip") && <AdminTrainingTipCard />}
       {widgetOn("trivia") && <DailyTriviaCard />}
       {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
 
