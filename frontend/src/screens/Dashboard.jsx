@@ -51,6 +51,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
   const [pendingVax, setPendingVax] = useState([]);
+  // Sprint 110di-82 — Pending homework day-submissions awaiting admin review.
+  const [pendingHomework, setPendingHomework] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [todayPnl, setTodayPnl] = useState(null);
   const [pnlExpanded, setPnlExpanded] = useState(false);
@@ -68,12 +70,13 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
   const load = async () => {
     try {
-      const [s, st, pg, sv, vx, lb, qr, pnl] = await Promise.all([
+      const [s, st, pg, sv, vx, hw, lb, qr, pnl] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
+        api.get("/admin/homework/pending-reviews").catch(()=>({data:[]})),
         api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
         api.get("/admin/today-pnl").catch(()=>({data:null})),
@@ -83,6 +86,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setPrograms(pg.data);
       setServices(sv.data || []);
       setPendingVax(Array.isArray(vx.data) ? vx.data : []);
+      setPendingHomework(Array.isArray(hw.data) ? hw.data : []);
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
       setTodayPnl(pnl.data);
@@ -255,6 +259,58 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       {widgetOn("training_tip") && <AdminTrainingTipCard />}
       {widgetOn("trivia") && <DailyTriviaCard />}
       {widgetOn("trivia") && <TriviaDashboardTile onNavSettings={()=>onNavigate("settings")} />}
+
+      {pendingHomework.length > 0 && (
+        <div className="card-warning rounded-xl p-5 shadow-xl" data-testid="pending-homework-reviews">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+            <h3 className="text-xs font-black text-shOrange uppercase tracking-widest flex items-center gap-2">
+              <i className="fas fa-clipboard-check"/> Homework Awaiting Review · {pendingHomework.length}
+            </h3>
+            <button onClick={()=>onNavigate("homework")}
+                    data-testid="open-homework-queue"
+                    className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:text-white border border-shOrange/40 hover:border-shOrange rounded px-3 py-1.5">
+              Open Review Queue <i className="fas fa-arrow-right ml-1"/>
+            </button>
+          </div>
+          <div className="space-y-2">
+            {pendingHomework.slice(0, 5).map(h => (
+              <button key={`${h.homework_id}-${h.day_number}`}
+                      type="button"
+                      onClick={()=>onNavigate("homework")}
+                      data-testid={`pending-homework-${h.homework_id}-${h.day_number}`}
+                      className="w-full text-left flex items-center justify-between gap-3 bg-bgBase/50 hover:bg-bgBase rounded p-3 flex-wrap transition">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="w-10 h-10 rounded bg-shOrange/15 text-shOrange grid place-items-center shrink-0">
+                    {h.has_photo ? <i className="fas fa-camera"/> : <i className="fas fa-paw"/>}
+                  </div>
+                  <div className="text-xs min-w-0">
+                    <div className="font-black text-white uppercase truncate">
+                      {h.dog_name || "—"}
+                      <span className="text-gray-500 font-normal normal-case"> · {h.client_name || "—"}</span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                      <span className="font-black uppercase px-2 py-0.5 rounded bg-shOrange/20 text-shOrange text-[12px] tracking-widest">
+                        Day {h.day_number}{h.total_days ? ` / ${h.total_days}` : ""}
+                      </span>
+                      <span className="text-gray-300 truncate max-w-[260px]">{h.title || "Daily tracker"}</span>
+                      {h.submitted_at && (
+                        <span className="text-gray-500">submitted <span className="font-black text-white">{new Date(h.submitted_at).toLocaleString()}</span></span>
+                      )}
+                    </div>
+                    {h.note && <div className="text-gray-400 mt-1 italic truncate max-w-[640px]">&ldquo;{h.note}&rdquo;</div>}
+                  </div>
+                </div>
+                <i className="fas fa-chevron-right text-gray-500 shrink-0"/>
+              </button>
+            ))}
+            {pendingHomework.length > 5 && (
+              <p className="text-[12px] text-gray-500 italic px-1">
+                + {pendingHomework.length - 5} more in the queue
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {pendingVax.length > 0 && (
         <div className="card-info rounded-xl p-5 shadow-xl" data-testid="pending-vax-reviews">
