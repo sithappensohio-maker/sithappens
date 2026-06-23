@@ -5165,7 +5165,7 @@ def _default_dashboard_widgets() -> dict:
     queries/data still run so reports stay accurate."""
     return {
         "hero_card":         True,
-        "today_tasks":       True,
+        "today_tasks":       False,  # Sprint 110di-72 — hidden by default; operator can re-enable in Settings → Dashboard widgets
         "dog_fact":          True,
         "trivia":            True,
         "daycare_stats":     True,
@@ -9481,6 +9481,24 @@ async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
     )
     sessions = await cur.to_list(10000)
 
+    # Sprint 110di-72 — Resolve dog + enrollment names once so per-dog
+    # breakdowns can show real names. Single batched query each.
+    all_dog_ids = list({s.get("dog_id") for s in sessions if s.get("dog_id")})
+    all_eids = list({s.get("enrollment_id") for s in sessions if s.get("enrollment_id")})
+    dog_rows = await db.dogs.find(
+        {"id": {"$in": all_dog_ids}}, {"_id": 0, "id": 1, "name": 1, "owner_id": 1},
+    ).to_list(5000) if all_dog_ids else []
+    dog_lookup = {d["id"]: d for d in dog_rows}
+    owner_ids = list({d.get("owner_id") for d in dog_rows if d.get("owner_id")})
+    client_rows = await db.clients.find(
+        {"id": {"$in": owner_ids}}, {"_id": 0, "id": 1, "name": 1},
+    ).to_list(5000) if owner_ids else []
+    client_lookup = {c["id"]: c.get("name") for c in client_rows}
+    enr_rows = await db.dog_programs.find(
+        {"id": {"$in": all_eids}}, {"_id": 0, "id": 1, "program_snapshot.name": 1},
+    ).to_list(5000) if all_eids else []
+    enr_lookup = {e["id"]: ((e.get("program_snapshot") or {}).get("name") or "") for e in enr_rows}
+
     by_trainer: Dict[str, Dict] = {}
     for s in sessions:
         key = (s.get("by_email") or s.get("by_user") or "unknown").lower()
@@ -9489,24 +9507,59 @@ async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
             "trainer_name": s.get("by_user") or s.get("by_email") or "Unknown",
             "trainer_email": s.get("by_email"),
             "session_count": 0,
-            "dogs": set(),
+            "dogs": {},
             "skills_mastered": 0,
             "modules_advanced": 0,
             "last_session_at": None,
             "session_notes": 0,
         })
         bucket["session_count"] += 1
-        if s.get("dog_id"):
-            bucket["dogs"].add(s["dog_id"])
+        # Per-dog sub-bucket
+        dog_id = s.get("dog_id")
+        if dog_id:
+            dbucket = bucket["dogs"].setdefault(dog_id, {
+                "dog_id": dog_id,
+                "dog_name": (dog_lookup.get(dog_id) or {}).get("name") or "Dog",
+                "client_name": client_lookup.get((dog_lookup.get(dog_id) or {}).get("owner_id")) or "",
+                "enrollment_id": s.get("enrollment_id"),
+                "program_name": enr_lookup.get(s.get("enrollment_id")) or "",
+                "session_count": 0,
+                "skills_moved": 0,
+                "skills_mastered": 0,
+                "modules_advanced": 0,
+                "last_session_at": None,
+                "recent_diffs": [],
+            })
+            dbucket["session_count"] += 1
+            if s.get("advanced_module"):
+                dbucket["modules_advanced"] += 1
+            at = s.get("at")
+            if at and (not dbucket["last_session_at"] or at > dbucket["last_session_at"]):
+                dbucket["last_session_at"] = at
         for d in (s.get("goal_updates") or []):
             prior = (d.get("prior_status") or "")
             new = (d.get("new_status") or "")
             prior_score = int(d.get("prior_score") or 0)
             new_score = int(d.get("new_score") or 0)
-            if new == "mastered" and prior != "mastered":
+            mastered_event = (new == "mastered" and prior != "mastered") or (new_score >= 4 and prior_score < 4)
+            moved = prior != new or prior_score != new_score
+            if mastered_event:
                 bucket["skills_mastered"] += 1
-            elif new_score >= 4 and prior_score < 4:
-                bucket["skills_mastered"] += 1
+            if dog_id:
+                dbucket = bucket["dogs"].get(dog_id)
+                if dbucket is not None:
+                    if mastered_event:
+                        dbucket["skills_mastered"] += 1
+                    if moved:
+                        dbucket["skills_moved"] += 1
+                        # Keep last 5 diff blurbs newest-first
+                        if len(dbucket["recent_diffs"]) < 5:
+                            dbucket["recent_diffs"].append({
+                                "goal_id": d.get("goal_id"),
+                                "prior_status": prior, "new_status": new,
+                                "prior_score": prior_score, "new_score": new_score,
+                                "at": s.get("at"),
+                            })
         if s.get("advanced_module"):
             bucket["modules_advanced"] += 1
         if (s.get("session_note") or "").strip():
@@ -9517,6 +9570,10 @@ async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
 
     rows = []
     for b in by_trainer.values():
+        dogs_list = sorted(
+            b["dogs"].values(),
+            key=lambda x: (-x["session_count"], -(x["skills_mastered"] or 0)),
+        )
         rows.append({
             "trainer_key": b["trainer_key"],
             "trainer_name": b["trainer_name"],
@@ -9527,6 +9584,7 @@ async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
             "modules_advanced": b["modules_advanced"],
             "session_notes": b["session_notes"],
             "last_session_at": b["last_session_at"],
+            "dogs": dogs_list,
         })
     rows.sort(key=lambda r: (-r["session_count"], -r["skills_mastered"]))
 
@@ -9606,9 +9664,16 @@ async def programs_pipeline(
     status: Optional[str] = None,
     type: Optional[str] = None,
     search: Optional[str] = None,
+    trainer: Optional[str] = None,
+    stalled_days: Optional[int] = None,
 ):
     """All-dogs training overview. Joins enrollments → dogs → clients with computed
-    progress, days_since_start, days_to_target. Supports filtering."""
+    progress, days_since_start, days_to_target. Supports filtering.
+
+    Sprint 110di-72 — Enriched with last_session_at + last_trainer (from
+    training_session_log) so the Training Hub can flag stalled dogs and show
+    who last worked each one. `stalled_days` filter restricts to dogs whose
+    most recent session is older than N days (or never)."""
     query: Dict = {}
     if status:
         query["status"] = status
@@ -9632,8 +9697,24 @@ async def programs_pipeline(
     ).to_list(2000) if client_ids else []
     client_map = {c["id"]: c for c in clients_list}
 
-    out = []
+    # Sprint 110di-72 — pull the most-recent training_session_log row per
+    # enrollment so we can show "last trainer + when". One sort+limit per
+    # enrollment is fine at this scale; if it grows we can switch to a
+    # facet aggregation.
+    last_session_by_eid: Dict[str, Dict] = {}
+    eids = list({r["id"] for r in rows if r.get("id")})
+    if eids:
+        log_cur = db.training_session_log.find(
+            {"enrollment_id": {"$in": eids}},
+            {"_id": 0, "enrollment_id": 1, "at": 1, "by_user": 1, "by_email": 1},
+        ).sort("at", -1)
+        async for log_row in log_cur:
+            eid = log_row.get("enrollment_id")
+            if eid and eid not in last_session_by_eid:
+                last_session_by_eid[eid] = log_row
+
     today = business_today()
+    out = []
     for r in rows:
         dog = dog_map.get(r["dog_id"])
         if not dog:
@@ -9654,6 +9735,30 @@ async def programs_pipeline(
                 days_to_target = (date.fromisoformat(summary["target_completion_date"]) - today).days
         except Exception:
             pass
+        last_log = last_session_by_eid.get(r["id"]) or {}
+        last_at = last_log.get("at")
+        days_since_session = None
+        if last_at:
+            try:
+                days_since_session = (datetime.now(timezone.utc) - datetime.fromisoformat(last_at)).days
+            except Exception:
+                pass
+        # Trainer filter — match against by_user OR by_email
+        if trainer:
+            t = trainer.lower()
+            hay = f"{last_log.get('by_user','')} {last_log.get('by_email','')}".lower()
+            if t not in hay:
+                continue
+        is_stalled = False
+        if stalled_days is not None and stalled_days >= 0:
+            if days_since_session is None or days_since_session >= stalled_days:
+                is_stalled = True
+            else:
+                # filter requested — skip rows that are NOT stalled
+                continue
+        elif days_since_session is None or days_since_session >= 14:
+            # default "stalled" tag: no session for 14+ days
+            is_stalled = True
         out.append({
             **summary,
             "dog_id": dog["id"],
@@ -9663,6 +9768,11 @@ async def programs_pipeline(
             "client_name": (client or {}).get("name"),
             "days_since_start": days_since,
             "days_to_target": days_to_target,
+            "last_session_at": last_at,
+            "last_trainer_name": last_log.get("by_user"),
+            "last_trainer_email": last_log.get("by_email"),
+            "days_since_session": days_since_session,
+            "is_stalled": is_stalled,
         })
 
     # Sort: active first, then overdue (negative days_to_target), then by recency
@@ -11235,6 +11345,176 @@ async def delete_dog_fact(fact_id: str, _: dict = Depends(require_admin)):
     if not res.deleted_count:
         raise HTTPException(status_code=404, detail="Fact not found")
     return {"ok": True}
+
+
+# ─────────────── Sprint 110di-72 · Training Tips (staff-only) ───────────────
+# Pattern mirrors dog_facts but is admin/staff-facing only (Training Hub).
+# Schema: { id, tip, category, difficulty, audience, source, active }
+
+TRAINING_TIP_SEEDS: List[Dict[str, Any]] = [
+    {"tip": "Reward calm behaviour at the door before opening it — every time. Manners start before the leash clips on.",
+     "category": "impulse_control", "difficulty": "beginner", "audience": "staff"},
+    {"tip": "Loose-leash drills die in distraction. Build duration in the kitchen first, hallway second, yard third.",
+     "category": "leash_work", "difficulty": "intermediate", "audience": "staff"},
+    {"tip": "Service dogs in training need real-world generalization — same skill, three locations, this week.",
+     "category": "service_dog", "difficulty": "advanced", "audience": "staff"},
+    {"tip": "If a puppy fails a cue three times in a row, the cue is too hard. Step back, lower difficulty, win a rep.",
+     "category": "puppy", "difficulty": "beginner", "audience": "staff"},
+    {"tip": "Reactive dogs do better under threshold. If they're staring, you've already lost. Add distance.",
+     "category": "reactivity", "difficulty": "intermediate", "audience": "staff"},
+    {"tip": "Focus games are cheap. Five reps of 'watch me' before any real work pays dividends all session.",
+     "category": "focus", "difficulty": "beginner", "audience": "staff"},
+    {"tip": "Confidence is built one tiny success at a time. End every session on a win, even a small one.",
+     "category": "confidence", "difficulty": "beginner", "audience": "staff"},
+    {"tip": "Public-access trainees should be invisible. If you're noticed, the dog isn't ready for that environment yet.",
+     "category": "public_access", "difficulty": "advanced", "audience": "staff"},
+    {"tip": "Always leash up before opening crates in unfamiliar environments. Safety beats elegance.",
+     "category": "safety", "difficulty": "beginner", "audience": "staff"},
+    {"tip": "Your treat-delivery hand matters. Reward from the position you want — heel reps go to your seam.",
+     "category": "trainer_handling", "difficulty": "intermediate", "audience": "staff"},
+]
+
+TRAINING_TIP_CATEGORIES = [
+    "leash_work", "focus", "confidence", "impulse_control", "reactivity",
+    "service_dog", "puppy", "public_access", "trainer_handling", "safety",
+    "general",
+]
+
+
+async def _seed_training_tips_if_empty():
+    n = await db.training_tips.count_documents({})
+    if n > 0:
+        return
+    rows = []
+    for i, item in enumerate(TRAINING_TIP_SEEDS):
+        rows.append({
+            "id": str(uuid.uuid4()),
+            "tip": item["tip"],
+            "category": item.get("category", "general"),
+            "difficulty": item.get("difficulty", "beginner"),
+            "audience": item.get("audience", "staff"),
+            "source": item.get("source") or "",
+            "active": True,
+            "seeded": True,
+            "created_at": now_iso(),
+            "sort_order": i,
+        })
+    if rows:
+        await db.training_tips.insert_many(rows)
+        logger.info("Seeded %d training tips", len(rows))
+
+
+@api.get("/training-tips/today")
+async def training_tip_today(_: dict = Depends(require_admin)):
+    """One tip per calendar day, deterministically picked from active tips."""
+    await _seed_training_tips_if_empty()
+    tips = await db.training_tips.find(
+        {"active": True}, {"_id": 0}
+    ).sort("sort_order", 1).to_list(2000)
+    if not tips:
+        return {"tip": None, "date": business_today().isoformat()}
+    idx = business_today().toordinal() % len(tips)
+    return {"tip": tips[idx], "date": business_today().isoformat()}
+
+
+@api.get("/training-tips")
+async def list_training_tips(active_only: bool = False, _: dict = Depends(require_admin)):
+    await _seed_training_tips_if_empty()
+    q = {"active": True} if active_only else {}
+    return await db.training_tips.find(q, {"_id": 0}).sort("sort_order", 1).to_list(5000)
+
+
+class TrainingTipIn(BaseModel):
+    tip: str = Field(min_length=3, max_length=600)
+    category: Optional[str] = "general"
+    difficulty: Optional[str] = "beginner"
+    audience: Optional[str] = "staff"
+    source: Optional[str] = ""
+    active: Optional[bool] = True
+
+
+@api.post("/training-tips")
+async def create_training_tip(body: TrainingTipIn, user: dict = Depends(require_admin)):
+    last = await db.training_tips.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
+    next_sort = (last[0]["sort_order"] + 1) if last else 0
+    doc = {
+        "id": str(uuid.uuid4()),
+        "tip": body.tip.strip()[:600],
+        "category": (body.category or "general").strip().lower()[:40],
+        "difficulty": (body.difficulty or "beginner").strip().lower()[:20],
+        "audience": (body.audience or "staff").strip().lower()[:20],
+        "source": (body.source or "").strip()[:200],
+        "active": True if body.active is None else bool(body.active),
+        "seeded": False,
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "sort_order": next_sort,
+    }
+    await db.training_tips.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class TrainingTipPatch(BaseModel):
+    tip: Optional[str] = None
+    category: Optional[str] = None
+    difficulty: Optional[str] = None
+    audience: Optional[str] = None
+    source: Optional[str] = None
+    active: Optional[bool] = None
+
+
+@api.patch("/training-tips/{tip_id}")
+async def update_training_tip(tip_id: str, body: TrainingTipPatch, _: dict = Depends(require_admin)):
+    existing = await db.training_tips.find_one({"id": tip_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tip not found")
+    upd = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if "tip" in upd: upd["tip"] = upd["tip"].strip()[:600]
+    if "category" in upd: upd["category"] = upd["category"].strip().lower()[:40]
+    await db.training_tips.update_one({"id": tip_id}, {"$set": upd})
+    existing.update(upd)
+    return existing
+
+
+@api.delete("/training-tips/{tip_id}")
+async def delete_training_tip(tip_id: str, _: dict = Depends(require_admin)):
+    r = await db.training_tips.delete_one({"id": tip_id})
+    if not r.deleted_count:
+        raise HTTPException(status_code=404, detail="Tip not found")
+    return {"ok": True}
+
+
+class TrainingTipsImportIn(BaseModel):
+    """CSV rows already parsed client-side (matches dog facts + DailyTracker pattern)."""
+    rows: List[Dict] = []
+
+
+@api.post("/training-tips/import")
+async def import_training_tips(body: TrainingTipsImportIn, _: dict = Depends(require_admin)):
+    """Bulk insert from CSV-parsed rows. Skips rows with empty `tip`."""
+    last = await db.training_tips.find({}, {"_id": 0, "sort_order": 1}).sort("sort_order", -1).to_list(1)
+    base = (last[0]["sort_order"] + 1) if last else 0
+    docs = []
+    for i, r in enumerate(body.rows):
+        tip_text = (r.get("tip") or "").strip()
+        if len(tip_text) < 3:
+            continue
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "tip": tip_text[:600],
+            "category": (r.get("category") or "general").strip().lower()[:40],
+            "difficulty": (r.get("difficulty") or "beginner").strip().lower()[:20],
+            "audience": (r.get("audience") or "staff").strip().lower()[:20],
+            "source": (r.get("source") or "").strip()[:200],
+            "active": str(r.get("active") or "true").strip().lower() not in ("false", "no", "0"),
+            "seeded": False,
+            "created_at": now_iso(),
+            "sort_order": base + i,
+        })
+    if docs:
+        await db.training_tips.insert_many(docs)
+    return {"imported": len(docs)}
 
 
 class DogFactGenerateIn(BaseModel):

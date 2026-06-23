@@ -241,7 +241,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {/* Operations polish — Quick links to new ops screens + readiness checklist */}
       {widgetOn("quick_links") && <DashboardQuickLinks onNavigate={onNavigate} can={can} />}
-      {widgetOn("today_tasks") && <ReadinessChecklist onNavigate={onNavigate} />}
+      {/* Sprint 110di-72 — Operational Readiness removed from the daily Dashboard per user request.
+          ReadinessChecklist component + endpoint stay available; can be re-mounted on a Settings/System
+          page if needed. */}
 
       {/* Sprint 110ax / 110di-59 — Daily dog fact + trivia leaderboard.
           Promoted to BIG variant and moved above-the-fold (was previously

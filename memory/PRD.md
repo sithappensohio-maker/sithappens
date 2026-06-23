@@ -5210,3 +5210,54 @@ On the **Staff** screen, new subtab `Training` (10th tab next to Employees · Ti
 - `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v72-110di-71b-scorecard-moved-to-staff`.
 - NEW `backend/tests/test_trainer_scorecard.py`.
 
+
+## Sprint 110di-72 — Training Hub + Tip of Day + Scorecard expansion + Dashboard cleanup (2026-02-22)
+
+**User ask**: Expand existing training workflow into a full **Training Hub**. Do NOT rebuild/duplicate. Keep TrainingTrackerModal, Dog Training tab, training_session_log, scorecard, goal_progress, current_module/current_week — all single source of truth.
+
+### What shipped
+
+**1. Pipeline → "Training Hub"** (existing Pipeline screen extended, not replaced)
+- New title: "Training Hub · Every Dog · One View"
+- **Training Tip of the Day** card pinned at the top
+- **Stalled 7d+** filter chip — narrows to dogs with no session in 7+ days
+- **Filter by trainer** input — searches by_user/by_email on the audit log
+- Every row now shows a **"Last session: {date} · {trainer}"** ribbon + a **🟠 STALLED** badge when no session in 14+ days
+- Quick-action buttons on every row: **TRACKER** (opens TrainingTrackerModal in-page) + **DOG PROFILE** (jumps via onJumpToDog)
+- TrainingTrackerModal now mountable directly from the Hub (no need to go to dashboard or care board first)
+
+**2. Training Tip of the Day** (new content collection, mirrors dog_facts pattern)
+- Backend: `training_tips` collection with 10 seeded staff-facing tips covering leash work, focus, confidence, impulse control, reactivity, service dog, puppy, public access, trainer handling, safety.
+- Endpoints: `GET /training-tips/today` (deterministic by ordinal day), `GET /training-tips`, `POST /training-tips`, `PATCH /training-tips/{id}`, `DELETE /training-tips/{id}`, `POST /training-tips/import` (CSV-parsed rows, matches dog facts pattern).
+- Staff/admin only — never surfaced on client portal.
+
+**3. Trainer Scorecard — clickable rows with per-dog breakdown**
+- Backend: each `trainer` row in `/admin/training/trainer-scorecard` now includes a `dogs[]` array with: dog_id, dog_name, client_name, enrollment_id, program_name, session_count, skills_moved, skills_mastered, modules_advanced, last_session_at, recent_diffs (last 5).
+- Frontend: rows are now `<button>` toggles. Click expands a per-dog breakdown panel showing dog/client/program, 4 mini KPIs (Sessions/Moved/Mastered/Adv), and the 3 most-recent skill diffs. Mobile-responsive.
+
+**4. Dashboard cleanup — Operational Readiness removed**
+- The ReadinessChecklist component + endpoint stay available, but the Dashboard mount line is removed per user request. New installs also default `today_tasks=False` in the widget config.
+
+### Backend additions
+- `GET /programs/pipeline` enriched with `last_session_at`, `last_trainer_name`, `last_trainer_email`, `days_since_session`, `is_stalled` + new query params: `trainer=...`, `stalled_days=N`. One additional bulk read of training_session_log.
+- `/admin/training/trainer-scorecard` query plan: batched `dogs.find` + `clients.find` + `dog_programs.find` for ID→name resolution. Per-dog buckets aggregated in the same single pass as the trainer rollup.
+- Six new endpoints for Training Tips (CRUD + bulk import + today).
+
+### Files touched
+- `backend/server.py` — `programs_pipeline` rewrite (~50 lines), `trainer_scorecard` rewrite (~50 lines), `training_tips` block (~150 lines), default widgets `today_tasks=False`.
+- `frontend/src/screens/Pipeline.jsx` — title rebrand, tip card, stalled+trainer filters, action buttons row, TrackerModal mount.
+- `frontend/src/components/TrainerScorecardTab.jsx` — rows now collapsible, per-dog expansion block (~80 added lines).
+- `frontend/src/screens/Dashboard.jsx` — ReadinessChecklist mount removed.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v73-110di-72-training-hub`.
+- NEW `backend/tests/test_training_hub.py` — 6 pytest cases.
+
+### Tests
+- 33/33 pytest across `test_training_hub`, `test_trainer_scorecard`, `test_training_tracker`, `test_lesson_plan`, `test_income_ar_rollup`, `test_custom_email_templates`, `test_step_description_persist` — **zero regression**.
+- Live screenshot: Training Hub renders perfectly with tip card + all new filters + stalled-tag ribbon + quick-action buttons.
+
+### Non-regression confirmation
+- TrainingTrackerModal unchanged (no duplicate UI).
+- goal_progress + current_module_id remain the single source of truth.
+- Dog Training tab + client portal progress still read from the same enrollment data.
+- training_session_log is still the only audit collection (no parallel logs).
+

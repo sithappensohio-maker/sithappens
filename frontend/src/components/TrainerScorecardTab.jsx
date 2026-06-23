@@ -31,6 +31,8 @@ export default function TrainerScorecardTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  // Sprint 110di-72 — expand a trainer row to show per-dog breakdown
+  const [expanded, setExpanded] = useState({}); // { [trainer_key]: bool }
 
   useEffect(() => {
     let alive = true;
@@ -102,33 +104,83 @@ export default function TrainerScorecardTab() {
               </div>
               {data.trainers.map(t => (
                 <div key={t.trainer_key} data-testid={`scorecard-row-${t.trainer_key}`}
-                     className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-bgHover/60 last:border-b-0 items-center">
-                  <div className="col-span-12 sm:col-span-4">
-                    <p className="text-white font-black text-[14px] truncate">{t.trainer_name}</p>
-                    {t.trainer_email && t.trainer_email !== t.trainer_name && (
-                      <p className="text-gray-500 text-[11px] truncate">{t.trainer_email}</p>
-                    )}
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 sm:text-right">
-                    <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Sessions</p>
-                    <p className="text-shGreen font-black text-[16px]">{t.session_count}</p>
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 sm:text-right">
-                    <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Dogs</p>
-                    <p className="text-shBlue font-black text-[16px]">{t.unique_dogs}</p>
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 sm:text-right">
-                    <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Mastered</p>
-                    <p className="text-shOrange font-black text-[16px]">{t.skills_mastered}</p>
-                  </div>
-                  <div className="col-span-3 sm:col-span-1 sm:text-right">
-                    <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Adv</p>
-                    <p className="text-pink-400 font-black text-[16px]">{t.modules_advanced}</p>
-                  </div>
-                  <div className="col-span-12 sm:col-span-1 sm:text-right">
-                    <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Last session</p>
-                    <p className="text-gray-400 text-[11px] font-black uppercase tracking-widest">{fmtRelative(t.last_session_at)}</p>
-                  </div>
+                     className="border-b border-bgHover/60 last:border-b-0">
+                  <button onClick={() => setExpanded(e => ({ ...e, [t.trainer_key]: !e[t.trainer_key] }))}
+                          data-testid={`scorecard-row-toggle-${t.trainer_key}`}
+                          className="w-full grid grid-cols-12 gap-3 px-4 py-3 items-center hover:bg-bgBase/40 transition text-left">
+                    <div className="col-span-12 sm:col-span-4 flex items-center gap-2">
+                      <i className={`fas ${expanded[t.trainer_key] ? "fa-chevron-down" : "fa-chevron-right"} text-gray-500 text-[10px]`}/>
+                      <div className="min-w-0">
+                        <p className="text-white font-black text-[14px] truncate">{t.trainer_name}</p>
+                        {t.trainer_email && t.trainer_email !== t.trainer_name && (
+                          <p className="text-gray-500 text-[11px] truncate">{t.trainer_email}</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="col-span-3 sm:col-span-2 sm:text-right">
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Sessions</p>
+                      <p className="text-shGreen font-black text-[16px]">{t.session_count}</p>
+                    </div>
+                    <div className="col-span-3 sm:col-span-2 sm:text-right">
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Dogs</p>
+                      <p className="text-shBlue font-black text-[16px]">{t.unique_dogs}</p>
+                    </div>
+                    <div className="col-span-3 sm:col-span-2 sm:text-right">
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Mastered</p>
+                      <p className="text-shOrange font-black text-[16px]">{t.skills_mastered}</p>
+                    </div>
+                    <div className="col-span-3 sm:col-span-1 sm:text-right">
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Adv</p>
+                      <p className="text-pink-400 font-black text-[16px]">{t.modules_advanced}</p>
+                    </div>
+                    <div className="col-span-12 sm:col-span-1 sm:text-right">
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Last session</p>
+                      <p className="text-gray-400 text-[11px] font-black uppercase tracking-widest">{fmtRelative(t.last_session_at)}</p>
+                    </div>
+                  </button>
+                  {expanded[t.trainer_key] && (
+                    <div className="bg-bgBase/40 border-t border-bgHover/60 px-4 py-3 space-y-2"
+                         data-testid={`scorecard-expansion-${t.trainer_key}`}>
+                      {(t.dogs || []).length === 0 ? (
+                        <p className="text-gray-500 text-[12px]">No per-dog breakdown available.</p>
+                      ) : (t.dogs || []).map(d => (
+                        <div key={d.dog_id || d.enrollment_id} data-testid={`scorecard-dog-${d.dog_id}`}
+                             className="bg-bgPanel/60 border border-bgHover rounded p-3">
+                          <div className="flex items-center justify-between flex-wrap gap-2">
+                            <div>
+                              <p className="text-white font-black text-[13px]">
+                                <i className="fas fa-dog text-shBlue mr-1.5"/>{d.dog_name}
+                                {d.client_name && <span className="text-gray-500 text-[11px] font-normal ml-2">· {d.client_name}</span>}
+                              </p>
+                              {d.program_name && <p className="text-gray-500 text-[11px]">{d.program_name}</p>}
+                            </div>
+                            <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{fmtRelative(d.last_session_at)}</p>
+                          </div>
+                          <div className="grid grid-cols-4 gap-2 mt-2 text-[12px] font-black uppercase tracking-widest">
+                            <Mini label="Sessions" value={d.session_count} color="text-shGreen"/>
+                            <Mini label="Moved" value={d.skills_moved} color="text-shBlue"/>
+                            <Mini label="Mastered" value={d.skills_mastered} color="text-shOrange"/>
+                            <Mini label="Adv" value={d.modules_advanced} color="text-pink-400"/>
+                          </div>
+                          {(d.recent_diffs || []).length > 0 && (
+                            <ul className="mt-2 space-y-0.5 text-[12px] text-gray-400">
+                              {d.recent_diffs.slice(0, 3).map((diff, i) => (
+                                <li key={i} className="flex items-center gap-1.5">
+                                  <i className={`fas ${diff.new_status === "mastered" ? "fa-star text-shGreen" : "fa-arrow-right text-shBlue"} text-[10px]`}/>
+                                  <span className="text-white">
+                                    {(diff.prior_status || "—") + " → " + (diff.new_status || "—")}
+                                  </span>
+                                  {(diff.new_score ?? 0) !== (diff.prior_score ?? 0) && (
+                                    <span className="text-gray-500">(score {diff.prior_score ?? 0} → {diff.new_score ?? 0})</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -150,6 +202,15 @@ function Tile({ label, value, icon, color, testId }) {
         <i className={`fas ${icon} mr-1 ${color}`}/>{label}
       </p>
       <p className={`text-2xl font-black ${color}`}>{value}</p>
+    </div>
+  );
+}
+
+function Mini({ label, value, color }) {
+  return (
+    <div className="text-center">
+      <p className="text-gray-500 text-[10px]">{label}</p>
+      <p className={`${color} text-[14px]`}>{value || 0}</p>
     </div>
   );
 }

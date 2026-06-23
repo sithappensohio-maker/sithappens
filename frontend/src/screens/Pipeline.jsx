@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import PageHero from "../components/PageHero";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
+import TrainingTrackerModal from "../components/TrainingTrackerModal";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -31,9 +32,14 @@ export default function Pipeline({ onJumpToDog }) {
   const [rows, setRows] = useState([]);
   const [filterStatus, setFilterStatus] = useState("active");
   const [filterType, setFilterType] = useState("");
+  const [filterStalled, setFilterStalled] = useState(false);
+  const [trainerFilter, setTrainerFilter] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
+  // Sprint 110di-72 — Training Hub upgrades: tip-of-day, training-tracker modal pop, action launchers
+  const [todayTip, setTodayTip] = useState(null);
+  const [trackerFor, setTrackerFor] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -41,19 +47,27 @@ export default function Pipeline({ onJumpToDog }) {
     if (filterStatus) params.status = filterStatus;
     if (filterType) params.type = filterType;
     if (search) params.search = search;
+    if (trainerFilter) params.trainer = trainerFilter;
+    if (filterStalled) params.stalled_days = 7;
     try {
       const { data } = await api.get("/programs/pipeline", { params });
       setRows(data);
     } catch { setRows([]); }
     setLoading(false);
   };
-  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [filterStatus, filterType]);
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [filterStatus, filterType, filterStalled, trainerFilter]);
   useEffect(() => {
     const t = setTimeout(load, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
   useLiveRefresh(load, { intervalMs: 30_000 });
+  // Sprint 110di-72 — load today's training tip once
+  useEffect(() => {
+    api.get("/training-tips/today")
+      .then(r => setTodayTip(r.data?.tip || null))
+      .catch(() => setTodayTip(null));
+  }, []);
 
   const stats = useMemo(() => {
     const s = { active: 0, on_hold: 0, completed: 0, overdue: 0 };
@@ -65,12 +79,13 @@ export default function Pipeline({ onJumpToDog }) {
   }, [rows]);
 
   return (
+    <>
     <div className="p-8 max-w-7xl mx-auto space-y-6" data-testid="pipeline-screen">
       <PageHero
-        eyebrow={{ icon: "fa-line-chart", text: "Active dog programs", color: "text-shGreen" }}
-        title="Training Pipeline."
-        highlight="At a glance."
-        subtitle="Every dog enrolled in a training program — track progress, leave notes, and update goals without leaving this page."
+        eyebrow={{ icon: "fa-graduation-cap", text: "Training Hub", color: "text-shGreen" }}
+        title="Training Hub."
+        highlight="Every dog. One view."
+        subtitle="Active enrollments, current week, last trainer, stalled dogs — all on one page. Open the tracker without leaving."
         right={(
           <div className="flex gap-2 flex-wrap">
             <Stat label="Active" value={stats.active} color="#8cc63f" />
@@ -81,6 +96,20 @@ export default function Pipeline({ onJumpToDog }) {
         )}
         testid="pipeline-hero"
       />
+
+      {/* Sprint 110di-72 — Training Tip of the Day */}
+      {todayTip && (
+        <div data-testid="training-tip-card"
+             className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+            <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day · {todayTip.category?.replace(/_/g, " ")}
+          </p>
+          <p className="text-white text-[15px] leading-relaxed">{todayTip.tip}</p>
+          {todayTip.source && (
+            <p className="text-gray-500 text-[11px] mt-1">— {todayTip.source}</p>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 mb-5 items-center" data-testid="pipeline-filters">
         <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search dog, client, program…"
@@ -97,6 +126,19 @@ export default function Pipeline({ onJumpToDog }) {
             {Object.entries(TYPE_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
           </select>
         </div>
+        <input value={trainerFilter} onChange={(e)=>setTrainerFilter(e.target.value)}
+               placeholder="Filter by trainer…"
+               data-testid="pipeline-trainer-filter"
+               className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm w-48"/>
+        <button onClick={() => setFilterStalled(s => !s)}
+                data-testid="pipeline-stalled-filter"
+                className={`px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest border transition ${
+                  filterStalled
+                    ? "bg-red-500/20 text-red-300 border-red-500/40"
+                    : "bg-bgPanel text-gray-400 border-bgHover hover:text-white"
+                }`}>
+          <i className="fas fa-triangle-exclamation mr-1"/>Stalled 7d+
+        </button>
       </div>
 
       <div className="card-stat rounded-xl overflow-hidden shadow-lg">
@@ -113,6 +155,7 @@ export default function Pipeline({ onJumpToDog }) {
                 expanded={expandedId === r.id}
                 onToggle={() => setExpandedId(expandedId === r.id ? null : r.id)}
                 onJumpToDog={onJumpToDog}
+                onOpenTracker={() => setTrackerFor({ dog_id: r.dog_id, enrollment_id: r.id })}
                 onSaved={load}
               />
             ))}
@@ -120,10 +163,20 @@ export default function Pipeline({ onJumpToDog }) {
         )}
       </div>
     </div>
+
+    {trackerFor && (
+      <TrainingTrackerModal
+        dogId={trackerFor.dog_id}
+        enrollmentId={trackerFor.enrollment_id}
+        onClose={() => setTrackerFor(null)}
+        onSaved={() => { setTrackerFor(null); load(); }}
+      />
+    )}
+    </>
   );
 }
 
-function Row({ row, expanded, onToggle, onJumpToDog, onSaved }) {
+function Row({ row, expanded, onToggle, onJumpToDog, onOpenTracker, onSaved }) {
   const sm = STATUS_META[row.status] || STATUS_META.active;
   const tm = TYPE_META[row.program_snapshot?.type] || TYPE_META.private_lessons;
   const overdue = row.status === "active" && row.days_to_target != null && row.days_to_target < 0;
@@ -175,6 +228,35 @@ function Row({ row, expanded, onToggle, onJumpToDog, onSaved }) {
       {expanded && (
         <ExpandedDetail row={row} onJumpToDog={onJumpToDog} onSaved={onSaved} />
       )}
+      {/* Sprint 110di-72 — Quick actions + last-session ribbon */}
+      <div className="border-t border-bgHover/60 bg-bgBase/40 px-4 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="text-gray-500 font-black uppercase tracking-widest">
+          <i className="fas fa-clock mr-1"/>
+          Last session: {row.last_session_at
+            ? `${new Date(row.last_session_at).toLocaleDateString([], {month:"short",day:"numeric"})} · ${row.last_trainer_name || "Trainer"}`
+            : "Never"}
+        </span>
+        {row.is_stalled && (
+          <span className="bg-red-500/15 text-red-300 border border-red-500/30 px-2 py-0.5 rounded font-black uppercase tracking-widest"
+                data-testid={`stalled-tag-${row.id}`}>
+            <i className="fas fa-triangle-exclamation mr-1"/>Stalled
+          </span>
+        )}
+        <div className="ml-auto flex flex-wrap gap-1.5">
+          <button onClick={(e)=>{ e.stopPropagation(); onOpenTracker(); }}
+                  data-testid={`hub-open-tracker-${row.id}`}
+                  className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shGreen/25">
+            <i className="fas fa-paw mr-1"/>Tracker
+          </button>
+          {onJumpToDog && (
+            <button onClick={(e)=>{ e.stopPropagation(); onJumpToDog(row.dog_id); }}
+                    data-testid={`hub-open-dog-${row.id}`}
+                    className="bg-shBlue/15 text-shBlue border border-shBlue/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shBlue/25">
+              <i className="fas fa-dog mr-1"/>Dog Profile
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
