@@ -3,6 +3,7 @@
    Google/Facebook links, lets you copy the message template, and logs that
    you asked for a review. */
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -71,8 +72,8 @@ export default function ReviewRequestButton({ clientId, dogId = null, clientName
         <i className="fas fa-star mr-1"/>Request review{count > 0 ? ` · ${count}` : ""}
       </button>
 
-      {open && links && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+      {open && links && createPortal((
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in"
                data-testid={`review-modal-${clientId}`}>
             <div className="flex items-center justify-between mb-3">
@@ -133,7 +134,7 @@ export default function ReviewRequestButton({ clientId, dogId = null, clientName
             )}
           </div>
         </div>
-      )}
+      ), document.body)}
     </>
   );
 }

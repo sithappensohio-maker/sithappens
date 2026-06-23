@@ -3,6 +3,7 @@
    submissions with status pills + a quick "Send form" affordance.
    Routes operator to the full Intake Forms screen for reviewing details. */
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
@@ -94,8 +95,8 @@ export default function IntakeFormsSection({ clientId = null, dogId = null, labe
         </ul>
       )}
 
-      {open && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+      {open && createPortal((
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Send intake form</h4>
@@ -119,7 +120,7 @@ export default function IntakeFormsSection({ clientId = null, dogId = null, labe
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </div>
   );
 }

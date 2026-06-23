@@ -1631,8 +1631,8 @@ function ClientStatusPill({ status, clientId, onChange }) {
               className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border mt-1 ${meta.color} hover:opacity-80`}>
         <i className="fas fa-handshake text-[10px]"/>{meta.text}
       </button>
-      {open && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={()=>setOpen(false)}>
+      {open && createPortal((
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[100]" onClick={()=>setOpen(false)}>
           <div className="bg-bgPanel border border-bgHover rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e)=>e.stopPropagation()}
                data-testid="client-status-modal">
             <h4 className="text-lg font-black text-white uppercase italic mb-2">Update client status</h4>
@@ -1656,7 +1656,7 @@ function ClientStatusPill({ status, clientId, onChange }) {
             </div>
           </div>
         </div>
-      )}
+      ), document.body)}
     </>
   );
 }

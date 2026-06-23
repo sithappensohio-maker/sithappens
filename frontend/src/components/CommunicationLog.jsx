@@ -1,6 +1,7 @@
 /* Sprint 110ey — Phase 8: Client communication log
    Drop-in timeline section for client/dog detail cards. */
 import { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
@@ -189,8 +190,8 @@ function Pill({ active, onClick, label, accent = "shGreen" }) {
 }
 
 function AddModal({ form, setForm, onSave, onCancel }) {
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
+  return createPortal((
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in max-h-[calc(100vh-2rem)] overflow-y-auto" data-testid="comm-add-modal">
         <div className="flex items-center justify-between mb-4">
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Log Communication</h4>
@@ -244,5 +245,5 @@ function AddModal({ form, setForm, onSave, onCancel }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
