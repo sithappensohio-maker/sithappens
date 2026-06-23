@@ -326,14 +326,31 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
   );
 }
 
+// Sprint 110di-73 — Unified grading UI. Both the Dog Training tab and the
+// TrainingTrackerModal now use the SAME 4-status pills so the operator never
+// sees two grading systems for what is one and the same goal_progress doc.
+const STATUS_PRESETS = [
+  { key: "not_started", label: "Not Started", score: 0, cls: "bg-gray-500/20 text-gray-300 border-gray-500/30" },
+  { key: "in_progress", label: "Learning",    score: 2, cls: "bg-shBlue/20 text-shBlue border-shBlue/30" },
+  { key: "in_progress", label: "Proficient",  score: 3, cls: "bg-shOrange/20 text-shOrange border-shOrange/30" },
+  { key: "mastered",    label: "Mastered",    score: 5, cls: "bg-shGreen/20 text-shGreen border-shGreen/40" },
+];
+
+function presetIndex(progress) {
+  const sc = progress.score || 0;
+  if (progress.status === "mastered" || sc >= 4) return 3;
+  if (sc >= 3) return 2;
+  if (progress.status === "in_progress" || sc >= 1) return 1;
+  return 0;
+}
+
 function GoalRow({ goal, progress, onChange }) {
   const [openNote, setOpenNote] = useState(false);
   const [note, setNote] = useState(progress.notes || "");
   useEffect(() => { setNote(progress.notes || ""); }, [progress.notes]);
-  const colors = ["#475569","#f59e0b","#f97316","#eab308","#84cc16","#22c55e"];
-  const labels = ["Not Started","Introductory","Learning","Emerging","Proficient","Mastered"];
   const isManual = !!goal.manual_only;
   const isDone = progress.status === "mastered" || progress.score >= 4;
+  const activeIdx = presetIndex(progress);
   return (
     <div className="bg-bgPanel rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
@@ -349,12 +366,17 @@ function GoalRow({ goal, progress, onChange }) {
               <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
             </button>
           ) : (
-            <div className="flex gap-1">
-              {[0,1,2,3,4,5].map(n => (
-                <button key={n} onClick={()=>onChange({ score: n })} data-testid={`goal-score-${goal.id}-${n}`}
-                        title={labels[n]}
-                        className={`w-8 h-8 sm:w-6 sm:h-6 text-[15px] sm:text-[14px] font-black rounded border ${progress.score===n?"text-white":"text-gray-500 border-bgHover hover:text-white"}`}
-                        style={progress.score===n ? {background: colors[n], borderColor: colors[n]} : {}}>{n}</button>
+            <div className="flex gap-1 flex-wrap">
+              {STATUS_PRESETS.map((btn, i) => (
+                <button key={btn.label}
+                        onClick={()=>onChange({ status: btn.key, score: btn.score })}
+                        data-testid={`goal-status-${goal.id}-${btn.label.toLowerCase().replace(/\s+/g,'-')}`}
+                        title={btn.label}
+                        className={`px-2 py-1 rounded text-[11px] font-black uppercase tracking-widest border transition ${
+                          activeIdx === i ? `${btn.cls} ring-2 ring-white/10` : "bg-bgBase text-gray-500 border-bgHover hover:text-white"
+                        }`}>
+                  {btn.label}
+                </button>
               ))}
             </div>
           )}
@@ -370,7 +392,7 @@ function GoalRow({ goal, progress, onChange }) {
                  className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-white" autoFocus />
         </div>
       )}
-      {!openNote && progress.notes && <p className="text-[14px] text-gray-400 italic mt-1 pl-1">"{progress.notes}"</p>}
+      {!openNote && progress.notes && <p className="text-[14px] text-gray-400 italic mt-1 pl-1">&quot;{progress.notes}&quot;</p>}
     </div>
   );
 }

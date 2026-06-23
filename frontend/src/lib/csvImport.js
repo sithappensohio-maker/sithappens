@@ -164,6 +164,37 @@ export const DAILY_TRACKER_CSV_SAMPLE = `day_number,day_focus,day_instructions,d
 3,Stay Duration,,,Down-stay 60s,5,Trainer out of sight at end
 `;
 
+/** Sprint 110di-73 — Training Tips CSV import. Required: tip.
+ *  Optional: category, difficulty, audience, source, active. */
+export function parseTrainingTipsCsv(text) {
+  const { headers, records } = csvToObjects(text);
+  if (!headers.includes("tip")) {
+    throw new Error('CSV must include a "tip" column.');
+  }
+  const rows = [];
+  const errors = [];
+  records.forEach((rec, idx) => {
+    const rowNum = idx + 2;
+    const tip = (rec.tip || "").trim();
+    if (!tip) { errors.push(`Row ${rowNum}: missing tip`); return; }
+    rows.push({
+      tip,
+      category: (rec.category || "general").trim().toLowerCase(),
+      difficulty: (rec.difficulty || "beginner").trim().toLowerCase(),
+      audience: (rec.audience || "staff").trim().toLowerCase(),
+      source: (rec.source || "").trim(),
+      active: (rec.active || "true").trim().toLowerCase() !== "false",
+    });
+  });
+  return { rows, errors };
+}
+
+export const TRAINING_TIPS_CSV_SAMPLE = `tip,category,difficulty,audience,source,active
+"Reward calm at the door before opening — every time.",impulse_control,beginner,staff,House rule,true
+"Build loose-leash duration in the kitchen first, hallway second, yard third.",leash_work,intermediate,staff,,true
+"Service dogs need same skill in three locations per week.",service_dog,advanced,staff,,true
+`;
+
 /** Trigger a browser download of the given text as a CSV file. */
 export function downloadCsv(filename, text) {
   const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });

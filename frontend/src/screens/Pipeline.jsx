@@ -4,6 +4,9 @@ import PageHero from "../components/PageHero";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import TrainingTrackerModal from "../components/TrainingTrackerModal";
+import CsvImportButton from "../components/CsvImportButton";
+import { parseTrainingTipsCsv, TRAINING_TIPS_CSV_SAMPLE } from "../lib/csvImport";
+import { toast } from "sonner";
 
 const STATUS_META = {
   active: { label: "Active", color: "#8cc63f", icon: "fa-play" },
@@ -101,13 +104,36 @@ export default function Pipeline({ onJumpToDog }) {
       {todayTip && (
         <div data-testid="training-tip-card"
              className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
-            <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day · {todayTip.category?.replace(/_/g, " ")}
-          </p>
-          <p className="text-white text-[15px] leading-relaxed">{todayTip.tip}</p>
-          {todayTip.source && (
-            <p className="text-gray-500 text-[11px] mt-1">— {todayTip.source}</p>
-          )}
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+                <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day · {todayTip.category?.replace(/_/g, " ")}
+              </p>
+              <p className="text-white text-[15px] leading-relaxed">{todayTip.tip}</p>
+              {todayTip.source && (
+                <p className="text-gray-500 text-[11px] mt-1">— {todayTip.source}</p>
+              )}
+            </div>
+            <CsvImportButton
+              label="Import Tips CSV"
+              parse={parseTrainingTipsCsv}
+              sampleText={TRAINING_TIPS_CSV_SAMPLE}
+              sampleFilename="training-tips-template.csv"
+              testIdPrefix="tips-csv"
+              helpText="Columns: tip (required), category, difficulty, audience, source, active."
+              onImport={async (parsed) => {
+                if (!parsed?.rows?.length) return;
+                try {
+                  const { data } = await api.post("/training-tips/import", { rows: parsed.rows });
+                  toast.success(`Imported ${data.imported} training tip${data.imported === 1 ? "" : "s"}`);
+                  // Refresh tip-of-day in case the new pool changes today's pick
+                  api.get("/training-tips/today").then(r => setTodayTip(r.data?.tip || null)).catch(() => {});
+                } catch (e) {
+                  toast.error(e?.response?.data?.detail || "Tips import failed");
+                }
+              }}
+            />
+          </div>
         </div>
       )}
 

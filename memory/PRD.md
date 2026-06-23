@@ -5261,3 +5261,48 @@ On the **Staff** screen, new subtab `Training` (10th tab next to Employees · Ti
 - Dog Training tab + client portal progress still read from the same enrollment data.
 - training_session_log is still the only audit collection (no parallel logs).
 
+
+## Sprint 110di-73 — Unified grading UI + Training Tips CSV import (2026-02-22)
+
+**User asks**:
+1. "Tracker uses 4 status pills, Training tab uses 0-5 numbers. Let me make them match. these two things should be one system as a whole"
+2. CSV import for Training Tips so the operator can bulk-upload their own tips.
+
+### Unified grading — ONE system end-to-end
+The TrainingTrackerModal and the Dog Training tab's GoalRow now share the **exact same 4-status preset widget**:
+
+| Button     | Status         | Score |
+|------------|----------------|-------|
+| Not Started| `not_started`  | 0     |
+| Learning   | `in_progress`  | 2     |
+| Proficient | `in_progress`  | 3     |
+| Mastered   | `mastered`     | 5     |
+
+Same labels, same colors, same data flow. Both write to the same `goal_progress[goal_id]` dict (single source of truth, already enforced by the shared `_apply_goal_update_to_enrollment` backend helper). The legacy 0-5 number row was removed from the Training tab to eliminate the dual-paradigm confusion.
+
+**Manual-only goals** (with `goal.manual_only=true`) keep the simple "Mark Done" toggle — that's a separate intentional UX for goals that don't have a graduated mastery curve.
+
+### Training Tips CSV import
+- New parser `parseTrainingTipsCsv` in `lib/csvImport.js` — required `tip`, optional `category/difficulty/audience/source/active`.
+- New sample constant `TRAINING_TIPS_CSV_SAMPLE` (downloadable from the button).
+- `<CsvImportButton>` wired into the Training Hub's tip card. Clicking it parses the CSV in browser, POSTs `/training-tips/import`, shows a "Imported N tips" toast, then refreshes the tip-of-day pick.
+- Backend `POST /training-tips/import` already shipped in Sprint 110di-72 — accepts `{rows: [{tip, category, difficulty, audience, source, active}]}`.
+
+### Files touched
+- `frontend/src/components/DogTrainingTab.jsx` — `GoalRow` rewrite using the new 4-pill widget (matches `TrainingTrackerModal`). Removed dead `colors`/`labels` arrays.
+- `frontend/src/lib/csvImport.js` — added `parseTrainingTipsCsv` + `TRAINING_TIPS_CSV_SAMPLE`.
+- `frontend/src/screens/Pipeline.jsx` — wired `<CsvImportButton>` into the tip card (top-right corner of the tip block).
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v74-110di-73-unified-grading-tips-csv`.
+
+### Verified
+- Node smoke: parser → 3 valid tips from sample, header missing → throws, empty `tip` cell → row-numbered error.
+- 21/21 backend pytest pass (training-hub, scorecard, tracker, lesson-plan) — zero regression.
+- Lint: 0 issues in DogTrainingTab.jsx + csvImport.js.
+
+### Non-regression confirmation
+- Same `goal_progress` doc backs both UIs.
+- Same `_apply_goal_update_to_enrollment` helper handles every score/status update.
+- Same `training_session_log` audit collection.
+- Lesson plan modal's `current_module_id` pointer is the same one TrainingTracker bumps.
+- No new tables, no parallel grading store.
+
