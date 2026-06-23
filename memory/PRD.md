@@ -5084,3 +5084,52 @@ Smoke screenshot:
 - `frontend/public/service-worker.js` — CACHE_VERSION bumped.
 - NEW `backend/tests/test_income_ar_rollup.py`.
 
+
+## Sprint 110di-69 — Training Program Step Tracker (trainer-facing) (2026-02-22)
+
+**User ask**: A trainer-facing step tracker tied into the existing dog training program/enrollment system. When a trainer checks in a dog for a training booking, the app should immediately show that dog's active program progress so the trainer can work from the correct lesson without digging.
+
+**User choice**: Option C — Advance button always available, trainer's discretion (no completion-gating).
+
+### Design contract (per user spec)
+- **NO duplicate progress store**. Reuses Programs → Modules → Goals, dog_programs enrollment, goal_progress, current_module_id pointer, Lesson Plan modal, goal scoring/notes.
+- Trainer/admin only.
+- Mobile-first (used on phones/tablets at training time).
+- Audit trail of who/when/which-booking, but per-goal updates flow through the same logic the legacy endpoint uses.
+
+### Backend
+- **Refactored** `update_goal` to use a new `_apply_goal_update_to_enrollment` helper so the new training-session endpoint can batch-apply many goal updates without code duplication. Single source of truth.
+- **NEW** `GET /api/bookings/{booking_id}/training-context` — returns full training context for the booking's dog, or `{has_program: False, reason}` if no active enrollment.
+- **NEW** `GET /api/dogs/{dog_id}/programs/{enrollment_id}/training-context` — direct fetch (Care Board / dog profile entry points).
+- **NEW** `POST /api/dogs/{dog_id}/programs/{enrollment_id}/training-session` — atomic batch: applies goal updates via the shared helper, optionally bumps `current_module_id` to the next module in order, writes ONE audit row to a new `training_session_log` collection. Returns updated context + last_log.
+- **NEW** `GET /api/dogs/{dog_id}/programs/{enrollment_id}/session-log` — activity feed, newest first.
+- Audit row shape: `{id, dog_id, enrollment_id, booking_id?, by_user, by_email, at, session_note, goal_updates: [{goal_id, prior_status, new_status, prior_score, new_score, note}], advanced_module: {from_id, to_id}|null, current_module_id_after}`.
+
+### Frontend
+- **NEW `TrainingTrackerModal.jsx`** (~248 lines, mobile-first):
+  - Header: Dog name · Program name + Week X of Y pill.
+  - Current module description block.
+  - Per-goal cards: 4 quick status buttons (Not Started / Learning / Proficient / Mastered → maps to score 0 / 2 / 3 / 5) with colored ring highlight on the active one, per-goal notes textarea.
+  - Session note textarea.
+  - Footer: "View full program progress" link (→ `/dogs/{id}`), "Save + Advance week" (always available — trainer's discretion), "Save session" button.
+- **Auto-open on check-in**: `Dashboard.jsx` → `checkIn()` calls `GET /bookings/{id}/training-context` ONLY when `service_type === "training"`. If `has_program=true`, opens the tracker. Boarding/daycare check-ins are unaffected.
+- **Manual entry**: Roster row shows a green `TRACKER` button (`roster-training-tracker-{id}`) for on-premises training bookings. Click → same modal.
+
+### Tests
+- **NEW `tests/test_training_tracker.py`** — 7 pytest cases covering all 8 acceptance criteria (AC1-8): no-program returns false, active returns full ctx, mastered updates real goal_progress (NOT a duplicate), all_mastered flag, advance-bumps-everywhere, session-log audit, alien goal_id 404.
+- Regression: 22/22 total across training-tracker, lesson-plan, custom-email-templates, income-ar-rollup.
+
+### Verified (testing agent iteration_17)
+**Backend 100%** — 22/22 pytest pass.
+**Frontend 100%** — testing agent seeded a 2-module program + enrollment + today training booking → clicked CHECK IN on dashboard → tracker auto-opened → marked Sit Mastered + typed notes + session note + Save → toast + closed → roster shows TRACKER button → reopen confirmed Mastered ring highlight + notes pre-fill → Save+Advance → "Week 2 of 2" + "Loose Leash" module → direct API verification confirmed `enrollment.goal_progress[Sit_id]` reflects the change exactly as the existing DogTrainingTab consumes it. Session log has 2 audit rows with booking_id + advanced_module diff.
+
+### Files touched
+- `backend/server.py` — refactored update_goal + 4 new endpoints + new TrainingSession* models + _build_training_context helper.
+- NEW `frontend/src/components/TrainingTrackerModal.jsx` (~248 lines).
+- `frontend/src/screens/Dashboard.jsx` — import, state, auto-open in checkIn(), TRACKER button on roster row, modal mount.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v69-110di-69-training-tracker`.
+- NEW `backend/tests/test_training_tracker.py` — 7 acceptance tests.
+
+### Note for future
+- The view-full-progress link uses `window.location.href` (full reload) instead of react-router navigate(). Minor cosmetic polish for a future pass.
+
