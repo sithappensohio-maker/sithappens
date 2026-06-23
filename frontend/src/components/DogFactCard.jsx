@@ -62,29 +62,22 @@ export function DogFactCard({ variant = "big" }) {
     );
   }
 
-  // big variant
+  // big variant — Sprint 110di-81: slimmed to match the Training Tip card
+  // (left-border accent, no oversized background glyph, compact one-line layout).
   return (
     <div data-testid="dog-fact-big"
-         className="relative overflow-hidden rounded-2xl border border-shGreen/20 bg-gradient-to-br from-bgPanel via-bgPanel to-bgBase p-6 sm:p-7 shadow-lg card-fact">
-      <div className="absolute -top-6 -right-6 text-[120px] sm:text-[140px] opacity-[0.08] select-none pointer-events-none" aria-hidden>
-        {fact.emoji || "🐶"}
+         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+      <div className="flex items-baseline flex-wrap gap-2 mb-1">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+          <span className="mr-1.5" aria-hidden>{fact.emoji || "🐶"}</span>Dog Fact of the Day
+        </p>
+        {fact.tag && (
+          <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${tagClass(fact.tag)}`}>
+            {fact.tag}
+          </span>
+        )}
       </div>
-      <div className="relative flex items-start gap-4">
-        <div className="text-4xl sm:text-5xl shrink-0" aria-hidden>{fact.emoji || "🐶"}</div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline flex-wrap gap-2 mb-1">
-            <p className="text-[10px] sm:text-[11px] font-black tracking-[0.22em] uppercase text-shGreen">
-              <i className="fas fa-paw mr-1.5"/>Dog Fact of the Day
-            </p>
-            {fact.tag && (
-              <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${tagClass(fact.tag)}`}>
-                {fact.tag}
-              </span>
-            )}
-          </div>
-          <p className="text-white text-base sm:text-lg leading-snug">{fact.text}</p>
-        </div>
-      </div>
+      <p className="text-white text-[15px] leading-relaxed">{fact.text}</p>
     </div>
   );
 }
