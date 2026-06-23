@@ -9466,6 +9466,84 @@ async def list_training_session_log(
     return await cur.to_list(500)
 
 
+@api.get("/admin/training/trainer-scorecard")
+async def trainer_scorecard(days: int = 30, _: dict = Depends(require_admin)):
+    """Sprint 110di-71 — Per-trainer 30-day rollup from training_session_log.
+    Counts sessions logged, distinct dogs worked with, skills moved to mastered
+    (status transitions to 'mastered' OR score crossing into 4-5), and module
+    advances. Window is `days` rolling back from now (default 30, max 365)."""
+    days = max(1, min(int(days or 30), 365))
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since_iso = since.isoformat()
+
+    cur = db.training_session_log.find(
+        {"at": {"$gte": since_iso}}, {"_id": 0},
+    )
+    sessions = await cur.to_list(10000)
+
+    by_trainer: Dict[str, Dict] = {}
+    for s in sessions:
+        key = (s.get("by_email") or s.get("by_user") or "unknown").lower()
+        bucket = by_trainer.setdefault(key, {
+            "trainer_key": key,
+            "trainer_name": s.get("by_user") or s.get("by_email") or "Unknown",
+            "trainer_email": s.get("by_email"),
+            "session_count": 0,
+            "dogs": set(),
+            "skills_mastered": 0,
+            "modules_advanced": 0,
+            "last_session_at": None,
+            "session_notes": 0,
+        })
+        bucket["session_count"] += 1
+        if s.get("dog_id"):
+            bucket["dogs"].add(s["dog_id"])
+        for d in (s.get("goal_updates") or []):
+            prior = (d.get("prior_status") or "")
+            new = (d.get("new_status") or "")
+            prior_score = int(d.get("prior_score") or 0)
+            new_score = int(d.get("new_score") or 0)
+            if new == "mastered" and prior != "mastered":
+                bucket["skills_mastered"] += 1
+            elif new_score >= 4 and prior_score < 4:
+                bucket["skills_mastered"] += 1
+        if s.get("advanced_module"):
+            bucket["modules_advanced"] += 1
+        if (s.get("session_note") or "").strip():
+            bucket["session_notes"] += 1
+        at = s.get("at")
+        if at and (not bucket["last_session_at"] or at > bucket["last_session_at"]):
+            bucket["last_session_at"] = at
+
+    rows = []
+    for b in by_trainer.values():
+        rows.append({
+            "trainer_key": b["trainer_key"],
+            "trainer_name": b["trainer_name"],
+            "trainer_email": b["trainer_email"],
+            "session_count": b["session_count"],
+            "unique_dogs": len(b["dogs"]),
+            "skills_mastered": b["skills_mastered"],
+            "modules_advanced": b["modules_advanced"],
+            "session_notes": b["session_notes"],
+            "last_session_at": b["last_session_at"],
+        })
+    rows.sort(key=lambda r: (-r["session_count"], -r["skills_mastered"]))
+
+    return {
+        "days": days,
+        "since": since_iso,
+        "trainers": rows,
+        "totals": {
+            "trainers": len(rows),
+            "sessions": sum(r["session_count"] for r in rows),
+            "skills_mastered": sum(r["skills_mastered"] for r in rows),
+            "modules_advanced": sum(r["modules_advanced"] for r in rows),
+        },
+    }
+
+
+
 
 
 class CustomProgramIn(BaseModel):

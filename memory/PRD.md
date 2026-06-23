@@ -5163,3 +5163,50 @@ Each row shows:
 - 11/11 backend pytest pass (training_tracker + lesson_plan) — zero regression.
 - Component lint: clean.
 
+
+## Sprint 110di-71 / 71b — Trainer Scorecard (in Staff screen) (2026-02-22)
+
+**User ask**: "Add a Trainer scorecard view: # sessions logged, total skills moved to mastered, # modules advanced — last 30 days." Then: "trainers score card really should be in the staff window it would make more sense than it being in the income tab."
+
+### What it does
+On the **Staff** screen, new subtab `Training` (10th tab next to Employees · Timecards · Schedule · Tasks · Payroll · Payroll Tax · Quarterly Tax · Time Off · Corrections). Shows a rolling-window scorecard with 4 KPI tiles + per-trainer table.
+
+### Backend
+- NEW `GET /api/admin/training/trainer-scorecard?days=30` — aggregates `training_session_log` entries (Sprint 110di-69) into per-trainer buckets. Counts:
+  - `session_count` — total sessions logged in the window.
+  - `unique_dogs` — distinct dog_ids worked with.
+  - `skills_mastered` — goal transitions to status=`mastered` OR score crossing into 4-5 (whichever fires first; never double-counted).
+  - `modules_advanced` — sessions that used `Save + Advance week`.
+  - `session_notes` — sessions that included a session note.
+  - `last_session_at` — most recent timestamp.
+- Window clamps to `1 ≤ days ≤ 365`.
+- Totals dict exposed for the KPI strip: `{trainers, sessions, skills_mastered, modules_advanced}`.
+
+### Frontend
+- NEW `frontend/src/components/TrainerScorecardTab.jsx` (~160 lines):
+  - **Range chips**: 7 days / 30 days / 90 days (testids `scorecard-range-7|30|90`).
+  - **4 KPI tiles**: Trainers / Sessions / Skills mastered / Modules advanced.
+  - **Trainer table** (testid `scorecard-table`) — columns: Trainer · Sessions · Dogs · Mastered · Adv · Last. Sorted by session count desc, then mastery desc. Mobile-responsive (collapses to stacked labels on narrow screens).
+  - Hides empty state with a helpful "no sessions yet" panel.
+  - Footnote explains how Skills mastered / Modules advanced are counted.
+- `Staff.jsx` — added `["training", "Training", "fa-clipboard-user"]` to the subtab strip + `{subtab === "training" && <TrainerScorecardTab />}` route.
+
+### Tests
+- NEW `backend/tests/test_trainer_scorecard.py` — 4 pytest cases:
+  - Shape: required keys + types always present (even for empty state).
+  - Counts: 2 sessions → 2 master events + 1 advance correctly bucketed under admin trainer.
+  - Window: 1-day count ≤ 365-day count.
+  - Clamp: `days=99999` → `days=365`.
+- 11/11 pass across `test_trainer_scorecard.py` + `test_training_tracker.py`.
+
+### Verified
+- Live screenshot: STAFF → Training subtab → scorecard renders with **Trainers 1 · Sessions 29 · Skills Mastered 29 · Modules Advanced 10** (matches the prior testing-agent + smoke-test sessions accumulated in the dev DB).
+
+### Files touched
+- `backend/server.py` — new `trainer_scorecard` endpoint at ~line 9430.
+- NEW `frontend/src/components/TrainerScorecardTab.jsx`.
+- `frontend/src/screens/Staff.jsx` — import + new subtab + route line.
+- `frontend/src/screens/Income.jsx` — first added the Training tab here, then **removed** it per user's request to live under Staff instead.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v72-110di-71b-scorecard-moved-to-staff`.
+- NEW `backend/tests/test_trainer_scorecard.py`.
+

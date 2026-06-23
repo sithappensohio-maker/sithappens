@@ -6,6 +6,7 @@ import { useConfirm } from "../lib/useConfirm";
 import PageHero from "../components/PageHero";
 import RolesPanel from "../components/RolesPanel";
 import { todayISO, daysAgoISO } from "../lib/date";
+import TrainerScorecardTab from "../components/TrainerScorecardTab";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -83,6 +84,7 @@ export default function Staff() {
           ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
           ["timeoff", "Time Off", "fa-umbrella-beach"],
           ["corrections", "Corrections", "fa-clock-rotate-left"],
+          ["training", "Training", "fa-clipboard-user"],
         ].map(([k, label, icon]) => (
           <button key={k} onClick={()=>setSubtab(k)} data-testid={`staff-subtab-${k}`}
                   className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`}>
@@ -262,6 +264,7 @@ export default function Staff() {
       {subtab === "quarterly" && <QuarterlyTaxTab />}
       {subtab === "timeoff" && <TimeOffAdminTab />}
       {subtab === "corrections" && <PunchCorrectionsAdminTab />}
+      {subtab === "training" && <TrainerScorecardTab />}
 
       {modal && <EmployeeFormModal mode={modal.mode} emp={modal.emp}
                                   onClose={()=>setModal(null)}
