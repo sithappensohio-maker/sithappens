@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
 import { ProgramEditor } from "./Programs";
+import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
 
 /* ============================================================
  *  Replaces the old Training tab inside the dog edit modal.
@@ -226,6 +227,13 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
           </div>
         ))}
       </div>
+
+      {/* Sprint 110di-70 — Recent training sessions timeline */}
+      <RecentTrainingSessionsPanel
+        dogId={dogId}
+        enrollmentId={enrollment.id}
+        modules={snap.modules || []}
+      />
 
       {/* Sprint 110di-64 — Weekly lesson plan timeline (trainer-only) */}
       {planOpen && (

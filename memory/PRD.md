@@ -5133,3 +5133,33 @@ Smoke screenshot:
 ### Note for future
 - The view-full-progress link uses `window.location.href` (full reload) instead of react-router navigate(). Minor cosmetic polish for a future pass.
 
+
+## Sprint 110di-70 — Recent Training Sessions timeline on dog profile (2026-02-22)
+
+**Built on top of Sprint 110di-69** — uses the existing `/dogs/{id}/programs/{eid}/session-log` endpoint (already shipped with the Training Tracker). Single new frontend component, no backend changes.
+
+### What it does
+On the dog's Training tab, below each active enrollment's modules/goals list, a "Recent training sessions" panel renders the **last 10 sessions** for that enrollment, newest-first.
+
+Each row shows:
+- **Trainer name** (from `by_user` in the audit log)
+- **Date/time** ("Today · 2:14 PM" / "Yesterday · 10:00 AM" / "Feb 18 · 9:30 AM" smart formatting)
+- **Session note** if present (italic, with blue left-rule)
+- **Skills that moved** — e.g. "Sit · Learning → Mastered (score 2 → 5)" with a star icon when the change was a mastery. Goal IDs are resolved to goal names locally from the enrollment's snapshotted modules.
+- **"Advanced to next week"** flag if the trainer bumped the module pointer.
+
+### UX details
+- Panel **hides entirely** if there are no sessions yet — no empty-state clutter for new enrollments.
+- Shows **3 rows by default**, with a "Show all N" toggle to expand to 10.
+- Mobile-friendly (stacks naturally).
+
+### Files touched
+- NEW `frontend/src/components/RecentTrainingSessionsPanel.jsx` (~110 lines).
+- `frontend/src/components/DogTrainingTab.jsx` — imported and mounted inside EnrollmentCard, below the modules list.
+- `frontend/public/service-worker.js` — `CACHE_VERSION` bumped to `sh-v70-110di-70-recent-sessions-timeline`.
+
+### Verified
+- Backend shape matches frontend expectations exactly (smoke test created 2 sessions → log returned both with correct goal_updates diffs + advanced_module).
+- 11/11 backend pytest pass (training_tracker + lesson_plan) — zero regression.
+- Component lint: clean.
+
