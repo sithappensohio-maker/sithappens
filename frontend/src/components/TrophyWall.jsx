@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { createPortal } from "react-dom";
 import TrophyBadge from "./TrophyBadge";
 import { api } from "../lib/api";
 
@@ -20,8 +21,10 @@ function TrophyDetailModal({ award, onClose }) {
   const copy = async () => {
     try { await navigator.clipboard.writeText(`${shareText} ${cardUrl}`); setCopied(true); setTimeout(()=>setCopied(false), 2500); } catch {}
   };
-  return (
-    <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-detail-modal">
+  // Sprint 110di-77 — render via portal so the `.card-dog` (isolation: isolate)
+  // stacking context can't trap us behind a sibling card.
+  return createPortal((
+    <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-detail-modal">
       <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
@@ -51,7 +54,7 @@ function TrophyDetailModal({ award, onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 /**
