@@ -233,9 +233,9 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
         </div>
       </div>
 
-      <div className="divide-y divide-bgHover">
-        {snap.modules.map(m => (
-          <div key={m.id} className="px-4 py-3">
+      <div className="px-2 sm:px-3 py-2 space-y-4">
+        {snap.modules.map((m, idx) => (
+          <div key={m.id} className={`px-2 py-2 ${idx === 0 ? "" : "mt-1"}`}>
             <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2">{m.name}</p>
             <div className="space-y-1">
               {m.goals.map(g => {
