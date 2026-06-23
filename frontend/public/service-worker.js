@@ -1,5 +1,5 @@
 /* Sit Happens service worker — bump CACHE_VERSION to force-update clients. */
-const CACHE_VERSION = "sh-v75-110di-74-tracker-jump-and-refresh";
+const CACHE_VERSION = "sh-v76-110di-75-unified-tracker-from-dog-profile";
 const CACHE_NAME = `sit-happens-${CACHE_VERSION}`;
 const SHELL = [
   "/",

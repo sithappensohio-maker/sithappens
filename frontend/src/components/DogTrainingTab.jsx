@@ -5,6 +5,7 @@ import ProgressRing from "./ProgressRing";
 import CollapsibleText from "./CollapsibleText";
 import { ProgramEditor } from "./Programs";
 import RecentTrainingSessionsPanel from "./RecentTrainingSessionsPanel";
+import TrainingTrackerModal from "./TrainingTrackerModal";
 
 /* ============================================================
  *  Replaces the old Training tab inside the dog edit modal.
@@ -19,6 +20,9 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [activeGoalEdit, setActiveGoalEdit] = useState(null);
   const [err, setErr] = useState("");
+  // Sprint 110di-75 — Unified tracker: launch the SAME modal Pipeline/Dashboard use,
+  // so every session writes to training_session_log and the scorecard / timeline stay accurate.
+  const [trackerFor, setTrackerFor] = useState(null);
 
   const load = async () => {
     try {
@@ -108,7 +112,8 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onUnenroll={()=>unenroll(e)}
                           onTargetDate={(d)=>updateTarget(e.id, d)}
                           onCurrentModule={(mid)=>setCurrentModule(e.id, mid)}
-                          onGoal={(gid, patch)=>setGoal(e.id, gid, patch)} />
+                          onGoal={(gid, patch)=>setGoal(e.id, gid, patch)}
+                          onOpenTracker={()=>setTrackerFor({ dog_id: dogId, enrollment_id: e.id })} />
         ))
       ) : (
         <div className="bg-bgBase/40 border border-dashed border-bgHover rounded p-6 text-center" data-testid="no-active">
@@ -154,11 +159,21 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                               onClose={()=>setCustomOpen(false)}
                               onCreated={()=>{ setCustomOpen(false); load(); }} />
       )}
+
+      {/* Sprint 110di-75 — Unified tracker modal (same instance Pipeline/Dashboard use) */}
+      {trackerFor && (
+        <TrainingTrackerModal
+          dogId={trackerFor.dog_id}
+          enrollmentId={trackerFor.enrollment_id}
+          onClose={()=>setTrackerFor(null)}
+          onSaved={()=>{ setTrackerFor(null); load(); }}
+        />
+      )}
     </div>
   );
 }
 
-function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal }) {
+function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onTargetDate, onCurrentModule, onGoal, onOpenTracker }) {
   const color = typeMeta?.color || "#00a9e0";
   const snap = enrollment.program_snapshot;
   const [editTarget, setEditTarget] = useState(false);
@@ -178,6 +193,10 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
             <p className="text-sm sm:text-base font-black text-white truncate">{snap.name}</p>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
+            <button onClick={onOpenTracker} data-testid={`open-tracker-${enrollment.id}`}
+                    className="bg-shGreen/20 text-shGreen border border-shGreen/40 px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap shadow">
+              <i className="fas fa-paw mr-1"/>Log Session
+            </button>
             <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
                     className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
             <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}

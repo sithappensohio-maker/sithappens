@@ -5329,3 +5329,18 @@ Same labels, same colors, same data flow. Both write to the same `goal_progress[
 ### Non-regression confirmation
 - Tracker still posts to `/dogs/{did}/programs/{eid}/training-session` unchanged.
 - `goal_progress` / `current_module_id` machinery untouched.
+
+
+## Sprint 110di-75 — Unified Tracker From Dog Profile (2026-02-23)
+**User ask**: "Anywhere we are tracking progress should be the same for that dog anytime we make changes." — eliminate the split between the inline per-goal grading on the Dog profile and the session-logging modal everywhere else.
+
+### Change
+- `DogTrainingTab.jsx` — imports `TrainingTrackerModal` and adds a prominent green **"Log Session"** button at the top of every active `EnrollmentCard`. Clicking it opens the same modal used by Pipeline / Dashboard / Care Board.
+- Sessions logged from the Dog profile now flow through `POST /dogs/{id}/programs/{eid}/training-session`, which writes a `training_session_log` row — so the Trainer Scorecard and "Recent training sessions" timeline correctly include them.
+- Inline per-goal pill grading is kept for quick spot-edits (e.g. correcting a single skill outside a session) — those still hit `PUT .../goals/{gid}` and don't write a session log, by design.
+- `service-worker.js` — `CACHE_VERSION` bumped to `sh-v76-110di-75-unified-tracker-from-dog-profile`.
+
+### Verified
+- Live screenshot: Pipeline → Dog Profile → Training tab → "Log Session" button opens the modal; "View full program progress" link works.
+- 17/17 backend pytest pass (tracker + hub + scorecard).
+- Lint: 0 issues.
