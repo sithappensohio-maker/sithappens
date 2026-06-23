@@ -9209,19 +9209,22 @@ async def _auto_assign_module_homework(enrollment: dict, just_mastered_goal_id: 
 
 
 
-@api.put("/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}")
-async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin)):
-    enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
-    if not enrollment:
-        raise HTTPException(status_code=404, detail="Enrollment not found")
+async def _apply_goal_update_to_enrollment(
+    *, enrollment: dict, goal_id: str, body: "GoalUpdate",
+) -> dict:
+    """Sprint 110di-69 — Extracted from `update_goal` so the new
+    training-session batch endpoint can apply many goal updates inside one
+    enrollment doc without duplicating the auto-status / auto-homework /
+    auto-complete / trophy side effects. Mutates + returns the enrollment.
+    The DB write is left to the CALLER so multiple goal updates can be
+    committed as a single $set."""
     progress = enrollment.get("goal_progress") or {}
     cur = progress.get(goal_id) or {"status": "not_started", "score": 0, "notes": "", "last_session_at": None}
-    prior_status = cur.get("status")
+    prior = {"status": cur.get("status"), "score": int(cur.get("score") or 0)}
     if body.status is not None:
         cur["status"] = body.status
     if body.score is not None:
         cur["score"] = body.score
-        # Auto-bump status: 0=not_started, 1-3=in_progress, 4-5=mastered
         if body.score >= 4:
             cur["status"] = "mastered"
         elif body.score >= 1:
@@ -9230,9 +9233,28 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
             cur["status"] = "not_started"
     if body.notes is not None:
         cur["notes"] = body.notes
+    cur["last_session_at"] = datetime.now(timezone.utc).isoformat()
     progress[goal_id] = cur
-    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": {"goal_progress": progress}})
     enrollment["goal_progress"] = progress
+    enrollment["_goal_diff_" + goal_id] = {  # internal scratchpad consumed by training-session endpoint
+        "prior_status": prior["status"], "new_status": cur["status"],
+        "prior_score": prior["score"], "new_score": int(cur.get("score") or 0),
+    }
+    return enrollment
+
+
+@api.put("/dogs/{dog_id}/programs/{enrollment_id}/goals/{goal_id}")
+async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalUpdate, _: dict = Depends(require_admin)):
+    enrollment = await db.dog_programs.find_one({"id": enrollment_id, "dog_id": dog_id}, {"_id": 0})
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    enrollment = await _apply_goal_update_to_enrollment(
+        enrollment=enrollment, goal_id=goal_id, body=body,
+    )
+    diff = enrollment.pop("_goal_diff_" + goal_id, {})
+    prior_status = diff.get("prior_status")
+    cur = (enrollment.get("goal_progress") or {}).get(goal_id) or {}
+    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": {"goal_progress": enrollment["goal_progress"]}})
 
     # Sprint 110bx — auto-assign that module's homework when it flips to "mastered"
     if cur.get("status") == "mastered" and prior_status != "mastered":
@@ -9249,6 +9271,201 @@ async def update_goal(dog_id: str, enrollment_id: str, goal_id: str, body: GoalU
     except Exception as exc:
         logger.warning("Dog trophy check failed for %s: %s", dog_id, exc)
     return _enrollment_summary(enrollment)
+
+
+# ─── Sprint 110di-69 · Training Tracker (trainer-side batch + audit) ──────
+# Layered on TOP of the existing enrollment + goal_progress system. Does NOT
+# create a duplicate progress store — just batches per-session goal updates
+# and writes one audit row to `training_session_log` for the activity feed.
+
+class TrainingSessionGoalUpdate(BaseModel):
+    goal_id: str
+    status: Optional[Literal["not_started", "in_progress", "mastered"]] = None
+    score: Optional[int] = Field(default=None, ge=0, le=5)
+    notes: Optional[str] = None
+
+
+class TrainingSessionIn(BaseModel):
+    booking_id: Optional[str] = None
+    session_note: Optional[str] = ""
+    goal_updates: List[TrainingSessionGoalUpdate] = []
+    advance_to_next_module: bool = False
+
+
+async def _build_training_context(enrollment: dict) -> dict:
+    """Shape the current-module-with-progress payload the tracker modal renders."""
+    summary = _enrollment_summary(enrollment)
+    current_module = summary.get("current_module") or {}
+    goals = []
+    for g in (current_module.get("goals") or []):
+        p = (enrollment.get("goal_progress") or {}).get(g["id"]) or {}
+        goals.append({
+            "id": g["id"], "name": g.get("name"), "description": g.get("description") or "",
+            "status": p.get("status") or "not_started",
+            "score": int(p.get("score") or 0),
+            "notes": p.get("notes") or "",
+            "last_session_at": p.get("last_session_at"),
+        })
+    all_mastered = bool(goals) and all(g["status"] == "mastered" for g in goals)
+    return {
+        "has_program": True,
+        "enrollment": {
+            "id": summary["id"], "dog_id": summary["dog_id"],
+            "current_week": summary.get("current_week"),
+            "total_weeks": summary.get("total_weeks"),
+            "mastered_pct": summary.get("mastered_pct"),
+        },
+        "program": {
+            "name": (summary.get("program_snapshot") or {}).get("name"),
+            "type": (summary.get("program_snapshot") or {}).get("type"),
+        },
+        "current_module": {
+            "id": current_module.get("id"),
+            "name": current_module.get("name"),
+            "description": current_module.get("description") or "",
+            "order": current_module.get("order"),
+        },
+        "goals": goals,
+        "all_current_goals_mastered": all_mastered,
+    }
+
+
+@api.get("/bookings/{booking_id}/training-context")
+async def get_training_context_for_booking(booking_id: str, _: dict = Depends(require_admin)):
+    """Return the active training-program context for the dog on this booking,
+    so the check-in flow can decide whether to surface the Training Tracker."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    dog_id = booking.get("dog_id")
+    if not dog_id:
+        return {"has_program": False, "reason": "no_dog_on_booking"}
+    enrollment = await db.dog_programs.find_one(
+        {"dog_id": dog_id, "status": "active"}, {"_id": 0},
+    )
+    if not enrollment:
+        return {"has_program": False, "reason": "no_active_enrollment", "dog_id": dog_id}
+    ctx = await _build_training_context(enrollment)
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "name": 1, "id": 1}) or {}
+    ctx["dog"] = {"id": dog_id, "name": dog.get("name") or ""}
+    ctx["booking_id"] = booking_id
+    return ctx
+
+
+@api.get("/dogs/{dog_id}/programs/{enrollment_id}/training-context")
+async def get_training_context_direct(dog_id: str, enrollment_id: str, _: dict = Depends(require_admin)):
+    """Direct fetch (Care Board / dog profile entry points — no booking)."""
+    enrollment = await db.dog_programs.find_one(
+        {"id": enrollment_id, "dog_id": dog_id}, {"_id": 0},
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+    ctx = await _build_training_context(enrollment)
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "name": 1, "id": 1}) or {}
+    ctx["dog"] = {"id": dog_id, "name": dog.get("name") or ""}
+    return ctx
+
+
+@api.post("/dogs/{dog_id}/programs/{enrollment_id}/training-session")
+async def record_training_session(
+    dog_id: str, enrollment_id: str, body: TrainingSessionIn,
+    user: dict = Depends(require_admin),
+):
+    """Atomic batch: apply each goal update via the SAME helper update_goal
+    uses, optionally bump current_module to the next module in `order`,
+    write one audit row to training_session_log, return updated context."""
+    enrollment = await db.dog_programs.find_one(
+        {"id": enrollment_id, "dog_id": dog_id}, {"_id": 0},
+    )
+    if not enrollment:
+        raise HTTPException(status_code=404, detail="Enrollment not found")
+
+    # Apply every goal update against the in-memory enrollment doc, accumulating diffs
+    goal_diffs = []
+    for upd in body.goal_updates:
+        if not any(
+            g.get("id") == upd.goal_id
+            for m in (enrollment.get("program_snapshot", {}).get("modules") or [])
+            for g in (m.get("goals") or [])
+        ):
+            raise HTTPException(status_code=404, detail=f"Goal {upd.goal_id} not in this enrollment")
+        enrollment = await _apply_goal_update_to_enrollment(
+            enrollment=enrollment, goal_id=upd.goal_id,
+            body=GoalUpdate(status=upd.status, score=upd.score, notes=upd.notes),
+        )
+        diff = enrollment.pop("_goal_diff_" + upd.goal_id, {})
+        diff["goal_id"] = upd.goal_id
+        diff["note"] = upd.notes or ""
+        goal_diffs.append(diff)
+
+    # Optionally advance module pointer (trainer's discretion — no gating)
+    advance_record = None
+    if body.advance_to_next_module:
+        modules_sorted = sorted(
+            (enrollment.get("program_snapshot", {}).get("modules") or []),
+            key=lambda m: (m.get("order", 0), m.get("name") or ""),
+        )
+        ids = [m.get("id") for m in modules_sorted]
+        cur_id = enrollment.get("current_module_id") or (ids[0] if ids else None)
+        if cur_id and cur_id in ids and ids.index(cur_id) < len(ids) - 1:
+            next_id = ids[ids.index(cur_id) + 1]
+            advance_record = {"from_id": cur_id, "to_id": next_id}
+            enrollment["current_module_id"] = next_id
+
+    # Commit the enrollment doc in one $set
+    set_doc = {"goal_progress": enrollment["goal_progress"]}
+    if advance_record:
+        set_doc["current_module_id"] = enrollment["current_module_id"]
+    await db.dog_programs.update_one({"id": enrollment_id}, {"$set": set_doc})
+
+    # Run side effects ONCE at the end (auto-homework, auto-complete, trophies).
+    for diff in goal_diffs:
+        if diff.get("new_status") == "mastered" and diff.get("prior_status") != "mastered":
+            try:
+                await _auto_assign_module_homework(enrollment, diff["goal_id"])
+            except Exception as exc:
+                logger.warning("Auto-homework trigger failed: %s", exc)
+    enrollment = await _auto_complete_if_satisfied(enrollment)
+    try:
+        await check_dog_trophies(db, dog_id)
+    except Exception as exc:
+        logger.warning("Dog trophy check failed for %s: %s", dog_id, exc)
+
+    # Audit row — one per session, regardless of how many goals were touched
+    log_row = {
+        "id": _gid(),
+        "dog_id": dog_id,
+        "enrollment_id": enrollment_id,
+        "booking_id": body.booking_id,
+        "by_user": user.get("name") or user.get("email") or "admin",
+        "by_email": user.get("email"),
+        "at": datetime.now(timezone.utc).isoformat(),
+        "session_note": (body.session_note or "").strip(),
+        "goal_updates": goal_diffs,
+        "advanced_module": advance_record,
+        "current_module_id_after": enrollment.get("current_module_id"),
+    }
+    await db.training_session_log.insert_one(dict(log_row))
+
+    ctx = await _build_training_context(enrollment)
+    dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "name": 1, "id": 1}) or {}
+    ctx["dog"] = {"id": dog_id, "name": dog.get("name") or ""}
+    ctx["last_log"] = log_row
+    return ctx
+
+
+@api.get("/dogs/{dog_id}/programs/{enrollment_id}/session-log")
+async def list_training_session_log(
+    dog_id: str, enrollment_id: str, limit: int = 50,
+    _: dict = Depends(require_admin),
+):
+    """Activity feed for the dog/enrollment. Newest first."""
+    cur = db.training_session_log.find(
+        {"dog_id": dog_id, "enrollment_id": enrollment_id}, {"_id": 0},
+    ).sort("at", -1).limit(max(1, min(limit, 500)))
+    return await cur.to_list(500)
+
+
 
 
 class CustomProgramIn(BaseModel):

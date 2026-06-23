@@ -16,6 +16,7 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { OwnerClock, EndOfDayPanel } from "../components/OwnerClockAndEndOfDay";
 import ReadinessChecklist from "../components/ReadinessChecklist";
 import DashboardQuickLinks from "../components/DashboardQuickLinks";
+import TrainingTrackerModal from "../components/TrainingTrackerModal";
 import { useTheme } from "../lib/theme";
 import { toast } from "sonner";
 
@@ -43,6 +44,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   // Sprint 110aq — read-only "what's the deal with this booking" overview
   // modal launched from any roster row on the Today's Check-in Board.
   const [detailFor, setDetailFor] = useState(null);
+  // Sprint 110di-69 — Training Tracker modal trigger { booking_id, dog_id, dog_name? }
+  const [trainingTrackerFor, setTrainingTrackerFor] = useState(null);
   const [services, setServices] = useState([]);
   const [showQuick, setShowQuick] = useState(false);
   const [programs, setPrograms] = useState(null);
@@ -130,7 +133,22 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
     );
   });
-  const checkIn = async (id) => { try { const geo = await captureGeo(); await api.post(`/bookings/${id}/check-in`, geo); load(); } catch {} };
+  const checkIn = async (id) => {
+    try {
+      const geo = await captureGeo();
+      await api.post(`/bookings/${id}/check-in`, geo);
+      // Sprint 110di-69 — if this booking is for a training service AND the dog
+      // has an active training enrollment, open the Training Tracker directly.
+      try {
+        const row = (stats?.today_roster || []).find(b => b.id === id);
+        if (row && row.service_type === "training") {
+          const { data } = await api.get(`/bookings/${id}/training-context`);
+          if (data?.has_program) setTrainingTrackerFor({ booking_id: id, dog_id: data.dog?.id, dog_name: data.dog?.name });
+        }
+      } catch { /* training context is best-effort */ }
+      load();
+    } catch { /* silent — geo errors are non-fatal */ }
+  };
 
   const approveVax = async (v) => {
     try {
@@ -510,6 +528,15 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                     <button onClick={(e)=>{ e.stopPropagation(); setCheckoutFor(b); }} data-testid={`checkout-${b.id}`}
                             className="bg-shBlue text-white px-5 py-2 rounded font-black uppercase text-[14px] tracking-widest shadow hover:bg-shBlue/90">Check Out</button>
                   )}
+                  {/* Sprint 110di-69 — Trainer shortcut: only shown on-premises for training bookings */}
+                  {onPremises && b.service_type === "training" && (
+                    <button onClick={(e)=>{ e.stopPropagation(); setTrainingTrackerFor({ booking_id: b.id, dog_id: b.dog_id, dog_name: b.dog_name }); }}
+                            data-testid={`roster-training-tracker-${b.id}`}
+                            title="Open training tracker for this dog's active program"
+                            className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-3 py-2 rounded font-black uppercase text-[14px] tracking-widest hover:bg-shGreen/25">
+                      <i className="fas fa-paw mr-1"/>Tracker
+                    </button>
+                  )}
                   {/* Sprint 110as — cancel is now available on EVERY row that
                       hasn't been checked out yet (not just on-premises). The
                       modal lets the operator choose refund vs charge. */}
@@ -595,6 +622,15 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
       {reportFor && <ReportCardModal booking={reportFor} moodTags={moodTags} onClose={()=>{ setReportFor(null); load(); }} />}
       {detailFor && <BookingDetailModal booking={detailFor} onClose={()=>setDetailFor(null)} onJumpToDog={onJumpToDog} />}
+      {trainingTrackerFor && (
+        <TrainingTrackerModal
+          bookingId={trainingTrackerFor.booking_id}
+          dogId={trainingTrackerFor.dog_id}
+          enrollmentId={trainingTrackerFor.enrollment_id}
+          onClose={()=>setTrainingTrackerFor(null)}
+          onSaved={()=>{ load(); }}
+        />
+      )}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}
                                      onRequestCancel={(b)=>{ setCheckoutFor(null); setCancelFor(b); }}
                                      onClose={()=>{ setCheckoutFor(null); load(); }} />}
