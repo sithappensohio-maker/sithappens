@@ -821,6 +821,8 @@ const CPC_SECTION_META = [
     desc: "Daily fun-fact widget on the portal home." },
   { id: "trivia_rewards",      label: "Trivia & Rewards",           masterFeature: "rewards",
     desc: "Trivia widget + Trophy Wall. Hidden if Rewards or Trivia is OFF in Feature Visibility." },
+  { id: "training_tip",        label: "Training Tip of the Day",    masterFeature: null,
+    desc: "One daily training tip on the portal home. Tips tagged audience=staff are hidden from clients." },
   { id: "booking_history",     label: "Booking history",            masterFeature: null,
     desc: "Past completed/cancelled bookings list." },
   { id: "upcoming_bookings",   label: "Upcoming bookings",          masterFeature: null,

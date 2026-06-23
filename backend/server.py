@@ -5191,6 +5191,7 @@ def _default_client_portal_controls() -> dict:
             "prices":              True,
             "dog_facts":           True,
             "trivia_rewards":      True,
+            "training_tip":        True,
             "booking_history":     True,
             "upcoming_bookings":   True,
             "profile_quick_links": True,
@@ -11415,6 +11416,31 @@ async def training_tip_today(_: dict = Depends(require_admin)):
         return {"tip": None, "date": business_today().isoformat()}
     idx = business_today().toordinal() % len(tips)
     return {"tip": tips[idx], "date": business_today().isoformat()}
+
+
+@api.get("/me/training-tip/today")
+async def my_training_tip_today(user: dict = Depends(get_current_user)):
+    """Sprint 110di-79 — Client-facing tip-of-day. Same deterministic pick as the
+    admin Training Hub, scoped to tips whose `audience` is anything other than
+    'staff'/'trainer' (so admin can mark tips as internal-only by tagging
+    audience='staff'). If the curated pool is empty, falls back to all active
+    tips so the operator doesn't have to retag the seed pool to enable the
+    feature on day one."""
+    await _require_client_with_record(user)
+    await _seed_training_tips_if_empty()
+    INTERNAL = {"staff", "trainer", "trainers", "internal"}
+    all_active = await db.training_tips.find(
+        {"active": True}, {"_id": 0}
+    ).sort("sort_order", 1).to_list(2000)
+    client_pool = [
+        t for t in all_active
+        if (t.get("audience") or "").strip().lower() not in INTERNAL
+    ]
+    pool = client_pool or all_active  # fallback so day-1 install isn't empty
+    if not pool:
+        return {"tip": None, "date": business_today().isoformat()}
+    idx = business_today().toordinal() % len(pool)
+    return {"tip": pool[idx], "date": business_today().isoformat()}
 
 
 @api.get("/training-tips")

@@ -24,7 +24,7 @@ def _admin_h():
 
 
 REQUIRED_SECTIONS = {
-    "credits", "prices", "dog_facts", "trivia_rewards",
+    "credits", "prices", "dog_facts", "trivia_rewards", "training_tip",
     "booking_history", "upcoming_bookings", "profile_quick_links",
     "waiver_documents", "vaccines_compliance", "messages", "help_button",
 }

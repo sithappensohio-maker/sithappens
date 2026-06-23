@@ -32,6 +32,7 @@ import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
 import PortalAnnouncementsCard from "../components/PortalAnnouncementsCard";
+import PortalTrainingTipCard from "../components/PortalTrainingTipCard";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -1238,6 +1239,9 @@ export default function Portal() {
         {/* Sprint 110ax — Daily dog fact, pinned above the main content.
             Sprint 110di-18 — Gated by Client Portal Controls. */}
         {sectionOn("dog_facts") && <div className="mb-6"><DogFactCard variant="big" /></div>}
+
+        {/* Sprint 110di-79 — Training Tip of the Day (client-facing). */}
+        {sectionOn("training_tip") && <div className="mb-6"><PortalTrainingTipCard /></div>}
 
         {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game).
             Sprint 110di-18 — Gated by Client Portal Controls (trivia_rewards). */}
