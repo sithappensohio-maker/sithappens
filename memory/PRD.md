@@ -5306,3 +5306,26 @@ Same labels, same colors, same data flow. Both write to the same `goal_progress[
 - Lesson plan modal's `current_module_id` pointer is the same one TrainingTracker bumps.
 - No new tables, no parallel grading store.
 
+
+
+## Sprint 110di-74 — Training Tracker Bug Fixes (2026-02-23)
+**User ask**: 1) "View full program progress" link inside `TrainingTrackerModal` was hard-redirecting (window.location.href) to a non-existent route, dumping users back on the Dashboard. 2) Progress bar didn't visually refresh after marking skills / advancing the week.
+
+### Root cause
+- App uses tab-based navigation (no react-router paths). `window.location.href = /dogs/{id}` triggered a full SPA reload, falling back to the default Dashboard tab.
+- The `onJumpToDog` prop was declared in `TrainingTrackerModal` but never wired through.
+
+### Fix
+- `TrainingTrackerModal.jsx` — replaced the broken `<a href>` with a real `<button>` that invokes `onJumpToDog(dog_id)` then `onClose()`. Disabled when prop is missing.
+- `Pipeline.jsx` — passes `onJumpToDog={onJumpToDog}` into the tracker (prop already comes from App.js shell).
+- `Dashboard.jsx` — passes `onJumpToDog={(id)=>{ setTrainingTrackerFor(null); onJumpToDog?.(id); }}` so the modal closes before the jump.
+- `service-worker.js` — `CACHE_VERSION` bumped to `sh-v75-110di-74-tracker-jump-and-refresh`.
+
+### Verified
+- 7/7 `tests/test_training_tracker.py` pass (mastered_pct recomputation, week advancement).
+- Live screenshot test: opening the tracker from Pipeline → clicking "View full program progress" now opens the Dog edit modal on the Dogs tab (no Dashboard fallback).
+- Progress refresh wiring: both parents already call `load()` via `onSaved`, backend `_enrollment_summary` recomputes `mastered_pct` after every `/training-session` POST.
+
+### Non-regression confirmation
+- Tracker still posts to `/dogs/{did}/programs/{eid}/training-session` unchanged.
+- `goal_progress` / `current_module_id` machinery untouched.

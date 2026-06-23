@@ -23,7 +23,7 @@ function statusToBtnIndex(g) {
   return 0;
 }
 
-export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, onClose, onSaved }) {
+export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, onClose, onSaved, onJumpToDog }) {
   const [ctx, setCtx] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -223,11 +223,19 @@ export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, o
         {/* Footer */}
         <div className="px-4 sm:px-6 py-3 border-t border-bgHover bg-bgBase/50 sticky bottom-0 rounded-b-2xl">
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <a href={`/dogs/${ctx.dog?.id || dogId}`} onClick={(e)=>{ e.preventDefault(); window.location.href = `/dogs/${ctx.dog?.id || dogId}`; }}
-               data-testid="tracker-view-full-progress"
-               className="text-[12px] text-shBlue hover:text-white font-black uppercase tracking-widest underline-offset-2 hover:underline">
+            <button type="button"
+                    onClick={() => {
+                      const did = ctx.dog?.id || dogId;
+                      if (onJumpToDog && did) {
+                        onJumpToDog(did);
+                        onClose?.();
+                      }
+                    }}
+                    disabled={!onJumpToDog}
+                    data-testid="tracker-view-full-progress"
+                    className="text-[12px] text-shBlue hover:text-white font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-40 disabled:cursor-not-allowed">
               <i className="fas fa-up-right-from-square mr-1"/>View full program progress
-            </a>
+            </button>
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => save({ advance: true })} disabled={saving}
                       data-testid="tracker-advance-btn"

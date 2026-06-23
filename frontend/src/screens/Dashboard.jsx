@@ -630,7 +630,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           dogId={trainingTrackerFor.dog_id}
           enrollmentId={trainingTrackerFor.enrollment_id}
           onClose={()=>setTrainingTrackerFor(null)}
-          onSaved={()=>{ load(); }}
+          onSaved={()=>{ setTrainingTrackerFor(null); load(); }}
+          onJumpToDog={(id)=>{ setTrainingTrackerFor(null); onJumpToDog?.(id); }}
         />
       )}
       {checkoutFor && <CheckoutModal booking={checkoutFor} services={services}

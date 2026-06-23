@@ -196,6 +196,7 @@ export default function Pipeline({ onJumpToDog }) {
         enrollmentId={trackerFor.enrollment_id}
         onClose={() => setTrackerFor(null)}
         onSaved={() => { setTrackerFor(null); load(); }}
+        onJumpToDog={onJumpToDog}
       />
     )}
     </>
