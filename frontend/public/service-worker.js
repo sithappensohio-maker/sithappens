@@ -1,5 +1,5 @@
 /* Sit Happens service worker — bump CACHE_VERSION to force-update clients. */
-const CACHE_VERSION = "sh-v84-110di-83-mobile-responsive-hardening";
+const CACHE_VERSION = "sh-v85-110di-84-clean-card-chrome";
 const CACHE_NAME = `sit-happens-${CACHE_VERSION}`;
 const SHELL = [
   "/",

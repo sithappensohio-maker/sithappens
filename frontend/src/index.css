@@ -117,6 +117,17 @@ body {
     inset 0 1px 0 var(--ct-default-inner-highlight-rgba, var(--card-inner-highlight-rgba, rgba(255, 255, 255, 0.08)));
   z-index: 0;
 }
+/* Sprint 110di-84 — When the panel also has `.rounded-xl` or `.rounded-2xl`,
+   the canonical card chrome (further down in this file, "Card poster style")
+   already paints a real border + halo on the element itself. Suppress the
+   default ::after layer here so we don't end up with two concentric borders
+   or two competing glows at slightly different radii. Flat .bg-bgPanel
+   elements (dropdowns, menus, small chips) keep their ::after chrome. */
+.bg-bgPanel.rounded-xl::after,
+.bg-bgPanel.rounded-2xl::after {
+  border: none !important;
+  box-shadow: none !important;
+}
 /* Make sure direct children sit above the overlay. Without this, content
    inside the card stays interactive (links/buttons still click) — pointer
    events on ::after are off, but z-stacking can still bury hover effects. */
@@ -712,29 +723,15 @@ body {
      the default `scroll`. */
 }
 
-/* Override panel cards globally — glassy navy with neon border + glow. */
+/* Override panel cards globally — glassy navy background.
+   Sprint 110di-84 — Removed the duplicate border + box-shadow that previously
+   lived here. The canonical chrome for `.bg-bgPanel.rounded-xl/2xl` is the
+   "Card poster" block further down (around line 1361). Keeping both layers
+   active created a double-outline / mismatched-glow bug on modals where the
+   ::after pseudo-element and the real border drew two concentric rings. */
 .bg-bgPanel {
   background:
     linear-gradient(135deg, rgba(3, 18, 33, 0.94) 0%, rgba(1, 8, 20, 0.98) 100%) !important;
-}
-.bg-bgPanel.rounded-xl,
-.bg-bgPanel.rounded-2xl {
-  border: 1px solid rgba(0, 174, 240, 0.42) !important;
-  box-shadow:
-    0 0 22px rgba(0, 174, 240, 0.16),
-    inset 0 0 22px rgba(0, 174, 240, 0.05),
-    0 18px 30px -18px rgba(0, 0, 0, 0.85),
-    0 6px 0 -2px rgba(0, 0, 0, 0.45) !important;
-  border-radius: 20px !important;
-}
-.bg-bgPanel.rounded-xl:hover,
-.bg-bgPanel.rounded-2xl:hover {
-  border-color: rgba(155, 229, 31, 0.55) !important;
-  box-shadow:
-    0 0 28px rgba(155, 229, 31, 0.25),
-    inset 0 0 22px rgba(155, 229, 31, 0.06),
-    0 22px 36px -16px rgba(0, 0, 0, 0.9),
-    0 7px 0 -2px rgba(0, 0, 0, 0.55) !important;
 }
 
 /* Primary CTA — auto-promote bg-shGreen buttons to lime pill style. */
