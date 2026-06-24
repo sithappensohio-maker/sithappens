@@ -124,7 +124,15 @@ body {
    or two competing glows at slightly different radii. Flat .bg-bgPanel
    elements (dropdowns, menus, small chips) keep their ::after chrome. */
 .bg-bgPanel.rounded-xl::after,
-.bg-bgPanel.rounded-2xl::after {
+.bg-bgPanel.rounded-2xl::after,
+.bg-bgPanel.rounded-r-xl::after,
+.bg-bgPanel.rounded-l-xl::after,
+.bg-bgPanel.rounded-t-xl::after,
+.bg-bgPanel.rounded-b-xl::after,
+.bg-bgPanel.rounded-r-2xl::after,
+.bg-bgPanel.rounded-l-2xl::after,
+.bg-bgPanel.rounded-t-2xl::after,
+.bg-bgPanel.rounded-b-2xl::after {
   border: none !important;
   box-shadow: none !important;
 }
