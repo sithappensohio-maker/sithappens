@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Sprint 110di-83 — Global mobile responsive hardening. Prevents stray
+   horizontal overflow at the document level (the universal cause of
+   "horizontal scrollbar" bug reports). Individual scrollable regions
+   (tables, modals) can still opt back in with their own overflow rules. */
+html, body, #root {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+*, *::before, *::after { box-sizing: border-box; }
+
 /* Sprint 110dd — On-brand display font. Matches the chunky distressed
    stencil look used across sithappensohiodogtraining.com hero headlines. */
 @import url('https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=Black+Ops+One&family=Anton&family=Inter:wght@400;500;600;700;800;900&display=swap');

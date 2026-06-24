@@ -308,8 +308,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-4" onClick={onClose} data-testid="portal-book-wizard">
-      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-2xl w-full max-h-[92vh] overflow-y-auto p-6 space-y-5" onClick={(e)=>e.stopPropagation()}>
+    <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-2 sm:p-4" onClick={onClose} data-testid="portal-book-wizard">
+      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-2xl w-full max-h-[92vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5" onClick={(e)=>e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
@@ -344,12 +344,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             )}
             <div>
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
-              <div className="grid grid-cols-2 gap-3 mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
                 {VISIBLE_SERVICES.map(s => (
                   <button key={s.key} onClick={()=>setServiceType(s.key)} data-testid={`wiz-svc-${s.key}`}
-                          className={`text-left p-4 rounded-lg border transition ${serviceType===s.key ? s.color + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
-                    <p className="font-black uppercase tracking-widest text-[15px]"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>
-                    <p className="text-[13px] mt-1 opacity-80 normal-case">{s.desc}</p>
+                          className={`text-left p-4 rounded-lg border transition min-w-0 ${serviceType===s.key ? s.color + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
+                    <p className="font-black uppercase tracking-widest text-[15px] break-words"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>
+                    <p className="text-[13px] mt-1 opacity-80 normal-case break-words">{s.desc}</p>
                   </button>
                 ))}
               </div>
@@ -400,7 +400,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <>
                 {serviceType === "boarding" && (
                   <>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off date</label>
                       <input type="date" value={date} min={minDate} onChange={(e)=>{
@@ -434,7 +434,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                       existing half-day pricing rule so an early pickup
                       doesn't get charged a full extra day. The estimate
                       panel computes units from these + booking_rules. */}
-                  <div className="grid grid-cols-2 gap-3 mt-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off time</label>
                       <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)}
@@ -518,7 +518,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 {!slotLoading && slots && !slots.closed && (
                   <>
                     <p className="text-[13px] text-gray-500 mt-1">{slots.duration_minutes || 60}-minute session</p>
-                    <div className="grid grid-cols-4 gap-2 mt-2 max-h-56 overflow-y-auto p-1">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 max-h-56 overflow-y-auto p-1">
                       {slots.slots.length === 0 && <p className="col-span-4 text-[14px] text-gray-500 text-center py-3">No slots configured for this date.</p>}
                       {slots.slots.map(s => {
                         const selected = time === s.time;

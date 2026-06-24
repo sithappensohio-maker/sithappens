@@ -266,8 +266,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="admin-booking-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in">
+    <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-2 sm:p-4 z-50" data-testid="admin-booking-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto overflow-x-hidden animate-slide-in">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
@@ -359,7 +359,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           {serviceType === "grooming" && !isEdit && (
             <div data-testid="ab-grooming-types">
               <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
                 {[
                   { k: "bath", label: "Bath", icon: "fa-bath" },
                   { k: "nail_trim", label: "Nail Trim", icon: "fa-scissors" },
@@ -440,7 +440,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               <p className="text-[13px] text-gray-500 normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
                 <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
@@ -503,7 +503,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                         <p className="text-[12px] font-black uppercase tracking-widest text-amber-400 mb-2">
                           <i className="fas fa-plus-circle mr-1"/>Add-ons for {(dogs.find(d=>d.id===extra.dog_id) || {}).name || "this dog"} (optional)
                         </p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {eligibleAddons.map(a => {
                             const on = (extra.addon_service_ids || []).includes(a.id);
                             return (
@@ -568,7 +568,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                   </span>
                 )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {eligibleAddons.map(a => {
                   const picked = selectedAddonIds.includes(a.id);
                   return (
