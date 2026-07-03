@@ -9950,7 +9950,21 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
     roster = []
     for b in today_bookings:
         days = _dates_in_range(b["date"], b.get("end_date"))
-        if today in days:
+        # Sprint 110di-85 — Missed-checkout rescue. A daycare booking with a
+        # single-day date range disappears from the dashboard the next
+        # business day, which caused stuck-checked-in dogs (staff forgot to
+        # check them out) to vanish silently — no checkout time, no credit
+        # deducted. Boarding didn't hit this because its end_date spans
+        # multiple days. Keep any still-checked-in booking whose scheduled
+        # date is in the past on today's roster so the front desk can
+        # complete the missed checkout.
+        checked_in = bool(b.get("checked_in_at"))
+        checked_out = bool(b.get("checked_out_at"))
+        is_missed_checkout = (
+            checked_in and not checked_out
+            and (b.get("date") or "") < today
+        )
+        if today in days or is_missed_checkout:
             # Live counts: a dog that's already checked out no longer occupies its slot.
             already_out = bool(b.get("checked_out_at"))
             svc = b["service_type"]
@@ -9965,6 +9979,7 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
             enriched["client_credits"] = client_bal_map.get(b.get("client_id"), {
                 "credits": 0, "training_credits": 0, "boarding_credits": 0,
             })
+            enriched["is_missed_checkout"] = is_missed_checkout
             roster.append(enriched)
     return {
         "daycare_occupancy": daycare_today,
@@ -21744,7 +21759,13 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
     for b in candidates:
         d = b.get("date") or ""
         e = b.get("end_date") or d
-        if d <= today_local <= e:
+        # Sprint 110di-85 — Same missed-checkout rescue as /dashboard/stats:
+        # if the dog is still checked in from a past date, keep the row so
+        # staff can complete the checkout from the care board too.
+        checked_in = bool(b.get("checked_in_at"))
+        checked_out = bool(b.get("checked_out_at"))
+        is_missed_checkout = checked_in and not checked_out and d < today_local
+        if (d <= today_local <= e) or is_missed_checkout:
             on_site.append(b)
     # Hydrate care items for each on-site booking
     feeding_items: List[Dict[str, Any]] = []

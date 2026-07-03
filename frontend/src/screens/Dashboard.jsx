@@ -555,13 +555,21 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                 >
                   <div className={`w-3 h-3 rounded-full ${done?"bg-gray-500":onPremises?"bg-shGreen animate-pulse":"bg-shOrange"}`}/>
                   <div>
-                    <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2">
+                    <p className="text-sm font-black text-white uppercase tracking-tight flex items-center gap-2 flex-wrap">
                       {b.dog_name}
                       {careIcons.map((ic,idx)=><i key={idx} className={`fas ${ic.i} ${ic.c} text-[14px]`} title={`${ic.n} ${ic.i==="fa-pills"?"medications":"feedings"}`} />)}
                       {credits != null && (
                         <span className={`text-[13px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${creditChipColor}`}
                               title={`Available ${b.service_type} credits`} data-testid={`roster-credits-${b.id}`}>
                           <i className="fas fa-coins mr-1"/>{credits}
+                        </span>
+                      )}
+                      {/* Sprint 110di-85 — Flag any dog that never got checked out on their scheduled day. */}
+                      {b.is_missed_checkout && (
+                        <span data-testid={`roster-missed-checkout-${b.id}`}
+                              title={`Checked in ${new Date(b.checked_in_at).toLocaleString()} and never checked out — please close this out to deduct the credit.`}
+                              className="text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border bg-shOrange/15 text-shOrange border-shOrange/50 animate-pulse">
+                          <i className="fas fa-triangle-exclamation mr-1"/>Missed checkout · {b.date}
                         </span>
                       )}
                     </p>
