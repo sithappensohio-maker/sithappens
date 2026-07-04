@@ -565,6 +565,18 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                         </span>
                       )}
                       {/* Sprint 110di-85 — Flag any dog that never got checked out on their scheduled day. */}
+                      {/* Sprint 110di-87 — At-a-glance planned checkout date for
+                          multi-day stays (boarding). Suppressed on rows that
+                          are already flagged as missed (that pill shows the
+                          same date more prominently) and on rows that have
+                          finished checking out. */}
+                      {b.end_date && b.end_date !== b.date && !b.is_missed_checkout && !b.checked_out_at && (
+                        <span data-testid={`roster-planned-out-${b.id}`}
+                              title={`Scheduled check-out on ${b.end_date}. Extra days past this date are automatically billed at check-out.`}
+                              className="text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border bg-shBlue/15 text-shBlue border-shBlue/40">
+                          <i className="fas fa-calendar-check mr-1"/>Out · {b.end_date}
+                        </span>
+                      )}
                       {b.is_missed_checkout && (
                         <span data-testid={`roster-missed-checkout-${b.id}`}
                               title={`Checked in ${new Date(b.checked_in_at).toLocaleString()} and never checked out — please close this out to deduct the credit.`}
