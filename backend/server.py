@@ -9960,9 +9960,15 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
         # complete the missed checkout.
         checked_in = bool(b.get("checked_in_at"))
         checked_out = bool(b.get("checked_out_at"))
+        # Sprint 110di-86 — Use `end_date` (or `date` if no end_date) as the
+        # cutoff, NOT `date`. A boarding stay with date=yesterday and
+        # end_date=next_week is still in-progress on day 2 — it should NOT be
+        # flagged. Only bookings whose scheduled stay has fully ended count
+        # as missed checkouts.
+        end_of_stay = b.get("end_date") or b.get("date") or ""
         is_missed_checkout = (
             checked_in and not checked_out
-            and (b.get("date") or "") < today
+            and end_of_stay < today
         )
         if today in days or is_missed_checkout:
             # Live counts: a dog that's already checked out no longer occupies its slot.
@@ -21759,12 +21765,13 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
     for b in candidates:
         d = b.get("date") or ""
         e = b.get("end_date") or d
-        # Sprint 110di-85 — Same missed-checkout rescue as /dashboard/stats:
-        # if the dog is still checked in from a past date, keep the row so
-        # staff can complete the checkout from the care board too.
+        # Sprint 110di-85/86 — Same missed-checkout rescue as /dashboard/stats:
+        # if the dog is still checked in AFTER their scheduled end date, keep
+        # the row so staff can complete the checkout from the care board too.
+        # NOTE: uses `e` (end_date) not `d` — mid-boarding stays never flag.
         checked_in = bool(b.get("checked_in_at"))
         checked_out = bool(b.get("checked_out_at"))
-        is_missed_checkout = checked_in and not checked_out and d < today_local
+        is_missed_checkout = checked_in and not checked_out and e < today_local
         if (d <= today_local <= e) or is_missed_checkout:
             on_site.append(b)
     # Hydrate care items for each on-site booking

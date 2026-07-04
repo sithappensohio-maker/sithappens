@@ -172,3 +172,65 @@ def test_boarding_still_uses_date_range_not_missed_flag():
     finally:
         requests.post(f"{BASE_URL}/api/bookings/{bid}/check-out",
                       json={"paid_amount": 0}, headers=h, timeout=15)
+
+
+def test_mid_boarding_stay_from_yesterday_does_not_flag():
+    """Sprint 110di-86 regression: a boarding stay that STARTED yesterday and
+    continues through tomorrow (date < today <= end_date) must appear on the
+    roster (via today ∈ days) but must NOT be flagged as missed_checkout,
+    because the stay is still in progress. Only when today > end_date and the
+    dog is still checked in should the flag fire."""
+    h = _admin_h()
+    client_id, dog_id = _seed_client_dog(h)
+    yday = _yday_iso()
+    tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+
+    # Start the stay yesterday, ending tomorrow — dog is mid-stay today.
+    r = requests.post(
+        f"{BASE_URL}/api/bookings",
+        json={"dog_id": dog_id, "date": yday, "end_date": tomorrow,
+              "service_type": "boarding", "check_in_now": True,
+              "override_capacity": True},
+        headers=h, timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    bid = r.json()["id"]
+
+    try:
+        stats = requests.get(f"{BASE_URL}/api/dashboard/stats", headers=h, timeout=15).json()
+        row = next((r for r in (stats.get("today_roster") or []) if r.get("id") == bid), None)
+        assert row is not None, "Mid-stay boarding must be on today's roster"
+        assert row.get("is_missed_checkout") is False, \
+            "Mid-stay boarding must NOT be flagged as missed checkout"
+    finally:
+        requests.post(f"{BASE_URL}/api/bookings/{bid}/check-out",
+                      json={"paid_amount": 0}, headers=h, timeout=15)
+
+
+def test_boarding_end_date_passed_but_no_checkout_flags():
+    """Complementary test: a boarding stay whose end_date is truly in the
+    past AND still checked in SHOULD be flagged and rescued onto the roster."""
+    h = _admin_h()
+    client_id, dog_id = _seed_client_dog(h)
+    two_days_ago = (datetime.now(timezone.utc).date() - timedelta(days=2)).isoformat()
+    yday = _yday_iso()
+
+    # Stay ran two_days_ago -> yesterday, dog was never checked out.
+    r = requests.post(
+        f"{BASE_URL}/api/bookings",
+        json={"dog_id": dog_id, "date": two_days_ago, "end_date": yday,
+              "service_type": "boarding", "check_in_now": True,
+              "override_capacity": True},
+        headers=h, timeout=15,
+    )
+    assert r.status_code in (200, 201), r.text
+    bid = r.json()["id"]
+
+    try:
+        stats = requests.get(f"{BASE_URL}/api/dashboard/stats", headers=h, timeout=15).json()
+        row = next((r for r in (stats.get("today_roster") or []) if r.get("id") == bid), None)
+        assert row is not None, "Boarding past its end_date but still checked in must be rescued"
+        assert row.get("is_missed_checkout") is True, row
+    finally:
+        requests.post(f"{BASE_URL}/api/bookings/{bid}/check-out",
+                      json={"paid_amount": 0}, headers=h, timeout=15)

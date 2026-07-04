@@ -569,7 +569,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
                         <span data-testid={`roster-missed-checkout-${b.id}`}
                               title={`Checked in ${new Date(b.checked_in_at).toLocaleString()} and never checked out — please close this out to deduct the credit.`}
                               className="text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded border bg-shOrange/15 text-shOrange border-shOrange/50 animate-pulse">
-                          <i className="fas fa-triangle-exclamation mr-1"/>Missed checkout · {b.date}
+                          <i className="fas fa-triangle-exclamation mr-1"/>Missed checkout · {b.end_date || b.date}
                         </span>
                       )}
                     </p>
