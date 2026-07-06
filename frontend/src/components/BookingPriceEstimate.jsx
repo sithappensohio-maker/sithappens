@@ -141,9 +141,13 @@ export default function BookingPriceEstimate({
   const legacyCalc = useMemo(() => {
     if (!headlineService) return null;
     const base = Number(headlineService.base_price || 0);
-    // Sprint 110di-26 — honor optional additional_dog_rate if the admin
-    // has configured it. Otherwise the 2nd+ dog is billed at the base rate.
-    const extraDogRate = Number(headlineService.additional_dog_rate ?? base);
+    // Daycare/boarding additional dogs are 50% off the SAME base service
+    // price. Do not stack old `additional_dog_rate` values with the sibling
+    // discount or the estimate under-quotes daycare. For other services, keep
+    // the legacy optional rate.
+    const extraDogRate = (serviceType === "daycare" || serviceType === "boarding")
+      ? base
+      : Number(headlineService.additional_dog_rate ?? base);
 
     const dogs = Math.max(1, Number(dogCount) || 1);
     const additionalDogs = Math.max(0, dogs - 1);

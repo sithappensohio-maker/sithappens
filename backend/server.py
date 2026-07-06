@@ -1783,7 +1783,17 @@ async def _quote_base_service_price(
             unit_price = float(pricing.get("effective_price", list_price) or 0)
         except Exception:
             unit_price = list_price
-    additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
+    # Sit Happens business rule: daycare/boarding sibling pricing is
+    # calculated as a discount off the SAME base unit price as the first dog.
+    # Older service rows may still have `additional_dog_rate` populated; do
+    # not stack that custom rate with the 50% multi-dog discount or daycare
+    # estimates become too low (ex: $30 + ($25 - 50%) = $42.50 instead of
+    # $30 + ($30 - 50%) = $45). For non-core services, preserve the legacy
+    # optional additional_dog_rate behavior.
+    if service_type in ("daycare", "boarding"):
+        additional_dog_unit_price = unit_price
+    else:
+        additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
     if service_type == "boarding":
         units = _billable_boarding_nights(start_date, end_date, legacy_minimum=legacy_boarding_minimum)
         unit_label = "nights"
