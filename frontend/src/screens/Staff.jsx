@@ -7,6 +7,7 @@ import PageHero from "../components/PageHero";
 import RolesPanel from "../components/RolesPanel";
 import { todayISO, daysAgoISO } from "../lib/date";
 import TrainerScorecardTab from "../components/TrainerScorecardTab";
+import { compressImage } from "../lib/imageCompress";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -1723,10 +1724,18 @@ export function RegisterTab() {
   const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
   const [reportEnd, setReportEnd] = useState(todayISO());
   const [reportData, setReportData] = useState(null);
+  const [expenseRows, setExpenseRows] = useState([]);
+  const [expenseCategories, setExpenseCategories] = useState([]);
+  const [expenseReceiptPreview, setExpenseReceiptPreview] = useState(null);
+  const [expenseUploadBusy, setExpenseUploadBusy] = useState(false);
+  const blankExpense = { description: "", quantity: "1", unit_price: "", amount: "", category: "Cleaning supplies", payment_method: "clover", vendor: "", notes: "", tax_deductible: true, from_cash_drawer: false, recurring: false, recurring_interval: "monthly", receipt_image: "", receipt_filename: "" };
+  const [expense, setExpense] = useState(blankExpense);
 
   const methodOptions = [
     ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
   ];
+  const methodLabelMap = Object.fromEntries(methodOptions);
+  const _prettyMethod = (m) => methodLabelMap[m] || m || "Other";
 
   const load = async () => {
     setErr("");
@@ -1747,14 +1756,29 @@ export function RegisterTab() {
       setPacks((p.data || []).filter(x => x.active !== false));
     } catch {}
   };
-  useEffect(() => { loadChoices(); }, []);
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [date]);
+  const loadExpenseChoices = async () => {
+    try {
+      const r = await api.get("/expenses/categories");
+      setExpenseCategories(r.data?.categories || []);
+    } catch {}
+  };
+  const loadExpenses = async () => {
+    try {
+      const r = await api.get("/expenses", { params: { start_date: date, end_date: date } });
+      setExpenseRows(r.data || []);
+    } catch {}
+  };
+  useEffect(() => { loadChoices(); loadExpenseChoices(); }, []);
+  useEffect(() => { load(); loadExpenses(); /* eslint-disable-next-line */ }, [date]);
 
   const selectedClient = (id) => clients.find(c => c.id === id);
   const selectedPack = packs.find(p => p.id === packSale.pack_id);
   const saleQty = Math.max(1, Number(sale.quantity || 1));
   const saleUnit = Number(sale.unit_price || 0);
   const saleLineTotal = saleUnit > 0 ? saleQty * saleUnit : Number(sale.amount || 0);
+  const expenseQty = Math.max(1, Number(expense.quantity || 1));
+  const expenseUnit = Number(expense.unit_price || 0);
+  const expenseLineTotal = expenseUnit > 0 ? expenseQty * expenseUnit : Number(expense.amount || 0);
   const packQty = Math.max(1, Number(packSale.quantity || 1));
   const packOrderTotal = selectedPack ? Number(selectedPack.price || 0) * packQty : 0;
   const money = (n) => `$${Number(n || 0).toFixed(2)}`;
@@ -1815,7 +1839,53 @@ export function RegisterTab() {
     await api.post("/admin/register/cash-payout", { date, amount: Number(payout.amount || 0), description: payout.description, category: payout.category, vendor: payout.vendor, notes: payout.notes, tax_deductible: !!payout.tax_deductible });
     setPayout({ amount: "", description: "", category: payout.category, vendor: "", notes: "", tax_deductible: true });
     showDone("Cash payout logged as an expense and removed from expected drawer.");
+    loadExpenses();
   });
+  const submitExpense = () => submit(async () => {
+    const qty = Math.max(1, Number(expense.quantity || 1));
+    const unitPrice = Number(expense.unit_price || 0);
+    const totalAmount = unitPrice > 0 ? qty * unitPrice : Number(expense.amount || 0);
+    await api.post("/expenses", {
+      date,
+      description: expense.description,
+      quantity: qty,
+      unit_price: unitPrice > 0 ? unitPrice : null,
+      amount: Number(totalAmount || 0),
+      category: expense.category,
+      payment_method: expense.from_cash_drawer ? "cash" : expense.payment_method,
+      vendor: expense.vendor,
+      notes: expense.notes,
+      tax_deductible: !!expense.tax_deductible,
+      from_cash_drawer: !!expense.from_cash_drawer,
+      recurring: !!expense.recurring,
+      recurring_interval: expense.recurring_interval || "monthly",
+      receipt_image: expense.receipt_image || "",
+      receipt_filename: expense.receipt_filename || "",
+    });
+    setExpense({ ...blankExpense, category: expense.category, payment_method: expense.payment_method });
+    showDone("Expense logged and included in Register reports.");
+    loadExpenseChoices();
+    loadExpenses();
+  });
+  const onExpenseReceiptFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setExpenseUploadBusy(true);
+    try {
+      if (file.type.startsWith("image/")) {
+        const compressed = await compressImage(file, { maxWidth: 1400, maxHeight: 1800, quality: 0.78 });
+        setExpense(x => ({ ...x, receipt_image: compressed, receipt_filename: file.name }));
+      } else if (file.type === "application/pdf") {
+        if (file.size > 2500000) { setErr("PDF receipt is over 2.5 MB. Please compress it first."); return; }
+        const reader = new FileReader();
+        reader.onload = () => setExpense(x => ({ ...x, receipt_image: reader.result, receipt_filename: file.name }));
+        reader.readAsDataURL(file);
+      } else {
+        setErr("Receipt must be a JPG/PNG image or PDF.");
+      }
+    } catch (ex) { setErr(ex.message || "Receipt upload failed"); }
+    finally { setExpenseUploadBusy(false); e.target.value = ""; }
+  };
   const submitCloseout = () => submit(async () => {
     await api.post("/admin/end-of-day/closeout", {
       cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
@@ -1852,6 +1922,22 @@ export function RegisterTab() {
       setTimeout(() => URL.revokeObjectURL(obj), 5000);
     } catch (e) { setErr(formatErr(e.message) || "CSV download failed"); }
   };
+  const downloadTaxPacket = async () => {
+    try {
+      const token = localStorage.getItem("sh_token") || "";
+      const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+      const qs = new URLSearchParams({ start_date: reportStart, end_date: reportEnd }).toString();
+      const r = await fetch(`${API_ROOT}/api/admin/register/tax-packet.zip?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) { setErr(`Tax packet download failed (${r.status})`); return; }
+      const blob = await r.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = `sit-happens-tax-packet-${reportStart}-to-${reportEnd}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(obj), 5000);
+    } catch (e) { setErr(formatErr(e.message) || "Tax packet download failed"); }
+  };
 
   const totals = data?.totals || {};
   const incoming = data?.incoming_by_method || {};
@@ -1887,7 +1973,7 @@ export function RegisterTab() {
     <div className="space-y-4" data-testid="register-tab">
       <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300">
         <i className="fas fa-cash-register text-shBlue mr-2"/>
-        Register Phase 3: one money hub plus register-first reports, closeout history, exports, and reconciliation warnings.
+        Register Phase 4: one money hub with POS sales, expenses, receipts, closeouts, tax packet exports, and reconciliation warnings.
       </div>
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Register date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
@@ -1899,7 +1985,7 @@ export function RegisterTab() {
       <div className="flex gap-1 overflow-x-auto border-b border-bgHover/70">
         {[
           ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
-          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
+          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["expenses", "Expenses", "fa-receipt"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
         ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
@@ -2054,6 +2140,67 @@ export function RegisterTab() {
         <button disabled={!Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log cash payout</button>
       </div>}
 
+      {active === "expenses" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-expenses-tab">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h4 className="text-white font-black uppercase italic"><i className="fas fa-receipt text-red-300 mr-2"/>Expenses & Receipts</h4>
+            <p className="text-[12px] text-gray-500 mt-1">Use this for money going out. If it came from the drawer, check “paid out of cash drawer” so closeout math stays right.</p>
+          </div>
+          <button onClick={loadExpenses} className="bg-bgBase border border-bgHover text-gray-300 px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Refresh</button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <FormInput label="Description" value={expense.description} onChange={v=>setExpense({...expense, description:v})} placeholder="Kibble, cleaner, software, etc."/>
+          <FormInput label="Vendor / store" value={expense.vendor} onChange={v=>setExpense({...expense, vendor:v})} placeholder="Chewy, Tractor Supply, Clover, etc."/>
+          <FormInput label="Category" value={expense.category} onChange={v=>setExpense({...expense, category:v})}>
+            <input list="register-expense-categories" value={expense.category} onChange={e=>setExpense({...expense, category:e.target.value})} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+          </FormInput>
+          <datalist id="register-expense-categories">{expenseCategories.map(c => <option key={c} value={c}/>)}</datalist>
+          <FormInput label="Quantity" type="number" step="0.01" value={expense.quantity} onChange={v=>setExpense({...expense, quantity:v})}/>
+          <FormInput label="Price each" type="number" step="0.01" value={expense.unit_price} onChange={v=>setExpense({...expense, unit_price:v, amount:""})} placeholder="optional"/>
+          <FormInput label="Total amount" type="number" step="0.01" value={expense.unit_price ? expenseLineTotal.toFixed(2) : expense.amount} onChange={v=>setExpense({...expense, amount:v})} placeholder="or enter total"/>
+          {methodSelect(expense.from_cash_drawer ? "cash" : expense.payment_method, v=>setExpense({...expense, payment_method:v, from_cash_drawer: v === "cash" ? expense.from_cash_drawer : false}))}
+          <FormInput label="Notes" value={expense.notes} onChange={v=>setExpense({...expense, notes:v})}/>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.tax_deductible} onChange={e=>setExpense({...expense, tax_deductible:e.target.checked})}/> Tax deductible</label>
+          <label className="flex items-center gap-2 bg-bgBase border border-shOrange/40 rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.from_cash_drawer} onChange={e=>setExpense({...expense, from_cash_drawer:e.target.checked, payment_method:e.target.checked ? "cash" : expense.payment_method})}/> Paid out of cash drawer</label>
+          <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.recurring} onChange={e=>setExpense({...expense, recurring:e.target.checked})}/> Recurring</label>
+        </div>
+        {expense.recurring && <div className="max-w-xs"> <Select label="Recurring interval" value={expense.recurring_interval} onChange={v=>setExpense({...expense, recurring_interval:v})}><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></Select></div>}
+        <div className="bg-bgBase/50 border border-bgHover rounded-xl p-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-paperclip mr-1"/>Receipt</p>
+              <p className="text-[12px] text-gray-500">JPG/PNG auto-compressed or PDF up to 2.5 MB.</p>
+            </div>
+            <label className="bg-bgPanel border border-bgHover text-gray-300 hover:text-white px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest cursor-pointer">
+              <i className={`fas ${expenseUploadBusy ? "fa-spinner fa-spin" : "fa-upload"} mr-1`}/>{expense.receipt_image ? "Replace receipt" : "Attach receipt"}
+              <input type="file" accept="image/*,application/pdf" capture="environment" onChange={onExpenseReceiptFile} className="hidden"/>
+            </label>
+          </div>
+          {expense.receipt_image && <div className="mt-3 flex items-center gap-3 text-sm">
+            {expense.receipt_image.startsWith("data:application/pdf") ? <i className="fas fa-file-pdf text-red-300 text-2xl"/> : <button onClick={()=>setExpenseReceiptPreview(expense.receipt_image)} className="w-14 h-14 rounded overflow-hidden border border-bgHover"><img src={expense.receipt_image} alt="receipt" className="w-full h-full object-cover"/></button>}
+            <div className="flex-1 min-w-0"><p className="text-white font-bold truncate">{expense.receipt_filename || "receipt"}</p><p className="text-gray-500 text-[12px]">Attached to this expense</p></div>
+            <button onClick={()=>setExpense({...expense, receipt_image:"", receipt_filename:""})} className="text-red-300 text-[11px] font-black uppercase tracking-widest"><i className="fas fa-trash mr-1"/>Remove</button>
+          </div>}
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="text-[13px] text-gray-400">Expense total: <span className="text-white font-black">{money(expenseLineTotal)}</span>{expense.from_cash_drawer && <span className="text-shOrange font-black ml-2">will reduce expected cash drawer</span>}</div>
+          <button disabled={!expense.description || !Number(expenseLineTotal)} onClick={submitExpense} className="bg-red-500/20 disabled:opacity-50 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log expense</button>
+        </div>
+        <div className="bg-bgBase/70 border border-bgHover rounded-xl p-4">
+          <h5 className="text-white font-black uppercase italic mb-2"><i className="fas fa-list text-shGreen mr-2"/>Expenses for {date}</h5>
+          <div className="divide-y divide-bgHover/50 max-h-[280px] overflow-auto">
+            {expenseRows.length === 0 && <p className="text-gray-500 text-sm p-3 text-center">No expenses logged for this date.</p>}
+            {expenseRows.map(e => <div key={e.id} className="py-2 flex items-start justify-between gap-3 text-sm">
+              <div><p className="text-white font-black">{e.description}</p><p className="text-[12px] text-gray-500">{e.vendor || "—"} · {e.category || "Other"} · {_prettyMethod(e.payment_method)}{e.from_cash_drawer ? " · cash drawer" : ""}{e.receipt_image ? " · receipt" : ""}</p></div>
+              <p className="font-black text-red-300">-{money(e.amount)}</p>
+            </div>)}
+          </div>
+        </div>
+        {expenseReceiptPreview && <div className="fixed inset-0 bg-black/90 z-[90] flex items-center justify-center p-4" onClick={()=>setExpenseReceiptPreview(null)}><img src={expenseReceiptPreview} alt="receipt preview" className="max-h-[90vh] max-w-[92vw] rounded shadow-2xl" onClick={e=>e.stopPropagation()}/><button onClick={()=>setExpenseReceiptPreview(null)} className="absolute top-4 right-6 text-white/70 hover:text-white text-3xl"><i className="fas fa-times"/></button></div>}
+      </div>}
+
       {active === "closeout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-clipboard-check text-shGreen mr-2"/>Close Day</h4>
         <p className="text-[12px] text-gray-500">Expected totals are from the app. Enter the real-world drawer count and outside app totals from Clover, Venmo, PayPal, and checks.</p>
@@ -2091,6 +2238,7 @@ export function RegisterTab() {
             {[ ["activity","Activity"], ["payment-methods","Methods"], ["closeouts","Closeouts"], ["expenses","Expenses"], ["tax-summary","Tax summary"] ].map(([k,l]) => (
               <button key={k} onClick={()=>downloadRegisterCsv(k)} className="bg-bgBase border border-bgHover text-gray-300 hover:text-white px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-1"/>{l}</button>
             ))}
+            <button onClick={downloadTaxPacket} className="bg-shGreen text-bgHeader px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-file-zipper mr-1"/>Tax packet</button>
           </div>
         </div>
         {!reportData && <div className="text-gray-500 text-sm p-4 text-center border border-bgHover rounded bg-bgBase/40">Run the report to see range totals, closeout history, and warnings.</div>}

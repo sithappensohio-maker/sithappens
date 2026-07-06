@@ -786,8 +786,9 @@ function RegisterDashboardCard({ data, onNavigate }) {
       </div>
       <div className="relative flex flex-wrap gap-2 mt-4">
         <QuickRegisterButton label="New Sale" icon="fa-plus" onClick={()=>openRegister("sale")} />
-        <QuickRegisterButton label="Sell Credits" icon="fa-ticket" onClick={()=>openRegister("credits")} />
+        <QuickRegisterButton label="Sell Credits" icon="fa-ticket" onClick={()=>openRegister("pack")} />
         <QuickRegisterButton label="Record Payment" icon="fa-hand-holding-dollar" onClick={()=>openRegister("payment")} />
+        <QuickRegisterButton label="Expenses" icon="fa-receipt" onClick={()=>openRegister("expenses")} />
         <QuickRegisterButton label="Cash Payout" icon="fa-right-left" onClick={()=>openRegister("payout")} />
         <QuickRegisterButton label="Close Day" icon="fa-clipboard-check" onClick={()=>openRegister("closeout")} />
       </div>

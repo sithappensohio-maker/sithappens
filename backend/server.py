@@ -17087,10 +17087,10 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-closeouts-{stamp}.csv")
 
     if safe_kind == "expenses":
-        rows = [["Date", "Vendor", "Category", "Description", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Notes"]]
+        rows = [["Date", "Vendor", "Category", "Description", "Quantity", "Unit Price", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Recurring", "Receipt Attached", "Notes"]]
         exps = await db.expenses.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(50000)
         for e in exps:
-            rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("notes")])
+            rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), e.get("quantity", 1), e.get("unit_price"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("recurring", False), bool(e.get("receipt_image")), e.get("notes")])
         return _csv_response(rows, f"sit-happens-expenses-{stamp}.csv")
 
     if safe_kind == "tax-summary":
@@ -17108,6 +17108,83 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-tax-register-summary-{stamp}.csv")
 
     raise HTTPException(400, "kind must be activity, payment-methods, closeouts, expenses, or tax-summary")
+
+
+@api.get("/admin/register/tax-packet.zip")
+async def admin_register_tax_packet_zip(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    """One-click CPA/bookkeeper export packet.
+
+    This bundles register activity, payment-method totals, closeouts, expenses,
+    and a tax summary into one zip without mutating business data.
+    """
+    perms = _perms_for(user)
+    if not perms.get("data_export") or not perms.get("finance_reports"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_export + finance_reports")
+    import csv as _csv
+    import io as _io
+    import zipfile as _zipfile
+
+    sd, ed, days = _date_range_for_register(start_date, end_date)
+    stamp = f"{sd}_to_{ed}"
+
+    def csv_bytes(rows: List[List[Any]]) -> bytes:
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        for row in rows:
+            w.writerow(["" if v is None else v for v in row])
+        return buf.getvalue().encode("utf-8")
+
+    files: Dict[str, bytes] = {}
+
+    activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
+    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts"]]
+    for d in days:
+        day = await _register_day_summary(d)
+        for a in day.get("activity") or []:
+            activity_rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), f"{float(a.get('amount') or 0):.2f}"])
+        m = day.get("incoming_by_method") or {}
+        t = day.get("totals") or {}
+        src = day.get("incoming_sources") or {}
+        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}"])
+    files[f"register-activity-{stamp}.csv"] = csv_bytes(activity_rows)
+    files[f"payment-methods-{stamp}.csv"] = csv_bytes(methods_rows)
+
+    closeout_rows = [["Date", "Created At", "Closed By", "Cash Counted", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Notes"]]
+    closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
+    for c in closeouts:
+        closeout_rows.append([c.get("date"), c.get("created_at"), c.get("created_by_name"), c.get("cash_counted"), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("notes")])
+    files[f"closeouts-{stamp}.csv"] = csv_bytes(closeout_rows)
+
+    expense_rows = [["Date", "Vendor", "Category", "Description", "Quantity", "Unit Price", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Recurring", "Receipt Attached", "Notes"]]
+    exps = await db.expenses.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(50000)
+    for e in exps:
+        expense_rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), e.get("quantity", 1), e.get("unit_price"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("recurring", False), bool(e.get("receipt_image")), e.get("notes")])
+    files[f"expenses-{stamp}.csv"] = csv_bytes(expense_rows)
+
+    summary = await _register_range_summary(sd, ed)
+    tax_rows = [["Metric", "Amount"]]
+    tax_rows += [
+        ["Gross cash collected", f"{summary['totals'].get('incoming_total',0):.2f}"],
+        ["Refunds", f"{summary['totals'].get('refund_total',0):.2f}"],
+        ["Expenses", f"{summary['totals'].get('expense_total',0):.2f}"],
+        ["Credit pack sales", f"{summary['incoming_sources'].get('credit_pack_sales',0):.2f}"],
+        ["Booking payments", f"{summary['incoming_sources'].get('booking_payments',0):.2f}"],
+        ["Manual sales", f"{summary['incoming_sources'].get('manual_sales',0):.2f}"],
+        ["Training program sales", f"{summary['incoming_sources'].get('training_program_sales',0):.2f}"],
+    ]
+    files[f"tax-summary-{stamp}.csv"] = csv_bytes(tax_rows)
+    files["README.txt"] = (f"Sit Happens tax/export packet\nRange: {sd} to {ed}\n\nIncludes register activity, payment method totals, closeouts, expenses, and tax summary. This is a bookkeeping aid, not CPA/legal tax advice.\n").encode("utf-8")
+
+    zbuf = _io.BytesIO()
+    with _zipfile.ZipFile(zbuf, "w", _zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    zbuf.seek(0)
+    return Response(content=zbuf.getvalue(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="sit-happens-tax-packet-{stamp}.zip"'})
 
 
 @api.get("/admin/register/day")
@@ -19566,16 +19643,46 @@ async def employee_trivia_answer(body: TriviaAnswerIn, _: dict = Depends(require
 
 
 # ────────────────────────── Expenses ──────────────────────────
+
+EXPENSE_CATEGORY_DEFAULTS = [
+    "Dog food / treats", "Cleaning supplies", "Training equipment", "Boarding supplies",
+    "Daycare supplies", "Office supplies", "Advertising / marketing", "Software / apps",
+    "Rent / facility", "Utilities", "Insurance", "Vehicle / mileage", "Repairs / maintenance",
+    "Payroll / contract labor", "Merchant fees", "Bank fees", "Licenses / taxes", "Professional services", "Other",
+]
+
+MAX_EXPENSE_RECEIPT_BYTES = 2_600_000  # base64 data URL guard; keeps Mongo documents sane
+
+def _clean_receipt_payload(data_url: Optional[str], filename: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Validate inline receipt payloads before saving.
+
+    Frontend compresses images and limits PDFs, but backend keeps the final guard
+    so a giant receipt cannot bloat MongoDB or break document updates.
+    """
+    data = (data_url or "").strip()
+    name = (filename or "").strip()[:180]
+    if not data:
+        return None, None
+    if not (data.startswith("data:image/") or data.startswith("data:application/pdf")):
+        raise HTTPException(status_code=400, detail="Receipt must be an image or PDF data URL")
+    if len(data.encode("utf-8")) > MAX_EXPENSE_RECEIPT_BYTES:
+        raise HTTPException(status_code=400, detail="Receipt is too large. Please compress it below about 2.5 MB.")
+    return data, (name or "receipt")
+
 class ExpenseIn(BaseModel):
     date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
     description: str = Field(min_length=1, max_length=200)
     amount: float = Field(ge=0)
+    quantity: Optional[float] = Field(default=1, ge=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "clover"
     tax_deductible: Optional[bool] = True
     from_cash_drawer: Optional[bool] = False
     vendor: Optional[str] = ""
+    recurring: Optional[bool] = False
+    recurring_interval: Optional[Literal["weekly", "monthly", "quarterly", "yearly"]] = "monthly"
     # Sprint 110ap — optional photo/PDF/scan of the receipt for IRS audit
     # peace-of-mind. Stored inline as a base64 data URL (`data:image/jpeg;…`
     # or `data:application/pdf;…`). Front-end compresses images to <800kB
@@ -19608,6 +19715,7 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
     """Log an out-of-pocket business expense (food, supplies, utilities, etc.).
     These flow into the Income screen's monthly/range view so you can see NET
     instead of just gross income."""
+    receipt_image, receipt_filename = _clean_receipt_payload(body.receipt_image, body.receipt_filename)
     doc = {
         "id": str(uuid.uuid4()),
         "date": body.date,
@@ -19621,8 +19729,10 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
         "tax_deductible": bool(body.tax_deductible),
         "from_cash_drawer": bool(body.from_cash_drawer),
         "vendor": (body.vendor or "").strip(),
-        "receipt_image": (body.receipt_image or "") or None,
-        "receipt_filename": (body.receipt_filename or "").strip() or None,
+        "recurring": bool(body.recurring),
+        "recurring_interval": body.recurring_interval if body.recurring else None,
+        "receipt_image": receipt_image,
+        "receipt_filename": receipt_filename,
         "created_at": now_iso(),
         "created_by": user.get("id"),
     }
@@ -19650,14 +19760,17 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
         "tax_deductible": bool(body.tax_deductible),
         "from_cash_drawer": bool(body.from_cash_drawer),
         "vendor": (body.vendor or "").strip(),
+        "recurring": bool(body.recurring),
+        "recurring_interval": body.recurring_interval if body.recurring else None,
         "updated_at": now_iso(),
     }
     # Receipt is editable — empty string means "remove the receipt", non-empty
     # replaces it. We intentionally don't clobber an existing receipt when
     # `receipt_image` is omitted entirely (Pydantic default).
     if body.receipt_image is not None:
-        patch["receipt_image"] = body.receipt_image or None
-        patch["receipt_filename"] = (body.receipt_filename or "").strip() or None
+        receipt_image, receipt_filename = _clean_receipt_payload(body.receipt_image, body.receipt_filename)
+        patch["receipt_image"] = receipt_image
+        patch["receipt_filename"] = receipt_filename
         # Drop None values so Mongo's $set doesn't store explicit nulls
         if patch["receipt_image"] is None:
             patch.pop("receipt_image")
@@ -19680,10 +19793,10 @@ async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
 
 @api.get("/expenses/categories")
 async def expense_categories(_: dict = Depends(require_admin)):
-    """Unique category strings seen so far — used to power autocomplete."""
+    """Default + previously used expense categories for consistent tax cleanup."""
     cats = await db.expenses.distinct("category")
-    cats = sorted([c for c in cats if c])
-    return {"categories": cats}
+    merged = sorted(set(EXPENSE_CATEGORY_DEFAULTS + [c for c in cats if c]))
+    return {"categories": merged, "defaults": EXPENSE_CATEGORY_DEFAULTS}
 
 
 # ────────────────────────── Retail Sales ──────────────────────────
