@@ -33,6 +33,11 @@ const DISCLAIMER =
 const fmtUSD = (n) =>
   `$${(Math.max(0, Number(n) || 0)).toFixed(2)}`;
 
+const fmtCredits = (n) => {
+  const val = Math.round((Number(n) || 0) * 10) / 10;
+  return Number.isInteger(val) ? String(val) : val.toFixed(1);
+};
+
 function nightsBetween(start, end) {
   if (!start || !end || end <= start) return 0;
   const ms = new Date(end + "T12:00:00") - new Date(start + "T12:00:00");
@@ -238,11 +243,19 @@ export default function BookingPriceEstimate({
       training: "training",
     })[serviceType];
     const creditsAvailable = poolKey ? credits[poolKey] : 0;
-    // Credits cover dogs × units (capped by what the client has).
-    const creditUnits = poolKey
-      ? Math.min(creditsAvailable, units * dogs)
+    // Credits mirror the cash rule for daycare/boarding: first dog = 1
+    // credit per unit; additional dogs = 0.5 credit per unit. Training stays
+    // one full credit per dog/session.
+    const creditUnitsRequired = poolKey
+      ? ((serviceType === "daycare" || serviceType === "boarding")
+          ? units * (1 + 0.5 * additionalDogs)
+          : units * dogs)
       : 0;
-    // Per-credit value = base rate (mirrors how check-out consumes them).
+    const creditUnits = poolKey
+      ? Math.min(creditsAvailable, creditUnitsRequired)
+      : 0;
+    // Per-credit value = the client's effective base rate. Add-ons are not
+    // covered by credits.
     const creditValue = creditUnits * base;
     const balanceDue = Math.max(0, total - creditValue);
 
@@ -257,7 +270,9 @@ export default function BookingPriceEstimate({
       units, unitLabel, unitsValid, halfDay,
       total,
       credits_available: creditsAvailable,
+      credit_units_required: creditUnitsRequired,
       credits_applied: creditUnits,
+      credits_remaining_after: Math.max(0, creditsAvailable - creditUnits),
       credit_value: creditValue,
       balance_due: balanceDue,
       pool_key: poolKey,
@@ -277,7 +292,7 @@ export default function BookingPriceEstimate({
     const base = Number(serverQuote.unit_price || 0);
     const total = Number(serverQuote.estimated_price || 0);
     const creditUnits = legacyCalc.pool_key
-      ? Math.min(Number(legacyCalc.credits_available || 0), Number(serverQuote.credit_units_required || units || 0))
+      ? Number(serverQuote.credits_applied ?? Math.min(Number(legacyCalc.credits_available || 0), Number(serverQuote.credit_units_required || units || 0)))
       : 0;
     const creditValue = creditUnits * base;
     const addonLines = (serverQuote.add_ons || []).map(a => ({
@@ -300,9 +315,17 @@ export default function BookingPriceEstimate({
       halfDay: false,
       total,
       service_name: serverQuote.service_name || legacyCalc.service_name,
+      list_base: Number(serverQuote.list_unit_price || base),
+      preferred_rate_applied: !!serverQuote.preferred_rate_applied,
+      price_label: serverQuote.price_label || (serverQuote.preferred_rate_applied ? "Preferred client rate" : "Standard rate"),
+      credit_units_required: Number(serverQuote.credit_units_required || 0),
+      credits_available: Number(serverQuote.credits_available ?? legacyCalc.credits_available ?? 0),
       credits_applied: creditUnits,
+      credits_remaining_after: Number(serverQuote.credits_remaining_after ?? Math.max(0, Number(legacyCalc.credits_available || 0) - creditUnits)),
+      credit_shortfall: Number(serverQuote.credit_shortfall || 0),
       credit_value: creditValue,
-      balance_due: Math.max(0, total - creditValue),
+      balance_due: Number(serverQuote.cash_due ?? Math.max(0, total - creditValue)),
+      covered_by_credits: !!serverQuote.covered_by_credits,
       md_discount_amount: Number(serverQuote.multi_dog_discount_amount || 0),
       md_discount_label: serverQuote.multi_dog_discount?.label || legacyCalc.md_discount_label || "Additional dog discount",
       md_discount_applied: Number(serverQuote.multi_dog_discount_amount || 0) > 0,
@@ -337,20 +360,52 @@ export default function BookingPriceEstimate({
     );
   }
 
-  const hasCredits = calc.pool_key && calc.credits_available > 0;
-  const fullyCovered = hasCredits && calc.balance_due <= 0;
+  const hasCredits = calc.pool_key && Number(calc.credits_available || 0) > 0;
+  const fullyCovered = hasCredits && (calc.covered_by_credits || Number(calc.balance_due || 0) <= 0);
+  const creditUnitLabel = calc.pool_key === "boarding" ? "boarding credits" : calc.pool_key === "daycare" ? "daycare credits" : "training credits";
 
   return (
     <div className="bg-bgBase border border-shGreen/30 rounded-lg p-4 space-y-3" data-testid="booking-estimate">
       <div className="flex items-center justify-between">
         <span className="text-[13px] font-black text-shGreen uppercase tracking-widest">
-          <i className="fas fa-receipt mr-2"/>Estimated Price
+          <i className="fas fa-receipt mr-2"/>{fullyCovered ? "Covered by Credits" : "Estimated Price"}
         </span>
         <span className="text-[11px] text-gray-500 font-black uppercase tracking-widest">
           {calc.service_name}
         </span>
       </div>
 
+      {calc.preferred_rate_applied && (
+        <div className="bg-shGreen/10 border border-shGreen/30 rounded px-3 py-2 text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="booking-estimate-preferred-rate">
+          <i className="fas fa-star mr-1.5"/>Preferred client rate applied
+          {calc.list_base && calc.list_base !== calc.base && (
+            <span className="text-gray-400 ml-1">({fmtUSD(calc.base)} instead of {fmtUSD(calc.list_base)})</span>
+          )}
+        </div>
+      )}
+
+      {fullyCovered ? (
+        <div className="space-y-2 text-[14px]" data-testid="booking-estimate-credit-covered">
+          <div className="bg-shBlue/10 border border-shBlue/30 rounded-lg p-3 space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-gray-300 font-black uppercase tracking-widest text-[12px]">Credits used</span>
+              <span className="text-shBlue font-black">{fmtCredits(calc.credits_applied)} {creditUnitLabel}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Current balance</span>
+              <span className="text-white font-black">{fmtCredits(calc.credits_available)} credits</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-400">Balance after booking</span>
+              <span className="text-shGreen font-black">{fmtCredits(calc.credits_remaining_after)} credits</span>
+            </div>
+            <div className="flex justify-between border-t border-shBlue/20 pt-2">
+              <span className="text-white font-black uppercase tracking-widest text-[13px]">Amount due today</span>
+              <span className="text-shGreen font-black text-[18px]">$0.00</span>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="space-y-1.5 text-[14px]">
         {/* Base line — quantified by units (days/nights/session) */}
         <div className="flex justify-between" data-testid="booking-estimate-base">
@@ -423,13 +478,19 @@ export default function BookingPriceEstimate({
             <div className="flex justify-between" data-testid="booking-estimate-credits">
               <span className="text-gray-400">Credits available</span>
               <span className="text-shBlue font-black">
-                {calc.credits_available} {calc.credits_available === 1 ? calc.unitLabel.replace(/s$/, "") : calc.unitLabel}
+                {fmtCredits(calc.credits_available)} {creditUnitLabel}
               </span>
             </div>
             {calc.credits_applied > 0 && (
               <div className="flex justify-between text-shGreen" data-testid="booking-estimate-credits-applied">
-                <span>Credits applied (est.)</span>
-                <span className="font-black">−{fmtUSD(calc.credit_value)}</span>
+                <span>Credits used (est.)</span>
+                <span className="font-black">{fmtCredits(calc.credits_applied)} credits</span>
+              </div>
+            )}
+            {calc.credits_applied > 0 && (
+              <div className="flex justify-between text-shGreen" data-testid="booking-estimate-credits-after">
+                <span>Credits after booking</span>
+                <span className="font-black">{fmtCredits(calc.credits_remaining_after)} credits</span>
               </div>
             )}
           </>
@@ -445,6 +506,7 @@ export default function BookingPriceEstimate({
           </span>
         </div>
       </div>
+      )}
 
       {/* Waitlist note — only shows when this booking will land on a waitlist */}
       {isWaitlist && (

@@ -245,9 +245,9 @@ class ClientIn(BaseModel):
     phone: Optional[str] = ""
     email: Optional[str] = ""
     emerg: Optional[str] = ""
-    credits: int = 0  # daycare credits (back-compat — kept as plain `credits` field)
-    training_credits: int = 0  # 1-on-1 / lesson credits
-    boarding_credits: int = 0  # overnight stay credits — 1 credit = 1 night
+    credits: float = 0  # daycare credits; supports .5 balances for additional dogs
+    training_credits: float = 0  # 1-on-1 / lesson credits
+    boarding_credits: float = 0  # overnight stay credits — 1 credit = 1 dog/night; extra dogs can use .5
     referred_by_code: Optional[str] = None  # set on creation if referred by another client
     photo: Optional[str] = ""  # base64 data URL of the client's profile photo (small avatar). Optional.
     photo_gallery_url: Optional[str] = ""  # per-client link to their photo gallery (e.g. PicTime, Pixieset)
@@ -461,7 +461,7 @@ class BookingOut(BaseModel):
     # Legacy credit-cost field. Kept for old UI/tests, but money totals must use
     # estimated_price / actual_price / amount_paid / balance_due instead.
     cost: Optional[int] = 0
-    credit_units_required: Optional[int] = 0
+    credit_units_required: Optional[float] = 0
     estimated_price: Optional[float] = None
     grooming_type: Optional[str] = None
     # Sprint 110di-38 — Multi-dog booking group. Same id across every dog
@@ -1671,13 +1671,49 @@ def _billable_boarding_nights(start: str, end: Optional[str], *, legacy_minimum:
     return max(legacy_minimum, (e - s).days)
 
 
-def _credit_units_required(service_type: str, start: str, end: Optional[str]) -> int:
-    """Credit units are intentionally separate from dollars."""
+def _credit_units_required(service_type: str, start: str, end: Optional[str], dog_count: int = 1) -> float:
+    """Credit units are intentionally separate from dollars.
+
+    Sit Happens rule for daycare/boarding credits mirrors cash pricing:
+      • first dog = 1.0 credit per billable unit
+      • each additional dog = 0.5 credit per billable unit
+
+    Packs are still SOLD as whole credits, but balances may spend down in .5
+    increments for multi-dog households. Existing whole-number balances remain
+    valid because Mongo stores numeric fields without a migration.
+    """
+    dogs = max(1, int(dog_count or 1))
     if service_type == "boarding":
-        return _billable_boarding_nights(start, end, legacy_minimum=1)
-    if service_type in ("daycare", "training"):
-        return 1
-    return 0
+        units = _billable_boarding_nights(start, end, legacy_minimum=1)
+        dog_weight = 1.0 + (0.5 * max(0, dogs - 1))
+        return round(float(units) * dog_weight, 2)
+    if service_type == "daycare":
+        dog_weight = 1.0 + (0.5 * max(0, dogs - 1))
+        return round(dog_weight, 2)
+    if service_type == "training":
+        return float(dogs)
+    return 0.0
+
+
+def _credit_unit_value_from_quote(quote: Dict[str, Any]) -> float:
+    """Dollar value of one credit unit for estimate/partial-credit math."""
+    return round(float(quote.get("unit_price") or 0), 2)
+
+
+def _service_base_credit_units_for_booking(booking: dict) -> float:
+    """Stored credit-unit snapshot wins; legacy rows fall back to one-dog math."""
+    try:
+        snap = float(booking.get("credit_units_required") or 0)
+        if snap > 0:
+            return round(snap, 2)
+    except Exception:
+        pass
+    return _credit_units_required(
+        booking.get("service_type") or "daycare",
+        booking.get("date"),
+        booking.get("end_date"),
+        dog_count=1,
+    )
 
 async def _booking_days_count(target_date: str) -> int:
     bookings = await db.bookings.find(
@@ -1777,12 +1813,25 @@ async def _quote_base_service_price(
         }
     list_price = float(svc.get("base_price") or 0)
     unit_price = list_price
+    pricing_meta = {
+        "effective_price": list_price,
+        "list_price": list_price,
+        "override_id": None,
+        "override_row": None,
+    }
     if client_id:
         try:
-            pricing = await resolve_client_price(client_id, "service", svc.get("id") or "", list_price)
-            unit_price = float(pricing.get("effective_price", list_price) or 0)
+            pricing_meta = await resolve_client_price(client_id, "service", svc.get("id") or "", list_price)
+            unit_price = float(pricing_meta.get("effective_price", list_price) or 0)
         except Exception:
             unit_price = list_price
+            pricing_meta = {
+                "effective_price": list_price,
+                "list_price": list_price,
+                "override_id": None,
+                "override_row": None,
+            }
+    preferred_rate_applied = bool(pricing_meta.get("override_id")) and abs(float(unit_price) - float(list_price)) > 0.005
     # Sit Happens business rule: daycare/boarding sibling pricing is
     # calculated as a discount off the SAME base unit price as the first dog.
     # Older service rows may still have `additional_dog_rate` populated; do
@@ -1804,6 +1853,11 @@ async def _quote_base_service_price(
         "service_id": svc.get("id"),
         "service_name": svc.get("name"),
         "unit_price": round(unit_price, 2),
+        "list_unit_price": round(list_price, 2),
+        "preferred_rate_applied": preferred_rate_applied,
+        "price_override_id": pricing_meta.get("override_id"),
+        "price_source": "preferred_client_rate" if preferred_rate_applied else "catalog_rate",
+        "price_label": "Preferred client rate" if preferred_rate_applied else "Standard rate",
         "additional_dog_unit_price": round(additional_dog_unit_price, 2),
         "units": int(units),
         "unit_label": unit_label,
@@ -1881,7 +1935,22 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
     # discount. Add-ons remain separate and full price.
     subtotal = round(first_dog_base + discounted_additional_dog_base, 2)
     total = round(subtotal + add_on_total, 2)
-    credit_units = _credit_units_required(body.service_type, body.date, body.end_date) * dog_count
+    credit_units = _credit_units_required(body.service_type, body.date, body.end_date, dog_count=dog_count)
+    credit_pool_field = _credit_balance_field(body.service_type)
+    credit_unit_value = _credit_unit_value_from_quote(quote)
+    credits_available = 0.0
+    if client_id and credit_pool_field:
+        try:
+            cdoc = await db.clients.find_one({"id": client_id}, {"_id": 0, credit_pool_field: 1})
+            credits_available = float((cdoc or {}).get(credit_pool_field) or 0)
+        except Exception:
+            credits_available = 0.0
+    credits_applied = min(credits_available, float(credit_units or 0)) if credit_pool_field else 0.0
+    credits_remaining_after = round(max(0.0, credits_available - credits_applied), 2)
+    credit_shortfall = round(max(0.0, float(credit_units or 0) - credits_applied), 2)
+    base_cash_due_after_credits = round(max(0.0, subtotal - (credits_applied * credit_unit_value)), 2) if credit_pool_field else subtotal
+    cash_due = round(base_cash_due_after_credits + add_on_total, 2)
+    covered_by_credits = bool(credit_pool_field) and float(credit_units or 0) > 0 and credit_shortfall <= 0.0001 and add_on_total <= 0.0001
 
     multi_dog_discount = None
     if additional_dogs > 0 and multi_dog_discount_amount > 0 and md_cfg:
@@ -1904,6 +1973,11 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "billable_units": units,
         "unit_label": quote.get("unit_label"),
         "unit_price": quote.get("unit_price"),
+        "list_unit_price": quote.get("list_unit_price"),
+        "preferred_rate_applied": quote.get("preferred_rate_applied", False),
+        "price_override_id": quote.get("price_override_id"),
+        "price_source": quote.get("price_source"),
+        "price_label": quote.get("price_label"),
         "additional_dog_unit_price": round(additional_dog_unit_price, 2),
         "dog_count": dog_count,
         "additional_dogs": additional_dogs,
@@ -1915,7 +1989,16 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "add_ons": add_ons,
         "add_on_total": round(add_on_total, 2),
         "estimated_price": total,
-        "credit_units_required": credit_units,
+        "credit_units_required": round(float(credit_units or 0), 2),
+        "credit_pool_field": credit_pool_field,
+        "credit_unit_value": credit_unit_value,
+        "credits_available": round(credits_available, 2),
+        "credits_applied": round(credits_applied, 2),
+        "credits_remaining_after": credits_remaining_after,
+        "credit_shortfall": credit_shortfall,
+        "cash_due": cash_due,
+        "covered_by_credits": covered_by_credits,
+        "payment_display_mode": "credits" if covered_by_credits else ("partial_credits" if credits_applied > 0 else "cash"),
     }
 
 
@@ -2160,7 +2243,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # field for backward compatibility; dollars go into `estimated_price`.
     days = _presence_dates(body.date, body.end_date)
     cost = _service_cost(rules, body.service_type, len(days))
-    credit_units_required = _credit_units_required(body.service_type, body.date, body.end_date)
+    credit_units_required = _credit_units_required(body.service_type, body.date, body.end_date, dog_count=1)
     quote = await _quote_base_service_price(
         client_id=client.get("id"),
         service_type=body.service_type,
@@ -2194,6 +2277,27 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "cost": cost,
         "credit_units_required": credit_units_required,
         "estimated_price": round(estimated_price, 2),
+        "service_id": quote.get("service_id"),
+        "service_name": quote.get("service_name"),
+        "unit_price": quote.get("unit_price"),
+        "list_unit_price": quote.get("list_unit_price"),
+        "preferred_rate_applied": quote.get("preferred_rate_applied", False),
+        "price_override_id": quote.get("price_override_id"),
+        "price_source": quote.get("price_source"),
+        "price_label": quote.get("price_label"),
+        "pricing_snapshot": {
+            "service_id": quote.get("service_id"),
+            "service_name": quote.get("service_name"),
+            "unit_price": quote.get("unit_price"),
+            "list_unit_price": quote.get("list_unit_price"),
+            "preferred_rate_applied": quote.get("preferred_rate_applied", False),
+            "price_override_id": quote.get("price_override_id"),
+            "price_source": quote.get("price_source"),
+            "price_label": quote.get("price_label"),
+            "billable_units": quote.get("units"),
+            "unit_label": quote.get("unit_label"),
+            "created_at": now_iso(),
+        },
         "balance_due": 0.0,
         # Sprint 110di-38 — Multi-dog group booking. Persist the group_id
         # so list/detail endpoints and the run sheet can render the "🔗
@@ -2576,6 +2680,74 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
     finally:
         _suppress_admin_booking_email.reset(token)
 
+    # Apply the final per-row pricing/credit snapshot for daycare/boarding group
+    # bookings. Each dog gets its own booking row, but the household price rule is
+    # first dog full-rate and each additional dog 50% off. Storing the reduced
+    # price on the extra-dog rows prevents checkout from discounting the same dog
+    # twice later. Existing rows/data are not rewritten.
+    if created and body.service_type in ("daycare", "boarding") and len(created) > 1:
+        try:
+            client_id_for_quote = created[0].get("client_id")
+            q = await _quote_base_service_price(
+                client_id=client_id_for_quote,
+                service_type=body.service_type,
+                start_date=body.date,
+                end_date=body.end_date,
+                service_id=body.service_id,
+            )
+            units = float(q.get("units") or 1)
+            unit_price = float(q.get("unit_price") or 0)
+            full_base = round(unit_price * units, 2)
+            half_base = round(full_base * 0.5, 2)
+            for idx, bk in enumerate(created):
+                addon_total = 0.0
+                for ao in (bk.get("add_ons") or []):
+                    addon_total += float(ao.get("price") or 0) * int(ao.get("qty") or 1)
+                is_extra = idx > 0
+                row_base = half_base if is_extra else full_base
+                row_credits = round(units * (0.5 if is_extra else 1.0), 2)
+                patch = {
+                    "estimated_price": round(row_base + addon_total, 2),
+                    "credit_units_required": row_credits,
+                    "unit_price": q.get("unit_price"),
+                    "list_unit_price": q.get("list_unit_price"),
+                    "preferred_rate_applied": q.get("preferred_rate_applied", False),
+                    "price_override_id": q.get("price_override_id"),
+                    "price_source": q.get("price_source"),
+                    "price_label": q.get("price_label"),
+                    "pricing_snapshot": {
+                        "service_id": q.get("service_id"),
+                        "service_name": q.get("service_name"),
+                        "unit_price": q.get("unit_price"),
+                        "list_unit_price": q.get("list_unit_price"),
+                        "preferred_rate_applied": q.get("preferred_rate_applied", False),
+                        "price_override_id": q.get("price_override_id"),
+                        "price_source": q.get("price_source"),
+                        "price_label": q.get("price_label"),
+                        "billable_units": q.get("units"),
+                        "unit_label": q.get("unit_label"),
+                        "group_dog_index": idx,
+                        "group_dog_count": len(created),
+                        "credit_units_required": row_credits,
+                        "created_at": now_iso(),
+                    },
+                }
+                if is_extra:
+                    patch["multi_dog_discount"] = {
+                        "pre_applied": True,
+                        "amount": round(full_base - half_base, 2),
+                        "mode": "percent",
+                        "value": 50.0,
+                        "label": "Additional dog discount",
+                        "service_type": body.service_type,
+                        "based_on_price": full_base,
+                        "applied_at": now_iso(),
+                    }
+                await db.bookings.update_one({"id": bk["id"]}, {"$set": patch})
+                bk.update(patch)
+        except Exception as exc:
+            logger.warning("group price snapshot failed for %s: %s", group_id, exc)
+
     # ONE summary email for portal-originated group bookings.
     if user.get("role") != "admin" and created and client_doc_for_summary:
         try:
@@ -2820,7 +2992,7 @@ def _credit_balance_field(service_type: str) -> Optional[str]:
 
 async def _consume_credit_lots(
     client_id: str,
-    qty: int,
+    qty: float,
     service_type: str = "daycare",
     prefer_program_id: Optional[str] = None,
 ) -> tuple:
@@ -2836,7 +3008,7 @@ async def _consume_credit_lots(
     Returns (total_value, [lot_ids_touched]). If lots don't cover qty, the
     remainder is valued at $0 — preserves balance integrity without inventing
     revenue."""
-    remaining = qty
+    remaining = round(float(qty or 0), 2)
     total_value = 0.0
     touched: List[str] = []
 
@@ -2852,17 +3024,17 @@ async def _consume_credit_lots(
         async for lot in cursor:
             if remaining <= 0:
                 break
-            take = min(remaining, int(lot.get("qty_remaining") or 0))
+            take = min(remaining, float(lot.get("qty_remaining") or 0))
             if take <= 0:
                 continue
-            value = float(lot.get("value_each") or 0) * take
+            value = float(lot.get("value_each") or 0) * float(take)
             await db.credit_lots.update_one(
                 {"id": lot["id"]},
                 {"$inc": {"qty_remaining": -take}, "$set": {"last_redeemed_at": now_iso()}},
             )
             total_value += value
             touched.append(lot["id"])
-            remaining -= take
+            remaining = round(remaining - float(take), 2)
 
     if prefer_program_id:
         await _drain({"program_id": prefer_program_id})
@@ -2870,13 +3042,13 @@ async def _consume_credit_lots(
     return round(total_value, 2), touched
 
 
-async def _restore_credit_lots(lot_ids: List[str], qty: int) -> None:
+async def _restore_credit_lots(lot_ids: List[str], qty: float) -> None:
     """Restore lot quantities (used when cancelling/rejecting an approved
     booking). Distributes the restore proportionally — simplest: just bump
     the first lot in the list by qty."""
     if not lot_ids or qty <= 0:
         return
-    remaining = qty
+    remaining = round(float(qty or 0), 2)
     # Restore in reverse order so the most-recently-consumed lot is restored first.
     for lot_id in reversed(lot_ids):
         if remaining <= 0:
@@ -2966,7 +3138,7 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
     else:
         # Refund credits (daycare or training) if previously approved
         if booking["status"] == "approved":
-            refund = int(booking.get("credits_deducted") or 0)
+            refund = float(booking.get("credits_deducted") or 0)
             if refund > 0:
                 credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
                 balance_field = _credit_balance_field(credit_pool) or "credits"
@@ -4664,7 +4836,7 @@ async def check_out(
 
     # ── Case B: client wants to PAY today instead — refund the pre-deducted credits.
     elif had_credit and not use_credits:
-        deducted = int(booking.get("credits_deducted") or 0)
+        deducted = float(booking.get("credits_deducted") or 0)
         lot_ids = booking.get("credit_lot_ids") or []
         svc_type = booking.get("credit_service_type") or "daycare"
         if deducted > 0:
@@ -4684,14 +4856,12 @@ async def check_out(
     # to the cash/card path below — don't block the checkout on a credit shortfall.
     elif not had_credit and use_credits and not booking.get("actual_price"):
         svc_type = booking.get("service_type") or "daycare"
-        # Boarding consumes one credit per night; everything else is 1 credit.
-        nights = 1
-        if svc_type == "boarding":
-            nights = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
+        credit_need = _service_base_credit_units_for_booking(booking)
         balance_field = _credit_balance_field(svc_type) or "credits"
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
-        available = int((client_doc or {}).get(balance_field) or 0)
-        if available >= nights and nights > 0:
+        available = float((client_doc or {}).get(balance_field) or 0)
+        credits_to_use = round(min(available, float(credit_need or 0)), 2)
+        if credits_to_use > 0 and credit_need > 0:
             # Sprint 110bx — prefer the dog's active training program's lot
             prefer_pid = None
             if svc_type == "training" and booking.get("dog_id"):
@@ -4705,37 +4875,56 @@ async def check_out(
                     if enrol:
                         prefer_pid = enrol.get("program_id")
             credit_value, lot_ids = await _consume_credit_lots(
-                booking["client_id"], nights, svc_type,
+                booking["client_id"], credits_to_use, svc_type,
                 prefer_program_id=prefer_pid,
             )
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -nights}})
-            # Sprint 110g — fire low-credit email if this checkout dropped the
-            # pool to ≤ 2. Idempotent per (client, pool, threshold) so we
-            # never spam the client with multiple "2 left" emails.
-            new_balance = available - nights
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -credits_to_use}})
+            new_balance = round(available - credits_to_use, 2)
             await _maybe_send_low_credit_email(booking["client_id"], svc_type, new_balance)
-            # Income value: prefer admin's manual override; fall back to lot value;
-            # if the lot has no $ data, use the default service price so income is
-            # still recorded correctly.
-            if body.base_price is not None:
-                svc_value = float(body.base_price)
-            elif credit_value > 0:
-                svc_value = float(credit_value)
-            else:
-                svc_value = await _resolve_service_value(float(credit_value))
+
             update["credit_value"] = round(float(credit_value), 2)
             update["credit_lot_ids"] = lot_ids
             update["credit_service_type"] = svc_type
-            update["credits_deducted"] = nights
-            update["actual_price"] = round(svc_value, 2)
-            update["payment_status"] = "paid"
-            update["payment_method"] = "credits"
-            update["paid_at"] = ts
-            # Skip the "will_charge" branch below — we're done settling this booking.
-            had_credit = True
-            use_credits = True
+            update["credits_deducted"] = credits_to_use
+
+            credit_shortfall = round(max(0.0, float(credit_need or 0) - credits_to_use), 2)
+            if credit_shortfall <= 0.0001:
+                # Fully covered by credits. `actual_price` records the visit value,
+                # but `cash_revenue` stays $0 because payment_method=credits.
+                if body.base_price is not None:
+                    svc_value = float(body.base_price)
+                elif credit_value > 0:
+                    svc_value = float(credit_value)
+                else:
+                    svc_value = float(booking.get("estimated_price") or 0) or await _resolve_service_value(float(credit_value))
+                update["actual_price"] = round(svc_value, 2)
+                update["payment_status"] = "paid"
+                update["payment_method"] = "credits"
+                update["paid_at"] = ts
+                had_credit = True
+                use_credits = True
+            else:
+                # Partial credit coverage: use what they have and charge only the
+                # remaining fractional service unit at this client's rate.
+                unit_rate = float((booking.get("pricing_snapshot") or {}).get("unit_price") or booking.get("unit_price") or 0)
+                if unit_rate <= 0:
+                    q = await _quote_base_service_price(
+                        client_id=booking.get("client_id"),
+                        service_type=svc_type,
+                        start_date=booking.get("date"),
+                        end_date=booking.get("end_date"),
+                        service_id=booking.get("service_id"),
+                        legacy_boarding_minimum=1,
+                    )
+                    unit_rate = float(q.get("unit_price") or 0)
+                remaining_cash = round(credit_shortfall * unit_rate, 2)
+                update["actual_price"] = remaining_cash
+                update["credit_shortfall"] = credit_shortfall
+                update["payment_method"] = body.payment_method or "cash"
+                use_credits = False
+                had_credit = False
         else:
-            # Not enough credits — silently fall through to charge cash/card.
+            # No applicable credits — fall through to cash/card.
             use_credits = False
 
     # Determine base price / service tag for paid-today bookings (no credits, or credits refunded).
@@ -4749,7 +4938,7 @@ async def check_out(
         nights_stayed = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
         return unit * nights_stayed
 
-    if will_charge and not booking.get("actual_price"):
+    if will_charge and not booking.get("actual_price") and "actual_price" not in update:
         # Honour explicit override from the modal.
         if body.base_price is not None:
             base_price = float(body.base_price)
@@ -4815,7 +5004,7 @@ async def check_out(
                 # Stack onto whatever credit_value already existed on the booking.
                 prev_credit_value = float(booking.get("credit_value") or 0)
                 update["credit_value"] = round(prev_credit_value + float(extra_credit_value), 2)
-                update["credits_deducted"] = int(booking.get("credits_deducted") or 0) + extra_credits_used
+                update["credits_deducted"] = float(booking.get("credits_deducted") or 0) + extra_credits_used
                 # Track lots for refund-on-cancel safety.
                 update["credit_lot_ids"] = list(booking.get("credit_lot_ids") or []) + list(extra_lot_ids or [])
         # Whatever nights weren't covered by credits get billed.
@@ -4893,7 +5082,8 @@ async def check_out(
     # AFTER add-ons + extra nights but BEFORE finalizing payment, so the
     # discount is visible as its own line on the receipt.
     multi_dog_discount_amount = 0.0
-    if (update.get("actual_price") or 0) > 0:
+    pre_applied_group_discount = isinstance((booking.get("multi_dog_discount") or {}), dict) and bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+    if (update.get("actual_price") or 0) > 0 and not pre_applied_group_discount:
         try:
             # Pass the merged view (booking + update) so the discount calc
             # sees the price we're ABOUT to commit, not the pre-checkout value.
@@ -15215,7 +15405,7 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
             paid_total += price
         elif r.get("status") == "completed":
             unpaid_total += _booking_balance_due(r)
-        credits_redeemed += int(r.get("credits_deducted") or 0)
+        credits_redeemed += float(r.get("credits_deducted") or 0)
 
         # Don't pollute by_service with $0 program-redemption rows.
         if is_program_credit or is_pos_credit_pack:

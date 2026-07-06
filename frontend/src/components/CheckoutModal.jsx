@@ -27,8 +27,16 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const creditPool = booking.credit_service_type || booking.service_type || "daycare";
   const creditsDeducted = booking.credits_deducted || 0;
 
-  // For boarding: how many nights this booking covers (1 if no end_date).
-  const nightsNeeded = (() => {
+  const fmtCredits = (n) => {
+    const val = Math.round((Number(n) || 0) * 10) / 10;
+    return Number.isInteger(val) ? String(val) : val.toFixed(1);
+  };
+
+  // Credit units for this row. New group bookings snapshot .5 credits on
+  // additional dogs; legacy rows fall back to one credit/day or one credit/night.
+  const creditUnitsNeeded = (() => {
+    const snap = Number(booking.credit_units_required || 0);
+    if (snap > 0) return snap;
     if (booking.service_type !== "boarding") return 1;
     try {
       const s = new Date(booking.date), e = new Date(booking.end_date || booking.date);
@@ -61,7 +69,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                   : booking.service_type === "boarding" ? "boarding_credits"
                   : "credits";
   const available = clientBal ? (clientBal[balField] || 0) : 0;
-  const canPayWithCredits = !hadCredit && !booking.actual_price && available >= nightsNeeded;
+  const creditsToUseNow = Math.min(Number(available || 0), Number(creditUnitsNeeded || 0));
+  const canPayWithCredits = !hadCredit && !booking.actual_price && creditsToUseNow > 0;
 
   // Sprint 110db — Preview the lot that's about to be consumed FIFO so the
   // operator sees its Legacy / Paid-at-sale badge BEFORE clicking
@@ -93,11 +102,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const [useCredits, setUseCredits] = useState(hadCredit);
   const [defaultedFromBal, setDefaultedFromBal] = useState(false);
   useEffect(() => {
-    if (clientBal && !defaultedFromBal && !hadCredit && available >= nightsNeeded && nightsNeeded > 0 && !booking.actual_price) {
+    if (clientBal && !defaultedFromBal && !hadCredit && creditsToUseNow > 0 && !booking.actual_price) {
       setUseCredits(true);
       setDefaultedFromBal(true);
     }
-  }, [clientBal, available, nightsNeeded, hadCredit, defaultedFromBal, booking.actual_price]);
+  }, [clientBal, creditsToUseNow, hadCredit, defaultedFromBal, booking.actual_price]);
   const [payMethod, setPayMethod] = useState("cash");
   const [basePrice, setBasePrice] = useState("");
   const [extraNights, setExtraNights] = useState(0);
@@ -274,7 +283,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-use-credits">
                 <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
                 <div className="flex-1">
-                  <p className="text-sm font-black text-white">Use {creditsDeducted || 1} {creditPool} credit{(creditsDeducted || 1) === 1 ? "" : "s"}</p>
+                  <p className="text-sm font-black text-white">Use {fmtCredits(creditsDeducted || 1)} {creditPool} credit{Number(creditsDeducted || 1) === 1 ? "" : "s"}</p>
                   <p className="text-[14px] text-gray-400">${creditAmt.toFixed(2)} value · already deducted from their pack at approval</p>
                 </div>
               </label>
@@ -282,7 +291,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <input type="radio" checked={!useCredits} onChange={()=>setUseCredits(false)} className="mt-1 accent-shBlue" />
                 <div className="flex-1">
                   <p className="text-sm font-black text-white">Charge as regular service</p>
-                  <p className="text-[14px] text-gray-400">Refund {creditsDeducted || 1} credit{(creditsDeducted || 1) === 1 ? "" : "s"} back to their pack & take payment today</p>
+                  <p className="text-[14px] text-gray-400">Refund {fmtCredits(creditsDeducted || 1)} credit{Number(creditsDeducted || 1) === 1 ? "" : "s"} back to their pack & take payment today</p>
                 </div>
               </label>
             </div>
@@ -291,8 +300,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition ${useCredits ? "border-shGreen bg-shGreen/10" : "border-bgHover hover:border-shGreen/50"}`} data-testid="opt-credit-at-checkout">
                 <input type="radio" checked={useCredits} onChange={()=>setUseCredits(true)} className="mt-1 accent-shGreen" />
                 <div className="flex-1">
-                  <p className="text-sm font-black text-white">Deduct {nightsNeeded} {booking.service_type} credit{nightsNeeded === 1 ? "" : "s"} now</p>
-                  <p className="text-[14px] text-gray-400">Client has <span className="text-shGreen font-black">{available}</span> available · FIFO from oldest pack</p>
+                  <p className="text-sm font-black text-white">{available >= creditUnitsNeeded ? "Deduct" : "Use partial"} {fmtCredits(creditsToUseNow)} {booking.service_type} credit{creditsToUseNow === 1 ? "" : "s"} now</p>
+                  <p className="text-[14px] text-gray-400">Client has <span className="text-shGreen font-black">{fmtCredits(available)}</span> available{available < creditUnitsNeeded ? ` · ${fmtCredits(creditUnitsNeeded - available)} credit shortfall will be charged` : ""} · FIFO from oldest pack</p>
                   {useCredits && nextLot && (
                     <div
                       data-testid={`checkout-next-lot-${nextLotKind}`}
@@ -313,12 +322,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                             : "Paid at sale — already counted"}
                         </strong>
                         <span className="block text-[11px] text-gray-300 mt-0.5">
-                          Next up: <strong>{nextLot.pack_name}</strong> · {nextLot.qty_remaining} of {nextLot.qty_total} left
+                          Next up: <strong>{nextLot.pack_name}</strong> · {fmtCredits(nextLot.qty_remaining)} of {fmtCredits(nextLot.qty_total)} left
                           {Number(nextLot.value_each || 0) > 0 && ` · $${Number(nextLot.value_each).toFixed(2)}/credit`}
                         </span>
                         {nextLotKind === "legacy" && (
                           <span className="block text-[11px] text-amber-300/90 mt-1">
-                            Will add to today's income at $<strong>{Number(nextLot.value_each || 0).toFixed(2)}</strong> per credit ({nightsNeeded} credit{nightsNeeded===1?"":"s"} = ${(Number(nextLot.value_each || 0) * nightsNeeded).toFixed(2)} on the books).
+                            Will add to today's income at $<strong>{Number(nextLot.value_each || 0).toFixed(2)}</strong> per credit ({fmtCredits(creditsToUseNow)} credit{creditsToUseNow===1?"":"s"} = ${(Number(nextLot.value_each || 0) * creditsToUseNow).toFixed(2)} on the books).
                           </span>
                         )}
                         {nextLotKind === "paid_at_sale" && (
@@ -342,9 +351,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           ) : (
             <p className="text-[15px] text-gray-300">
               No credits on file for this booking — collecting payment today.
-              {clientBal && available > 0 && available < nightsNeeded && (
+              {clientBal && available > 0 && available < creditUnitsNeeded && (
                 <span className="block mt-1 text-[14px] text-shOrange">
-                  Client has {available} {booking.service_type} credit{available === 1 ? "" : "s"} but {nightsNeeded} {nightsNeeded === 1 ? "is" : "are"} needed.
+                  Client has {fmtCredits(available)} {booking.service_type} credit{available === 1 ? "" : "s"} but {fmtCredits(creditUnitsNeeded)} {creditUnitsNeeded === 1 ? "is" : "are"} needed.
                 </span>
               )}
             </p>

@@ -6,6 +6,10 @@ import { todayISO } from "../lib/date";
 
 
 const fmtUSD = (n) => `$${(Math.max(0, Number(n) || 0)).toFixed(2)}`;
+const fmtCredits = (n) => {
+  const val = Math.round((Number(n) || 0) * 10) / 10;
+  return Number.isInteger(val) ? String(val) : val.toFixed(1);
+};
 
 const creditPoolForService = (serviceType) => {
   if (serviceType === "daycare") return { key: "credits", label: "daycare credits" };
@@ -351,11 +355,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     const baseTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
     const addonTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.add_on_total || 0), 0);
     const units = quoteLines.reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0);
-    const creditUnitsRequired = quoteLines.reduce((sum, l) => sum + Number(l.quote?.credit_units_required || 0), 0);
     const unitLabel = quoteLines[0]?.quote?.unit_label || (serviceType === "boarding" ? "nights" : "visits");
     const serviceName = quoteLines[0]?.quote?.service_name || serviceType;
     const pool = creditPoolForService(serviceType);
     const creditsAvailable = pool && selectedClient ? Number(selectedClient[pool.key] || 0) : 0;
+    const preferredRateApplied = quoteLines.some(l => !!l.quote?.preferred_rate_applied);
+    const unitPrice = Number(quoteLines[0]?.quote?.unit_price || 0);
+    const listUnitPrice = Number(quoteLines[0]?.quote?.list_unit_price || unitPrice);
 
     // Admin creates grouped bookings as one row per dog. For daycare/boarding,
     // the display must ignore any stale per-dog quote rows or old service
@@ -382,9 +388,26 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     const mdCfg = getMultiDogDiscountConfig(multiDogDiscountSettings, serviceType);
     const multiDogDiscountAmount = calcDiscountAmount(additionalDogBase, mdCfg, additionalDogCount);
     const total = Math.max(0, standardBaseTotal + addonTotal - multiDogDiscountAmount);
+    const unitsForFirstDog = coreMultiDogService
+      ? quoteLines
+          .filter(l => l.dog_id === uniqueDogIds[0])
+          .reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0)
+      : 0;
+    const creditUnitsRequired = pool
+      ? (coreMultiDogService
+          ? unitsForFirstDog * (1 + 0.5 * additionalDogCount)
+          : quoteLines.reduce((sum, l) => sum + Number(l.quote?.credit_units_required || 0), 0))
+      : 0;
+    const creditsApplied = Math.min(creditsAvailable, creditUnitsRequired);
+    const creditsRemainingAfter = Math.max(0, creditsAvailable - creditsApplied);
+    const creditShortfall = Math.max(0, creditUnitsRequired - creditsApplied);
+    const cashDue = Math.max(0, total - (creditsApplied * unitPrice));
+    const coveredByCredits = !!pool && creditUnitsRequired > 0 && creditShortfall <= 0.0001 && addonTotal <= 0.0001;
 
     return {
       total, rawTotal, baseTotal: standardBaseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable,
+      creditsApplied, creditsRemainingAfter, creditShortfall, cashDue, coveredByCredits,
+      preferredRateApplied, unitPrice, listUnitPrice,
       additionalDogBase, additionalDogCount,
       multiDogDiscountAmount,
       multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",
@@ -844,6 +867,15 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 )}
               </div>
 
+              {quoteSummary?.preferredRateApplied && (
+                <div className="bg-shGreen/10 border border-shGreen/30 rounded px-3 py-2 text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="admin-booking-estimate-preferred-rate">
+                  <i className="fas fa-star mr-1.5"/>Preferred client rate applied
+                  {quoteSummary.listUnitPrice && quoteSummary.listUnitPrice !== quoteSummary.unitPrice && (
+                    <span className="text-gray-400 ml-1">({fmtUSD(quoteSummary.unitPrice)} instead of {fmtUSD(quoteSummary.listUnitPrice)})</span>
+                  )}
+                </div>
+              )}
+
               {quoteLoading ? (
                 <div className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
                   <i className="fas fa-circle-notch fa-spin mr-2"/>Calculating estimate…
@@ -887,9 +919,18 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                   </div>
 
                   {quoteSummary.pool && (
-                    <div className="bg-shBlue/10 border border-shBlue/30 rounded px-3 py-2 text-[12px] text-shBlue font-black uppercase tracking-widest" data-testid="admin-booking-estimate-credits">
-                      <i className="fas fa-ticket mr-2"/>
-                      Client has {quoteSummary.creditsAvailable} {quoteSummary.pool.label}; this booking needs about {quoteSummary.creditUnitsRequired} credit{quoteSummary.creditUnitsRequired === 1 ? "" : "s"} if paid with credits.
+                    <div className="bg-shBlue/10 border border-shBlue/30 rounded px-3 py-2 text-[12px] text-shBlue font-black uppercase tracking-widest space-y-1" data-testid="admin-booking-estimate-credits">
+                      <div><i className="fas fa-ticket mr-2"/>Credit coverage</div>
+                      <div className="text-gray-300">Needs {fmtCredits(quoteSummary.creditUnitsRequired)} {quoteSummary.pool.label}</div>
+                      <div className="text-gray-300">Available now: {fmtCredits(quoteSummary.creditsAvailable)} credits</div>
+                      {quoteSummary.creditsApplied > 0 && (
+                        <div className="text-shGreen">Uses {fmtCredits(quoteSummary.creditsApplied)} credits · after booking: {fmtCredits(quoteSummary.creditsRemainingAfter)} credits</div>
+                      )}
+                      {quoteSummary.coveredByCredits ? (
+                        <div className="text-shGreen">Covered by credits · amount due today $0.00</div>
+                      ) : quoteSummary.creditsApplied > 0 ? (
+                        <div className="text-shOrange">Partial credits · estimated cash balance {fmtUSD(quoteSummary.cashDue)}</div>
+                      ) : null}
                     </div>
                   )}
 
