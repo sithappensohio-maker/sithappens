@@ -27398,7 +27398,11 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
         "preview_summary": preview.get("summary"),
         "moved_counts": moved_counts,
     }
-    await db.duplicate_merge_audit.insert_one(audit_row)
+    # PyMongo/Motor mutates inserted dictionaries by adding a raw ObjectId `_id`.
+    # Returning that mutated dict causes FastAPI JSON serialization to throw a 500
+    # even though the safe merge/archive already succeeded. Insert a copy and
+    # return the clean public audit row.
+    await db.duplicate_merge_audit.insert_one(dict(audit_row))
     return {"ok": True, "merged": True, "audit": audit_row, "preview_before": preview}
 
 
