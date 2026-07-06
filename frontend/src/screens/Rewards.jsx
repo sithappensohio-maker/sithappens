@@ -84,7 +84,7 @@ export default function Rewards() {
       {data && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Stat icon="fa-user-plus" label="Pending referrals" value={summary.pending_referrals || 0} color="text-shOrange" />
+            <Stat icon="fa-user-plus" label="Real pending referrals" value={summary.pending_referrals || 0} color="text-shOrange" />
             <Stat icon="fa-check-circle" label="Ready to grant" value={summary.ready_referrals || 0} />
             <Stat icon="fa-question" label="Trivia perks pending" value={summary.pending_trivia || 0} color="text-shBlue" />
             <Stat icon="fa-ticket" label="Clients with credits" value={summary.clients_with_credits || 0} color="text-shGreen" />
@@ -94,10 +94,15 @@ export default function Rewards() {
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
                 <h3 className="text-white font-black uppercase italic"><i className="fas fa-user-plus text-shOrange mr-2"/>Referral rewards</h3>
-                <p className="text-sm text-gray-400">Garrett rule: referral reward = 1 free daycare credit. Rewards are non-cash and do not count as income.</p>
+                <p className="text-sm text-gray-400">Garrett rule: referral reward = 1 free daycare credit. Only real referral-code matches show here. Rewards are non-cash and do not count as income.</p>
+                {(summary.invalid_referral_codes_hidden || summary.self_referrals_hidden) ? (
+                  <p className="text-xs text-shOrange font-bold mt-1">
+                    Hidden cleanup: {summary.invalid_referral_codes_hidden || 0} old/invalid referral-code value(s) and {summary.self_referrals_hidden || 0} self-referral value(s) were ignored so fake credits are not granted.
+                  </p>
+                ) : null}
               </div>
             </div>
-            {(data.pending_referrals || []).length === 0 ? <Empty>No pending referrals right now.</Empty> : (
+            {(data.pending_referrals || []).length === 0 ? <Empty>No real pending referrals right now. Clients only appear here after a valid referral code is attached to their profile.</Empty> : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead><tr className="text-gray-500 uppercase text-[11px] tracking-widest border-b border-bgHover"><th className="text-left py-2">Status</th><th className="text-left py-2">Referrer</th><th className="text-left py-2">Referred client</th><th className="text-left py-2">Completed</th><th className="text-right py-2">Action</th></tr></thead>

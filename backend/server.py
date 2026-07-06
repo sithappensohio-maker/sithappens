@@ -13247,17 +13247,32 @@ async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]
     referrers = await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1}).to_list(5000) if codes else []
     by_code = {(r.get("referral_code") or "").upper(): r for r in referrers}
     pending = []
+    invalid_code_count = 0
+    self_referral_count = 0
     for c in referred_clients:
         if c.get("id") in paid_by_referred:
             continue
         code = (c.get("referred_by_code") or "").upper().strip()
-        referrer = by_code.get(code) or {}
+        if not code:
+            continue
+        referrer = by_code.get(code)
+        # Do not show imported placeholder/junk values such as "Code" or old
+        # free-text notes as pending referrals. A real pending referral must map
+        # to an existing client's referral_code. Hidden invalid rows are counted
+        # in the summary so admin can clean old data later without awarding fake
+        # credits.
+        if not referrer or not referrer.get("id"):
+            invalid_code_count += 1
+            continue
+        if referrer.get("id") == c.get("id"):
+            self_referral_count += 1
+            continue
         completed = await _completed_booking_count_for_client(c.get("id"), exclude_id="")
         pending.append({
             "status": "pending" if completed <= 0 else "ready",
             "referral_code": code,
             "referrer_id": referrer.get("id", ""),
-            "referrer_name": referrer.get("name", "Unknown referrer"),
+            "referrer_name": referrer.get("name", ""),
             "referred_id": c.get("id"),
             "referred_name": c.get("name", ""),
             "referred_email": c.get("email", ""),
@@ -13270,12 +13285,12 @@ async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]
     for r in paid_rows:
         r.setdefault("status", "paid")
         r.setdefault("reward_service", "daycare")
-    return pending, paid_rows
+    return pending, paid_rows, {"invalid_code_count": invalid_code_count, "self_referral_count": self_referral_count}
 
 
 @api.get("/admin/rewards/center")
 async def admin_rewards_center(_: dict = Depends(require_admin)):
-    pending_referrals, paid_referrals = await _build_referral_rows()
+    pending_referrals, paid_referrals, referral_meta = await _build_referral_rows()
     clients = await db.clients.find(
         {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
         {"_id": 0, "id": 1, "name": 1, "email": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1, "trivia_milestones": 1}
@@ -13313,6 +13328,8 @@ async def admin_rewards_center(_: dict = Depends(require_admin)):
         "pending_referrals": len(pending_referrals),
         "ready_referrals": sum(1 for r in pending_referrals if r.get("status") == "ready"),
         "paid_referrals": len(paid_referrals),
+        "invalid_referral_codes_hidden": int((referral_meta or {}).get("invalid_code_count") or 0),
+        "self_referrals_hidden": int((referral_meta or {}).get("self_referral_count") or 0),
         "pending_trivia": len(pending_trivia),
         "clients_with_credits": len(credit_rows),
         "daycare_credits_outstanding": round(sum(r["daycare"] for r in credit_rows), 2),
@@ -13323,6 +13340,7 @@ async def admin_rewards_center(_: dict = Depends(require_admin)):
         "summary": summary,
         "pending_referrals": pending_referrals[:200],
         "paid_referrals": paid_referrals[:200],
+        "referral_meta": referral_meta or {},
         "pending_trivia": pending_trivia[:200],
         "credit_audit": credit_rows[:500],
         "recent_rewards": recent_rewards,
