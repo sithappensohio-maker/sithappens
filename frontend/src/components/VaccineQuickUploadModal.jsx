@@ -68,11 +68,16 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
   };
 
   const filledRows = Object.entries(rows).filter(([, v]) => v && v.expires_on);
-  const canSubmit = !!dog && filledRows.length > 0 && !saving;
+  const rowsMissingPhotos = filledRows.filter(([, v]) => !v.photos || v.photos.length === 0);
+  const canSubmit = !!dog && filledRows.length > 0 && rowsMissingPhotos.length === 0 && !saving;
 
   const submit = async () => {
     if (!dog || filledRows.length === 0) {
       setErr("Pick at least one vaccine to update and enter the expiry date.");
+      return;
+    }
+    if (rowsMissingPhotos.length > 0) {
+      setErr("Every vaccine you submit needs a clear certificate photo or PDF attached.");
       return;
     }
     setErr(""); setSaving(true); setDone(0);
@@ -105,7 +110,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
               <i className="fas fa-shield-virus mr-1.5"/>Vaccine Records
             </p>
             <h4 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight">Upload vaccine records</h4>
-            <p className="text-[13px] text-gray-400 mt-1">Pick the dog, then enter the new expiry date + photos for each vaccine you&apos;re updating.</p>
+            <p className="text-[13px] text-gray-400 mt-1">Pick the dog, then complete each red missing/expired vaccine. Each vaccine needs an expiry date and a clear photo/PDF.</p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-white p-1" data-testid="vquick-close">
             <i className="fas fa-times text-xl"/>
@@ -113,6 +118,15 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
         </div>
 
         <div className="p-5 sm:p-6 space-y-5">
+          <div className="bg-shOrange/10 border border-shOrange/35 rounded-lg p-3" data-testid="vquick-clear-instructions">
+            <p className="text-[13px] text-white font-black uppercase tracking-widest leading-snug">
+              Do every needed vaccine before submitting
+            </p>
+            <p className="text-[12px] text-gray-300 mt-1 leading-snug">
+              Missing/expired vaccines are red. Enter the expiry date and attach the certificate for each one. Uploads go to Sit Happens for approval, so booking stays locked until we approve them.
+            </p>
+          </div>
+
           {/* Dog picker */}
           <div>
             <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-2">
@@ -188,7 +202,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                       </div>
                       <div>
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">
-                          Photos (optional)
+                          Certificate photo/PDF required
                         </label>
                         <label className="inline-flex items-center gap-2 cursor-pointer bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
                           <i className="fas fa-camera"/> Add photos
@@ -214,13 +228,24 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                             </button>
                           </div>
                         ))}
-                        <p className="w-full text-[10px] text-gray-500"><i className="fas fa-circle-info mr-1"/>{row.photos.length} photo{row.photos.length === 1 ? "" : "s"} attached.</p>
+                        <p className="w-full text-[10px] text-shGreen"><i className="fas fa-circle-check mr-1"/>{row.photos.length} file{row.photos.length === 1 ? "" : "s"} attached.</p>
                       </div>
+                    )}
+                    {row.expires_on && (!row.photos || row.photos.length === 0) && (
+                      <p className="mt-2 text-[11px] text-shOrange font-black uppercase tracking-widest" data-testid={`vquick-photo-needed-${v.key}`}>
+                        <i className="fas fa-triangle-exclamation mr-1"/>Add the certificate photo/PDF for {v.label} before submitting.
+                      </p>
                     )}
                   </div>
                 );
               })}
             </div>
+          )}
+
+          {filledRows.length > 0 && rowsMissingPhotos.length > 0 && (
+            <p className="text-[12px] text-shOrange font-black uppercase tracking-widest" data-testid="vquick-missing-photo-warning">
+              <i className="fas fa-triangle-exclamation mr-1"/>Attach proof for every vaccine before submitting.
+            </p>
           )}
 
           {err && (
@@ -246,7 +271,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                     data-testid="vquick-submit"
                     className="text-[13px] font-black uppercase tracking-widest px-5 py-2 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 disabled:opacity-40 transition">
               {saving ? <><i className="fas fa-spinner fa-spin mr-2"/>Saving…</>
-                      : <><i className="fas fa-cloud-arrow-up mr-2"/>Submit {filledRows.length > 0 ? `(${filledRows.length})` : ""}</>}
+                      : <><i className="fas fa-cloud-arrow-up mr-2"/>Submit for Review {filledRows.length > 0 ? `(${filledRows.length})` : ""}</>}
             </button>
           </div>
         </div>

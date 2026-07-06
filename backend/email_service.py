@@ -478,6 +478,47 @@ async def notify_admin_new_client(user: dict, client: dict) -> None:
     )
 
 
+async def notify_admin_vaccine_upload_pending(client: dict, dog: dict, vaccine: str, expires_on: str) -> None:
+    """Client uploaded a vaccine certificate that needs admin review/approval."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    vaccine_label = {"rabies": "Rabies", "bordetella": "Bordetella", "dhpp": "DHPP"}.get((vaccine or "").lower(), (vaccine or "Vaccine").title())
+    dog_name = dog.get("name", "—") if dog else "—"
+    client_name = client.get("name") or dog.get("client_name") or "—"
+    rows = [
+        ("Client", client_name),
+        ("Dog", dog_name),
+        ("Vaccine", vaccine_label),
+        ("Expiry submitted", expires_on or "—"),
+        ("Status", "Waiting for admin approval"),
+    ]
+    if client.get("phone"):
+        rows.append(("Phone", client["phone"]))
+    if client.get("email"):
+        rows.append(("Email", client["email"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    await _dispatch(
+        slug="admin_vaccine_upload_pending",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": client_name,
+            "dog_name": dog_name,
+            "vaccine": vaccine_label,
+            "expires_on": expires_on or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"Vaccine approval needed · {dog_name} · {vaccine_label}",
+        fallback_title="💉 Vaccine approval waiting",
+        fallback_intro=(
+            f"{client_name} uploaded {vaccine_label} records for {dog_name}. "
+            "Review and approve the upload before this vaccine unlocks booking."
+        ),
+        fallback_cta_text="Open admin dashboard",
+    )
+
+
 async def notify_admin_first_booking(booking: dict, client: dict) -> None:
     """🎉 The client just made their first-ever booking — celebrate it with the operator."""
     if not ADMIN_NOTIFICATION_EMAIL:

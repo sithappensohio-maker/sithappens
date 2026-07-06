@@ -2309,9 +2309,8 @@ async def admin_list_vaccine_uploads(include_reviewed: bool = False, _: dict = D
 
 @api.post("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}/review")
 async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depends(require_admin)):
-    """Mark a client-uploaded vaccine cert as reviewed/approved. Doesn't change the
-    expiry — the client already set the expiry when uploading so they could keep
-    booking. To reject/correct, edit the dog from the Dogs screen."""
+    """Mark a client-uploaded vaccine cert as reviewed/approved and apply the
+    pending expiry date to the dog so booking can unlock."""
     if vaccine not in ("rabies", "bordetella", "dhpp"):
         raise HTTPException(status_code=400, detail="Invalid vaccine type")
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1})
@@ -2341,8 +2340,8 @@ async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depe
 
 @api.delete("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}")
 async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends(require_admin)):
-    """Reject a client-uploaded vaccine cert: removes the cert image AND clears the
-    associated vaccine expiry so the dog can no longer book until reuploaded."""
+    """Reject a client-uploaded vaccine cert. Removes the pending cert, but does
+    not wipe an older approved expiry unless it exactly matches the rejected upload."""
     if vaccine not in ("rabies", "bordetella", "dhpp"):
         raise HTTPException(status_code=400, detail="Invalid vaccine type")
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccine_certs": 1, "vaccines": 1})
@@ -3243,8 +3242,8 @@ class VaccineUpdateIn(BaseModel):
 
 @api.post("/portal/dogs/{dog_id}/vaccine-update")
 async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict = Depends(get_current_user)):
-    """Client uploads a new vaccine cert photo + expiry date. Pending admin review,
-    but we update the expiry immediately so they're unblocked from booking."""
+    """Client uploads a new vaccine cert photo + expiry date. The upload stays
+    pending until admin review; booking remains locked for that vaccine until approval."""
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
@@ -3281,6 +3280,18 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
     else:
         raise HTTPException(status_code=400, detail="Please upload a vaccine certificate photo.")
     await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
+
+    # Best-effort admin email: do not make the client wait on email delivery,
+    # and never fail the upload if Resend/admin email is misconfigured.
+    async def _notify_admin_vaccine_waiting():
+        try:
+            client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0}) or {}
+            await email_service.notify_admin_vaccine_upload_pending(client, dog, body.vaccine, body.expires_on)
+        except Exception as exc:
+            logger.warning("Vaccine approval admin email failed for dog=%s vaccine=%s: %s", dog_id, body.vaccine, exc)
+
+    asyncio.create_task(_notify_admin_vaccine_waiting())
+
     return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on, "status": "pending_review"}
 
 

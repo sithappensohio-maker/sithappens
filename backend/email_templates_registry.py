@@ -200,6 +200,18 @@ EMAIL_TEMPLATES = [
         "variables": ["client_name", "email", "phone"],
     },
     {
+        "slug": "admin_vaccine_upload_pending",
+        "name": "Admin · Vaccine Approval Waiting",
+        "description": "Fires when a client uploads a vaccine record that needs review.",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "Vaccine approval needed · {{dog_name}} · {{vaccine}}",
+        "default_title": "💉 Vaccine approval waiting",
+        "default_intro_html": "<strong>{{client_name}}</strong> uploaded <strong>{{vaccine}}</strong> records for <strong>{{dog_name}}</strong>. Review and approve the upload before this vaccine unlocks booking.",
+        "default_cta_text": "Open Dashboard",
+        "variables": ["client_name", "dog_name", "vaccine", "expires_on"],
+    },
+    {
         "slug": "admin_first_booking",
         "name": "Admin · First Booking",
         "description": "Fires the first time a brand-new client books.",

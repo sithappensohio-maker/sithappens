@@ -316,6 +316,7 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
   };
   const save = async () => {
     if (!expiresOn) { setErr("Pick the new expiry date."); return; }
+    if (!photo) { setErr("Attach a clear photo of the vaccine certificate before submitting."); return; }
     setErr(""); setSaving(true);
     try {
       await api.post(`/portal/dogs/${dog.id}/vaccine-update`, { vaccine, expires_on: expiresOn, photo });
@@ -332,7 +333,7 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Update {label} for {dog.name}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[15px] text-gray-400 mb-4">Snap a photo of the new vaccine certificate and enter the expiry date your vet wrote on it.</p>
+        <p className="text-[15px] text-gray-400 mb-4">Step 1: enter the expiry date. Step 2: attach a clear photo of the certificate. After you submit, Sit Happens reviews it before booking unlocks.</p>
         <div className="space-y-3">
           <div>
             <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New expiry date</label>
@@ -340,7 +341,7 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm" style={{colorScheme:"dark"}} />
           </div>
           <div>
-            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Cert photo (optional but recommended)</label>
+            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Cert photo required</label>
             <input type="file" accept="image/*" capture="environment" onChange={handleFile} data-testid="vaccine-photo-input"
                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm file:bg-shBlue file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:font-black file:text-[14px] file:uppercase file:tracking-widest" />
             {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-bgHover"/>}
@@ -348,8 +349,8 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
           {err && <p className="text-[15px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[15px] font-black uppercase tracking-widest">Cancel</button>
-            <button onClick={save} disabled={saving || !expiresOn} data-testid="vaccine-save"
-                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit Update"}</button>
+            <button onClick={save} disabled={saving || !expiresOn || !photo} data-testid="vaccine-save"
+                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit for Review"}</button>
           </div>
         </div>
       </div>
