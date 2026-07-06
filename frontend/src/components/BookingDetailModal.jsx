@@ -177,16 +177,12 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
     groupSubtotal = perDog.reduce((s, p) => s + p.base + p.addons, 0);
     // Apply discount on additional dogs' BASE only (not on their addons).
     const t = booking.service_type;
-    const mdSvc = (mdCfg.by_service || {})[t] || {};
     const mdEligibleSvc = (t === "daycare" || t === "boarding");
-    const mdActive = mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdCfg.enabled;
-    const mdMode  = mdSvc.mode || mdCfg.mode || "percent";
-    const mdValue = Number(mdSvc.value ?? mdCfg.value ?? 0);
-    if (mdEligibleSvc && mdActive && mdValue > 0 && perDog.length > 1) {
+    if (mdEligibleSvc && perDog.length > 1) {
+      // Fixed Sit Happens rule: daycare/boarding additional dogs are 50% off
+      // their base service price. Ignore older saved flat/legacy settings here.
       const extraDogsBase = perDog.slice(1).reduce((s, p) => s + p.base, 0);
-      groupMdDiscount = mdMode === "percent"
-        ? extraDogsBase * (mdValue / 100)
-        : Math.min(extraDogsBase, mdValue * (perDog.length - 1));
+      groupMdDiscount = extraDogsBase * 0.5;
     }
     groupTotal = Math.max(0, groupSubtotal - groupMdDiscount);
   }
@@ -448,7 +444,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                   <div className="flex justify-between"
                        data-testid="booking-detail-group-md-discount">
                     <span className="text-shGreen">
-                      <i className="fas fa-tag mr-1.5"/>{mdCfg.label || "Multi-dog discount"}
+                      <i className="fas fa-tag mr-1.5"/>{"Additional dog discount"}
                     </span>
                     <span className="text-shGreen font-black">−{fmtMoney(groupMdDiscount)}</span>
                   </div>

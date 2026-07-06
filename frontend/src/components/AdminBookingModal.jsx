@@ -20,26 +20,27 @@ const pluralUnit = (count, label) => {
 };
 
 const getMultiDogDiscountConfig = (settings, serviceType) => {
+  // Sit Happens fixed business rule: daycare and boarding additional dogs are
+  // always 50% off the same base service price as the first dog. Do not trust
+  // older saved settings like flat $12.50 or service.additional_dog_rate here;
+  // those were the source of weird daycare totals like $47.50.
+  if (serviceType === "daycare" || serviceType === "boarding") {
+    return { mode: "percent", value: 50, label: "Additional dog discount", source: "fixed_daycare_boarding_rule" };
+  }
   if (!settings) return null;
-  const eligibleDefault = serviceType === "daycare" || serviceType === "boarding";
   const per = settings.multi_dog_discount_by_service || {};
   const svcCfg = per[serviceType];
   if (svcCfg && Object.keys(svcCfg).length > 0) {
     if (!svcCfg.enabled) return null;
     return {
       mode: svcCfg.mode || "percent",
-      value: Number(svcCfg.value ?? 50),
+      value: Number(svcCfg.value || 0),
       label: svcCfg.label || "Additional dog discount",
     };
   }
-  if (!eligibleDefault) return null;
-  if (settings.multi_dog_discount_enabled === false) return null;
-  return {
-    mode: settings.multi_dog_discount_mode || "percent",
-    value: Number(settings.multi_dog_discount_value ?? 50),
-    label: settings.multi_dog_discount_label || "Additional dog discount",
-  };
+  return null;
 };
+
 
 const calcDiscountAmount = (rawAdditionalDogBase, cfg, additionalDogs) => {
   const raw = Math.max(0, Number(rawAdditionalDogBase) || 0);
@@ -356,27 +357,34 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     const pool = creditPoolForService(serviceType);
     const creditsAvailable = pool && selectedClient ? Number(selectedClient[pool.key] || 0) : 0;
 
-    // Admin creates grouped bookings as one row per dog. For the Sit Happens
-    // daycare/boarding rule, the discount is 50% off the same base service
-    // rate the first dog pays. Do NOT use old per-service `additional_dog_rate`
-    // or dog-specific stale quote rows as the discount base, or daycare can
-    // show weird math like $60 - $12.50 instead of $60 - $15.
-    const additionalDogCount = new Set(quoteLines.filter(l => l.dog_id && l.dog_id !== dogId).map(l => l.dog_id)).size;
-    const primaryBaseTotal = quoteLines
-      .filter(l => l.dog_id === dogId && (serviceType === "daycare" || serviceType === "boarding"))
-      .reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
-    const fallbackAdditionalDogBase = quoteLines
-      .filter(l => l.dog_id && l.dog_id !== dogId && (serviceType === "daycare" || serviceType === "boarding"))
-      .reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
-    const additionalDogBase = primaryBaseTotal > 0
-      ? primaryBaseTotal * additionalDogCount
-      : fallbackAdditionalDogBase;
+    // Admin creates grouped bookings as one row per dog. For daycare/boarding,
+    // the display must ignore any stale per-dog quote rows or old service
+    // `additional_dog_rate` values. Use the highest normal per-dog base as the
+    // reference rate, then apply 50% off that reference to each additional dog.
+    // Example: two daycare dogs at $30/day => base $60, discount $15, total $45.
+    const coreMultiDogService = serviceType === "daycare" || serviceType === "boarding";
+    const uniqueDogIds = [...new Set(quoteLines.map(l => l.dog_id).filter(Boolean))];
+    const additionalDogCount = coreMultiDogService ? Math.max(0, uniqueDogIds.length - 1) : 0;
+    let standardBaseTotal = baseTotal;
+    let additionalDogBase = 0;
+    if (coreMultiDogService && uniqueDogIds.length > 1) {
+      const baseByDog = uniqueDogIds.map(id =>
+        quoteLines
+          .filter(l => l.dog_id === id)
+          .reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0)
+      );
+      const referenceDogBase = Math.max(...baseByDog, 0);
+      if (referenceDogBase > 0) {
+        standardBaseTotal = referenceDogBase * uniqueDogIds.length;
+        additionalDogBase = referenceDogBase * additionalDogCount;
+      }
+    }
     const mdCfg = getMultiDogDiscountConfig(multiDogDiscountSettings, serviceType);
     const multiDogDiscountAmount = calcDiscountAmount(additionalDogBase, mdCfg, additionalDogCount);
-    const total = Math.max(0, rawTotal - multiDogDiscountAmount);
+    const total = Math.max(0, standardBaseTotal + addonTotal - multiDogDiscountAmount);
 
     return {
-      total, rawTotal, baseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable,
+      total, rawTotal, baseTotal: standardBaseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable,
       additionalDogBase, additionalDogCount,
       multiDogDiscountAmount,
       multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",

@@ -3700,46 +3700,40 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
 def _multi_dog_discount_config_for(settings: dict, service_type: str) -> Optional[Dict[str, Any]]:
     """Return the active multi-dog discount config for a service type.
 
-    Business rule for Sit Happens: daycare and boarding default to 50% off
-    additional dogs. Add-ons are not discounted. Explicit admin settings still
-    win, including disabling the rule.
+    Sit Happens fixed business rule: daycare and boarding additional dogs are
+    always 50% off the same base service rate as the first dog. Older installs
+    may still have `additional_dog_rate` or old multi_dog_discount settings
+    such as flat $12.50 saved in Mongo. Those legacy settings must NOT affect
+    daycare/boarding quotes, estimates, or checkout math.
+
+    For non-core services, preserve the older configurable behavior.
     """
     service_type = service_type or "daycare"
-    if service_type not in ("daycare", "boarding"):
-        # Other service types can still be enabled manually through settings,
-        # but they do not receive the Sit Happens default sibling discount.
-        per_service = settings.get("multi_dog_discount_by_service") or {}
-        cfg = per_service.get(service_type)
-        if not cfg:
-            return None
-        if not cfg.get("enabled"):
-            return None
-        return cfg
 
-    per_service = settings.get("multi_dog_discount_by_service") or {}
-    cfg = per_service.get(service_type)
-    if isinstance(cfg, dict) and cfg:
-        if not cfg.get("enabled"):
-            return None
+    if service_type in ("daycare", "boarding"):
         return {
             "enabled": True,
-            "mode": cfg.get("mode") or "percent",
-            "value": float(cfg.get("value") if cfg.get("value") is not None else 50.0),
-            "label": cfg.get("label") or "Additional dog discount",
+            "mode": "percent",
+            "value": 50.0,
+            "label": "Additional dog discount",
+            "source": "fixed_daycare_boarding_rule",
         }
 
-    # Legacy/global config fallback. If the global keys exist and the admin
-    # intentionally turned the master toggle off, respect that.
-    if "multi_dog_discount_enabled" in settings and not settings.get("multi_dog_discount_enabled"):
+    # Other service types can still be enabled manually through settings, but
+    # they do not receive the Sit Happens default sibling discount.
+    per_service = settings.get("multi_dog_discount_by_service") or {}
+    cfg = per_service.get(service_type)
+    if not cfg:
         return None
-
+    if not cfg.get("enabled"):
+        return None
     return {
         "enabled": True,
-        "mode": settings.get("multi_dog_discount_mode") or "percent",
-        "value": float(settings.get("multi_dog_discount_value") if settings.get("multi_dog_discount_value") is not None else 50.0),
-        "label": settings.get("multi_dog_discount_label") or "Additional dog discount",
+        "mode": cfg.get("mode") or "percent",
+        "value": float(cfg.get("value") or 0),
+        "label": cfg.get("label") or "Additional dog discount",
+        "source": "settings",
     }
-
 
 def _discount_amount_for_extra_dogs(raw_additional_dog_base: float, cfg: Optional[Dict[str, Any]], additional_dogs: int = 1) -> float:
     if not cfg or raw_additional_dog_base <= 0 or additional_dogs <= 0:

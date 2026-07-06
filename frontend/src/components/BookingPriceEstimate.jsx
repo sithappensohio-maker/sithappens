@@ -7,10 +7,10 @@ wizard Step 3, just above the Confirm button. STRICT GUARANTEES:
     pricing system, no new defaults to maintain.
   • Reads the client's existing credit balances (daycare/training/boarding)
     from /api/portal/me. Does NOT consume them; this is informational.
-  • Honors an optional `additional_dog_rate` field on the service doc if
-    the admin has set it; otherwise falls back to multiplying the base
-    rate by the number of dogs. (The current wizard is single-dog so this
-    path is dormant today but ready for a future multi-dog picker.)
+  • Daycare/boarding additional dogs use the fixed Sit Happens rule:
+    first dog at full base rate, each additional dog 50% off that same
+    base rate. Old `additional_dog_rate` service fields are ignored for
+    daycare/boarding so legacy settings cannot underquote estimates.
   • Calculation per service type:
        daycare       → base_price × #dates × #dogs
        boarding      → base_price × #nights × #dogs
@@ -200,11 +200,13 @@ export default function BookingPriceEstimate({
     // the checkout flow will charge, so the customer + admin both see the
     // accurate group total before they confirm). Per-service config wins;
     // otherwise the global value is used.
-    const mdSvc = (mdDiscount?.by_service || {})[serviceType] || {};
-    const mdEligibleSvc = (serviceType === "daycare" || serviceType === "boarding"); // pre-existing scope
-    const mdActiveForSvc = mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdDiscount?.enabled;
-    const mdMode  = mdSvc.mode || mdDiscount?.mode || "percent";
-    const mdValue = Number(mdSvc.value ?? mdDiscount?.value ?? 0);
+    const mdEligibleSvc = (serviceType === "daycare" || serviceType === "boarding");
+    // Sit Happens fixed rule. Ignore older saved discount settings for
+    // daycare/boarding, including flat $12.50 configs from the previous system.
+    const mdSvc = mdEligibleSvc ? { mode: "percent", value: 50, label: "Additional dog discount" } : ((mdDiscount?.by_service || {})[serviceType] || {});
+    const mdActiveForSvc = mdEligibleSvc ? true : (mdSvc.enabled !== undefined ? !!mdSvc.enabled : !!mdDiscount?.enabled);
+    const mdMode  = mdEligibleSvc ? "percent" : (mdSvc.mode || mdDiscount?.mode || "percent");
+    const mdValue = mdEligibleSvc ? 50 : Number(mdSvc.value ?? mdDiscount?.value ?? 0);
     const applyMd = mdEligibleSvc && mdActiveForSvc && mdValue > 0 && additionalDogs > 0;
     // Compute the additional-dog price WITHOUT the discount first, then
     // subtract — that way the breakdown still shows the raw line and the
@@ -263,7 +265,7 @@ export default function BookingPriceEstimate({
       // Sprint 110di-49 — Expose the upfront multi-dog discount so the
       // breakdown UI can render it as its own "you save" line.
       md_discount_amount: mdDiscountAmount,
-      md_discount_label: mdDiscount?.label || "Additional dog discount",
+      md_discount_label: mdSvc?.label || mdDiscount?.label || "Additional dog discount",
       md_discount_applied: applyMd,
     };
   }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules, mdDiscount]);
