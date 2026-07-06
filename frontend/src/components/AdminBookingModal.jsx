@@ -4,6 +4,21 @@ import MultiDatePicker from "./MultiDatePicker";
 import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
 
+
+const fmtUSD = (n) => `$${(Math.max(0, Number(n) || 0)).toFixed(2)}`;
+
+const creditPoolForService = (serviceType) => {
+  if (serviceType === "daycare") return { key: "credits", label: "daycare credits" };
+  if (serviceType === "training") return { key: "training_credits", label: "training credits" };
+  if (serviceType === "boarding") return { key: "boarding_credits", label: "boarding credits" };
+  return null;
+};
+
+const pluralUnit = (count, label) => {
+  const clean = String(label || "units").replace(/s$/, "");
+  return `${count} ${Number(count) === 1 ? clean : `${clean}s`}`;
+};
+
 export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
@@ -44,6 +59,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // and immediately sees it appear / disappear from the booking modal).
   const [eligibleAddons, setEligibleAddons] = useState([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState([]);
+
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const [quoteError, setQuoteError] = useState("");
+  const [quoteLines, setQuoteLines] = useState([]);
 
   // Sprint 110di-38 — Multi-dog group booking (admin variant).
   // Mirrors the portal wizard pattern: primary dog + extras share the same
@@ -135,6 +154,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     }));
   }, [dogs, clients]);
 
+  const selectedClient = useMemo(() => clients.find(c => c.id === clientId) || null, [clients, clientId]);
   const selectedDog = dogs.find(d => d.id === dogId);
   const rabies = selectedDog?.vaccines?.rabies || "";
   const rabiesOk = rabies && rabies >= todayISO();
@@ -165,6 +185,121 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     })();
     return () => { cancelled = true; };
   }, [serviceType, isEdit]);
+
+  // Admin-facing live estimate. Uses the same backend /pricing/quote
+  // endpoint that powers the client portal so admin-created bookings do not
+  // silently use different math. Read-only: does not create bookings or spend credits.
+  useEffect(() => {
+    if (isEdit) {
+      setQuoteLines([]);
+      setQuoteError("");
+      setQuoteLoading(false);
+      return;
+    }
+
+    const primaryDog = dogs.find(d => d.id === dogId);
+    const hasOneDate = !!date;
+    const datesToQuote = isMultiDate ? [...multiDates].sort() : (hasOneDate ? [date] : []);
+
+    if (!dogId || !serviceType || datesToQuote.length === 0) {
+      setQuoteLines([]);
+      setQuoteError("");
+      setQuoteLoading(false);
+      return;
+    }
+
+    if (serviceType === "boarding") {
+      if (!endDate) {
+        setQuoteLines([]);
+        setQuoteError("Pick a pickup date to see the boarding estimate.");
+        setQuoteLoading(false);
+        return;
+      }
+      if (endDate <= date) {
+        setQuoteLines([]);
+        setQuoteError("Pickup date must be after the drop-off date to calculate boarding nights.");
+        setQuoteLoading(false);
+        return;
+      }
+    }
+
+    const dogRows = [
+      {
+        dog_id: dogId,
+        dog_name: primaryDog?.name || "Selected dog",
+        addon_service_ids: selectedAddonIds,
+      },
+      ...extraDogs
+        .filter(e => e?.dog_id)
+        .map(e => ({
+          dog_id: e.dog_id,
+          dog_name: dogs.find(d => d.id === e.dog_id)?.name || "Extra dog",
+          addon_service_ids: e.addon_service_ids || [],
+        })),
+    ];
+
+    let cancelled = false;
+    setQuoteLoading(true);
+    setQuoteError("");
+
+    Promise.all(
+      dogRows.flatMap(row =>
+        datesToQuote.map(d =>
+          api.post("/pricing/quote", {
+            service_type: serviceType,
+            date: d,
+            end_date: serviceType === "boarding" ? endDate : null,
+            dog_id: row.dog_id,
+            addon_service_ids: row.addon_service_ids || [],
+          }).then(({ data }) => ({
+            dog_id: row.dog_id,
+            dog_name: row.dog_name,
+            date: d,
+            quote: data || {},
+          }))
+        )
+      )
+    )
+      .then(lines => {
+        if (!cancelled) setQuoteLines(lines || []);
+      })
+      .catch(e => {
+        if (!cancelled) {
+          setQuoteLines([]);
+          setQuoteError(formatErr(e.response?.data?.detail) || "Estimate unavailable. Check service pricing setup.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [
+    isEdit,
+    dogId,
+    serviceType,
+    date,
+    endDate,
+    isMultiDate,
+    JSON.stringify(multiDates),
+    JSON.stringify(selectedAddonIds),
+    JSON.stringify(extraDogs),
+    dogs,
+  ]);
+
+  const quoteSummary = useMemo(() => {
+    if (!quoteLines.length) return null;
+    const total = quoteLines.reduce((sum, l) => sum + Number(l.quote?.estimated_price || 0), 0);
+    const baseTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
+    const addonTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.add_on_total || 0), 0);
+    const units = quoteLines.reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0);
+    const creditUnitsRequired = quoteLines.reduce((sum, l) => sum + Number(l.quote?.credit_units_required || 0), 0);
+    const unitLabel = quoteLines[0]?.quote?.unit_label || (serviceType === "boarding" ? "nights" : "visits");
+    const serviceName = quoteLines[0]?.quote?.service_name || serviceType;
+    const pool = creditPoolForService(serviceType);
+    const creditsAvailable = pool && selectedClient ? Number(selectedClient[pool.key] || 0) : 0;
+    return { total, baseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable };
+  }, [quoteLines, serviceType, selectedClient]);
 
   const submit = async () => {
     setErr("");
@@ -603,6 +738,76 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {!isEdit && (
+            <div className="bg-bgBase border border-shGreen/30 rounded-lg p-4 space-y-3" data-testid="admin-booking-estimate">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-[13px] font-black text-shGreen uppercase tracking-widest">
+                  <i className="fas fa-receipt mr-2"/>Estimated Price
+                </span>
+                {quoteSummary?.serviceName && (
+                  <span className="text-[11px] text-gray-500 font-black uppercase tracking-widest text-right">
+                    {quoteSummary.serviceName}
+                  </span>
+                )}
+              </div>
+
+              {quoteLoading ? (
+                <div className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
+                  <i className="fas fa-circle-notch fa-spin mr-2"/>Calculating estimate…
+                </div>
+              ) : quoteError ? (
+                <div className="bg-shOrange/10 border border-shOrange/40 rounded px-3 py-2 text-[13px] text-shOrange font-black uppercase tracking-widest" data-testid="admin-booking-estimate-error">
+                  <i className="fas fa-triangle-exclamation mr-2"/>{quoteError}
+                </div>
+              ) : quoteSummary ? (
+                <div className="space-y-2 text-[14px]">
+                  <div className="flex justify-between" data-testid="admin-booking-estimate-base">
+                    <span className="text-gray-400">
+                      Base price
+                      {quoteSummary.units > 0 && (
+                        <span className="text-gray-500 ml-1">({pluralUnit(quoteSummary.units, quoteSummary.unitLabel)})</span>
+                      )}
+                    </span>
+                    <span className="text-white font-black">{fmtUSD(quoteSummary.baseTotal)}</span>
+                  </div>
+
+                  {quoteSummary.addonTotal > 0 && (
+                    <div className="flex justify-between" data-testid="admin-booking-estimate-addons">
+                      <span className="text-gray-400"><i className="fas fa-plus-circle text-shGreen mr-1.5 opacity-60"/>Add-ons</span>
+                      <span className="text-white font-black">{fmtUSD(quoteSummary.addonTotal)}</span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between border-t border-bgHover pt-2" data-testid="admin-booking-estimate-total">
+                    <span className="text-white font-black uppercase tracking-widest text-[13px]">Estimated total</span>
+                    <span className="text-white font-black text-[20px]">{fmtUSD(quoteSummary.total)}</span>
+                  </div>
+
+                  {quoteSummary.pool && (
+                    <div className="bg-shBlue/10 border border-shBlue/30 rounded px-3 py-2 text-[12px] text-shBlue font-black uppercase tracking-widest" data-testid="admin-booking-estimate-credits">
+                      <i className="fas fa-ticket mr-2"/>
+                      Client has {quoteSummary.creditsAvailable} {quoteSummary.pool.label}; this booking needs about {quoteSummary.creditUnitsRequired} credit{quoteSummary.creditUnitsRequired === 1 ? "" : "s"} if paid with credits.
+                    </div>
+                  )}
+
+                  {quoteLines.length > 1 && (
+                    <div className="text-[12px] text-gray-500 font-black uppercase tracking-widest" data-testid="admin-booking-estimate-line-count">
+                      <i className="fas fa-calculator mr-1.5"/>{quoteLines.length} quoted line item{quoteLines.length === 1 ? "" : "s"} across selected dog/date entries.
+                    </div>
+                  )}
+
+                  <p className="text-[11px] text-gray-500 leading-relaxed" data-testid="admin-booking-estimate-disclaimer">
+                    Estimate only. Checkout can still adjust for credits, discounts, extra services, or manual admin changes.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-[13px] text-gray-500 font-black uppercase tracking-widest" data-testid="admin-booking-estimate-empty">
+                  Pick the client, dog, service, and date to see the estimate before creating the booking.
+                </div>
+              )}
             </div>
           )}
 
