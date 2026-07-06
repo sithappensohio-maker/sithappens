@@ -1696,8 +1696,8 @@ function RegisterTab() {
   const [notes, setNotes] = useState("");
   const [clients, setClients] = useState([]);
   const [packs, setPacks] = useState([]);
-  const [sale, setSale] = useState({ description: "", amount: "", category: "Misc Sale", payment_method: "clover", client_id: "", notes: "", apply_tax: false });
-  const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", payment_method: "clover", amount_paid: "", note: "" });
+  const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "clover", client_id: "", notes: "", apply_tax: false });
+  const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", quantity: "1", payment_method: "clover", amount_paid: "", note: "" });
   const [payment, setPayment] = useState({ client_id: "", amount: "", method: "clover", notes: "" });
   const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "clover", reason: "", notes: "" });
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
@@ -1731,6 +1731,11 @@ function RegisterTab() {
 
   const selectedClient = (id) => clients.find(c => c.id === id);
   const selectedPack = packs.find(p => p.id === packSale.pack_id);
+  const saleQty = Math.max(1, Number(sale.quantity || 1));
+  const saleUnit = Number(sale.unit_price || 0);
+  const saleLineTotal = saleUnit > 0 ? saleQty * saleUnit : Number(sale.amount || 0);
+  const packQty = Math.max(1, Number(packSale.quantity || 1));
+  const packOrderTotal = selectedPack ? Number(selectedPack.price || 0) * packQty : 0;
   const money = (n) => `$${Number(n || 0).toFixed(2)}`;
   const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
   const submit = async (fn) => {
@@ -1744,25 +1749,34 @@ function RegisterTab() {
     setData(r.data.register); setNotes(""); showDone("Opening drawer saved.");
   });
   const submitSale = () => submit(async () => {
+    const qty = Math.max(1, Number(sale.quantity || 1));
+    const unitPrice = Number(sale.unit_price || 0);
+    const totalAmount = unitPrice > 0 ? qty * unitPrice : Number(sale.amount || 0);
     await api.post("/retail-sales", {
       date,
       description: sale.description,
-      amount: Number(sale.amount || 0),
+      quantity: qty,
+      unit_price: unitPrice > 0 ? unitPrice : null,
+      amount: Number(totalAmount || 0),
       category: sale.category || "Misc Sale",
       payment_method: sale.payment_method,
       client_id: sale.client_id || null,
       notes: sale.notes,
       apply_tax: !!sale.apply_tax,
     });
-    setSale({ description: "", amount: "", category: "Misc Sale", payment_method: sale.payment_method, client_id: sale.client_id, notes: "", apply_tax: false });
+    setSale({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: sale.payment_method, client_id: sale.client_id, notes: "", apply_tax: false });
     showDone("Sale logged in the Register.");
   });
   const submitPackSale = () => submit(async () => {
-    const body = { pack_id: packSale.pack_id, payment_method: packSale.payment_method, note: packSale.note };
+    const body = {
+      items: [{ pack_id: packSale.pack_id, quantity: Math.max(1, Number(packSale.quantity || 1)) }],
+      payment_method: packSale.payment_method,
+      note: packSale.note,
+    };
     if (packSale.amount_paid !== "") body.amount_paid = Number(packSale.amount_paid || 0);
-    await api.post(`/clients/${packSale.client_id}/sell-pack`, body);
-    setPackSale({ client_id: packSale.client_id, pack_id: "", payment_method: packSale.payment_method, amount_paid: "", note: "" });
-    showDone("Credit pack sold and added to the Register.");
+    await api.post(`/clients/${packSale.client_id}/sell-packs`, body);
+    setPackSale({ client_id: packSale.client_id, pack_id: "", quantity: "1", payment_method: packSale.payment_method, amount_paid: "", note: "" });
+    showDone("Credit pack(s) sold and added to the Register.");
     loadChoices();
   });
   const submitPayment = () => submit(async () => {
@@ -1918,30 +1932,41 @@ function RegisterTab() {
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-cart-plus text-shGreen mr-2"/>New Sale</h4>
         <p className="text-[12px] text-gray-500">Use this for merch, misc services, deposits, or any sale that did not start from a booking.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Description" value={sale.description} onChange={v=>setSale({...sale, description:v})} placeholder="Merch, deposit, misc service"/>
-          <FormInput label="Amount collected" type="number" step="0.01" value={sale.amount} onChange={v=>setSale({...sale, amount:v})}/>
+          <FormInput label="Description" value={sale.description} onChange={v=>setSale({...sale, description:v})} placeholder="Leash, merch, deposit, misc service"/>
+          <FormInput label="Quantity" type="number" step="1" value={sale.quantity} onChange={v=>setSale({...sale, quantity:v})} placeholder="1"/>
+          <FormInput label="Price each" type="number" step="0.01" value={sale.unit_price} onChange={v=>setSale({...sale, unit_price:v})} placeholder="Use for items like 2 leashes"/>
+          <FormInput label="Amount collected" type="number" step="0.01" value={sale.amount} onChange={v=>setSale({...sale, amount:v})} placeholder={saleUnit > 0 ? `auto = ${money(saleLineTotal)}` : "total sale amount"}/>
           {methodSelect(sale.payment_method, v=>setSale({...sale, payment_method:v}))}
           <FormInput label="Category" value={sale.category} onChange={v=>setSale({...sale, category:v})}/>
           {clientSelect(sale.client_id, v=>setSale({...sale, client_id:v}), true)}
           <FormInput label="Notes" value={sale.notes} onChange={v=>setSale({...sale, notes:v})}/>
         </div>
+        <div className="bg-bgBase/70 border border-bgHover rounded p-3 text-[13px] text-gray-300">
+          <span className="font-black text-white">Sale total:</span> {saleUnit > 0 ? `${saleQty} × ${money(saleUnit)} = ${money(saleLineTotal)}` : money(saleLineTotal)}
+          <span className="block text-[11px] text-gray-500 mt-1">For items, enter quantity and price each. For a one-off service/deposit, you can just enter Amount collected.</span>
+        </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!sale.apply_tax} onChange={e=>setSale({...sale, apply_tax:e.target.checked})}/> Apply configured retail sales tax to this total</label>
-        <button disabled={!sale.description || !Number(sale.amount)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log sale</button>
+        <button disabled={!sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log sale</button>
       </div>}
 
       {active === "pack" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-ticket text-shBlue mr-2"/>Sell Credit Pack</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientSelect(packSale.client_id, v=>setPackSale({...packSale, client_id:v}), false)}
-          <Select label="Credit pack" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
+          <Select label="Credit pack / single-day credit" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
             <option value="">Choose pack…</option>{packs.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} {p.service_type} · {money(p.price)}</option>)}
           </Select>
+          <FormInput label="Quantity to sell" type="number" step="1" value={packSale.quantity} onChange={v=>setPackSale({...packSale, quantity:v})} placeholder="1"/>
           {methodSelect(packSale.payment_method, v=>setPackSale({...packSale, payment_method:v}))}
-          <FormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(selectedPack.price)}` : "blank = full price"}/>
+          <FormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(packOrderTotal)}` : "blank = full price"}/>
           <FormInput label="Note" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})}/>
         </div>
-        {selectedPack && <p className="text-[12px] text-gray-400">Pack value: <span className="text-white font-black">{money(selectedPack.price)}</span>. Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</p>}
-        <button disabled={!packSale.client_id || !packSale.pack_id} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Sell pack</button>
+        {selectedPack && <div className="bg-bgBase/70 border border-bgHover rounded p-3 text-[13px] text-gray-300 space-y-1">
+          <div><span className="font-black text-white">Credits added:</span> {packQty * Number(selectedPack.qty || 0)} {selectedPack.service_type || "service"} credits</div>
+          <div><span className="font-black text-white">Order total:</span> {packQty} × {money(selectedPack.price)} = {money(packOrderTotal)}</div>
+          <div className="text-[11px] text-gray-500">Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</div>
+        </div>}
+        <button disabled={!packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Sell credit order</button>
       </div>}
 
       {active === "payment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">

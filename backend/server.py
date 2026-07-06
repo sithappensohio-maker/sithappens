@@ -19336,6 +19336,8 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
         "date": body.date,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
+        "quantity": round(float(body.quantity or 1), 3),
+        "unit_price": round(float(body.unit_price), 2) if body.unit_price is not None else None,
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
         "payment_method": _normalize_payment_method(body.payment_method, store=True),
@@ -19363,6 +19365,8 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
         "date": body.date,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
+        "quantity": round(float(body.quantity or 1), 3),
+        "unit_price": round(float(body.unit_price), 2) if body.unit_price is not None else None,
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
         "payment_method": _normalize_payment_method(body.payment_method, store=True),
@@ -19413,6 +19417,11 @@ class RetailSaleIn(BaseModel):
     date: str = Field(min_length=10, max_length=10)  # YYYY-MM-DD
     description: str = Field(min_length=1, max_length=200)
     amount: float = Field(ge=0)
+    # Sprint 110dq — Register/POS quantity support. Amount stays the money
+    # source of truth, but quantity + unit_price are saved for receipts/audit
+    # so a sale can say "2 × leash @ $12.99" instead of just one lump sum.
+    quantity: Optional[float] = Field(default=1, ge=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "credits", "other"]] = "clover"
@@ -19461,6 +19470,8 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
         "date": body.date,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
+        "quantity": round(float(body.quantity or 1), 3),
+        "unit_price": round(float(body.unit_price), 2) if body.unit_price is not None else None,
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
         "payment_method": _normalize_payment_method(body.payment_method, store=True),
@@ -19540,6 +19551,8 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
         "date": body.date,
         "description": body.description.strip(),
         "amount": round(float(body.amount), 2),
+        "quantity": round(float(body.quantity or 1), 3),
+        "unit_price": round(float(body.unit_price), 2) if body.unit_price is not None else None,
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
         "payment_method": _normalize_payment_method(body.payment_method, store=True),
@@ -20901,7 +20914,8 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     receipt_lines: List[Dict] = []
     for item in body.items:
         pack = packs[item.pack_id]
-        unit_price = float(pack["price"])
+        pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], float(pack["price"]))
+        unit_price = float(pricing.get("effective_price") or pack["price"])
         receipt_lines.append({
             "pack_id": pack["id"],
             "name": pack["name"],
