@@ -3491,30 +3491,225 @@ async def credit_referral(client_id: str, body: dict, user: dict = Depends(requi
     if not rclient:
         raise HTTPException(status_code=404, detail="Referred client not found")
 
-    await db.clients.update_one({"id": client_id}, {"$inc": {"credits": bonus}})
-    log = {
-        "id": str(uuid.uuid4()),
-        "referrer_id": client_id,
-        "referrer_name": client.get("name", ""),
-        "referred_id": referred,
-        "referred_name": rclient.get("name", ""),
-        "bonus_credits": bonus,
-        "note": note,
-        "created_by": user.get("name", "Admin"),
-        "created_at": now_iso(),
-    }
-    await db.referrals.insert_one(log)
+    # Manual referral credits are still allowed, but they now use the same
+    # non-cash rewards ledger as auto-referrals so credit history and tax reports
+    # stay clean. If the referral was already paid, return the existing row.
+    if bonus != 1:
+        reward = await _grant_client_reward_credit(
+            client,
+            service="daycare",
+            amount=bonus,
+            reason=f"Referral bonus — referred {rclient.get('name','')}",
+            source="referral_manual",
+            source_id=referred,
+            actor=user.get("id", "admin"),
+            actor_name=user.get("name", "Admin"),
+        )
+        log = {
+            "id": str(uuid.uuid4()),
+            "status": "paid",
+            "referrer_id": client_id,
+            "referrer_name": client.get("name", ""),
+            "referred_id": referred,
+            "referred_name": rclient.get("name", ""),
+            "reward_service": "daycare",
+            "bonus_credits": bonus,
+            "reward_ledger_id": reward.get("id"),
+            "note": note,
+            "created_by": user.get("name", "Admin"),
+            "created_at": now_iso(),
+            "earned_at": now_iso(),
+            "paid_at": now_iso(),
+        }
+        await db.referrals.insert_one(log)
+        log.pop("_id", None)
+        return log
+    log = await _grant_referral_reward_once(
+        referred_client=rclient,
+        referrer=client,
+        actor=user.get("id", "admin"),
+        actor_name=user.get("name", "Admin"),
+        note=note,
+    )
+    return log or {"ok": False}
+
+
+# -------- Rewards / referrals safety helpers --------
+def _reward_credit_field(service: str) -> str:
+    svc = (service or "daycare").strip().lower()
+    if svc == "boarding":
+        return "boarding_credits"
+    if svc == "training":
+        return "training_credits"
+    return "credits"
+
+
+def _reward_service_label(service: str) -> str:
+    svc = (service or "daycare").strip().lower()
+    return {"daycare": "daycare", "boarding": "boarding", "training": "training"}.get(svc, "daycare")
+
+
+async def _grant_client_reward_credit(
+    client: dict,
+    *,
+    service: str = "daycare",
+    amount: float = 1.0,
+    reason: str = "Reward credit",
+    source: str = "reward",
+    source_id: str = "",
+    actor: str = "system",
+    actor_name: str = "system",
+) -> dict:
+    """Grant a non-cash reward credit and write a durable audit row.
+
+    This is intentionally separate from sales/register cash. Referral/trivia
+    credits are value given away, not income collected, so they must not pollute
+    Register totals or Schedule C income estimates.
+    """
+    if not client or not client.get("id"):
+        raise HTTPException(status_code=404, detail="Client not found")
+    try:
+        amt = round(float(amount or 0), 2)
+    except Exception:
+        amt = 0.0
+    if amt <= 0 or amt > 50:
+        raise HTTPException(status_code=400, detail="Reward credit amount must be greater than 0 and no more than 50")
+    svc = _reward_service_label(service)
+    field = _reward_credit_field(svc)
+    before = round(float(client.get(field) or 0), 2)
+    after = round(before + amt, 2)
+    ts = now_iso()
+    await db.clients.update_one({"id": client["id"]}, {"$inc": {field: amt}})
+    adj_id = str(uuid.uuid4())
     await db.credit_adjustments.insert_one({
-        "id": str(uuid.uuid4()),
-        "client_id": client_id,
+        "id": adj_id,
+        "client_id": client["id"],
         "client_name": client.get("name", ""),
-        "changes": {"daycare": {"before": round(float(client.get("credits") or 0), 2), "delta": bonus, "after": round(float(client.get("credits") or 0) + bonus, 2)}},
-        "note": f"Referral bonus — referred {rclient.get('name','')}",
-        "adjusted_by": user.get("name", "Admin"),
-        "adjusted_at": now_iso(),
+        "changes": {svc: {"before": before, "delta": amt, "after": after}},
+        "note": reason,
+        "adjusted_by": actor_name or actor or "system",
+        "adjusted_at": ts,
+        "source": source,
+        "source_id": source_id,
     })
-    log.pop("_id", None)
-    return log
+    reward_row = {
+        "id": str(uuid.uuid4()),
+        "client_id": client["id"],
+        "client_name": client.get("name", ""),
+        "reward_type": "credit",
+        "service": svc,
+        "amount": amt,
+        "before": before,
+        "after": after,
+        "reason": reason,
+        "source": source,
+        "source_id": source_id,
+        "created_by": actor,
+        "created_by_name": actor_name or actor,
+        "created_at": ts,
+        "cash_value": 0,
+        "is_income": False,
+        "credit_adjustment_id": adj_id,
+    }
+    await db.rewards_ledger.insert_one(reward_row)
+    reward_row.pop("_id", None)
+    return reward_row
+
+
+async def _completed_booking_count_for_client(client_id: str, *, exclude_id: str = "") -> int:
+    filt = {
+        "client_id": client_id,
+        "status": "completed",
+        "checked_out_at": {"$ne": None, "$exists": True},
+    }
+    if exclude_id:
+        filt["id"] = {"$ne": exclude_id}
+    active = await db.bookings.count_documents(filt)
+    try:
+        archived = await db.bookings_archive.count_documents(filt)
+    except Exception:
+        archived = 0
+    return int(active or 0) + int(archived or 0)
+
+
+def _booking_has_real_value(booking: dict) -> bool:
+    """Avoid referral payouts for empty/test/comp checkouts when possible."""
+    if not booking:
+        return False
+    if (booking.get("status") or "").lower() in {"cancelled", "canceled", "rejected", "no_show"}:
+        return False
+    if bool(booking.get("test") or booking.get("is_test")):
+        return False
+    money_fields = ["actual_price", "amount_paid", "cash_revenue", "estimated_price", "credit_value"]
+    for f in money_fields:
+        try:
+            if float(booking.get(f) or 0) > 0:
+                return True
+        except Exception:
+            pass
+    try:
+        if float(booking.get("credits_deducted") or 0) > 0:
+            return True
+    except Exception:
+        pass
+    if (booking.get("payment_method") or "") == "credits":
+        return True
+    # If the booking has a service type and was actually completed, still treat it
+    # as real rather than silently blocking a legitimate comped first visit.
+    return bool(booking.get("service_type"))
+
+
+async def _grant_referral_reward_once(
+    *,
+    referred_client: dict,
+    referrer: dict,
+    booking: Optional[dict] = None,
+    actor: str = "system",
+    actor_name: str = "system",
+    note: str = "Referral reward — 1 free daycare credit",
+) -> Optional[dict]:
+    """Idempotently grant Garrett's referral reward: +1 daycare credit."""
+    if not referred_client or not referrer:
+        return None
+    referred_id = referred_client.get("id")
+    referrer_id = referrer.get("id")
+    if not referred_id or not referrer_id or referred_id == referrer_id:
+        return None
+    existing = await db.referrals.find_one({"referred_id": referred_id}, {"_id": 0})
+    if existing:
+        return existing
+    reward = await _grant_client_reward_credit(
+        referrer,
+        service="daycare",
+        amount=1,
+        reason=f"Referral bonus — referred {referred_client.get('name','')}",
+        source="referral",
+        source_id=referred_id,
+        actor=actor,
+        actor_name=actor_name,
+    )
+    ts = now_iso()
+    row = {
+        "id": str(uuid.uuid4()),
+        "status": "paid",
+        "referrer_id": referrer_id,
+        "referrer_name": referrer.get("name", ""),
+        "referred_id": referred_id,
+        "referred_name": referred_client.get("name", ""),
+        "reward_service": "daycare",
+        "bonus_credits": 1,
+        "reward_ledger_id": reward.get("id"),
+        "trigger_booking_id": (booking or {}).get("id", ""),
+        "trigger_service_type": (booking or {}).get("service_type", ""),
+        "note": note,
+        "created_by": actor_name or actor,
+        "created_at": ts,
+        "earned_at": ts,
+        "paid_at": ts,
+    }
+    await db.referrals.insert_one(row)
+    row.pop("_id", None)
+    return row
 
 
 # -------- Vaccine cert self-upload (client portal) --------
@@ -5310,61 +5505,36 @@ async def check_out(
             ref_code = (client or {}).get("referred_by_code") or ""
             ref_code = ref_code.upper().strip()
             if ref_code and not await db.referrals.find_one({"referred_id": client_id}):
-                # Was this the client's first checkout?
-                prior = await db.bookings.count_documents({
-                    "client_id": client_id,
-                    "checked_out_at": {"$ne": None, "$exists": True},
-                    "id": {"$ne": booking_id},
-                })
-                if prior == 0:
+                # Was this the client's first real checkout? Include archived
+                # bookings so a 90-day archive job doesn't cause duplicate rewards.
+                prior = await _completed_booking_count_for_client(client_id, exclude_id=booking_id)
+                if prior == 0 and _booking_has_real_value(booking):
                     referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
                     # Don't credit self-referrals
                     if referrer and referrer.get("id") != client_id:
-                        before_balance = round(float(referrer.get("credits") or 0), 2)
-                        new_balance = round(before_balance + 1, 2)
-                        await db.clients.update_one(
-                            {"id": referrer["id"]},
-                            {"$inc": {"credits": 1}},
+                        referral_row = await _grant_referral_reward_once(
+                            referred_client=client,
+                            referrer=referrer,
+                            booking=booking,
+                            actor="system",
+                            actor_name="system",
+                            note="Auto-credit on first real completed appointment",
                         )
-                        now = now_iso()
-                        await db.referrals.insert_one({
-                            "id": str(uuid.uuid4()),
-                            "referrer_id": referrer["id"],
-                            "referrer_name": referrer.get("name", ""),
-                            "referred_id": client_id,
-                            "referred_name": client.get("name", ""),
-                            "bonus_credits": 1,
-                            "trigger_booking_id": booking_id,
-                            "trigger_service_type": booking.get("service_type", ""),
-                            "note": "Auto-credit on first completed appointment",
-                            "created_by": "system",
-                            "created_at": now,
-                        })
-                        await db.credit_adjustments.insert_one({
-                            "id": str(uuid.uuid4()),
-                            "client_id": referrer["id"],
-                            "client_name": referrer.get("name", ""),
-                            "changes": {"daycare": {
-                                "before": before_balance,
-                                "delta": 1,
-                                "after": new_balance,
-                            }},
-                            "note": f"Referral bonus — referred {client.get('name','')}",
-                            "adjusted_by": "system",
-                            "adjusted_at": now,
-                        })
                         # Sprint 110cu — Notify both parties. Errors are
                         # logged but don't block the checkout flow.
                         try:
                             await _ensure_client_referral_code(client_id)
                             referee_fresh = await db.clients.find_one({"id": client_id}, {"_id": 0})
+                            fresh_referrer = await db.clients.find_one({"id": referrer["id"]}, {"_id": 0}) or referrer
+                            new_balance = round(float(fresh_referrer.get("credits") or 0), 2)
                             dog_name = booking.get("dog_name") or ""
-                            await email_service.notify_client_referral_payout(
-                                referrer, referee_fresh or client, new_balance,
-                            )
-                            await email_service.notify_client_referral_welcome(
-                                referee_fresh or client, referrer, dog_name,
-                            )
+                            if referral_row:
+                                await email_service.notify_client_referral_payout(
+                                    fresh_referrer, referee_fresh or client, new_balance,
+                                )
+                                await email_service.notify_client_referral_welcome(
+                                    referee_fresh or client, fresh_referrer, dog_name,
+                                )
                         except Exception as exc:
                             logger.warning("Referral notification email failed: %s", exc)
     except Exception as exc:
@@ -11399,7 +11569,7 @@ BACKUP_COLLECTIONS = [
     # Per-dog / per-client progress
     "homework", "homework_media", "step_events",
     "dog_programs", "training_sessions",
-    "awarded_trophies", "referrals",
+    "awarded_trophies", "referrals", "rewards_ledger",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
     "price_overrides", "payment_transactions",
@@ -12817,32 +12987,34 @@ async def portal_trivia_daily_answer(
     is_staff_attempt = cid.startswith("staff:")
     if correct and not is_staff_attempt:
         rewards = await _get_trivia_rewards()
-        match = next((r for r in rewards if int(r.get("days") or 0) == stats["current_streak"]), None)
-        if match:
-            milestone = {
-                "days": stats["current_streak"],
-                "label": match.get("label") or f"🎉 {stats['current_streak']}-day streak!",
-                "perk_type": match.get("perk_type") or "",
-            }
-            # Stamp the milestone so admin can spot it in client record
-            await db.clients.update_one(
-                {"id": cid},
-                {"$push": {"trivia_milestones": {
-                    "days": stats["current_streak"],
+        client_doc_existing = await db.clients.find_one({"id": cid}, {"_id": 0, "trivia_milestones": 1}) or {}
+        earned_days = {int(m.get("days") or 0) for m in (client_doc_existing.get("trivia_milestones") or [])}
+        due = []
+        for r in sorted(rewards, key=lambda x: int(x.get("days") or 0)):
+            d = int(r.get("days") or 0)
+            if d > 0 and d <= int(stats["current_streak"] or 0) and d not in earned_days:
+                due.append(r)
+        if due:
+            earned_rows = []
+            for match in due:
+                days = int(match.get("days") or 0)
+                row = {
+                    "days": days,
                     "earned_on": date_str,
-                    "label": milestone["label"],
-                    "perk_type": milestone["perk_type"],
-                }}},
-            )
-            # Sprint 110cv — notify the admin so they remember to hand the
-            # perk over at the client's next pickup. Best-effort; never
-            # blocks the answer flow.
+                    "label": match.get("label") or f"🎉 {days}-day streak!",
+                    "perk_type": match.get("perk_type") or "",
+                    "reward_service": match.get("reward_service") or "",
+                    "reward_credits": round(float(match.get("reward_credits") or 0), 2) if str(match.get("reward_credits") or "").strip() else 0,
+                    "status": "pending",
+                }
+                earned_rows.append(row)
+            await db.clients.update_one({"id": cid}, {"$push": {"trivia_milestones": {"$each": earned_rows}}})
+            milestone = earned_rows[-1]
             try:
                 client_doc = await db.clients.find_one({"id": cid}, {"_id": 0})
                 if client_doc:
-                    await email_service.notify_admin_trivia_milestone(
-                        client_doc, milestone, date_str,
-                    )
+                    for m in earned_rows:
+                        await email_service.notify_admin_trivia_milestone(client_doc, m, date_str)
             except Exception as exc:
                 logger.warning("Trivia milestone admin email failed: %s", exc)
     return {
@@ -13056,6 +13228,143 @@ async def portal_trivia_quiz_answer(
     }
 
 
+
+# ── Rewards Center: referrals, trivia perks, and credit audit ─────────────
+async def _build_referral_rows(limit: int = 200) -> Tuple[List[dict], List[dict]]:
+    """Return (pending, paid) referrals.
+
+    Pending rows are inferred from clients that have a referred_by_code but no
+    paid referral record yet. This keeps older signups visible without needing a
+    destructive migration.
+    """
+    paid_rows = await db.referrals.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    paid_by_referred = {r.get("referred_id") for r in paid_rows if r.get("referred_id")}
+    referred_clients = await db.clients.find(
+        {"referred_by_code": {"$exists": True, "$ne": ""}, "$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "referred_by_code": 1, "created_at": 1}
+    ).to_list(5000)
+    codes = sorted({(c.get("referred_by_code") or "").upper().strip() for c in referred_clients if c.get("referred_by_code")})
+    referrers = await db.clients.find({"referral_code": {"$in": codes}}, {"_id": 0, "id": 1, "name": 1, "email": 1, "referral_code": 1}).to_list(5000) if codes else []
+    by_code = {(r.get("referral_code") or "").upper(): r for r in referrers}
+    pending = []
+    for c in referred_clients:
+        if c.get("id") in paid_by_referred:
+            continue
+        code = (c.get("referred_by_code") or "").upper().strip()
+        referrer = by_code.get(code) or {}
+        completed = await _completed_booking_count_for_client(c.get("id"), exclude_id="")
+        pending.append({
+            "status": "pending" if completed <= 0 else "ready",
+            "referral_code": code,
+            "referrer_id": referrer.get("id", ""),
+            "referrer_name": referrer.get("name", "Unknown referrer"),
+            "referred_id": c.get("id"),
+            "referred_name": c.get("name", ""),
+            "referred_email": c.get("email", ""),
+            "referred_created_at": c.get("created_at", ""),
+            "completed_bookings": completed,
+            "reward_service": "daycare",
+            "bonus_credits": 1,
+        })
+    pending.sort(key=lambda r: (0 if r.get("status") == "ready" else 1, r.get("referred_name") or ""))
+    for r in paid_rows:
+        r.setdefault("status", "paid")
+        r.setdefault("reward_service", "daycare")
+    return pending, paid_rows
+
+
+@api.get("/admin/rewards/center")
+async def admin_rewards_center(_: dict = Depends(require_admin)):
+    pending_referrals, paid_referrals = await _build_referral_rows()
+    clients = await db.clients.find(
+        {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1, "trivia_milestones": 1}
+    ).to_list(50000)
+    pending_trivia = []
+    credit_rows = []
+    for c in clients:
+        d = round(float(c.get("credits") or 0), 2)
+        b = round(float(c.get("boarding_credits") or 0), 2)
+        t = round(float(c.get("training_credits") or 0), 2)
+        if d or b or t:
+            credit_rows.append({
+                "client_id": c.get("id"), "client_name": c.get("name", ""), "email": c.get("email", ""),
+                "daycare": d, "boarding": b, "training": t, "total_units": round(d+b+t, 2),
+            })
+        for m in (c.get("trivia_milestones") or []):
+            if not m.get("redeemed_at"):
+                pending_trivia.append({
+                    "client_id": c.get("id"),
+                    "client_name": c.get("name", ""),
+                    "email": c.get("email", ""),
+                    "days": m.get("days"),
+                    "earned_on": m.get("earned_on"),
+                    "label": m.get("label"),
+                    "perk_type": m.get("perk_type"),
+                    "reward_service": m.get("reward_service") or "",
+                    "reward_credits": round(float(m.get("reward_credits") or 0), 2),
+                    "status": m.get("status") or "pending",
+                })
+    pending_trivia.sort(key=lambda r: r.get("earned_on") or "")
+    credit_rows.sort(key=lambda r: (-r["total_units"], r["client_name"]))
+    recent_rewards = await db.rewards_ledger.find({}, {"_id": 0}).sort("created_at", -1).limit(100).to_list(100)
+    recent_adjustments = await db.credit_adjustments.find({}, {"_id": 0}).sort("adjusted_at", -1).limit(100).to_list(100)
+    summary = {
+        "pending_referrals": len(pending_referrals),
+        "ready_referrals": sum(1 for r in pending_referrals if r.get("status") == "ready"),
+        "paid_referrals": len(paid_referrals),
+        "pending_trivia": len(pending_trivia),
+        "clients_with_credits": len(credit_rows),
+        "daycare_credits_outstanding": round(sum(r["daycare"] for r in credit_rows), 2),
+        "boarding_credits_outstanding": round(sum(r["boarding"] for r in credit_rows), 2),
+        "training_credits_outstanding": round(sum(r["training"] for r in credit_rows), 2),
+    }
+    return {
+        "summary": summary,
+        "pending_referrals": pending_referrals[:200],
+        "paid_referrals": paid_referrals[:200],
+        "pending_trivia": pending_trivia[:200],
+        "credit_audit": credit_rows[:500],
+        "recent_rewards": recent_rewards,
+        "recent_credit_adjustments": recent_adjustments,
+    }
+
+
+@api.post("/admin/rewards/referrals/{referred_client_id}/grant")
+async def admin_rewards_grant_referral(referred_client_id: str, user: dict = Depends(require_admin)):
+    referred = await db.clients.find_one({"id": referred_client_id}, {"_id": 0})
+    if not referred:
+        raise HTTPException(status_code=404, detail="Referred client not found")
+    code = (referred.get("referred_by_code") or "").upper().strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="This client does not have a referral code attached")
+    referrer = await db.clients.find_one({"referral_code": code}, {"_id": 0})
+    if not referrer:
+        raise HTTPException(status_code=404, detail="Referrer not found for that code")
+    row = await _grant_referral_reward_once(
+        referred_client=referred,
+        referrer=referrer,
+        actor=user.get("id", "admin"),
+        actor_name=user.get("name", "Admin"),
+        note="Manual referral reward from Rewards Center",
+    )
+    if not row:
+        raise HTTPException(status_code=409, detail="Referral was already rewarded or could not be rewarded")
+    return row
+
+
+@api.get("/admin/rewards/credits-audit.csv")
+async def admin_rewards_credits_audit_csv(_: dict = Depends(require_admin)):
+    data = await admin_rewards_center(_)
+    import csv, io
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["client_name", "email", "daycare_credits", "boarding_credits", "training_credits", "total_units"])
+    for r in data.get("credit_audit", []):
+        w.writerow([r.get("client_name", ""), r.get("email", ""), r.get("daycare", 0), r.get("boarding", 0), r.get("training", 0), r.get("total_units", 0)])
+    return Response(content=out.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=credits-audit.csv"})
+
+
 # ── Admin trivia management ──
 @api.get("/admin/trivia/rewards")
 async def admin_trivia_rewards_get(_: dict = Depends(require_admin)):
@@ -13087,10 +13396,19 @@ async def admin_trivia_rewards_put(
         if days in seen_days:
             continue  # de-dupe
         seen_days.add(days)
+        reward_service = (m.get("reward_service") or "").strip().lower()
+        if reward_service not in ("", "daycare", "boarding", "training"):
+            reward_service = ""
+        try:
+            reward_credits = round(float(m.get("reward_credits") or 0), 2)
+        except Exception:
+            reward_credits = 0
         cleaned.append({
             "days": days,
             "label": label[:200],
             "perk_type": (m.get("perk_type") or "").strip()[:50],
+            "reward_service": reward_service,
+            "reward_credits": reward_credits,
         })
     cleaned.sort(key=lambda x: x["days"])
     await db.app_settings.update_one(
@@ -13205,6 +13523,9 @@ class TriviaMilestoneRedeemIn(BaseModel):
     client_id: str
     days: int
     earned_on: str
+    award_service: Optional[Literal["daycare", "boarding", "training"]] = None
+    award_credits: Optional[float] = None
+    note: Optional[str] = None
 
 
 @api.post("/admin/trivia/milestones/redeem")
@@ -13214,18 +13535,50 @@ async def admin_trivia_redeem_milestone(
 ):
     """Mark a streak-milestone perk as redeemed (operator just applied the
     free puzzle toy / retail credit / service upgrade at checkout)."""
+    client = await db.clients.find_one({"id": body.client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    matched_milestone = None
+    for m in (client.get("trivia_milestones") or []):
+        if int(m.get("days") or 0) == int(body.days) and (m.get("earned_on") or "") == body.earned_on:
+            matched_milestone = m
+            break
+    if not matched_milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    credit_award = None
+    service = body.award_service or matched_milestone.get("reward_service") or None
+    try:
+        amount = round(float(body.award_credits if body.award_credits is not None else matched_milestone.get("reward_credits") or 0), 2)
+    except Exception:
+        amount = 0
+    if service and amount > 0 and not matched_milestone.get("reward_credit_ledger_id"):
+        credit_award = await _grant_client_reward_credit(
+            client,
+            service=service,
+            amount=amount,
+            reason=body.note or f"Trivia reward — {body.days}-day streak",
+            source="trivia",
+            source_id=f"{body.client_id}:{body.days}:{body.earned_on}",
+            actor=admin.get("id", "admin"),
+            actor_name=admin.get("name", "Admin"),
+        )
+    set_doc = {
+        "trivia_milestones.$.redeemed_at": now_iso(),
+        "trivia_milestones.$.redeemed_by": admin["id"],
+        "trivia_milestones.$.redeemed_by_name": admin.get("name", "Admin"),
+        "trivia_milestones.$.status": "redeemed",
+    }
+    if credit_award:
+        set_doc["trivia_milestones.$.reward_credit_ledger_id"] = credit_award.get("id")
+        set_doc["trivia_milestones.$.reward_service"] = service
+        set_doc["trivia_milestones.$.reward_credits"] = amount
     res = await db.clients.update_one(
-        {"id": body.client_id, "trivia_milestones": {"$elemMatch": {
-            "days": body.days, "earned_on": body.earned_on,
-        }}},
-        {"$set": {
-            "trivia_milestones.$.redeemed_at": now_iso(),
-            "trivia_milestones.$.redeemed_by": admin["id"],
-        }},
+        {"id": body.client_id, "trivia_milestones": {"$elemMatch": {"days": body.days, "earned_on": body.earned_on}}},
+        {"$set": set_doc},
     )
     if not res.matched_count:
         raise HTTPException(status_code=404, detail="Milestone not found")
-    return {"ok": True}
+    return {"ok": True, "credit_award": credit_award}
 
 
 @api.get("/admin/trivia/recent-winners")

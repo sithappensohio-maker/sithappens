@@ -17,6 +17,7 @@ import Homework from "./screens/Homework";
 import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Trophies from "./screens/Trophies";
+import Rewards from "./screens/Rewards";
 import Staff from "./screens/Staff";
 import Register from "./screens/Register";
 import RecurringTemplates from "./screens/RecurringTemplates";
@@ -128,6 +129,7 @@ function AdminShell() {
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
+    { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
     { id: "income", label: "Income", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "register", label: "Register", icon: "fa-cash-register", perm: "finance_reports" },
@@ -299,6 +301,7 @@ function AdminShell() {
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "homework" && featureOn("homework") && <Homework />}
+          {tab === "rewards_center" && featureOn("rewards") && <Rewards />}
           {tab === "trophies" && featureOn("rewards") && <Trophies />}
           {tab === "income" && <Income />}
           {tab === "register" && <Register />}

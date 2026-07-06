@@ -5054,9 +5054,9 @@ function TriviaPanel() {
         <div className="space-y-3" data-testid="trivia-rewards-view">
           <div className="bg-shGreen/5 border border-shGreen/30 rounded-xl p-3 text-[13px] text-gray-300">
             <i className="fas fa-circle-info text-shGreen mr-2"/>
-            Pick your own streak goals + perks. Each entry is matched when a client's
-            <strong className="text-shGreen"> current daily-trivia streak </strong> hits exactly the day count.
-            The label is what the client sees on their portal and what shows in your "Perks to award at next checkout" list.
+            Pick your own streak goals + perks. Each entry is awarded when a client's
+            <strong className="text-shGreen"> current daily-trivia streak </strong> reaches or passes the day count.
+            The label is what the client sees on their portal and what shows in your Rewards Center pending list.
           </div>
           {!rewards ? <p className="text-gray-500 text-sm">Loading…</p> : (
             <>
@@ -5087,6 +5087,24 @@ function TriviaPanel() {
                              placeholder="puzzle_toy"
                              onChange={e => updateReward(i, { perk_type: e.target.value })}
                              data-testid={`trivia-reward-tag-${i}`}
+                             className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
+                    </label>
+                    <label className="col-span-6 sm:col-span-2 block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Auto credit</span>
+                      <select value={r.reward_service || ""} onChange={e => updateReward(i, { reward_service: e.target.value })}
+                              data-testid={`trivia-reward-credit-service-${i}`}
+                              className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1">
+                        <option value="">Manual prize</option>
+                        <option value="daycare">Daycare</option>
+                        <option value="boarding">Boarding</option>
+                        <option value="training">Training</option>
+                      </select>
+                    </label>
+                    <label className="col-span-3 sm:col-span-1 block">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-gray-500">Credits</span>
+                      <input type="number" min="0" step="0.5" value={r.reward_credits || ""}
+                             onChange={e => updateReward(i, { reward_credits: Number(e.target.value) || 0 })}
+                             data-testid={`trivia-reward-credit-amount-${i}`}
                              className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mt-1"/>
                     </label>
                     <div className="col-span-3 sm:col-span-1 flex justify-end items-center pt-5">
