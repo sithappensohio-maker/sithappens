@@ -15416,8 +15416,15 @@ def _schedule_c_booking_income(booking: dict) -> float:
 
 
 def _schedule_c_retail_income(row: dict) -> float:
-    """Retail/other cash income for Schedule C, net of sales tax collected."""
-    return round(max(0.0, float(row.get("amount") or 0) - float(row.get("tax_amount") or 0)), 2)
+    """Retail/other cash income for Schedule C, net of sales tax collected.
+
+    Normal sale rows cannot contribute negative income, but POS/register refund
+    rows intentionally reduce income in the period they are paid back.
+    """
+    net = round(float(row.get("amount") or 0) - float(row.get("tax_amount") or 0), 2)
+    if (row.get("source_kind") or "") == "refund":
+        return net
+    return round(max(0.0, net), 2)
 
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
     """Return True if this booking is paid from a training-program credit lot.
@@ -16707,8 +16714,10 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "credit_pack_sales": 0.0,
         "training_program_sales": 0.0,
         "tab_payments": 0.0,
+        "refunds": 0.0,
         "other_sales": 0.0,
     }
+    activity: List[Dict[str, Any]] = []
 
     # Booking checkout cash collected on the service date. This keeps the
     # register closeout aligned with how the operator sees today's checked-out
@@ -16719,17 +16728,26 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         if amt > 0:
             _add_method_total(incoming_by_method, b.get("payment_method"), amt)
             incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+            activity.append({
+                "id": b.get("id"), "kind": "booking_payment", "label": "Booking checkout",
+                "description": f"{b.get('service_type','service').title()} · {b.get('dog_name','')}",
+                "client_name": b.get("client_name") or "", "amount": round(amt, 2),
+                "payment_method": _normalize_payment_method(b.get("payment_method")),
+                "created_at": b.get("checked_out_at") or b.get("paid_at") or b.get("updated_at") or b.get("created_at") or f"{d}T12:00:00",
+            })
 
     # Retail_sales is the existing cash-basis income ledger for log sales,
     # credit-pack sales, training-program sales, and tab payments.
     retail = await db.retail_sales.find({"date": d}, {"_id": 0}).to_list(10000)
     for r in retail:
         amt = round(float(r.get("amount") or 0), 2)
-        if amt <= 0:
+        if abs(amt) < 0.005:
             continue
         _add_method_total(incoming_by_method, r.get("payment_method"), amt)
         kind = r.get("source_kind") or "manual_sale"
-        if kind == "credit_pack_sale":
+        if kind == "refund" or amt < 0:
+            incoming_sources["refunds"] = round(incoming_sources["refunds"] + abs(amt), 2)
+        elif kind == "credit_pack_sale":
             incoming_sources["credit_pack_sales"] = round(incoming_sources["credit_pack_sales"] + amt, 2)
         elif kind == "training_program_sale":
             incoming_sources["training_program_sales"] = round(incoming_sources["training_program_sales"] + amt, 2)
@@ -16739,6 +16757,14 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             incoming_sources["manual_sales"] = round(incoming_sources["manual_sales"] + amt, 2)
         else:
             incoming_sources["other_sales"] = round(incoming_sources["other_sales"] + amt, 2)
+        activity.append({
+            "id": r.get("id"), "kind": kind or "manual_sale",
+            "label": "Refund" if (kind == "refund" or amt < 0) else ("Credit pack" if kind == "credit_pack_sale" else "Register sale"),
+            "description": r.get("description") or r.get("pack_name") or r.get("category") or "Register entry",
+            "client_name": r.get("client_name") or "", "amount": amt,
+            "payment_method": _normalize_payment_method(r.get("payment_method")),
+            "created_at": r.get("created_at") or f"{d}T12:00:00",
+        })
 
     expenses = await db.expenses.find({"date": d}, {"_id": 0}).to_list(10000)
     drawer_payouts = 0.0
@@ -16751,6 +16777,13 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         _add_method_total(expenses_by_method, e.get("payment_method"), amt)
         if e.get("from_cash_drawer"):
             drawer_payouts = round(drawer_payouts + amt, 2)
+        activity.append({
+            "id": e.get("id"), "kind": "expense", "label": "Expense" + (" · cash payout" if e.get("from_cash_drawer") else ""),
+            "description": e.get("description") or e.get("category") or "Expense",
+            "client_name": e.get("vendor") or "", "amount": -round(amt, 2),
+            "payment_method": _normalize_payment_method(e.get("payment_method")),
+            "created_at": e.get("created_at") or f"{d}T12:00:00",
+        })
 
     # Drawer session: use explicit opening cash when available; otherwise carry
     # forward the most recent closeout cash count as a helpful default.
@@ -16781,6 +16814,9 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     if closeout and closeout.get("cash_counted") is not None:
         totals["actual_cash_counted"] = round(float(closeout.get("cash_counted") or 0), 2)
         totals["cash_over_short"] = round(totals["actual_cash_counted"] - expected_cash, 2)
+    totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
+    totals["net_incoming_total"] = round(sum(float(v or 0) for v in incoming_by_method.values()), 2)
+    activity = sorted(activity, key=lambda x: x.get("created_at") or "", reverse=True)[:75]
 
     return {
         "date": d,
@@ -16790,6 +16826,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "expenses_by_method": expenses_by_method,
         "expense_rows": _method_rows(expenses_by_method),
         "incoming_sources": incoming_sources,
+        "activity": activity,
         "totals": totals,
         "drawer_session": session,
         "opening_cash_source": opening_source,
@@ -16820,6 +16857,75 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     await db.cash_drawer_sessions.update_one({"date": d}, {"$set": doc}, upsert=True)
     fresh = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
     return {"ok": True, "drawer_session": fresh, "register": await _register_day_summary(d)}
+
+
+class RegisterRefundIn(BaseModel):
+    date: Optional[str] = None
+    amount: float = Field(gt=0)
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "clover"
+    reason: str = Field(min_length=1, max_length=200)
+    client_id: Optional[str] = None
+    notes: Optional[str] = ""
+
+
+class RegisterCashPayoutIn(BaseModel):
+    date: Optional[str] = None
+    amount: float = Field(gt=0)
+    description: str = Field(min_length=1, max_length=200)
+    category: Optional[str] = "Cash Drawer Payout"
+    vendor: Optional[str] = ""
+    notes: Optional[str] = ""
+    tax_deductible: Optional[bool] = True
+
+
+@api.post("/admin/register/refund")
+async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin)):
+    d = body.date or business_today().isoformat()
+    client_name = ""
+    if body.client_id:
+        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
+        if c:
+            client_name = c.get("name") or ""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": d,
+        "description": f"Refund · {body.reason.strip()}",
+        "amount": -round(float(body.amount), 2),
+        "category": "Refund",
+        "notes": (body.notes or "").strip(),
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
+        "client_id": body.client_id or None,
+        "client_name": client_name,
+        "source_kind": "refund",
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "logged_by": user.get("name") or user.get("email") or "admin",
+    }
+    await db.retail_sales.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return {"ok": True, "refund": doc, "register": await _register_day_summary(d)}
+
+
+@api.post("/admin/register/cash-payout")
+async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin)):
+    d = body.date or business_today().isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": d,
+        "description": body.description.strip(),
+        "amount": round(float(body.amount), 2),
+        "category": (body.category or "Cash Drawer Payout").strip(),
+        "notes": (body.notes or "").strip(),
+        "payment_method": "cash",
+        "tax_deductible": bool(body.tax_deductible),
+        "from_cash_drawer": True,
+        "vendor": (body.vendor or "").strip(),
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+    }
+    await db.expenses.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return {"ok": True, "expense": doc, "register": await _register_day_summary(d)}
 
 
 class EndOfDayCloseoutIn(BaseModel):

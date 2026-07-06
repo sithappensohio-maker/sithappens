@@ -1685,13 +1685,28 @@ function AuditTile({ label, value = 0, color = "text-white" }) {
 }
 
 
-// ─── Register / Cash Drawer ────────────────────────────────────────────────
+// ─── Register / POS / Cash Drawer ─────────────────────────────────────────
 function RegisterTab() {
   const [date, setDate] = useState(todayISO());
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [active, setActive] = useState("overview");
   const [openingCash, setOpeningCash] = useState("");
   const [notes, setNotes] = useState("");
+  const [clients, setClients] = useState([]);
+  const [packs, setPacks] = useState([]);
+  const [sale, setSale] = useState({ description: "", amount: "", category: "Misc Sale", payment_method: "clover", client_id: "", notes: "", apply_tax: false });
+  const [packSale, setPackSale] = useState({ client_id: "", pack_id: "", payment_method: "clover", amount_paid: "", note: "" });
+  const [payment, setPayment] = useState({ client_id: "", amount: "", method: "clover", notes: "" });
+  const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "clover", reason: "", notes: "" });
+  const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
+  const [closeout, setCloseout] = useState({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+
+  const methodOptions = [
+    ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
+  ];
+
   const load = async () => {
     setErr("");
     try {
@@ -1701,83 +1716,294 @@ function RegisterTab() {
       else if (r.data?.totals?.opening_cash != null) setOpeningCash(String(r.data.totals.opening_cash));
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register"); }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
-  const openDrawer = async () => {
-    setErr("");
+  const loadChoices = async () => {
     try {
-      const r = await api.post("/admin/register/open-drawer", { date, opening_cash: Number(openingCash || 0), notes });
-      setData(r.data.register);
-      setNotes("");
-    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to set opening cash"); }
+      const [c, p] = await Promise.all([
+        api.get("/clients"),
+        api.get("/credit-packs", { params: { include_inactive: false } }),
+      ]);
+      setClients((c.data || []).filter(x => !x.archived).sort((a,b)=>(a.name||"").localeCompare(b.name||"")));
+      setPacks((p.data || []).filter(x => x.active !== false));
+    } catch {}
   };
+  useEffect(() => { loadChoices(); }, []);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [date]);
+
+  const selectedClient = (id) => clients.find(c => c.id === id);
+  const selectedPack = packs.find(p => p.id === packSale.pack_id);
+  const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
+  const submit = async (fn) => {
+    setErr(""); setMsg("");
+    try { await fn(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail) || "Register action failed"); }
+  };
+
+  const openDrawer = () => submit(async () => {
+    const r = await api.post("/admin/register/open-drawer", { date, opening_cash: Number(openingCash || 0), notes });
+    setData(r.data.register); setNotes(""); showDone("Opening drawer saved.");
+  });
+  const submitSale = () => submit(async () => {
+    await api.post("/retail-sales", {
+      date,
+      description: sale.description,
+      amount: Number(sale.amount || 0),
+      category: sale.category || "Misc Sale",
+      payment_method: sale.payment_method,
+      client_id: sale.client_id || null,
+      notes: sale.notes,
+      apply_tax: !!sale.apply_tax,
+    });
+    setSale({ description: "", amount: "", category: "Misc Sale", payment_method: sale.payment_method, client_id: sale.client_id, notes: "", apply_tax: false });
+    showDone("Sale logged in the Register.");
+  });
+  const submitPackSale = () => submit(async () => {
+    const body = { pack_id: packSale.pack_id, payment_method: packSale.payment_method, note: packSale.note };
+    if (packSale.amount_paid !== "") body.amount_paid = Number(packSale.amount_paid || 0);
+    await api.post(`/clients/${packSale.client_id}/sell-pack`, body);
+    setPackSale({ client_id: packSale.client_id, pack_id: "", payment_method: packSale.payment_method, amount_paid: "", note: "" });
+    showDone("Credit pack sold and added to the Register.");
+    loadChoices();
+  });
+  const submitPayment = () => submit(async () => {
+    await api.post(`/clients/${payment.client_id}/payment`, { amount: Number(payment.amount || 0), method: payment.method, notes: payment.notes });
+    setPayment({ client_id: payment.client_id, amount: "", method: payment.method, notes: "" });
+    showDone("Client payment recorded.");
+    loadChoices();
+  });
+  const submitRefund = () => submit(async () => {
+    await api.post("/admin/register/refund", { date, amount: Number(refund.amount || 0), payment_method: refund.payment_method, client_id: refund.client_id || null, reason: refund.reason, notes: refund.notes });
+    setRefund({ client_id: refund.client_id, amount: "", payment_method: refund.payment_method, reason: "", notes: "" });
+    showDone("Refund recorded and deducted from Register totals.");
+  });
+  const submitPayout = () => submit(async () => {
+    await api.post("/admin/register/cash-payout", { date, amount: Number(payout.amount || 0), description: payout.description, category: payout.category, vendor: payout.vendor, notes: payout.notes, tax_deductible: !!payout.tax_deductible });
+    setPayout({ amount: "", description: "", category: payout.category, vendor: "", notes: "", tax_deductible: true });
+    showDone("Cash payout logged as an expense and removed from expected drawer.");
+  });
+  const submitCloseout = () => submit(async () => {
+    await api.post("/admin/end-of-day/closeout", {
+      cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
+      clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
+      venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
+      paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
+      check_total: closeout.check_total === "" ? null : Number(closeout.check_total),
+      notes: closeout.notes,
+    });
+    setCloseout({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+    showDone("Closeout saved.");
+  });
+
   const totals = data?.totals || {};
   const incoming = data?.incoming_by_method || {};
   const sources = data?.incoming_sources || {};
+  const activity = data?.activity || [];
+
+  const FormInput = ({ label, value, onChange, type="text", step, placeholder, children }) => (
+    <label className="block">
+      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+      {children || <input type={type} step={step} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder || ""} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>}
+    </label>
+  );
+  const Select = ({ label, value, onChange, children }) => (
+    <FormInput label={label} value={value} onChange={onChange}>{
+      <select value={value} onChange={e=>onChange(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+        {children}
+      </select>
+    }</FormInput>
+  );
+  const methodSelect = (value, setter) => (
+    <Select label="Payment method" value={value} onChange={setter}>
+      {methodOptions.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+    </Select>
+  );
+  const clientSelect = (value, setter, allowBlank=true) => (
+    <Select label="Client" value={value} onChange={setter}>
+      {allowBlank && <option value="">No client / walk-in</option>}
+      {clients.map(c => <option key={c.id} value={c.id}>{c.name}{Number(c.account_balance || 0) ? ` · balance ${money(c.account_balance)}` : ""}</option>)}
+    </Select>
+  );
+
   return (
     <div className="space-y-4" data-testid="register-tab">
       <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300">
         <i className="fas fa-cash-register text-shBlue mr-2"/>
-        Register Phase 1: tracks your expected drawer and outside payment totals from checkout, credit-pack sales, log sales, and drawer-paid expenses.
+        Register Phase 2: one money hub for sales, credit packs, client payments, refunds, cash payouts, drawer totals, and closeout.
       </div>
       <div className="flex flex-wrap items-end gap-2">
-        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Register date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
         <button onClick={load} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Refresh</button>
+        {msg && <span className="text-shGreen text-[13px] font-black">{msg}</span>}
         {err && <span className="text-red-400 text-[13px] font-black">{err}</span>}
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <AuditTile label="Incoming recorded" value={totals.incoming_total} color="text-shGreen"/>
-        <AuditTile label="Expected cash drawer" value={totals.expected_cash} color="text-white"/>
-        <AuditTile label="Drawer payouts" value={totals.cash_drawer_payouts} color="text-shOrange"/>
-        <AuditTile label="Expenses logged" value={totals.expense_total} color="text-red-300"/>
+
+      <div className="flex gap-1 overflow-x-auto border-b border-bgHover/70">
+        {[
+          ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
+          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["closeout", "Close Day", "fa-clipboard-check"],
+        ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
-          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-door-open text-shGreen mr-2"/>Cash drawer</h4>
-          <p className="text-[12px] text-gray-500 mb-3">Opening source: <span className="text-gray-300 font-bold">{data?.opening_cash_source || "—"}</span></p>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-            <label className="block sm:col-span-1">
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening cash</span>
-              <input type="number" step="0.01" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-            </label>
-            <label className="block sm:col-span-1">
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Note</span>
-              <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="optional" className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-            </label>
-            <button onClick={openDrawer} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening drawer</button>
-          </div>
-          <div className="mt-4 space-y-1 text-[13px]">
-            <Row label="Opening cash" value={totals.opening_cash || 0}/>
-            <Row label="Cash payments" value={totals.cash_in || 0}/>
-            <Row label="Cash drawer payouts" value={totals.cash_drawer_payouts || 0} neg/>
-            <Row label="Expected cash drawer" value={totals.expected_cash || 0} bold color="shGreen"/>
-            {totals.actual_cash_counted != null && <Row label="Last closeout counted" value={totals.actual_cash_counted || 0}/>} 
-            {totals.cash_over_short != null && <Row label="Over / short" value={totals.cash_over_short || 0} color={totals.cash_over_short === 0 ? "shGreen" : "shOrange"}/>} 
-          </div>
-        </div>
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
-          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-money-bill-transfer text-shBlue mr-2"/>Expected by payment method</h4>
-          <div className="space-y-1 text-[13px]">
-            <Row label="Cash" value={incoming.cash || 0}/>
-            <Row label="Clover / Credit Card" value={incoming.clover || 0}/>
-            <Row label="Venmo" value={incoming.venmo || 0}/>
-            <Row label="PayPal" value={incoming.paypal || 0}/>
-            <Row label="Checks" value={incoming.check || 0}/>
-            {(incoming.venmo_paypal || 0) > 0 && <Row label="Legacy transfer" value={incoming.venmo_paypal || 0}/>} 
-            <Row label="Other" value={incoming.other || 0}/>
-          </div>
-        </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <AuditTile label="Net incoming" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shGreen"/>
+        <AuditTile label="Cash drawer" value={totals.expected_cash} color="text-white"/>
+        <AuditTile label="Clover/card" value={incoming.clover} color="text-shBlue"/>
+        <AuditTile label="Venmo + PayPal" value={Number(incoming.venmo || 0) + Number(incoming.paypal || 0)} color="text-shGreen"/>
+        <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
       </div>
-      <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
-        <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-list-check text-shOrange mr-2"/>Where the money came from</h4>
+
+      {active === "overview" && (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+              <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-door-open text-shGreen mr-2"/>Cash drawer</h4>
+              <p className="text-[12px] text-gray-500 mb-3">Opening source: <span className="text-gray-300 font-bold">{data?.opening_cash_source || "—"}</span></p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                <FormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={setOpeningCash}/>
+                <FormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
+                <button onClick={openDrawer} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
+              </div>
+              <div className="mt-4 space-y-1 text-[13px]">
+                <Row label="Opening cash" value={totals.opening_cash || 0}/>
+                <Row label="Cash payments/refunds" value={totals.cash_in || 0}/>
+                <Row label="Cash drawer payouts" value={totals.cash_drawer_payouts || 0} neg/>
+                <Row label="Expected cash drawer" value={totals.expected_cash || 0} bold color="shGreen"/>
+                {totals.actual_cash_counted != null && <Row label="Last closeout counted" value={totals.actual_cash_counted || 0}/>} 
+                {totals.cash_over_short != null && <Row label="Over / short" value={totals.cash_over_short || 0} color={totals.cash_over_short === 0 ? "shGreen" : "shOrange"}/>} 
+              </div>
+            </div>
+            <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+              <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-money-bill-transfer text-shBlue mr-2"/>Expected by payment method</h4>
+              <div className="space-y-1 text-[13px]">
+                <Row label="Cash" value={incoming.cash || 0}/>
+                <Row label="Clover / Credit Card" value={incoming.clover || 0}/>
+                <Row label="Venmo" value={incoming.venmo || 0}/>
+                <Row label="PayPal" value={incoming.paypal || 0}/>
+                <Row label="Checks" value={incoming.check || 0}/>
+                {(incoming.venmo_paypal || 0) > 0 && <Row label="Legacy transfer" value={incoming.venmo_paypal || 0}/>} 
+                <Row label="Other" value={incoming.other || 0}/>
+              </div>
+            </div>
+          </div>
+          <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+            <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-list-check text-shOrange mr-2"/>Where the money came from</h4>
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+              <AuditTile label="Booking payments" value={sources.booking_payments}/>
+              <AuditTile label="Manual sales" value={sources.manual_sales}/>
+              <AuditTile label="Credit packs" value={sources.credit_pack_sales}/>
+              <AuditTile label="Training programs" value={sources.training_program_sales}/>
+              <AuditTile label="Tab payments" value={sources.tab_payments}/>
+              <AuditTile label="Refunds" value={sources.refunds} color="text-red-300"/>
+            </div>
+          </div>
+          <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+            <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-receipt text-shGreen mr-2"/>Recent register activity</h4>
+            <div className="divide-y divide-bgHover/50 max-h-[420px] overflow-auto">
+              {activity.length === 0 && <div className="text-gray-500 text-sm p-4 text-center">No register activity for this date yet.</div>}
+              {activity.map((a,idx) => (
+                <div key={`${a.id || idx}-${a.kind}`} className="py-2 flex items-center justify-between gap-3 text-sm">
+                  <div>
+                    <p className="text-white font-black">{a.label} <span className="text-gray-500 font-normal">· {a.description}</span></p>
+                    <p className="text-[12px] text-gray-500">{a.client_name || "—"} · {a.payment_method || "other"}</p>
+                  </div>
+                  <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shGreen"}`}>{money(a.amount)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {active === "sale" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-cart-plus text-shGreen mr-2"/>New Sale</h4>
+        <p className="text-[12px] text-gray-500">Use this for merch, misc services, deposits, or any sale that did not start from a booking.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <FormInput label="Description" value={sale.description} onChange={v=>setSale({...sale, description:v})} placeholder="Merch, deposit, misc service"/>
+          <FormInput label="Amount collected" type="number" step="0.01" value={sale.amount} onChange={v=>setSale({...sale, amount:v})}/>
+          {methodSelect(sale.payment_method, v=>setSale({...sale, payment_method:v}))}
+          <FormInput label="Category" value={sale.category} onChange={v=>setSale({...sale, category:v})}/>
+          {clientSelect(sale.client_id, v=>setSale({...sale, client_id:v}), true)}
+          <FormInput label="Notes" value={sale.notes} onChange={v=>setSale({...sale, notes:v})}/>
+        </div>
+        <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!sale.apply_tax} onChange={e=>setSale({...sale, apply_tax:e.target.checked})}/> Apply configured retail sales tax to this total</label>
+        <button disabled={!sale.description || !Number(sale.amount)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log sale</button>
+      </div>}
+
+      {active === "pack" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-ticket text-shBlue mr-2"/>Sell Credit Pack</h4>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {clientSelect(packSale.client_id, v=>setPackSale({...packSale, client_id:v}), false)}
+          <Select label="Credit pack" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
+            <option value="">Choose pack…</option>{packs.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} {p.service_type} · {money(p.price)}</option>)}
+          </Select>
+          {methodSelect(packSale.payment_method, v=>setPackSale({...packSale, payment_method:v}))}
+          <FormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(selectedPack.price)}` : "blank = full price"}/>
+          <FormInput label="Note" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})}/>
+        </div>
+        {selectedPack && <p className="text-[12px] text-gray-400">Pack value: <span className="text-white font-black">{money(selectedPack.price)}</span>. Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</p>}
+        <button disabled={!packSale.client_id || !packSale.pack_id} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Sell pack</button>
+      </div>}
+
+      {active === "payment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-hand-holding-dollar text-shGreen mr-2"/>Record Client Payment</h4>
+        <p className="text-[12px] text-gray-500">Use this for a client paying an account balance/tab outside a booking checkout.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {clientSelect(payment.client_id, v=>setPayment({...payment, client_id:v}), false)}
+          <FormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
+          {methodSelect(payment.method, v=>setPayment({...payment, method:v}))}
+          <FormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
+        </div>
+        {selectedClient(payment.client_id) && <p className="text-[12px] text-gray-400">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-white">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
+        <button disabled={!payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record payment</button>
+      </div>}
+
+      {active === "refund" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-rotate-left text-red-300 mr-2"/>Issue Refund</h4>
+        <p className="text-[12px] text-gray-500">This records money leaving the business and reduces Register/tax income for the day. It does not delete the original booking/sale.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <FormInput label="Refund amount" type="number" step="0.01" value={refund.amount} onChange={v=>setRefund({...refund, amount:v})}/>
+          {methodSelect(refund.payment_method, v=>setRefund({...refund, payment_method:v}))}
+          {clientSelect(refund.client_id, v=>setRefund({...refund, client_id:v}), true)}
+          <FormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
+          <FormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
+        </div>
+        <button disabled={!Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record refund</button>
+      </div>}
+
+      {active === "payout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-money-bill-transfer text-shOrange mr-2"/>Cash Drawer Payout</h4>
+        <p className="text-[12px] text-gray-500">Use this when you physically take cash from the drawer for a business expense. It logs the expense and lowers expected drawer cash.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <FormInput label="Amount" type="number" step="0.01" value={payout.amount} onChange={v=>setPayout({...payout, amount:v})}/>
+          <FormInput label="Description" value={payout.description} onChange={v=>setPayout({...payout, description:v})} placeholder="Poop bags, cleaner, etc."/>
+          <FormInput label="Category" value={payout.category} onChange={v=>setPayout({...payout, category:v})}/>
+          <FormInput label="Vendor" value={payout.vendor} onChange={v=>setPayout({...payout, vendor:v})}/>
+          <FormInput label="Notes" value={payout.notes} onChange={v=>setPayout({...payout, notes:v})}/>
+        </div>
+        <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!payout.tax_deductible} onChange={e=>setPayout({...payout, tax_deductible:e.target.checked})}/> Mark as tax deductible</label>
+        <button disabled={!Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log cash payout</button>
+      </div>}
+
+      {active === "closeout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-clipboard-check text-shGreen mr-2"/>Close Day</h4>
+        <p className="text-[12px] text-gray-500">Expected totals are from the app. Enter the real-world drawer count and outside app totals from Clover, Venmo, PayPal, and checks.</p>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <AuditTile label="Booking payments" value={sources.booking_payments}/>
-          <AuditTile label="Log/manual sales" value={sources.manual_sales}/>
-          <AuditTile label="Credit packs" value={sources.credit_pack_sales}/>
-          <AuditTile label="Training programs" value={sources.training_program_sales}/>
-          <AuditTile label="Tab payments" value={sources.tab_payments}/>
+          <AuditTile label="Expected cash" value={totals.expected_cash}/>
+          <AuditTile label="Expected Clover" value={incoming.clover}/>
+          <AuditTile label="Expected Venmo" value={incoming.venmo}/>
+          <AuditTile label="Expected PayPal" value={incoming.paypal}/>
+          <AuditTile label="Expected checks" value={incoming.check}/>
         </div>
-        <p className="text-[11px] text-gray-500 mt-3">Clover, Venmo, PayPal, and checks are expected totals based on what staff entered. Verify those against the outside apps during closeout.</p>
-      </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <FormInput label="Actual cash counted" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>setCloseout({...closeout, cash_counted:v})}/>
+          <FormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>setCloseout({...closeout, clover_batch:v})}/>
+          <FormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>setCloseout({...closeout, venmo_total:v})}/>
+          <FormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>setCloseout({...closeout, paypal_total:v})}/>
+          <FormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>setCloseout({...closeout, check_total:v})}/>
+          <FormInput label="Closeout notes" value={closeout.notes} onChange={v=>setCloseout({...closeout, notes:v})}/>
+        </div>
+        <button onClick={submitCloseout} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-save mr-1"/>Save closeout</button>
+      </div>}
     </div>
   );
 }
