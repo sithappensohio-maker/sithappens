@@ -197,7 +197,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   };
 
   const remove = async (id) => {
-    if (!(await confirm({ title: "Delete this client?", body: "This client and all their dogs will be removed. Bookings, training notes, and homework will also be deleted. This cannot be undone.", confirmText: "Delete client", tone: "danger" }))) return;
+    if (!(await confirm({ title: "Archive this client?", body: "This hides the client and their dogs from normal screens and disables portal access, but keeps credits, bookings, notes, and history safe for records/taxes.", confirmText: "Archive client", tone: "danger" }))) return;
     await api.delete(`/clients/${id}`); load();
   };
 

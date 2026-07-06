@@ -756,6 +756,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 dogCount={1 + extraDogs.length}
                 date={date}
                 endDate={endDate}
+                primaryDogId={dogId}
                 multiDates={multiDates}
                 isMultiDate={isMultiDate}
                 isWaitlist={!!willWaitlist}

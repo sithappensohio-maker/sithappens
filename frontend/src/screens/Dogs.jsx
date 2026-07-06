@@ -225,7 +225,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
 
   const confirm = useConfirm();
   const remove = async (id) => {
-    if (!(await confirm({ title: "Delete this dog?", body: "All training logs, photos, and historical bookings for this dog will be removed. This cannot be undone.", confirmText: "Delete dog", tone: "danger" }))) return;
+    if (!(await confirm({ title: "Archive this dog?", body: "This hides the dog from normal screens but keeps training logs, photos, bookings, and history safe for records/taxes.", confirmText: "Archive dog", tone: "danger" }))) return;
     await api.delete(`/dogs/${id}`); load();
   };
 

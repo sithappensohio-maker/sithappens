@@ -13,7 +13,7 @@ BASE = os.environ.get("API_URL", os.environ.get("TEST_BACKEND_URL","http://local
 # customisation + every dog's progress survives a redeploy.
 REQUIRED_COLLECTIONS = {
     # Core directory
-    "clients", "dogs", "bookings", "incidents",
+    "clients", "dogs", "bookings", "bookings_archive", "incidents",
     "waiver_signatures", "client_files", "claim_tokens",
     # Catalog the admin curates by hand
     "settings", "app_settings", "services", "credit_packs",
@@ -42,6 +42,15 @@ REQUIRED_COLLECTIONS = {
     "reschedule_requests",
     # Vaccine reminder dismissals (so restore doesn't re-fire stale alerts)
     "vaccine_dismissals",
+    # Newer workflow/business state that must not vanish on restore
+    "payment_ledger", "waitlist",
+    "intake_form_templates", "intake_submissions",
+    "client_communications", "client_message_threads",
+    "bulk_email_templates", "bulk_email_history",
+    "help_requests", "announcements", "announcement_reads",
+    "review_requests", "training_tips",
+    "program_enrollments", "training_session_log",
+    "punch_corrections", "vaccine_uploads", "audit_log",
 }
 
 

@@ -28,6 +28,27 @@ logger = logging.getLogger(__name__)
 BOARDING_HOURS_PER_NIGHT = 4
 
 
+async def _booking_rows_anywhere(db, query: Dict[str, Any], projection: Dict[str, Any], *, limit: int = 50000) -> List[Dict[str, Any]]:
+    """Read hot bookings plus bookings_archive for reports so old tax/history
+    records do not disappear after the archive job moves them out of `bookings`.
+    Active rows win if a duplicate id exists.
+    """
+    rows = await db.bookings.find(query, projection).to_list(limit)
+    try:
+        archived = await db.bookings_archive.find(query, projection).to_list(limit)
+    except Exception:
+        archived = []
+    seen = {r.get("id") for r in rows if r.get("id")}
+    for r in archived:
+        rid = r.get("id")
+        if rid and rid in seen:
+            continue
+        rows.append(r)
+        if rid:
+            seen.add(rid)
+    return rows[:limit]
+
+
 def _fmt_money(n: float) -> str:
     return f"${n:,.2f}" if n >= 0 else f"-${abs(n):,.2f}"
 
@@ -160,10 +181,12 @@ async def _compute_payroll_for_range(db, start_date: str, end_date: str) -> Dict
 
 async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     """Build the full Profit & Loss dataset for a date range."""
-    bookings = await db.bookings.find(
+    bookings = await _booking_rows_anywhere(
+        db,
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
-    ).to_list(20000)
+        limit=50000,
+    )
     expenses = await db.expenses.find(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
@@ -183,12 +206,32 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
         if b.get("is_prepaid_program_session"):
             return 0.0
         actual = float(b.get("actual_price") or 0)
+        paid_amt = float(b.get("amount_paid") or 0)
+        status = b.get("payment_status")
         if b.get("payment_method") == "credits":
             cv = float(b.get("credit_value") or 0)
-            return max(0.0, round(actual - cv, 2))
+            return round(paid_amt, 2) if paid_amt > 0 else max(0.0, round(actual - cv, 2))
+        if status == "paid_partial":
+            return round(max(0.0, paid_amt), 2)
+        if status == "paid":
+            return round(paid_amt if paid_amt > 0 else actual, 2)
+        if status in ("unpaid", "comped", "refunded"):
+            return 0.0
+        if b.get("status") == "completed" and actual > 0:
+            return round(actual, 2)
         if not actual and float(b.get("credit_value") or 0) > 0:
             return 0.0
-        return round(actual, 2)
+        return 0.0
+
+    def _balance_due(b: dict) -> float:
+        actual = float(b.get("actual_price") or 0)
+        status = b.get("payment_status")
+        if status == "paid_partial":
+            return max(0.0, round(actual - float(b.get("amount_paid") or 0), 2))
+        if status == "unpaid" and b.get("status") == "completed":
+            return round(actual, 2)
+        return 0.0
+
 
     # Sprint 110eg — `_is_program_redemption` retained for backwards-compat
     # filtering (the old per-redemption path), but credit-pack burns now
@@ -224,12 +267,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
 
     # ── Income totals
     completed = [b for b in bookings if b.get("status") == "completed"]
-    paid = [b for b in bookings if b.get("payment_status") == "paid"]
-    unpaid = [b for b in bookings if b.get("payment_status") == "unpaid" and b.get("actual_price")]
+    paid = [b for b in bookings if b.get("payment_status") in ("paid", "paid_partial")]
+    unpaid = [b for b in bookings if b.get("payment_status") in ("unpaid", "paid_partial") and b.get("actual_price")]
 
     completed_total = round(sum(_cash_revenue(b) for b in completed), 2)
     paid_total = round(sum(_cash_revenue(b) for b in paid), 2)
-    unpaid_total = round(sum(_cash_revenue(b) for b in unpaid), 2)
+    unpaid_total = round(sum(_balance_due(b) for b in unpaid), 2)
 
     # ── Daily revenue (completed bookings + retail sales)
     by_day_map: Dict[str, float] = defaultdict(float)
@@ -366,10 +409,12 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     try:
         end_year = datetime.strptime(end_date, "%Y-%m-%d").year
         ytd_start = f"{end_year}-01-01"
-        ytd_bookings = await db.bookings.find(
+        ytd_bookings = await _booking_rows_anywhere(
+            db,
             {"date": {"$gte": ytd_start, "$lte": end_date}, "status": "completed"},
-            {"_id": 0, "actual_price": 1, "credit_value": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
-        ).to_list(50000)
+            {"_id": 0, "actual_price": 1, "amount_paid": 1, "payment_status": 1, "credit_value": 1, "date": 1, "payment_method": 1, "credit_lot_ids": 1, "is_prepaid_program_session": 1},
+            limit=50000,
+        )
         # Sprint 110cj — drop training-program redemptions here too.
         ytd_bookings = [b for b in ytd_bookings if not _is_program_redemption(b)]
         # Sprint 110eg — universal cash-basis applies to YTD as well.
@@ -410,11 +455,13 @@ async def build_pl_data(db, start_date: str, end_date: str) -> Dict[str, Any]:
     # the filtered-out training-program redemptions, so the operator sees
     # the full picture of pre-paid usage even though program redemptions
     # don't appear in the booking pool above).
-    burn_bookings_full = await db.bookings.find(
+    burn_bookings_full = await _booking_rows_anywhere(
+        db,
         {"date": {"$gte": start_date, "$lte": end_date}, "status": "completed",
          "payment_method": "credits"},
         {"_id": 0, "credit_value": 1, "credits_deducted": 1, "service_type": 1},
-    ).to_list(20000)
+        limit=50000,
+    )
     credit_redemptions_value = round(sum(float(b.get("credit_value") or 0) for b in burn_bookings_full), 2)
     credit_redemptions_count = len(burn_bookings_full)
     cash_flow = {

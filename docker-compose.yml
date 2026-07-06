@@ -31,17 +31,21 @@ services:
       mongo:
         condition: service_healthy
     environment:
-      # The .env file inside backend/ is the source of truth; compose just forwards
-      # what's needed for connecting to mongo and any keys you set.
+      # Root .env is read by Docker Compose and forwarded into the backend.
+      # Mongo data lives in the named volume below, so rebuilds do not wipe it.
       MONGO_URL: "mongodb://mongo:27017"
       DB_NAME: "${DB_NAME:-sit_happens}"
-      # Pass-through everything else from the backend/.env file:
+      # Pass-through app secrets/config from root .env:
       APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       SENDER_EMAIL: "${SENDER_EMAIL:-}"
       ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
       EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@sithappens.com}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      ADMIN_NAME: "${ADMIN_NAME:-Admin}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
 
   frontend:
     build:

@@ -10,6 +10,8 @@ import AccountsReceivableTab from "./AccountsReceivable";
 import TakePaymentModal from "../components/TakePaymentModal";
 
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
+function cashAmount(r) { return Number(r?.cash_revenue ?? r?.amount_paid ?? (r?.payment_status === "paid" ? r?.actual_price : 0)) || 0; }
+function balanceAmount(r) { return Number(r?.balance_due ?? (r?.payment_status === "paid_partial" ? (Number(r?.actual_price || 0) - Number(r?.amount_paid || 0)) : (r?.payment_status === "unpaid" ? r?.actual_price : 0))) || 0; }
 
 const PAYMENT_STATUSES = [
   { key: "unpaid",       label: "Unpaid",   color: "bg-shOrange/15 text-shOrange" },
@@ -194,7 +196,7 @@ export default function Income() {
   }, [rows, filters, search]);
 
   const exportCSV = () => {
-    const header = ["date", "dog", "client", "service", "type", "actual_price", "status", "payment_status", "payment_method", "notes"];
+    const header = ["date", "dog", "client", "service", "type", "actual_price", "cash_revenue", "balance_due", "status", "payment_status", "payment_method", "notes"];
     const lines = [header.join(",")];
     filtered.forEach(r => {
       const row = [
@@ -203,6 +205,8 @@ export default function Income() {
         r.service_name || "",
         r.service_type || "",
         r.actual_price || 0,
+        cashAmount(r),
+        balanceAmount(r),
         r.status, r.payment_status || "", r.payment_method || "",
         (r.notes || "").replace(/"/g, "'"),
       ].map(v => `"${String(v ?? "")}"`).join(",");
@@ -623,7 +627,7 @@ export default function Income() {
           <CollapsibleDateGroups
             rows={filtered}
             getDate={(r) => r.date}
-            getAmount={(r) => Number(r.actual_price) || 0}
+            getAmount={(r) => cashAmount(r)}
             fmtAmount={(n) => fmt(n)}
             compact
             testid="income-groups"
@@ -639,7 +643,7 @@ export default function Income() {
                     </p>
                   </div>
                   {ps && <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${ps.color}`}>{ps.label}</span>}
-                  <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(r.actual_price || 0)}</span>
+                  <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(cashAmount(r))}</span>
                 </div>
               );
             }}
@@ -654,7 +658,7 @@ export default function Income() {
                 <th className="px-3 py-2 text-left">Date</th>
                 <th className="px-3 py-2 text-left">Dog · Client</th>
                 <th className="px-3 py-2 text-left">Service</th>
-                <th className="px-3 py-2 text-right">Price</th>
+                <th className="px-3 py-2 text-right">Charged / Cash</th>
                 <th className="px-3 py-2 text-center">Status</th>
                 <th className="px-3 py-2 text-center">Payment</th>
                 <th className="px-3 py-2 text-center">Method</th>
@@ -692,6 +696,9 @@ export default function Income() {
                              }}
                              data-testid={`txn-price-${r.id}`}
                              className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[15px]" />
+                      <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                        cash {fmt(cashAmount(r))}{balanceAmount(r) > 0 ? ` · due ${fmt(balanceAmount(r))}` : ""}
+                      </p>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shGreen/15 text-shGreen":r.status==="approved"?"bg-shBlue/15 text-shBlue":"bg-shOrange/15 text-shOrange"}`}>{r.status}</span>
@@ -727,7 +734,7 @@ export default function Income() {
                 <tr>
                   <td colSpan="3" className="px-3 py-2 text-[13px] font-black uppercase tracking-widest text-gray-500">{filtered.length} rows</td>
                   <td className="px-3 py-2 text-right text-shGreen font-black text-[15px]">
-                    {fmt(filtered.reduce((sum, r) => sum + (Number(r.actual_price) || 0), 0))}
+                    {fmt(filtered.reduce((sum, r) => sum + cashAmount(r), 0))}
                   </td>
                   <td colSpan="4"></td>
                 </tr>

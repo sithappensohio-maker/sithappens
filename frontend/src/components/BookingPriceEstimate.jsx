@@ -17,9 +17,9 @@ wizard Step 3, just above the Confirm button. STRICT GUARANTEES:
        training      → base_price × #dogs (single session)
        grooming      → base_price × #dogs (single session)
        photography   → base_price × #dogs (single session)
-  • If multiple base services exist for the same service_type, we pick
-    the cheapest as the displayed estimate and let the standard
-    disclaimer cover the variance.
+  • If multiple base services exist for the same service_type, use the
+    configured default service. Do not pick the cheapest service because
+    that underquotes boarding/daycare when multiple variants exist.
   • Gated by the new `show_price_estimate` toggle under Booking Flow
     Controls — parent should render this component only when the toggle
     is on. */
@@ -44,6 +44,7 @@ export default function BookingPriceEstimate({
   dogCount = 1,
   date,
   endDate,
+  primaryDogId = "",
   multiDates = [],
   isMultiDate = false,
   isWaitlist = false,
@@ -64,6 +65,7 @@ export default function BookingPriceEstimate({
   // truth via /settings/public).
   const [mdDiscount, setMdDiscount] = useState({ enabled: false, by_service: {}, label: "Multi-dog discount" });
   const [loading, setLoading] = useState(true);
+  const [serverQuote, setServerQuote] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,22 +105,37 @@ export default function BookingPriceEstimate({
     return () => { cancelled = true; };
   }, []);
 
-  // Find the cheapest non-addon service matching this service_type — this is
-  // the "headline" price we quote. If the operator has multiple variants
-  // (e.g. half-day vs full-day daycare) we go conservative on the estimate
-  // and let the disclaimer cover the variance.
+  // Backend quote is the real source of truth. Keep the legacy client-side
+  // calculator as a fallback for multi-date / multi-dog estimate edge cases.
+  useEffect(() => {
+    let cancelled = false;
+    const addonIds = (addons || []).map(a => a?.id).filter(Boolean);
+    const canUseBackendQuote = !!serviceType && !!date && !isMultiDate && !addonsPerDog && Number(dogCount || 1) === 1;
+    if (!canUseBackendQuote) { setServerQuote(null); return () => { cancelled = true; }; }
+    api.post("/pricing/quote", {
+      service_type: serviceType,
+      date,
+      end_date: endDate || null,
+      dog_id: primaryDogId || undefined,
+      addon_service_ids: addonIds,
+    })
+      .then(({ data }) => { if (!cancelled) setServerQuote(data || null); })
+      .catch(() => { if (!cancelled) setServerQuote(null); });
+    return () => { cancelled = true; };
+  }, [serviceType, date, endDate, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
+
+  // Use the configured default service matching this service_type. If there is
+  // no explicit default, fall back to the first active service. We intentionally
+  // do NOT pick the cheapest option because that made estimates too low.
   const headlineService = useMemo(() => {
     const candidates = services.filter(
       (s) => s.service_type === serviceType && !s.is_addon && s.active !== false
     );
     if (candidates.length === 0) return null;
-    return candidates.reduce(
-      (lo, s) => (Number(s.base_price || 0) < Number(lo.base_price || 0) ? s : lo),
-      candidates[0]
-    );
+    return candidates.find((s) => !!s.is_default) || candidates[0];
   }, [services, serviceType]);
 
-  const calc = useMemo(() => {
+  const legacyCalc = useMemo(() => {
     if (!headlineService) return null;
     const base = Number(headlineService.base_price || 0);
     // Sprint 110di-26 — honor optional additional_dog_rate if the admin
@@ -243,6 +260,39 @@ export default function BookingPriceEstimate({
       md_discount_applied: applyMd,
     };
   }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules, mdDiscount]);
+
+  const calc = useMemo(() => {
+    if (!serverQuote || !legacyCalc) return legacyCalc;
+    const units = Number(serverQuote.billable_units || 0);
+    const unitLabel = serverQuote.unit_label || legacyCalc.unitLabel;
+    const base = Number(serverQuote.unit_price || 0);
+    const total = Number(serverQuote.estimated_price || 0);
+    const creditUnits = legacyCalc.pool_key
+      ? Math.min(Number(legacyCalc.credits_available || 0), Number(serverQuote.credit_units_required || units || 0))
+      : 0;
+    const creditValue = creditUnits * base;
+    const addonLines = (serverQuote.add_ons || []).map(a => ({
+      id: a.id || a.service_id || a.name,
+      name: a.name || a.service_name || "Add-on",
+      price: Number(a.price || a.base_price || 0) * Number(a.qty || 1),
+    }));
+    return {
+      ...legacyCalc,
+      base,
+      base_price: Number(serverQuote.base_estimated_price || 0),
+      addon_total: Number(serverQuote.add_on_total || 0),
+      addon_lines: addonLines,
+      units,
+      unitLabel,
+      unitsValid: serverQuote.service_type === "boarding" ? units >= 1 : true,
+      halfDay: false,
+      total,
+      service_name: serverQuote.service_name || legacyCalc.service_name,
+      credits_applied: creditUnits,
+      credit_value: creditValue,
+      balance_due: Math.max(0, total - creditValue),
+    };
+  }, [serverQuote, legacyCalc]);
 
   // Empty-state: nothing to estimate. Stay quiet rather than show $0 —
   // the operator might not have set up a service for this type yet.

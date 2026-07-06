@@ -187,6 +187,11 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Safety: deactivated staff/client accounts must not keep working from
+        # old saved JWTs. Legacy rows without an `active` field are treated as
+        # active so existing production accounts are not locked out.
+        if user.get("active") is False:
+            raise HTTPException(status_code=403, detail="Account disabled")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -453,7 +458,11 @@ class BookingOut(BaseModel):
     yard_group: Optional[str] = ""
     training_group: Optional[str] = ""
     duration_minutes: Optional[int] = 0  # blocks the schedule for time-slotted services
+    # Legacy credit-cost field. Kept for old UI/tests, but money totals must use
+    # estimated_price / actual_price / amount_paid / balance_due instead.
     cost: Optional[int] = 0
+    credit_units_required: Optional[int] = 0
+    estimated_price: Optional[float] = None
     grooming_type: Optional[str] = None
     # Sprint 110di-38 — Multi-dog booking group. Same id across every dog
     # booked in one transaction; None for legacy single-dog rows.
@@ -472,6 +481,8 @@ class BookingOut(BaseModel):
     # `paid_partial`. The remaining balance is also pushed onto
     # `client.account_balance` via the payment_ledger (see helpers below).
     amount_paid: Optional[float] = None
+    balance_due: Optional[float] = None
+    cash_revenue: Optional[float] = None
     # Sprint 17 — credit lot tracking. credit_value is accrued at approval,
     # promoted to actual_price at check-out.
     credit_value: Optional[float] = None
@@ -685,6 +696,10 @@ async def login(body: LoginIn):
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Safety: employee/client deactivation must actually stop login. Missing
+    # `active` on legacy users is allowed for backwards compatibility.
+    if user.get("active") is False:
+        raise HTTPException(status_code=403, detail="Account disabled")
     # Record last-login timestamp so admin can see who's actually using the app.
     # Best-effort — don't block the login if this fails.
     try:
@@ -708,10 +723,14 @@ async def me(user: dict = Depends(get_current_user)):
 
 # -------- Clients --------
 @api.get("/clients", response_model=List[ClientOut])
-async def list_clients(_: dict = Depends(require_admin)):
-    items = await db.clients.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
-    # Pull all dogs once (without photos) and group by owner — avoids N+1.
-    dogs = await db.dogs.find({}, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1}).to_list(2000)
+async def list_clients(_: dict = Depends(require_admin), include_deleted: bool = False):
+    # Soft-deleted clients stay in Mongo for history/tax/credits recovery, but
+    # normal admin lists hide them so the UI behaves like “delete” without data loss.
+    q = {} if include_deleted else {"deleted_at": {"$exists": False}}
+    items = await db.clients.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+    # Pull all active dogs once (without photos) and group by owner — avoids N+1.
+    dog_q = {} if include_deleted else {"deleted_at": {"$exists": False}}
+    dogs = await db.dogs.find(dog_q, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1}).to_list(2000)
     dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
     for d in dogs:
         dogs_by_owner.setdefault(d.get("owner_id", ""), []).append(
@@ -733,10 +752,14 @@ async def list_clients(_: dict = Depends(require_admin)):
         required_vax = settings.get("required_vaccines", ["rabies"]) or []
         current_waiver_version = int(settings.get("waiver_version") or 1)
         # Batch loads
-        dogs_full = await db.dogs.find({}, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "birthday": 1, "age_y": 1, "age_m": 1, "vaccines": 1}).to_list(5000)
+        dogs_full = await db.dogs.find(dog_q, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "birthday": 1, "age_y": 1, "age_m": 1, "vaccines": 1, "vaccine_certs": 1}).to_list(5000)
         dogs_full_by_owner: Dict[str, List[Dict[str, Any]]] = {}
+        pending_vac_dog_ids = set()
         for d in dogs_full:
             dogs_full_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
+            for vv, info in (d.get("vaccine_certs") or {}).items():
+                if isinstance(info, dict) and not info.get("reviewed_at") and not info.get("uploaded_by_admin") and (info.get("status") in ("pending_review", "pending") or info.get("pending_expires_on")):
+                    pending_vac_dog_ids.add(d.get("id"))
         # Real waiver collection is waiver_signatures (one row per sign event;
         # latest row per client wins).
         waivers_by_client: Dict[str, Dict[str, Any]] = {}
@@ -744,7 +767,6 @@ async def list_clients(_: dict = Depends(require_admin)):
             cidw = sig.get("client_id")
             if cidw and cidw not in waivers_by_client:
                 waivers_by_client[cidw] = sig
-        pending_vac_dog_ids = set()
         async for vu in db.vaccine_uploads.find({"status": "pending"}, {"_id": 0, "dog_id": 1}):
             if vu.get("dog_id"):
                 pending_vac_dog_ids.add(vu["dog_id"])
@@ -881,11 +903,30 @@ async def get_client(client_id: str, _: dict = Depends(require_employee_or_admin
     return existing
 
 @api.delete("/clients/{client_id}")
-async def delete_client(client_id: str, _: dict = Depends(require_admin)):
-    await db.clients.delete_one({"id": client_id})
-    await db.dogs.delete_many({"owner_id": client_id})
-    await db.users.delete_many({"client_id": client_id})
-    return {"ok": True}
+async def delete_client(client_id: str, user: dict = Depends(require_admin)):
+    # No destructive deletes for business records. A deleted client may have
+    # credits, payments, bookings, vaccines, and tax history attached. Hide it
+    # from normal screens, deactivate portal access, and preserve everything.
+    perms = _perms_for(user)
+    if not perms.get("delete_records"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_records")
+    existing = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Client not found")
+    stamp = now_iso()
+    await db.clients.update_one(
+        {"id": client_id},
+        {"$set": {"deleted_at": stamp, "deleted_by": user.get("id"), "active": False}},
+    )
+    await db.dogs.update_many(
+        {"owner_id": client_id},
+        {"$set": {"deleted_at": stamp, "deleted_by": user.get("id"), "active": False}},
+    )
+    await db.users.update_many(
+        {"client_id": client_id},
+        {"$set": {"active": False, "deactivated_at": stamp, "deactivated_by": user.get("id")}},
+    )
+    return {"ok": True, "soft_deleted": True}
 
 @api.post("/clients/{client_id}/portal-account", response_model=UserOut)
 async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict = Depends(require_admin)):
@@ -1098,6 +1139,70 @@ async def list_archived(skip: int = 0, limit: int = 100, _: dict = Depends(requi
     items = await db.bookings_archive.find({}, {"_id": 0}).sort("archived_at", -1).skip(int(skip)).limit(int(limit)).to_list(int(limit))
     return {"total": total, "skip": skip, "limit": limit, "items": items}
 
+
+async def _booking_rows_anywhere(
+    query: Optional[Dict[str, Any]] = None,
+    projection: Optional[Dict[str, Any]] = None,
+    *,
+    include_archive: bool = True,
+    limit: int = 50000,
+    sort_field: str = "date",
+    sort_desc: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return booking rows from hot storage plus archive, without duplicates.
+
+    Old completed/cancelled rows are moved into `bookings_archive` after 90 days.
+    Reports, exports, dog history, and client snapshots must read both collections
+    so tax/history data does not silently disappear after the archive job runs.
+    Active `bookings` wins if a duplicate id exists.
+    """
+    q = query or {}
+    proj = projection or {"_id": 0}
+    rows: List[Dict[str, Any]] = await db.bookings.find(q, proj).to_list(limit)
+    if include_archive:
+        try:
+            archived = await db.bookings_archive.find(q, proj).to_list(limit)
+        except Exception:
+            archived = []
+        seen = {r.get("id") for r in rows if r.get("id")}
+        for r in archived:
+            rid = r.get("id")
+            if rid and rid in seen:
+                continue
+            rows.append(r)
+            if rid:
+                seen.add(rid)
+    rows.sort(key=lambda r: str(r.get(sort_field) or ""), reverse=sort_desc)
+    return rows[:limit]
+
+
+async def _booking_count_anywhere(query: Optional[Dict[str, Any]] = None) -> int:
+    q = query or {}
+    hot = await db.bookings.count_documents(q)
+    try:
+        archived = await db.bookings_archive.count_documents(q)
+    except Exception:
+        archived = 0
+    return int(hot) + int(archived)
+
+
+async def _first_booking_created_for_clients(client_ids: List[str]) -> Dict[str, str]:
+    """Earliest booking.created_at per client across hot + archived bookings."""
+    out: Dict[str, str] = {}
+    if not client_ids:
+        return out
+    rows = await _booking_rows_anywhere(
+        {"client_id": {"$in": client_ids}},
+        {"_id": 0, "client_id": 1, "created_at": 1},
+        limit=50000,
+        sort_field="created_at",
+    )
+    for r in rows:
+        cid = r.get("client_id")
+        ca = r.get("created_at") or ""
+        if cid and ca and (cid not in out or ca < out[cid]):
+            out[cid] = ca
+    return out
 
 
 
@@ -1410,9 +1515,11 @@ async def _resolve_client_scope(user: dict) -> Optional[str]:
     return user.get("client_id")
 
 @api.get("/dogs", response_model=List[DogOut])
-async def list_dogs(user: dict = Depends(get_current_user)):
+async def list_dogs(user: dict = Depends(get_current_user), include_deleted: bool = False):
     scope = await _resolve_client_scope(user)
     q = {} if scope is None else {"owner_id": scope}
+    if not include_deleted:
+        q["deleted_at"] = {"$exists": False}
     # Strip gallery photos from list payload — they balloon the response when
     # multiple dogs have 5+ images each. Detail endpoint `/dogs/{id}` returns
     # the full record (with gallery) for the edit modal.
@@ -1457,7 +1564,7 @@ async def get_dog(dog_id: str, user: dict = Depends(get_current_user)):
     """Full dog record including gallery photos. Use this when the user
     opens the edit modal so the list endpoint can stay lightweight."""
     scope = await _resolve_client_scope(user)
-    q = {"id": dog_id} if scope is None else {"id": dog_id, "owner_id": scope}
+    q = {"id": dog_id} if scope is None else {"id": dog_id, "owner_id": scope, "deleted_at": {"$exists": False}}
     dog = await db.dogs.find_one(q, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
@@ -1485,9 +1592,18 @@ async def update_dog(dog_id: str, body: DogIn, _: dict = Depends(require_admin))
     return existing
 
 @api.delete("/dogs/{dog_id}")
-async def delete_dog(dog_id: str, _: dict = Depends(require_admin)):
-    await db.dogs.delete_one({"id": dog_id})
-    return {"ok": True}
+async def delete_dog(dog_id: str, user: dict = Depends(require_admin)):
+    perms = _perms_for(user)
+    if not perms.get("delete_records"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_records")
+    existing = await db.dogs.find_one({"id": dog_id}, {"_id": 0, "id": 1})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Dog not found")
+    await db.dogs.update_one(
+        {"id": dog_id},
+        {"$set": {"deleted_at": now_iso(), "deleted_by": user.get("id"), "active": False}},
+    )
+    return {"ok": True, "soft_deleted": True}
 
 @api.post("/dogs/{dog_id}/training-logs", response_model=DogOut)
 async def add_training_log(dog_id: str, body: TrainingLogIn, _: dict = Depends(require_admin)):
@@ -1516,6 +1632,12 @@ async def add_training_log(dog_id: str, body: TrainingLogIn, _: dict = Depends(r
 
 # -------- Bookings --------
 def _dates_in_range(start: str, end: Optional[str]) -> List[str]:
+    """Inclusive presence dates.
+
+    This is for operational views: kennel board, run sheet, capacity, closed-day
+    checks. It intentionally includes both drop-off and pickup dates. Do NOT use
+    this helper to bill boarding nights.
+    """
     s = datetime.fromisoformat(start).date()
     e = datetime.fromisoformat(end).date() if end else s
     if e < s:
@@ -1526,6 +1648,36 @@ def _dates_in_range(start: str, end: Optional[str]) -> List[str]:
         out.append(cur.isoformat())
         cur += timedelta(days=1)
     return out
+
+
+def _presence_dates(start: str, end: Optional[str]) -> List[str]:
+    """Explicit alias for inclusive dates when the dog is physically present."""
+    return _dates_in_range(start, end)
+
+
+def _billable_boarding_nights(start: str, end: Optional[str], *, legacy_minimum: int = 0) -> int:
+    """Exclusive pickup-date math for boarding billing.
+
+    July 1 → July 2 = 1 night. July 1 → July 4 = 3 nights.
+    New boarding bookings reject zero-night stays before they get here, so the
+    default minimum is 0. Some old reporting/legacy rows used same-day boarding;
+    callers can pass legacy_minimum=1 when they need backward-compatible display.
+    """
+    try:
+        s = datetime.fromisoformat(str(start)[:10]).date()
+        e = datetime.fromisoformat(str(end or start)[:10]).date()
+    except Exception:
+        return legacy_minimum
+    return max(legacy_minimum, (e - s).days)
+
+
+def _credit_units_required(service_type: str, start: str, end: Optional[str]) -> int:
+    """Credit units are intentionally separate from dollars."""
+    if service_type == "boarding":
+        return _billable_boarding_nights(start, end, legacy_minimum=1)
+    if service_type in ("daycare", "training"):
+        return 1
+    return 0
 
 async def _booking_days_count(target_date: str) -> int:
     bookings = await db.bookings.find(
@@ -1563,7 +1715,7 @@ async def list_bookings(
         if not end_date:
             end_date = (business_today() + timedelta(days=90)).isoformat()
         q["date"] = {"$gte": start_date, "$lte": end_date}
-    items = await db.bookings.find(q, {"_id": 0}).sort("date", 1).to_list(3000)
+    items = await _booking_rows_anywhere(q, {"_id": 0}, include_archive=include_all, limit=3000, sort_field="date")
     # Sprint 110di-25 — Defensive coercion at the API boundary so legacy /
     # mid-migration rows don't 500 the entire list endpoint. The response
     # model is strict (Literal status enum, required dog_name/client_name),
@@ -1580,16 +1732,173 @@ async def list_bookings(
     return items
 
 def _service_cost(rules: dict, service_type: str, days: int) -> int:
-    # Credits only apply to daycare. Boarding and training are pay-on-the-day.
+    # Legacy credit-cost field: ONLY daycare credits. Do not use for dollars.
     if service_type == "daycare":
         return int(rules.get("daycare_cost", 1)) * max(days, 1)
     return 0
+
+
+async def _quote_base_service_price(
+    *,
+    client_id: Optional[str],
+    service_type: str,
+    start_date: str,
+    end_date: Optional[str] = None,
+    service_id: Optional[str] = None,
+    legacy_boarding_minimum: int = 0,
+) -> Dict[str, Any]:
+    """Single backend source for base booking estimates.
+
+    Returns dollars + unit metadata. This is deliberately small and boring so
+    booking creation, checkout fallback, and reporting can agree instead of each
+    screen inventing its own boarding math.
+    """
+    q: Dict[str, Any]
+    if service_id:
+        q = {"id": service_id, "active": True}
+    else:
+        q = {"service_type": service_type, "is_default": True, "active": True}
+    svc = await db.services.find_one(q, {"_id": 0})
+    if not svc and not service_id:
+        # Fallback: first active service of this type if no explicit default exists.
+        svc = await db.services.find_one(
+            {"service_type": service_type, "active": True},
+            {"_id": 0},
+            sort=[("is_default", -1), ("name", 1)],
+        )
+    if not svc:
+        return {
+            "service_id": service_id,
+            "service_name": None,
+            "unit_price": 0.0,
+            "units": 0,
+            "unit_label": "units",
+            "estimated_price": 0.0,
+        }
+    list_price = float(svc.get("base_price") or 0)
+    unit_price = list_price
+    if client_id:
+        try:
+            pricing = await resolve_client_price(client_id, "service", svc.get("id") or "", list_price)
+            unit_price = float(pricing.get("effective_price", list_price) or 0)
+        except Exception:
+            unit_price = list_price
+    if service_type == "boarding":
+        units = _billable_boarding_nights(start_date, end_date, legacy_minimum=legacy_boarding_minimum)
+        unit_label = "nights"
+    else:
+        units = 1 if service_type else 0
+        unit_label = "visits"
+    return {
+        "service_id": svc.get("id"),
+        "service_name": svc.get("name"),
+        "unit_price": round(unit_price, 2),
+        "units": int(units),
+        "unit_label": unit_label,
+        "estimated_price": round(unit_price * int(units), 2),
+    }
+
+
+class PricingQuoteIn(BaseModel):
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"]
+    date: str
+    end_date: Optional[str] = None
+    dog_id: Optional[str] = None
+    client_id: Optional[str] = None
+    service_id: Optional[str] = None
+    addon_service_ids: List[str] = []
+
+
+@api.post("/pricing/quote")
+async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_user)):
+    """Backend source-of-truth quote for booking screens.
+
+    This endpoint is intentionally read-only. It does not create bookings, spend
+    credits, or mutate client/dog records. Frontend estimate widgets should call
+    this instead of re-implementing boarding-night math in React.
+    """
+    client_id = body.client_id
+    if body.dog_id:
+        dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "owner_id": 1})
+        if not dog:
+            raise HTTPException(status_code=404, detail="Dog not found")
+        if user.get("role") == "client" and dog.get("owner_id") != user.get("client_id"):
+            raise HTTPException(status_code=403, detail="Not your dog")
+        client_id = dog.get("owner_id") or client_id
+    if user.get("role") == "client":
+        client_id = user.get("client_id")
+
+    if body.service_type == "boarding" and body.end_date:
+        nights = _billable_boarding_nights(body.date, body.end_date, legacy_minimum=0)
+        if nights <= 0:
+            raise HTTPException(status_code=400, detail="Boarding pickup date must be after drop-off date.")
+
+    quote = await _quote_base_service_price(
+        client_id=client_id,
+        service_type=body.service_type,
+        start_date=body.date,
+        end_date=body.end_date,
+        service_id=body.service_id,
+    )
+    add_ons: List[Dict[str, Any]] = []
+    add_on_total = 0.0
+    if body.addon_service_ids:
+        add_ons = await resolve_addon_snapshots(
+            client_id, body.addon_service_ids, body.service_type,
+        )
+        for a in add_ons:
+            add_on_total += float(a.get("price") or 0) * int(a.get("qty") or 1)
+
+    subtotal = float(quote.get("estimated_price") or 0)
+    total = round(subtotal + add_on_total, 2)
+    units = int(quote.get("units") or 0)
+    return {
+        "service_type": body.service_type,
+        "service_id": quote.get("service_id"),
+        "service_name": quote.get("service_name"),
+        "date": body.date,
+        "end_date": body.end_date,
+        "presence_dates": _presence_dates(body.date, body.end_date),
+        "billable_units": units,
+        "unit_label": quote.get("unit_label"),
+        "unit_price": quote.get("unit_price"),
+        "base_estimated_price": round(subtotal, 2),
+        "add_ons": add_ons,
+        "add_on_total": round(add_on_total, 2),
+        "estimated_price": total,
+        "credit_units_required": _credit_units_required(body.service_type, body.date, body.end_date),
+    }
+
+
+def _pending_vaccine_cert_for(dog: dict, vaccine: str) -> Optional[dict]:
+    cert = (dog.get("vaccine_certs") or {}).get(vaccine)
+    if not isinstance(cert, dict):
+        return None
+    if cert.get("reviewed_at") or cert.get("uploaded_by_admin"):
+        return None
+    # Only block records created by the safer upload flow. Legacy rows may already
+    # have been trusted in production, so do not retroactively strand customers.
+    if cert.get("status") in ("pending_review", "pending") or cert.get("pending_expires_on"):
+        return cert
+    return None
+
+
+def _validate_base64_uploads(photos: List[str], *, max_items: int = 4, max_chars_each: int = 3_000_000) -> None:
+    if len(photos) > max_items:
+        raise HTTPException(status_code=400, detail=f"Please upload no more than {max_items} photos.")
+    for p in photos:
+        if not isinstance(p, str):
+            raise HTTPException(status_code=400, detail="Invalid uploaded photo.")
+        if len(p) > max_chars_each:
+            raise HTTPException(status_code=400, detail="Uploaded photo is too large. Please use a smaller/compressed image.")
 
 
 async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
     today = business_today().isoformat()
     vaccines = dog.get("vaccines") or {}
     for v in required:
+        if _pending_vaccine_cert_for(dog, v):
+            raise HTTPException(status_code=400, detail=f"{v.title()} vaccine is pending admin review")
         d = vaccines.get(v, "")
         if not d or d < today:
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
@@ -1764,8 +2073,11 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             if await _booking_days_count_filtered(body.date, "daycare") >= daycare_cap:
                 raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
         elif body.service_type == "boarding":
-            if await _booking_days_count_filtered(body.date, "boarding") >= boarding_cap:
-                raise HTTPException(status_code=400, detail="Boarding is fully booked for that date")
+            # Boarding capacity is a per-presence-date rule, not just the drop-off day.
+            # A stay from July 1→4 occupies a kennel on every inclusive presence date.
+            for stay_day in _presence_dates(body.date, body.end_date):
+                if await _booking_days_count_filtered(stay_day, "boarding") >= boarding_cap:
+                    raise HTTPException(status_code=400, detail=f"Boarding is fully booked for {stay_day}")
 
     # Time-slot conflict check for time-based services. Shared pool: a Training
     # at 2pm blocks a Grooming at 2pm, etc. Admins can override.
@@ -1795,12 +2107,19 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
                             detail=f"That time conflicts with an existing {b.get('service_type')} appointment at {b.get('time')}.",
                         )
 
-    # Credit cost — daycare only; boarding/training are pay-on-the-day.
-    # Clients can book even with 0 credits (they'll settle on arrival); credits
-    # are deducted on approval IF they have any (otherwise the booking is approved
-    # with a balance owed at drop-off — admin tracks it manually).
-    days = _dates_in_range(body.date, body.end_date)
+    # Credit units and money are separate. `cost` remains the old daycare-credit
+    # field for backward compatibility; dollars go into `estimated_price`.
+    days = _presence_dates(body.date, body.end_date)
     cost = _service_cost(rules, body.service_type, len(days))
+    credit_units_required = _credit_units_required(body.service_type, body.date, body.end_date)
+    quote = await _quote_base_service_price(
+        client_id=client.get("id"),
+        service_type=body.service_type,
+        start_date=body.date,
+        end_date=body.end_date,
+        service_id=body.service_id,
+    )
+    estimated_price = float(quote.get("estimated_price") or 0)
 
     auto_approve = bool(rules.get("auto_approve", False))
     status_val = "approved" if (is_admin or auto_approve) else "pending"
@@ -1824,6 +2143,9 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "pickup_time": body.pickup_time or "",
         "created_at": now_iso(),
         "cost": cost,
+        "credit_units_required": credit_units_required,
+        "estimated_price": round(estimated_price, 2),
+        "balance_due": 0.0,
         # Sprint 110di-38 — Multi-dog group booking. Persist the group_id
         # so list/detail endpoints and the run sheet can render the "🔗
         # Group · N dogs" badge. None for legacy single-dog flows.
@@ -1845,6 +2167,11 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             body.addon_service_ids,
             body.service_type,
         )
+        try:
+            add_on_est = sum(float(a.get("price") or 0) * int(a.get("qty") or 1) for a in (doc.get("add_ons") or []))
+            doc["estimated_price"] = round(float(doc.get("estimated_price") or 0) + add_on_est, 2)
+        except Exception:
+            pass
     # Sprint 110aw — Optional service pre-selection. When the caller picks a
     # specific service row (e.g. a Board-and-Train package), snapshot it onto
     # the booking so check-out / auto-enroll can use it.
@@ -1929,7 +2256,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # and if they came in via a referral code, the referrer is auto-credited on
     # this client's FIRST CHECKOUT — see check_out() below.
     try:
-        booking_count = await db.bookings.count_documents({"client_id": client["id"]})
+        booking_count = await _booking_count_anywhere({"client_id": client["id"]})
         if booking_count == 1:
             await notify_admin_first_booking(doc, client)
     except Exception:
@@ -1994,10 +2321,22 @@ async def admin_review_vaccine_cert(dog_id: str, vaccine: str, user: dict = Depe
     if vaccine not in certs:
         raise HTTPException(status_code=404, detail="No cert uploaded for this vaccine")
     certs[vaccine] = dict(certs[vaccine])
+    approved_exp = certs[vaccine].get("pending_expires_on") or certs[vaccine].get("expires_on")
+    if not approved_exp:
+        raise HTTPException(status_code=400, detail="Uploaded cert is missing an expiry date")
+    try:
+        date.fromisoformat(str(approved_exp)[:10])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Uploaded cert has an invalid expiry date")
     certs[vaccine]["reviewed_at"] = now_iso()
     certs[vaccine]["reviewed_by"] = user.get("name", "Admin")
-    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs}})
-    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine}
+    certs[vaccine]["status"] = "approved"
+    certs[vaccine]["expires_on"] = str(approved_exp)[:10]
+    certs[vaccine].pop("pending_expires_on", None)
+    vaccines = dict((await db.dogs.find_one({"id": dog_id}, {"_id": 0, "vaccines": 1}) or {}).get("vaccines") or {})
+    vaccines[vaccine] = str(approved_exp)[:10]
+    await db.dogs.update_one({"id": dog_id}, {"$set": {"vaccine_certs": certs, "vaccines": vaccines}})
+    return {"ok": True, "dog_id": dog_id, "vaccine": vaccine, "expires_on": str(approved_exp)[:10]}
 
 
 @api.delete("/admin/dogs/{dog_id}/vaccine-cert/{vaccine}")
@@ -2011,8 +2350,14 @@ async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends
         raise HTTPException(status_code=404, detail="Dog not found")
     certs = dict(dog.get("vaccine_certs") or {})
     vaccines = dict(dog.get("vaccines") or {})
+    rejected_cert = certs.get(vaccine) or {}
+    pending_exp = rejected_cert.get("pending_expires_on") or rejected_cert.get("expires_on")
     certs.pop(vaccine, None)
-    vaccines[vaccine] = ""  # clear expiry to block future bookings
+    # Safe behavior: rejecting a NEW pending upload should not wipe an older
+    # approved vaccine date already on file. Only clear the vaccine if the value
+    # currently on the dog is exactly the rejected upload's expiry.
+    if pending_exp and vaccines.get(vaccine) == str(pending_exp)[:10]:
+        vaccines[vaccine] = ""
     await db.dogs.update_one(
         {"id": dog_id},
         {"$set": {"vaccine_certs": certs, "vaccines": vaccines}},
@@ -2910,15 +3255,17 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
         date.fromisoformat(body.expires_on)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid expiry date")
-    vaccines = dict(dog.get("vaccines") or {})
-    vaccines[body.vaccine] = body.expires_on
-    update_doc: Dict[str, Any] = {"vaccines": vaccines}
+    # Client uploads are PENDING REVIEW. Do not update `dog.vaccines` here;
+    # that field is the admin-approved source used by booking gates. Existing
+    # approved vaccine dates stay intact until an admin reviews this upload.
+    update_doc: Dict[str, Any] = {}
     # Resolve which photos we got — `photos` (multi) takes precedence over the
     # legacy single `photo` field. Keep `photo` populated with the first entry
     # so existing reads (admin review screen) still work.
     photo_list = [p for p in (body.photos or []) if p]
     if not photo_list and body.photo:
         photo_list = [body.photo]
+    _validate_base64_uploads(photo_list)
     if photo_list:
         certs = dict(dog.get("vaccine_certs") or {})
         certs[body.vaccine] = {
@@ -2926,11 +3273,15 @@ async def portal_update_vaccine(dog_id: str, body: VaccineUpdateIn, user: dict =
             "photos": photo_list,
             "uploaded_at": now_iso(),
             "uploaded_by": user.get("name", ""),
-            "expires_on": body.expires_on,
+            "expires_on": body.expires_on,          # shown in admin queue
+            "pending_expires_on": body.expires_on,  # only applied on review
+            "status": "pending_review",
         }
         update_doc["vaccine_certs"] = certs
+    else:
+        raise HTTPException(status_code=400, detail="Please upload a vaccine certificate photo.")
     await db.dogs.update_one({"id": dog_id}, {"$set": update_doc})
-    return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on}
+    return {"ok": True, "dog_id": dog_id, "vaccine": body.vaccine, "expires_on": body.expires_on, "status": "pending_review"}
 
 
 @api.post("/dogs/{dog_id}/vaccine-cert")
@@ -2952,6 +3303,7 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
     photo_list = [p for p in (body.photos or []) if p]
     if not photo_list and body.photo:
         photo_list = [body.photo]
+    _validate_base64_uploads(photo_list)
     if photo_list:
         certs = dict(dog.get("vaccine_certs") or {})
         certs[body.vaccine] = {
@@ -2961,6 +3313,7 @@ async def admin_attach_vaccine_cert(dog_id: str, body: VaccineUpdateIn, user: di
             "uploaded_by": user.get("name", "admin"),
             "uploaded_by_admin": True,
             "expires_on": body.expires_on,
+            "status": "approved",
             # Admin-uploaded certs are pre-verified — skip the pending review queue.
             "reviewed_at": now_iso(),
             "reviewed_by": user.get("name", "admin"),
@@ -4127,12 +4480,7 @@ async def check_out(
                         return round(unit_price * full_units + unit_price * half_pct * half_units, 2)
                 # Fallback (pre-timestamp bookings) — calendar nights for boarding.
                 if svc_type == "boarding":
-                    try:
-                        start_d = date.fromisoformat(booking.get("date"))
-                        end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
-                        nights_stayed = max(1, (end_d - start_d).days or 1)
-                    except Exception:
-                        nights_stayed = 1
+                    nights_stayed = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
                     return round(unit_price * nights_stayed, 2)
             return unit_price
         return default_for_zero
@@ -4225,12 +4573,7 @@ async def check_out(
         # Boarding consumes one credit per night; everything else is 1 credit.
         nights = 1
         if svc_type == "boarding":
-            try:
-                start_d = date.fromisoformat(booking.get("date"))
-                end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
-                nights = max(1, (end_d - start_d).days or 1)
-            except Exception:
-                nights = 1
+            nights = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
         balance_field = _credit_balance_field(svc_type) or "credits"
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         available = int((client_doc or {}).get(balance_field) or 0)
@@ -4289,12 +4632,7 @@ async def check_out(
     def _maybe_apply_nights(unit: float) -> float:
         if booking.get("service_type") != "boarding":
             return unit
-        try:
-            start_d = date.fromisoformat(booking.get("date"))
-            end_d = date.fromisoformat(booking.get("end_date") or booking.get("date"))
-            nights_stayed = max(1, (end_d - start_d).days or 1)
-        except Exception:
-            nights_stayed = 1
+        nights_stayed = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
         return unit * nights_stayed
 
     if will_charge and not booking.get("actual_price"):
@@ -4523,6 +4861,28 @@ async def check_out(
             update["paid_at"] = ts
         if body.payment_method:
             update["payment_method"] = body.payment_method
+
+    # Finalize cash-basis bookkeeping fields. `actual_price` is what the visit
+    # was worth/charged; `cash_revenue` is money collected; `balance_due` is AR.
+    merged_money = {**booking, **update}
+    total_for_money = float(merged_money.get("actual_price") or 0)
+    if total_for_money > 0:
+        if merged_money.get("payment_method") == "credits":
+            update.setdefault("amount_paid", 0.0)
+            update["balance_due"] = 0.0
+        elif merged_money.get("payment_status") == "paid":
+            update.setdefault("amount_paid", round(total_for_money, 2))
+            update["balance_due"] = 0.0
+        elif merged_money.get("payment_status") == "paid_partial":
+            update["balance_due"] = max(0.0, round(total_for_money - float(merged_money.get("amount_paid") or 0), 2))
+        elif merged_money.get("payment_status") == "unpaid":
+            update.setdefault("amount_paid", 0.0)
+            update["balance_due"] = round(total_for_money, 2)
+    else:
+        update.setdefault("amount_paid", 0.0)
+        update["balance_due"] = 0.0
+    merged_money = {**booking, **update}
+    update["cash_revenue"] = _cash_revenue(merged_money)
 
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
@@ -6069,7 +6429,7 @@ async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
     dog = await db.dogs.find_one({"id": dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")
-    bookings = await db.bookings.find({"dog_id": dog_id}, {"_id": 0}).to_list(2000)
+    bookings = await _booking_rows_anywhere({"dog_id": dog_id}, {"_id": 0}, limit=5000, sort_field="date")
     daycare_days = 0
     boarding_nights = 0
     training_sessions = 0
@@ -6083,7 +6443,10 @@ async def dog_stats(dog_id: str, _: dict = Depends(require_admin)):
         if b["service_type"] == "daycare":
             daycare_days += len(past_days)
         elif b["service_type"] == "boarding":
-            boarding_nights += len(past_days)
+            # Boarding stats are billable nights, not inclusive presence dates.
+            # July 1 → July 4 is 3 nights even though the dog is present on 4 dates.
+            checkout_cutoff = min(b.get("end_date") or b.get("date"), today)
+            boarding_nights += _billable_boarding_nights(b.get("date"), checkout_cutoff, legacy_minimum=0)
         elif b["service_type"] == "training":
             training_sessions += len(past_days)
         if past_days:
@@ -7360,7 +7723,7 @@ async def dog_timeline(dog_id: str, limit: int = 80, user: dict = Depends(get_cu
     events: List[dict] = []
 
     # ── Bookings (one event per visit; report-card if present folds in)
-    async for b in db.bookings.find({"dog_id": dog_id}, {"_id": 0}).sort("date", -1).limit(limit):
+    for b in await _booking_rows_anywhere({"dog_id": dog_id}, {"_id": 0}, limit=limit, sort_field="date", sort_desc=True):
         evt = {
             "id": f"booking-{b['id']}",
             "ts": b.get("check_in_at") or (b.get("date", "") + "T00:00:00"),
@@ -10020,14 +10383,8 @@ async def _first_time_bookings_today(today: str, dog_map: dict) -> list:
     client_ids = list({b.get("client_id") for b in new_today if b.get("client_id")})
     if not client_ids:
         return []
-    # For each client, find the earliest booking created_at in one aggregation.
-    pipeline = [
-        {"$match": {"client_id": {"$in": client_ids}}},
-        {"$group": {"_id": "$client_id", "first_created": {"$min": "$created_at"}}},
-    ]
-    first_map = {}
-    async for row in db.bookings.aggregate(pipeline):
-        first_map[row["_id"]] = row.get("first_created") or ""
+    # For each client, find the earliest booking created_at across hot + archive.
+    first_map = await _first_booking_created_for_clients(client_ids)
     seen = set()
     out = []
     for b in new_today:
@@ -10621,7 +10978,7 @@ async def calendar_events(_: dict = Depends(require_admin)):
 #   • system_runs         — cron-job audit.
 BACKUP_COLLECTIONS = [
     # Core directory
-    "clients", "dogs", "bookings", "incidents",
+    "clients", "dogs", "bookings", "bookings_archive", "incidents",
     "waiver_signatures", "client_files", "claim_tokens",
     # Settings + catalog (the "templates" the user explicitly called out)
     "settings", "app_settings", "services", "credit_packs",
@@ -10655,6 +11012,23 @@ BACKUP_COLLECTIONS = [
     "payment_plans", "payment_plan_settings",
     # Vaccine reminder dismissals so restored state doesn't re-fire stale alerts
     "vaccine_dismissals",
+    # Business workflow collections added after the original backup list. These
+    # are not optional if the app is running the whole business: messages,
+    # waitlist, intake, AR ledger, announcements, bulk email, review requests,
+    # staff corrections, and training-tip content must survive restore too.
+    "payment_ledger",
+    "waitlist",
+    "intake_form_templates", "intake_submissions",
+    "client_communications", "client_message_threads",
+    "bulk_email_templates", "bulk_email_history",
+    "help_requests",
+    "announcements", "announcement_reads",
+    "review_requests",
+    "training_tips",
+    "program_enrollments", "training_session_log",
+    "punch_corrections",
+    "vaccine_uploads",
+    "audit_log",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -10663,10 +11037,11 @@ BACKUP_COLLECTIONS = [
 #   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
 STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
-# Bumped to v4 with the email customization + notification log additions.
-# Restore accepts older v1/v2/v3 backups too (missing collections are left
-# untouched rather than wiped).
-BACKUP_VERSION = 4
+# Bumped to v6 to include the newer business-critical workflow collections
+# (payment_ledger, waitlist, intake, messages, announcements, etc.). Restore
+# accepts older v1–v5 backups too (missing collections are left untouched rather
+# than wiped).
+BACKUP_VERSION = 6
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -12739,14 +13114,16 @@ async def sales_tax_summary(
     sd = start_date or f"{today.year}-01-01"
     ed = end_date or today.isoformat()
     # Booking-level tax
-    bk_rows = await db.bookings.find(
+    bk_rows = await _booking_rows_anywhere(
         {
             "date": {"$gte": sd, "$lte": ed},
             "tax_amount": {"$exists": True, "$gt": 0},
             "status": {"$in": ["completed", "approved"]},
         },
         {"_id": 0, "id": 1, "date": 1, "service_type": 1, "actual_price": 1, "tax_amount": 1, "tax_rate_pct": 1, "client_name": 1, "dog_name": 1},
-    ).to_list(10000)
+        limit=50000,
+        sort_field="date",
+    )
     rt_rows = await db.retail_sales.find(
         {"date": {"$gte": sd, "$lte": ed}, "tax_amount": {"$exists": True, "$gt": 0}},
         {"_id": 0, "id": 1, "date": 1, "description": 1, "amount": 1, "tax_amount": 1, "tax_rate_pct": 1, "client_name": 1},
@@ -13096,13 +13473,15 @@ async def admin_income_csv(
     start = f"{yr}-01-01"
     end = f"{yr}-12-31"
     # Paid / completed bookings within the year
-    paid_bookings = await db.bookings.find(
+    paid_bookings = await _booking_rows_anywhere(
         {
             "date": {"$gte": start, "$lte": end},
             "$or": [{"actual_price": {"$gt": 0}}, {"credit_value": {"$gt": 0}}],
         },
         {"_id": 0},
-    ).to_list(50000)
+        limit=50000,
+        sort_field="date",
+    )
     # Sprint 110cj — skip training-program credit redemptions; the program
     # revenue is recorded once in `retail_sales` at sale-time, so listing the
     # per-session checkouts again would double-count.
@@ -13288,7 +13667,7 @@ async def admin_client_portal_snapshot(client_id: str, _: dict = Depends(require
         raise HTTPException(status_code=404, detail="Client not found")
 
     dogs = await db.dogs.find({"owner_id": client_id}, {"_id": 0}).to_list(200)
-    bookings = await db.bookings.find({"client_id": client_id}, {"_id": 0}).sort("date", -1).to_list(200)
+    bookings = await _booking_rows_anywhere({"client_id": client_id}, {"_id": 0}, limit=500, sort_field="date", sort_desc=True)
 
     # Active enrollments per dog (mirrors what PortalTrainingCard fetches)
     enrollments_by_dog: Dict[str, list] = {}
@@ -14040,6 +14419,10 @@ async def startup():
     await db.clients.create_index("id", unique=True)
     await db.dogs.create_index("id", unique=True)
     await db.bookings.create_index("id", unique=True)
+    await db.bookings_archive.create_index("id", unique=True)
+    await db.bookings_archive.create_index([("date", 1), ("status", 1)])
+    await db.bookings_archive.create_index("dog_id")
+    await db.bookings_archive.create_index("client_id")
     # Performance indexes — hot query paths used by Dashboard, Schedule,
     # Bookings, Pipeline, Income. All safe to create; existing data uses
     # them on next query. Each wrapped individually so one failure (e.g.
@@ -14360,8 +14743,11 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
         "actual_price": price,
         "payment_status": body.payment_status,
         "payment_method": body.payment_method,
+        "amount_paid": round(float(price), 2) if body.payment_status == "paid" else 0.0,
+        "balance_due": 0.0 if body.payment_status == "paid" else round(float(price), 2),
         "paid_at": now_iso() if body.payment_status == "paid" else None,
     }
+    doc["cash_revenue"] = _cash_revenue(doc)
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -14387,6 +14773,17 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     # Auto-mark complete when invoice is paid (the "automation" the user asked for)
     if body.payment_status == "paid" and booking.get("status") not in ("completed", "cancelled", "rejected"):
         update.setdefault("status", "completed")
+    merged = {**booking, **update}
+    total_for_money = float(merged.get("actual_price") or 0)
+    if merged.get("payment_status") == "paid":
+        update.setdefault("amount_paid", round(total_for_money, 2))
+        update["balance_due"] = 0.0
+    elif merged.get("payment_status") == "unpaid":
+        update.setdefault("amount_paid", 0.0)
+        update["balance_due"] = round(total_for_money, 2)
+    elif merged.get("payment_status") == "paid_partial":
+        update["balance_due"] = _booking_balance_due(merged)
+    update["cash_revenue"] = _cash_revenue({**booking, **update})
     await db.bookings.update_one({"id": transaction_id}, {"$set": update})
     return {**booking, **update}
 
@@ -14403,7 +14800,7 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     else:
         await db.bookings.update_one(
             {"id": transaction_id},
-            {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": ""}},
+            {"$unset": {"service_id": "", "service_name": "", "actual_price": "", "payment_status": "", "payment_method": "", "paid_at": "", "amount_paid": "", "balance_due": "", "cash_revenue": ""}},
         )
     return {"ok": True}
 
@@ -14449,7 +14846,7 @@ async def list_transactions(
     if payment_status:
         q["payment_status"] = payment_status
 
-    rows = await db.bookings.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+    rows = await _booking_rows_anywhere(q, {"_id": 0}, limit=5000, sort_field="date", sort_desc=True)
     enriched = []
     for r in rows:
         # Skip rejected and unchargeable cancellations — keep cancelled bookings
@@ -14460,7 +14857,9 @@ async def list_transactions(
         is_cancel_fee = r.get("status") == "cancelled" and r.get("cancellation_charged")
         if r.get("status") == "cancelled" and not is_cancel_fee:
             continue
-        is_revenue = bool(r.get("service_id")) or bool(r.get("actual_price")) or bool(is_cancel_fee)
+        r["cash_revenue"] = _cash_revenue(r)
+        r["balance_due"] = _booking_balance_due(r)
+        is_revenue = bool(r.get("service_id")) or bool(r.get("actual_price")) or bool(r.get("cash_revenue")) or bool(r.get("balance_due")) or bool(is_cancel_fee)
         if revenue_only:
             if is_revenue:
                 enriched.append(r)
@@ -14520,34 +14919,59 @@ def _is_pos_credit_pack_redemption(booking: dict, pos_lot_ids: set) -> bool:
     return booking.get("payment_method") == "credits"
 
 
+def _booking_balance_due(booking: dict) -> float:
+    """Open amount still owed for a booking, separate from cash collected."""
+    actual = float(booking.get("actual_price") or 0)
+    status = booking.get("payment_status")
+    if status == "paid":
+        return 0.0
+    if status == "paid_partial":
+        return max(0.0, round(actual - float(booking.get("amount_paid") or 0), 2))
+    if status == "unpaid":
+        return round(actual, 2) if booking.get("status") == "completed" else 0.0
+    if status in (None, ""):
+        return 0.0
+    if status in ("comped", "refunded"):
+        return 0.0
+    return 0.0
+
+
 def _cash_revenue(booking: dict) -> float:
-    """Sprint 110eg — Returns the cash portion of a booking's revenue for
-    P&L purposes. The rule, applied app-wide:
+    """Cash-basis revenue for reports.
 
-      • Cash/card paid bookings → full `actual_price` counts.
-      • Credit-paid bookings → only the cash amount charged ON TOP of
-        credits counts (i.e. add-ons or admin override at checkout).
-        Pure credit burns return $0.
-      • Pre-paid training-program sessions → always $0 (revenue already
-        recognized as Training Revenue when the program was sold).
-
-    `actual_price` on a credit-paid booking holds the booking's notional
-    value (≥ credit_value). Cash revenue = max(0, actual_price -
-    credit_value). When the admin types a base_price override AND/OR adds
-    a paid add-on at checkout, the override + add-ons stack into
-    actual_price; the delta over credit_value is the cash piece.
+    This intentionally does NOT mean "what the visit was worth". It means
+    money collected for this booking. Unpaid balances belong in AR, not profit.
     """
     if booking.get("is_prepaid_program_session"):
         return 0.0
     actual = float(booking.get("actual_price") or 0)
-    if booking.get("payment_method") == "credits":
+    paid = float(booking.get("amount_paid") or 0)
+    status = booking.get("payment_status")
+    method = booking.get("payment_method")
+
+    if method == "credits":
         credit_value = float(booking.get("credit_value") or 0)
+        # Pure prepaid credit redemption is not new cash. Only a cash amount
+        # explicitly collected on top of credits should count.
+        if paid > 0:
+            return round(paid, 2)
         return max(0.0, round(actual - credit_value, 2))
-    # Legacy data: actual_price empty but credit_value populated → still
-    # treat as $0 (no cash event).
+
+    if status == "paid_partial":
+        return round(max(0.0, paid), 2)
+    if status == "paid":
+        # If amount_paid is present, it is the cleanest cash drawer number.
+        return round(paid if paid > 0 else actual, 2)
+    if status in ("unpaid", "comped", "refunded"):
+        return 0.0
+
+    # Legacy rows before payment_status existed: completed + actual_price was
+    # historically treated as paid, but approved/pending rows are forecasts only.
+    if booking.get("status") == "completed" and actual > 0:
+        return round(actual, 2)
     if not actual and float(booking.get("credit_value") or 0) > 0:
         return 0.0
-    return round(actual, 2)
+    return 0.0
 
 
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
@@ -14576,10 +15000,12 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         raise HTTPException(status_code=400, detail="Invalid ref_date")
     monday_iso, sunday_iso = _week_bounds(ref)
 
-    rows = await db.bookings.find(
+    rows = await _booking_rows_anywhere(
         {"date": {"$gte": monday_iso, "$lte": sunday_iso}},
         {"_id": 0},
-    ).to_list(2000)
+        limit=5000,
+        sort_field="date",
+    )
 
     # Sprint 110cw — Build a service_type → canonical display name map from
     # the services catalog so duplicates like "Boarding (per night)" + raw
@@ -14659,10 +15085,10 @@ async def weekly_summary(_: dict = Depends(require_admin), ref_date: Optional[st
         elif r.get("status") in ("approved", "pending"):
             booked_total += price
             booked_count += 1
-        if r.get("payment_status") == "paid":
+        if r.get("payment_status") in ("paid", "paid_partial"):
             paid_total += price
-        elif r.get("status") in ("completed", "approved"):
-            unpaid_total += price
+        elif r.get("status") == "completed":
+            unpaid_total += _booking_balance_due(r)
         credits_redeemed += int(r.get("credits_deducted") or 0)
 
         # Don't pollute by_service with $0 program-redemption rows.
@@ -14778,10 +15204,12 @@ async def summary_range(
     end_date: str = ...,
 ):
     """Aggregate income over an arbitrary date range (for monthly / quarterly views)."""
-    rows = await db.bookings.find(
+    rows = await _booking_rows_anywhere(
         {"date": {"$gte": start_date, "$lte": end_date}},
         {"_id": 0},
-    ).to_list(5000)
+        limit=20000,
+        sort_field="date",
+    )
     # Sprint 110cj — exclude training-program credit redemptions (already
     # counted as Training Revenue at sale-time).
     program_lot_ids = await _get_training_program_lot_ids()
@@ -15726,13 +16154,15 @@ async def admin_quarterly_tax(
     settings = await _get_quarterly_tax_settings()
 
     # ---- Income: bookings (completed) + retail sales --------------------------
-    booking_rows = await db.bookings.find(
-        {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
-    ).to_list(20000)
+    booking_rows = await _booking_rows_anywhere(
+        {"date": {"$gte": start, "$lte": end}}, {"_id": 0},
+        limit=50000,
+        sort_field="date",
+    )
     service_income = 0.0
     for r in booking_rows:
         if r.get("status") == "completed":
-            service_income += float(r.get("actual_price") or 0)
+            service_income += _cash_revenue(r)
     retail_rows = await db.retail_sales.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)
@@ -17305,12 +17735,11 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
             "booking_id": b["id"],
             "dog_name": b.get("dog_name", ""),
             "client_name": b.get("client_name", ""),
-            "amount": float(b.get("actual_price") or 0),
+            "amount": _booking_balance_due(b),
             "service_type": b.get("service_type", ""),
         }
         for b in completed_today
-        if b.get("payment_status") not in ("paid", "comped")
-        and float(b.get("actual_price") or 0) > 0
+        if _booking_balance_due(b) > 0
         and not b.get("is_prepaid_program_session")
     ]
     missing_cards = [
@@ -17325,10 +17754,9 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         and (b.get("report_card") or {}).get("photos", []) == []
         and (b.get("service_type") or "") in ("daycare", "boarding", "training")
     ]
-    revenue_cash = round(sum(float(b.get("actual_price") or 0)
+    revenue_cash = round(sum(_cash_revenue(b)
                              for b in completed_today
-                             if b.get("payment_method") != "credits"
-                             and not b.get("is_prepaid_program_session")), 2)
+                             if not b.get("is_prepaid_program_session")), 2)
     feedings_total = sum(len(b.get("feeding_log") or []) for b in bookings)
     meds_total = sum(len(b.get("medication_log") or []) for b in bookings)
     bathroom_pee = sum((b.get("bathroom_log") or {}).get("pee", 0) for b in bookings)
@@ -17464,12 +17892,7 @@ async def today_pnl(_: dict = Depends(require_admin)):
         # Compute boarding nights once for both branches
         nights = 1
         if b.get("service_type") == "boarding":
-            try:
-                d1 = datetime.strptime(b.get("date"), "%Y-%m-%d").date()
-                d2 = datetime.strptime(b.get("end_date") or b.get("date"), "%Y-%m-%d").date()
-                nights = max((d2 - d1).days, 1)
-            except Exception:
-                nights = 1
+            nights = _billable_boarding_nights(b.get("date"), b.get("end_date"), legacy_minimum=1)
         if not price and legacy_price is not None:
             price = float(legacy_price)
             if b.get("service_type") == "boarding":

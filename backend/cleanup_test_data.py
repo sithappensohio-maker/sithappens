@@ -6,7 +6,7 @@ templates, and branding stay intact.
 
 Run from /app/backend:
     python3 cleanup_test_data.py --dry-run     # preview counts only
-    python3 cleanup_test_data.py --confirm     # actually delete
+    SIT_HAPPENS_ALLOW_DATA_WIPE=YES_I_HAVE_A_BACKUP python3 cleanup_test_data.py --confirm
 """
 import asyncio
 import os
@@ -71,6 +71,11 @@ PURELY_TEST = [
 
 async def main():
     confirm = "--confirm" in sys.argv
+    if confirm and os.environ.get("SIT_HAPPENS_ALLOW_DATA_WIPE") != "YES_I_HAVE_A_BACKUP":
+        raise SystemExit(
+            "Refusing live delete without SIT_HAPPENS_ALLOW_DATA_WIPE=YES_I_HAVE_A_BACKUP. "
+            "Run dry-run first and verify you have a backup."
+        )
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     keep = await db.clients.find_one({"id": KEEP_CLIENT_ID})
