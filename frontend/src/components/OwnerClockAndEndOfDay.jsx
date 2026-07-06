@@ -119,17 +119,47 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
+  const [startDay, setStartDay] = useState({ opening_cash: "", notes: "" });
+  const loadStatus = async () => {
+    try {
+      const r = await api.get("/admin/end-of-day");
+      setData(r.data);
+      const opening = r.data?.register?.totals?.opening_cash;
+      if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
+        setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
+      }
+    } catch { /* dashboard card should not be noisy */ }
+  };
+  useEffect(() => { loadStatus(); }, []);
   const openPanel = async () => {
     setOpen(true);
     setLoading(true);
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
+      const opening = r.data?.register?.totals?.opening_cash;
+      if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
+        setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
+      }
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't load wrap-up"); }
     finally { setLoading(false); }
   };
-  const close = () => { setOpen(false); setData(null); };
+  const close = () => { setOpen(false); loadStatus(); };
+  const saveStartDay = async () => {
+    setStarting(true);
+    try {
+      await api.post("/admin/register/open-drawer", {
+        opening_cash: startDay.opening_cash === "" ? 0 : Number(startDay.opening_cash),
+        notes: startDay.notes || "Start-day checklist completed",
+      });
+      toast.success("Day started");
+      await loadStatus();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't start day"); }
+    finally { setStarting(false); }
+  };
+
   const saveCloseout = async () => {
     setClosing(true);
     try {
@@ -148,17 +178,31 @@ export function EndOfDayPanel({ onJump = () => {} }) {
     finally { setClosing(false); }
   };
 
+  const latestCloseout = data?.register?.latest_closeout;
+  const dayStarted = Boolean(data?.register?.drawer_session);
+  const hasBlockers = Boolean((data?.still_on_premises?.length || 0) || (data?.unpaid_bookings?.length || 0));
+  const card = latestCloseout
+    ? { eyebrow: "Day complete", title: "Closeout saved", sub: "View today’s wrap-up", icon: "fa-circle-check", tone: "green" }
+    : dayStarted
+      ? { eyebrow: "Day started", title: hasBlockers ? "Finish the day" : "Ready to close", sub: "Boarding stayovers do not block", icon: "fa-sun", tone: "orange" }
+      : { eyebrow: "Start day", title: "Open checklist", sub: "Set drawer + review today", icon: "fa-list-check", tone: "blue" };
+  const iconTone = card.tone === "green"
+    ? "bg-shGreen/20 text-shGreen group-hover:bg-shGreen"
+    : card.tone === "blue"
+      ? "bg-shBlue/20 text-shBlue group-hover:bg-shBlue"
+      : "bg-shOrange/20 text-shOrange group-hover:bg-shOrange";
+
   return (
     <>
       <button onClick={openPanel} data-testid="end-of-day-btn"
-              className="bg-bgPanel border border-bgHover rounded-xl px-4 py-3 flex items-center gap-3 hover:border-shOrange transition group text-left">
-        <div className="w-9 h-9 rounded-full bg-shOrange/20 text-shOrange flex items-center justify-center shrink-0 group-hover:bg-shOrange group-hover:text-bgHeader transition">
-          <i className="fas fa-moon"/>
+              className={`bg-bgPanel border border-bgHover rounded-xl px-4 py-3 flex items-center gap-3 transition group text-left ${latestCloseout ? "hover:border-shGreen" : dayStarted ? "hover:border-shOrange" : "hover:border-shBlue"}`}>
+        <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition group-hover:text-bgHeader ${iconTone}`}>
+          <i className={`fas ${card.icon}`}/>
         </div>
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-gray-500">Closing routine</p>
-          <p className="text-[14px] font-black text-white">Wrap up the day</p>
-          <p className="text-[11px] text-gray-500">30-second safety check</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.25em] text-gray-500">{card.eyebrow}</p>
+          <p className="text-[14px] font-black text-white">{card.title}</p>
+          <p className="text-[11px] text-gray-500">{card.sub}</p>
         </div>
       </button>
       {open && (
@@ -166,8 +210,8 @@ export function EndOfDayPanel({ onJump = () => {} }) {
           <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
             <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-3 flex justify-between items-center">
               <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shOrange"><i className="fas fa-moon mr-1"/>End of day</p>
-                <h3 className="text-xl font-black text-white">Wrap-up · {data?.date || "today"}</h3>
+                <p className={`text-[10px] font-black uppercase tracking-[0.3em] ${latestCloseout ? "text-shGreen" : dayStarted ? "text-shOrange" : "text-shBlue"}`}><i className={`fas ${latestCloseout ? "fa-circle-check" : dayStarted ? "fa-moon" : "fa-list-check"} mr-1`}/>{latestCloseout ? "Day complete" : dayStarted ? "End of day" : "Start day"}</p>
+                <h3 className="text-xl font-black text-white">{latestCloseout ? "Day Complete" : dayStarted ? "Wrap-up" : "Open Day"} · {data?.date || "today"}</h3>
               </div>
               <button onClick={close} className="text-gray-400 hover:text-white" data-testid="end-of-day-close"><i className="fas fa-xmark"/></button>
             </div>
@@ -175,6 +219,55 @@ export function EndOfDayPanel({ onJump = () => {} }) {
               {loading && <p className="text-gray-500 text-sm">Loading…</p>}
               {data && (
                 <>
+                  {!data.register?.drawer_session && !data.register?.latest_closeout && (
+                    <div className="bg-shBlue/10 border border-shBlue/40 rounded-xl p-4 space-y-3" data-testid="start-day-checklist">
+                      <div>
+                        <p className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-sun mr-1"/>Start-the-day checklist</p>
+                        <p className="text-[13px] text-gray-400 mt-1">This does not block the app. It just opens the drawer and gives you a clean daily starting point.</p>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <label className="block">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening cash drawer</span>
+                          <input type="number" step="0.01" value={startDay.opening_cash} onChange={(e)=>setStartDay({...startDay, opening_cash: e.target.value})}
+                                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                        </label>
+                        <label className="block">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening notes</span>
+                          <input value={startDay.notes} onChange={(e)=>setStartDay({...startDay, notes: e.target.value})}
+                                 placeholder="Anything to watch today?"
+                                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                        </label>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px] text-gray-300">
+                        <p><i className="fas fa-calendar-day text-shGreen mr-1"/>Review today’s bookings and arrivals.</p>
+                        <p><i className="fas fa-shield-dog text-shOrange mr-1"/>Check vaccines, meds, meals, behavior notes, and low credits.</p>
+                        <p><i className="fas fa-moon text-shBlue mr-1"/>Boarding dogs already staying over are expected on-site.</p>
+                        <p><i className="fas fa-cash-register text-shGreen mr-1"/>Drawer starts from the opening cash you save here.</p>
+                      </div>
+                      <button onClick={saveStartDay} disabled={starting}
+                              className="w-full bg-shBlue text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
+                              data-testid="start-day-save">
+                        <i className="fas fa-door-open mr-1"/>{starting ? "Starting…" : "Start Day"}
+                      </button>
+                    </div>
+                  )}
+
+                  {data.register?.latest_closeout && (
+                    <div className="bg-shGreen/15 border border-shGreen/40 rounded-xl p-4" data-testid="day-complete-banner">
+                      <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-circle-check text-shGreen mr-2"/>Day Complete</p>
+                      <p className="text-[13px] text-gray-400 mt-1">Closeout saved. You can still reopen this panel to view totals or save an additional note if something changed.</p>
+                    </div>
+                  )}
+
+                  {data.boarding_stayovers?.length > 0 && (
+                    <EodSection title="Boarding stayovers · not blockers" icon="fa-moon" tone="blue" items={data.boarding_stayovers}
+                                render={(r)=>(<div className="flex justify-between items-center">
+                                  <div><span className="text-white font-black">{r.dog_name}</span> <span className="text-gray-500 text-xs">· {r.client_name || "—"}</span></div>
+                                  <span className="text-[11px] text-gray-400">checkout {r.end_date || "later"}</span>
+                                </div>)}
+                                onClick={(r)=>{ onJump(r.booking_id); close(); }}/>
+                  )}
+
                   {data.all_clear ? (
                     <div className="bg-shGreen/15 border border-shGreen/40 rounded-xl p-6 text-center" data-testid="eod-all-clear">
                       <i className="fas fa-circle-check text-shGreen text-5xl mb-2"/>
@@ -257,7 +350,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                             data-testid="eod-save-closeout">
                       <i className="fas fa-lock mr-1"/>{closing ? "Saving…" : "Save End-of-Day Closeout"}
                     </button>
-                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but there are still safety or money items to resolve.</p>}
+                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but there are still safety or money items to resolve. Boarding stayovers are not blockers unless due for checkout.</p>}
                   </div>
                 </>
               )}

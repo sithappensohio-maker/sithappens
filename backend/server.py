@@ -19801,19 +19801,29 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         {"date": today, "status": {"$in": ["approved", "completed"]}},
         {"_id": 0},
     ).to_list(2000)
-    still_on = [
-        {
+    # Dogs staying overnight for boarding should NOT block end-of-day. They are
+    # expected to remain on premises until their pickup/checkout date. Only
+    # non-boarding dogs and boarding dogs due to leave today/past-due block closeout.
+    still_on = []
+    boarding_stayovers = []
+    for b in bookings:
+        if not (b.get("checked_in_at") and not b.get("checked_out_at")):
+            continue
+        service_type = (b.get("service_type") or "").lower()
+        end_date = b.get("end_date") or b.get("date") or today
+        row = {
             "booking_id": b["id"],
             "dog_name": b.get("dog_name", ""),
             "client_name": b.get("client_name", ""),
             "service_type": b.get("service_type", ""),
             "kennel": b.get("kennel", ""),
             "checked_in_at": b.get("checked_in_at", ""),
+            "end_date": end_date,
         }
-        for b in bookings
-        if b.get("checked_in_at") and not b.get("checked_out_at")
-        and (b.get("service_type") != "boarding" or (b.get("end_date") or b.get("date")) == today)
-    ]
+        if service_type == "boarding" and end_date > today:
+            boarding_stayovers.append(row)
+        else:
+            still_on.append(row)
     completed_today = [b for b in bookings if b.get("status") == "completed"]
     unpaid = [
         {
@@ -19850,6 +19860,7 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         "date": today,
         "register": register,
         "still_on_premises": still_on,
+        "boarding_stayovers": boarding_stayovers,
         "unpaid_bookings": unpaid,
         # Kept for backward compatibility with the existing UI/tests.
         # Report cards are optional and do not block all-clear closeout.
