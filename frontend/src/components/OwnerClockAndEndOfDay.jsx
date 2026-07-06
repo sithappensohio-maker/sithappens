@@ -118,6 +118,8 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", card_batch: "", venmo_paypal: "" });
   const openPanel = async () => {
     setOpen(true);
     setLoading(true);
@@ -128,6 +130,21 @@ export function EndOfDayPanel({ onJump = () => {} }) {
     finally { setLoading(false); }
   };
   const close = () => { setOpen(false); setData(null); };
+  const saveCloseout = async () => {
+    setClosing(true);
+    try {
+      const payload = {
+        notes: closeout.notes || "",
+        cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
+        card_batch: closeout.card_batch === "" ? null : Number(closeout.card_batch),
+        venmo_paypal: closeout.venmo_paypal === "" ? null : Number(closeout.venmo_paypal),
+      };
+      await api.post("/admin/end-of-day/closeout", payload);
+      toast.success("Closeout saved");
+      close();
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Closeout failed"); }
+    finally { setClosing(false); }
+  };
 
   return (
     <>
@@ -195,6 +212,35 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     <EodStat label="Cash today" value={`$${(data.revenue_cash || 0).toFixed(2)}`} color="text-shGreen"/>
                     <EodStat label="Meals · meds" value={`${data.care_log_totals?.feedings || 0} · ${data.care_log_totals?.medications || 0}`}/>
                     <EodStat label="💧 · 💩" value={`${data.care_log_totals?.pee || 0} · ${data.care_log_totals?.poop || 0}`}/>
+                  </div>
+
+                  <div className="bg-bgBase/60 border border-bgHover rounded-xl p-3 space-y-3" data-testid="eod-closeout-form">
+                    <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-clipboard-check mr-1"/>Save closeout snapshot</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {[
+                        ["cash_counted", "Cash counted"],
+                        ["card_batch", "Card batch"],
+                        ["venmo_paypal", "Venmo/PayPal"],
+                      ].map(([k,label]) => (
+                        <label key={k} className="block">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+                          <input type="number" step="0.01" value={closeout[k]} onChange={(e)=>setCloseout({...closeout, [k]: e.target.value})}
+                                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                        </label>
+                      ))}
+                    </div>
+                    <label className="block">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Notes</span>
+                      <textarea value={closeout.notes} onChange={(e)=>setCloseout({...closeout, notes: e.target.value})}
+                                placeholder="Anything weird today? unpaid promise, cash drawer note, supply issue…"
+                                className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm min-h-[70px]"/>
+                    </label>
+                    <button onClick={saveCloseout} disabled={closing}
+                            className="w-full bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
+                            data-testid="eod-save-closeout">
+                      <i className="fas fa-lock mr-1"/>{closing ? "Saving…" : "Save End-of-Day Closeout"}
+                    </button>
+                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but this day is not all-clear yet.</p>}
                   </div>
                 </>
               )}

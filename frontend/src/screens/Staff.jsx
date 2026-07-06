@@ -82,6 +82,7 @@ export default function Staff() {
           ["payroll", "Payroll", "fa-file-csv"],
           ["taxes", "Payroll Tax", "fa-calculator"],
           ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
+          ["money", "Money Audit", "fa-scale-balanced"],
           ["timeoff", "Time Off", "fa-umbrella-beach"],
           ["corrections", "Corrections", "fa-clock-rotate-left"],
           ["training", "Training", "fa-clipboard-user"],
@@ -262,6 +263,7 @@ export default function Staff() {
       {subtab === "payroll" && <PayrollTab employees={employees} />}
       {subtab === "taxes" && <TaxEstimatorTab />}
       {subtab === "quarterly" && <QuarterlyTaxTab />}
+      {subtab === "money" && <MoneyAuditTab />}
       {subtab === "timeoff" && <TimeOffAdminTab />}
       {subtab === "corrections" && <PunchCorrectionsAdminTab />}
       {subtab === "training" && <TrainerScorecardTab />}
@@ -1096,8 +1098,9 @@ const QUARTERLY_TAX_FIELDS = [
   ["ss_rate_pct", "Social Security % (both halves)", "Default 12.4%"],
   ["medicare_rate_pct", "Medicare % (both halves)", "Default 2.9%"],
   ["se_tax_taxable_pct", "SE taxable %", "IRS default 92.35%"],
-  ["ss_wage_base", "SS wage base ($)", "2026 estimate $176,100"],
-  ["estimated_payments_made", "Quarterly payments already made ($)", "Subtracted from YTD owed"],
+  ["ss_wage_base", "SS wage base ($)", "2026 SSA taxable maximum $184,500"],
+  ["estimated_payments_made", "Quarterly payments already made ($)", "Legacy field; payment log below wins when used"],
+  ["mileage_rate_per_mile", "Mileage rate ($/mile)", "2026 IRS business standard mileage rate $0.725"],
 ];
 
 function QuarterlyTaxTab() {
@@ -1240,6 +1243,17 @@ function QuarterlyTaxTab() {
         <TaxKpi label="Est. Tax Owed YTD" value={data.balance_owed_ytd} color="shBlue" emphasis/>
       </div>
 
+      {Number(data.income?.sales_tax_collected || 0) > 0 && (
+        <div className="bg-shBlue/5 border border-shBlue/40 rounded-xl p-3" data-testid="qt-sales-tax-note">
+          <p className="text-[12px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-receipt mr-1"/>Sales tax separated</p>
+          <p className="text-[13px] text-gray-300 mt-1">
+            Cash collected before sales tax: <span className="text-white font-black">${data.income.cash_collected_before_sales_tax.toFixed(2)}</span> ·
+            sales tax held aside: <span className="text-shOrange font-black">${data.income.sales_tax_collected.toFixed(2)}</span> ·
+            Schedule C income uses <span className="text-shGreen font-black">${data.income.gross.toFixed(2)}</span>.
+          </p>
+        </div>
+      )}
+
       {/* Owner's draw YTD tile — only render when an owner is set */}
       {Number(data.owner_draw_ytd || 0) > 0 && (
         <div className="bg-shBlue/5 border border-shBlue/40 rounded-xl p-3 flex items-baseline gap-3 flex-wrap" data-testid="qt-owner-draw">
@@ -1292,6 +1306,8 @@ function QuarterlyTaxTab() {
           <div className="space-y-1 text-[13px]">
             <Row label="Service bookings" value={data.income.service_bookings}/>
             <Row label="Retail sales" value={data.income.retail_sales}/>
+            {Number(data.income?.sales_tax_collected || 0) > 0 && <Row label="Sales tax collected (excluded)" value={data.income.sales_tax_collected} neg/>}
+            {Number(data.income?.service_unpaid_balance || 0) > 0 && <Row label="Unpaid service balances (not income yet)" value={data.income.service_unpaid_balance} neg/>}
             <Row label="GROSS INCOME" value={data.income.gross} bold/>
             <div className="border-t border-bgHover my-2"/>
             <Row label="Recorded expenses" value={data.expenses.recorded} neg/>
@@ -1578,6 +1594,92 @@ function Row({ label, value, neg = false, bold = false, color = "" }) {
   );
 }
 
+
+
+// ─── Money Audit / Sanity Check ─────────────────────────────────────────────
+function MoneyAuditTab() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [start, setStart] = useState(`${new Date().getFullYear()}-01-01`);
+  const [end, setEnd] = useState(todayISO());
+  const load = async () => {
+    setErr("");
+    try {
+      const r = await api.get("/admin/money-health", { params: { start_date: start, end_date: end } });
+      setData(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load money audit"); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  if (!data) return <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-400" data-testid="money-audit-loading">Loading money audit…</div>;
+  const c = data.cash || {};
+  const ar = data.receivables || {};
+  const cr = data.credits || {};
+  const checks = data.checks || [];
+  return (
+    <div className="space-y-4" data-testid="money-audit-tab">
+      <div className="bg-shOrange/10 border border-shOrange/40 rounded p-3 text-[13px] text-gray-300">
+        <i className="fas fa-triangle-exclamation text-shOrange mr-2"/>
+        This is an owner sanity check, not bookkeeping advice. It separates cash, AR, credits, and sales tax so you can hand cleaner numbers to a CPA.
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Start</span><input type="date" value={start} onChange={e=>setStart(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">End</span><input type="date" value={end} onChange={e=>setEnd(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
+        <button onClick={load} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Refresh</button>
+        {err && <span className="text-red-400 text-[13px] font-black">{err}</span>}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <AuditTile label="Cash collected" value={c.gross_collected_before_sales_tax} color="text-white"/>
+        <AuditTile label="Schedule C income" value={c.schedule_c_income} color="text-shGreen"/>
+        <AuditTile label="Sales tax held" value={c.sales_tax_collected} color="text-shOrange"/>
+        <AuditTile label="Booking AR" value={ar.booking_balance_due_in_window} color="text-shBlue"/>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-cash-register text-shGreen mr-2"/>Cash breakdown</h4>
+          <div className="space-y-1 text-[13px]">
+            <Row label="Service collected before sales tax" value={c.service_collected_before_sales_tax || 0}/>
+            <Row label="Retail/pack/program collected before sales tax" value={c.retail_collected_before_sales_tax || 0}/>
+            <Row label="Sales tax held aside" value={c.sales_tax_collected || 0} neg/>
+            <Row label="Schedule C income estimate" value={c.schedule_c_income || 0} bold color="shGreen"/>
+          </div>
+        </div>
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-ticket text-shBlue mr-2"/>Credits & AR</h4>
+          <div className="space-y-1 text-[13px]">
+            <Row label="Credit pack cash sales" value={cr.credit_pack_cash_sales_in_window || 0}/>
+            <Row label="Training program cash sales" value={cr.training_program_cash_sales_in_window || 0}/>
+            <Row label="Credit value redeemed" value={cr.credit_value_redeemed_in_window || 0} neg/>
+            <Row label="Daycare credits outstanding" value={cr.daycare_credits_outstanding || 0}/>
+            <Row label="Boarding credits outstanding" value={cr.boarding_credits_outstanding || 0}/>
+            <Row label="Client account balance owed" value={ar.client_account_balance_owed_all_time || 0} bold color="shOrange"/>
+          </div>
+        </div>
+      </div>
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="money-audit-checks">
+        <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-stethoscope text-shOrange mr-2"/>Sanity checks</h4>
+        <div className="space-y-2">
+          {checks.map(ch => (
+            <div key={ch.key} className={`rounded border p-3 ${ch.ok ? "bg-shGreen/10 border-shGreen/40" : ch.severity === "danger" ? "bg-red-500/10 border-red-500/40" : "bg-shOrange/10 border-shOrange/40"}`}>
+              <p className={`text-[12px] font-black uppercase tracking-widest ${ch.ok ? "text-shGreen" : ch.severity === "danger" ? "text-red-300" : "text-shOrange"}`}>
+                <i className={`fas ${ch.ok ? "fa-circle-check" : "fa-triangle-exclamation"} mr-1`}/>{ch.label}
+              </p>
+              <p className="text-[13px] text-gray-300 mt-1">{ch.detail}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AuditTile({ label, value = 0, color = "text-white" }) {
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-xl p-3">
+      <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+      <p className={`text-xl font-black mt-1 ${color}`}>${Number(value || 0).toFixed(2)}</p>
+    </div>
+  );
+}
 
 
 // ─── Owner's Draw drill-down (sole-prop self-pay tracker) ──────────────────

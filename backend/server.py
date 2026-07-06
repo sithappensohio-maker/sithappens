@@ -11343,7 +11343,7 @@ BACKUP_COLLECTIONS = [
     # Staff scheduling + actual clocked hours (drives payroll)
     "shifts", "time_clock_entries", "time_off_requests",
     # Tax tracker
-    "tax_payments", "mileage_log",
+    "tax_payments", "mileage_log", "daily_closeouts",
     # Dog Trivia + Fact of the Day (engagement content + per-client streak history)
     # NOTE: trivia_daily is intentionally excluded — it's a 1-row daily cache
     # that regenerates from trivia_questions on the next portal hit. Including
@@ -15321,6 +15321,40 @@ def _cash_revenue(booking: dict) -> float:
     return 0.0
 
 
+
+
+def _sales_tax_collected_on_booking(booking: dict) -> float:
+    """Estimated sales tax actually collected for a booking.
+
+    `actual_price` includes tax when sales tax is enabled. For partial payments,
+    only a proportional slice of tax has actually been collected, so Schedule C
+    income should subtract only that slice. This keeps sales tax payable visible
+    without treating passthrough tax as business profit.
+    """
+    tax_total = float(booking.get("tax_amount") or 0)
+    if tax_total <= 0:
+        return 0.0
+    actual = float(booking.get("actual_price") or 0)
+    cash = _cash_revenue(booking)
+    if actual <= 0 or cash <= 0:
+        return 0.0
+    return round(min(tax_total, tax_total * min(cash, actual) / actual), 2)
+
+
+def _schedule_c_booking_income(booking: dict) -> float:
+    """Service income for Schedule C / quarterly-tax estimator.
+
+    Uses cash-basis booking revenue, then removes sales tax collected because
+    sales tax held for the state should be tracked as a liability, not profit,
+    when it is imposed on the buyer and remitted to the state/local authority.
+    """
+    return round(max(0.0, _cash_revenue(booking) - _sales_tax_collected_on_booking(booking)), 2)
+
+
+def _schedule_c_retail_income(row: dict) -> float:
+    """Retail/other cash income for Schedule C, net of sales tax collected."""
+    return round(max(0.0, float(row.get("amount") or 0) - float(row.get("tax_amount") or 0)), 2)
+
 def _is_program_credit_redemption(booking: dict, program_lot_ids: set) -> bool:
     """Return True if this booking is paid from a training-program credit lot.
     Identified by the `is_prepaid_program_session` flag (set at sell-time) OR
@@ -16432,6 +16466,197 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
     return {"snapshot": snapshot, "totals": totals}
 
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Business Health / Money Audit helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+@api.get("/admin/money-health")
+async def admin_money_health(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    """Non-destructive accounting sanity check.
+
+    Separates cash collected, Schedule C income, sales tax held for remittance,
+    accounts receivable, credit redemptions, and ledger/client-balance health.
+    This endpoint is designed for the owner before end-of-day or tax time.
+    """
+    today = business_today()
+    sd = start_date or f"{today.year}-01-01"
+    ed = end_date or today.isoformat()
+
+    bookings = await _booking_rows_anywhere(
+        {"date": {"$gte": sd, "$lte": ed}},
+        {"_id": 0}, limit=100000, sort_field="date",
+    )
+    completed = [b for b in bookings if b.get("status") == "completed"]
+    service_cash = round(sum(_cash_revenue(b) for b in completed), 2)
+    service_tax = round(sum(_sales_tax_collected_on_booking(b) for b in completed), 2)
+    service_schedule_c = round(sum(_schedule_c_booking_income(b) for b in completed), 2)
+    booking_ar = round(sum(_booking_balance_due(b) for b in completed), 2)
+    credit_redemptions = [b for b in completed if b.get("payment_method") == "credits"]
+    credit_value_redeemed = round(sum(float(b.get("credit_value") or 0) for b in credit_redemptions), 2)
+    credit_units_redeemed = round(sum(float(b.get("credit_units_used") or b.get("credit_units_required") or 0) for b in credit_redemptions), 2)
+
+    retail = await db.retail_sales.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).to_list(50000)
+    retail_cash = round(sum(float(r.get("amount") or 0) for r in retail), 2)
+    retail_tax = round(sum(float(r.get("tax_amount") or 0) for r in retail), 2)
+    retail_schedule_c = round(sum(_schedule_c_retail_income(r) for r in retail), 2)
+    credit_pack_sales = round(sum(float(r.get("amount") or 0) for r in retail if r.get("source_kind") == "credit_pack_sale" or "Credit Pack" in (r.get("description") or "")), 2)
+    training_program_sales = round(sum(float(r.get("amount") or 0) for r in retail if r.get("source_kind") == "training_program_sale" or "Training Program" in (r.get("description") or "")), 2)
+
+    clients = await db.clients.find({}, {"_id": 0, "id": 1, "name": 1, "account_balance": 1, "credits": 1, "boarding_credits": 1, "training_credits": 1}).to_list(50000)
+    client_balance_owed = round(sum(max(0.0, float(c.get("account_balance") or 0)) for c in clients), 2)
+    client_prepaid_cash = round(sum(max(0.0, -float(c.get("account_balance") or 0)) for c in clients), 2)
+    daycare_credits_outstanding = round(sum(float(c.get("credits") or 0) for c in clients), 2)
+    boarding_credits_outstanding = round(sum(float(c.get("boarding_credits") or 0) for c in clients), 2)
+    training_credits_outstanding = round(sum(float(c.get("training_credits") or 0) for c in clients), 2)
+
+    ledger_rows = await db.payment_ledger.find({"created_at": {"$gte": f"{sd}T00:00:00", "$lte": f"{ed}T23:59:59.999Z"}}, {"_id": 0}).to_list(100000)
+    ledger_by_type: Dict[str, float] = {}
+    for row in ledger_rows:
+        t = row.get("type") or "unknown"
+        ledger_by_type[t] = round(ledger_by_type.get(t, 0.0) + float(row.get("amount") or 0), 2)
+
+    ledger_booking_ids = {r.get("booking_id") for r in ledger_rows if r.get("booking_id")}
+    completed_with_balance = [b for b in completed if _booking_balance_due(b) > 0.005 and not b.get("is_prepaid_program_session")]
+    missing_ledger = [b for b in completed_with_balance if b.get("id") not in ledger_booking_ids]
+
+    weird_bookings = []
+    for b in completed:
+        actual = float(b.get("actual_price") or 0)
+        paid = float(b.get("amount_paid") or 0)
+        if paid - actual > 0.01 and b.get("payment_status") != "paid_over":
+            weird_bookings.append({"id": b.get("id"), "dog_name": b.get("dog_name"), "client_name": b.get("client_name"), "issue": "amount_paid_gt_actual", "actual_price": actual, "amount_paid": paid})
+        if b.get("payment_status") == "unpaid" and paid > 0:
+            weird_bookings.append({"id": b.get("id"), "dog_name": b.get("dog_name"), "client_name": b.get("client_name"), "issue": "unpaid_has_amount_paid", "actual_price": actual, "amount_paid": paid})
+
+    checks = []
+    def add_check(key: str, ok: bool, label: str, detail: str, severity: str = "warn"):
+        checks.append({"key": key, "ok": bool(ok), "label": label, "detail": detail, "severity": "ok" if ok else severity})
+    add_check("sales_tax_separated", True, "Sales tax separated", f"${service_tax + retail_tax:.2f} sales tax tracked separately from Schedule C income.", "warn")
+    add_check("ledger_on_ar", len(missing_ledger) == 0, "AR ledger coverage", f"{len(missing_ledger)} completed unpaid/partial booking(s) lack a ledger row in this window.", "danger")
+    add_check("booking_price_sanity", len(weird_bookings) == 0, "Booking payment sanity", f"{len(weird_bookings)} completed booking(s) have odd paid/status math.", "danger")
+    add_check("client_balance_reconciles", abs(client_balance_owed - booking_ar) < 1000000, "Client balances visible", f"Client AR total ${client_balance_owed:.2f}; booking AR in window ${booking_ar:.2f}. Use ledger for exact historical reconciliation.", "warn")
+
+    return {
+        "range": {"start_date": sd, "end_date": ed},
+        "cash": {
+            "service_collected_before_sales_tax": service_cash,
+            "retail_collected_before_sales_tax": retail_cash,
+            "gross_collected_before_sales_tax": round(service_cash + retail_cash, 2),
+            "sales_tax_collected": round(service_tax + retail_tax, 2),
+            "schedule_c_income": round(service_schedule_c + retail_schedule_c, 2),
+            "service_schedule_c_income": service_schedule_c,
+            "retail_schedule_c_income": retail_schedule_c,
+        },
+        "receivables": {
+            "booking_balance_due_in_window": booking_ar,
+            "client_account_balance_owed_all_time": client_balance_owed,
+            "client_prepaid_cash_all_time": client_prepaid_cash,
+        },
+        "credits": {
+            "credit_value_redeemed_in_window": credit_value_redeemed,
+            "credit_units_redeemed_in_window": credit_units_redeemed,
+            "credit_redemption_count": len(credit_redemptions),
+            "daycare_credits_outstanding": daycare_credits_outstanding,
+            "boarding_credits_outstanding": boarding_credits_outstanding,
+            "training_credits_outstanding": training_credits_outstanding,
+            "credit_pack_cash_sales_in_window": credit_pack_sales,
+            "training_program_cash_sales_in_window": training_program_sales,
+        },
+        "ledger": {"count": len(ledger_rows), "by_type": ledger_by_type},
+        "warnings": {"missing_ledger": missing_ledger[:25], "weird_bookings": weird_bookings[:25]},
+        "checks": checks,
+        "explain": {
+            "cash_basis": "Paid bookings count cash collected; partial bookings count amount_paid; unpaid bookings count $0 cash and move to AR.",
+            "credits": "Credit-pack sales count when sold; credit redemptions are tracked operationally but are not counted again as new cash.",
+            "sales_tax": "Sales tax collected is tracked separately and excluded from Schedule C income for the estimator.",
+        },
+    }
+
+
+@api.get("/admin/production-health")
+async def admin_production_health(_: dict = Depends(require_admin)):
+    """Operator health check for the self-hosted box: DB ping, backup age,
+    disk pressure, email/env setup, and key collection counts. No writes."""
+    checks = []
+    def add(key: str, ok: bool, label: str, detail: str, severity: str = "warn"):
+        checks.append({"key": key, "ok": bool(ok), "label": label, "detail": detail, "severity": "ok" if ok else severity})
+    try:
+        await db.command("ping")
+        add("mongo", True, "MongoDB", "Database ping OK")
+    except Exception as exc:
+        add("mongo", False, "MongoDB", f"Database ping failed: {exc}", "danger")
+
+    runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(5)
+    last_ok = next((r for r in runs if r.get("ok") or r.get("status") == "ok"), None)
+    if last_ok and last_ok.get("started_at"):
+        add("backup_recent", True, "Backups", f"Last successful backup: {last_ok.get('started_at')}")
+    else:
+        add("backup_recent", False, "Backups", "No successful in-app backup run found. Use browser backup or ./backup-now.sh before updates.", "danger")
+
+    disk = await admin_disk_usage(_={})
+    danger_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "danger"]
+    warn_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "warn"]
+    add("disk", not danger_paths, "Disk space", f"{len(danger_paths)} danger, {len(warn_paths)} warning mount(s).", "danger")
+
+    email_ok = bool(os.environ.get("RESEND_API_KEY")) and bool(os.environ.get("SENDER_EMAIL")) and bool(os.environ.get("ADMIN_NOTIFICATION_EMAIL"))
+    add("email", email_ok, "Email notifications", "Resend/admin/sender env vars present." if email_ok else "Missing RESEND_API_KEY, SENDER_EMAIL, or ADMIN_NOTIFICATION_EMAIL.", "warn")
+    add("jwt", len(JWT_SECRET or "") >= 32, "JWT secret", "Looks long enough." if len(JWT_SECRET or "") >= 32 else "JWT_SECRET is short; set a long random value before public exposure.", "danger")
+    admin_email_env = os.environ.get("ADMIN_EMAIL") or ""
+    admin_pw_env = os.environ.get("ADMIN_PASSWORD") or ""
+    default_admin_risk = (not admin_email_env) or admin_pw_env in ("", "admin123", "password")
+    add("admin_password", not default_admin_risk, "Admin seed credentials", "Admin env credentials look custom." if not default_admin_risk else "ADMIN_EMAIL/ADMIN_PASSWORD env vars look missing or default-risk.", "danger")
+
+    counts = {}
+    for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts"]:
+        try:
+            counts[coll] = await db[coll].count_documents({})
+        except Exception:
+            counts[coll] = None
+    return {"checked_at": now_iso(), "checks": checks, "backup_runs": runs, "disk": disk, "counts": counts}
+
+
+class EndOfDayCloseoutIn(BaseModel):
+    notes: Optional[str] = ""
+    cash_counted: Optional[float] = None
+    card_batch: Optional[float] = None
+    venmo_paypal: Optional[float] = None
+
+
+@api.post("/admin/end-of-day/closeout")
+async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depends(require_admin)):
+    """Persist an end-of-day closeout snapshot. It does not change bookings;
+    it creates an audit trail that says what the owner reviewed before closing."""
+    snapshot = await admin_end_of_day(_=user)  # type: ignore[arg-type]
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": snapshot.get("date"),
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email") or "admin",
+        "snapshot": snapshot,
+        "notes": (body.notes or "").strip()[:1000],
+        "cash_counted": round(float(body.cash_counted), 2) if body.cash_counted is not None else None,
+        "card_batch": round(float(body.card_batch), 2) if body.card_batch is not None else None,
+        "venmo_paypal": round(float(body.venmo_paypal), 2) if body.venmo_paypal is not None else None,
+        "all_clear": bool(snapshot.get("all_clear")),
+    }
+    await db.daily_closeouts.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return doc
+
+
+@api.get("/bookings/{booking_id}/history")
+async def booking_history(booking_id: str, _: dict = Depends(require_admin)):
+    """Booking change history from audit log + payment ledger. No writes."""
+    audits = await db.audit_log.find({"record_id": booking_id}, {"_id": 0}).sort("ts", -1).to_list(200)
+    ledger = await db.payment_ledger.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"booking_id": booking_id, "audit": audits, "ledger": ledger}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarterly Tax Estimate (Sole-Proprietor / Schedule C)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -16442,13 +16667,13 @@ async def staff_pay_snapshot(_: dict = Depends(require_admin)):
 QUARTERLY_TAX_DEFAULTS = {
     "se_tax_taxable_pct": 92.35,    # IRS allows 92.35% of net SE earnings to be taxed
     "ss_rate_pct": 12.4,            # Sole-prop pays both halves of Social Security
-    "ss_wage_base": 176100.0,       # 2026 estimated SS wage base
+    "ss_wage_base": 184500.0,       # 2026 SSA taxable maximum
     "medicare_rate_pct": 2.9,       # Sole-prop pays both halves of Medicare
     "federal_income_pct": 12.0,     # Effective rate guess (12% bracket sole-prop, married/single)
     "state_income_pct": 2.75,       # Ohio top effective
     "local_income_pct": 2.5,        # Warren city
     "estimated_payments_made": 0.0, # YTD federal quarterly payments already mailed in
-    "mileage_rate_per_mile": 0.70,  # 2026 IRS standard mileage rate for business use
+    "mileage_rate_per_mile": 0.725, # 2026 IRS standard mileage rate for business use
     "filing_status": "single",      # informational only
 }
 
@@ -16461,8 +16686,16 @@ async def _get_quarterly_tax_settings() -> Dict[str, Any]:
             {"_id": "quarterly_tax"}, {"$set": row}, upsert=True
         )
         return row
-    # Backfill missing keys so older docs still work after we add new fields
+    # Backfill missing keys so older docs still work after we add new fields.
     patched = {**QUARTERLY_TAX_DEFAULTS, **row}
+    # Sprint 110fa — Tax defaults audit: bump installs that were still using
+    # our older placeholder defaults (0.70 mileage / 176100 wage base) to the
+    # official 2026 values. If the owner manually changed either setting, leave
+    # their value alone.
+    if float(row.get("mileage_rate_per_mile", 0) or 0) == 0.70:
+        patched["mileage_rate_per_mile"] = QUARTERLY_TAX_DEFAULTS["mileage_rate_per_mile"]
+    if float(row.get("ss_wage_base", 0) or 0) == 176100.0:
+        patched["ss_wage_base"] = QUARTERLY_TAX_DEFAULTS["ss_wage_base"]
     return patched
 
 
@@ -16507,13 +16740,23 @@ async def admin_quarterly_tax(
         sort_field="date",
     )
     service_income = 0.0
+    service_cash_gross = 0.0
+    service_sales_tax_collected = 0.0
+    service_unpaid_balance = 0.0
     for r in booking_rows:
         if r.get("status") == "completed":
-            service_income += _cash_revenue(r)
+            service_cash_gross += _cash_revenue(r)
+            service_sales_tax_collected += _sales_tax_collected_on_booking(r)
+            service_income += _schedule_c_booking_income(r)
+            service_unpaid_balance += _booking_balance_due(r)
     retail_rows = await db.retail_sales.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)
-    retail_income = sum(float(r.get("amount") or 0) for r in retail_rows)
+    retail_cash_gross = sum(float(r.get("amount") or 0) for r in retail_rows)
+    retail_sales_tax_collected = sum(float(r.get("tax_amount") or 0) for r in retail_rows)
+    retail_income = sum(_schedule_c_retail_income(r) for r in retail_rows)
+    sales_tax_collected = round(service_sales_tax_collected + retail_sales_tax_collected, 2)
+    gross_cash_collected = round(service_cash_gross + retail_cash_gross, 2)
     gross_income = service_income + retail_income
 
     # ---- Expenses: recorded + labor (gross + employer burden) ----------------
@@ -16629,6 +16872,11 @@ async def admin_quarterly_tax(
             "service_bookings": round(service_income, 2),
             "retail_sales": round(retail_income, 2),
             "gross": round(gross_income, 2),
+            "cash_collected_before_sales_tax": gross_cash_collected,
+            "sales_tax_collected": sales_tax_collected,
+            "service_cash_before_sales_tax": round(service_cash_gross, 2),
+            "retail_cash_before_sales_tax": round(retail_cash_gross, 2),
+            "service_unpaid_balance": round(service_unpaid_balance, 2),
         },
         "expenses": {
             "recorded": round(recorded_expenses, 2),
@@ -16667,9 +16915,9 @@ async def admin_quarterly_tax(
         "next_quarter_due": next_q,
         "settings": settings,
         "disclaimer": (
-            "Estimator only. Sole-proprietor Schedule C math with 2026 default "
-            "rates. Adjust federal/state/local % to match your actual bracket. "
-            "Not a substitute for a CPA."
+            "Estimator only. Cash-basis sole-proprietor Schedule C math with 2026 default "
+            "rates. Sales tax collected is tracked separately and excluded from Schedule C income. "
+            "Adjust federal/state/local % to match your actual bracket. Not a substitute for a CPA."
         ),
     }
 

@@ -3685,6 +3685,7 @@ function BackupPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
+      <ProductionHealthPanel />
       <DiskUsagePanel />
       <AutoBackupPanel />
       <div className="border-t border-bgHover pt-6">
@@ -4082,6 +4083,56 @@ function fmtBytes(n) {
   const mb = n / (1024 ** 2);
   return `${mb.toFixed(1)} MB`;
 }
+
+function ProductionHealthPanel() {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const load = async () => {
+    setErr("");
+    try { const r = await api.get("/admin/production-health"); setData(r.data); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load production health"); }
+  };
+  useEffect(() => { load(); }, []);
+  if (!data && !err) return null;
+  const checks = data?.checks || [];
+  const bad = checks.filter(c => !c.ok && c.severity === "danger").length;
+  const warn = checks.filter(c => !c.ok && c.severity !== "danger").length;
+  return (
+    <div className="border border-bgHover rounded-xl p-4 bg-bgPanel" data-testid="production-health-panel">
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <div>
+          <h4 className="text-sm font-black text-shGreen uppercase tracking-widest"><i className="fas fa-heart-pulse mr-2"/>Production Health</h4>
+          <p className="text-[13px] text-gray-400">Quick safety check before updates: database, backups, disk, email, and risky env defaults.</p>
+        </div>
+        <button onClick={load} className="bg-bgBase border border-bgHover text-gray-300 px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:border-shGreen"><i className="fas fa-rotate mr-1"/>Refresh</button>
+      </div>
+      {err && <p className="text-red-400 text-[13px]">{err}</p>}
+      {data && (
+        <>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <HealthMini label="Danger" value={bad} color={bad ? "text-red-300" : "text-shGreen"}/>
+            <HealthMini label="Warnings" value={warn} color={warn ? "text-shOrange" : "text-shGreen"}/>
+            <HealthMini label="Collections" value={Object.keys(data.counts || {}).length} color="text-shBlue"/>
+          </div>
+          <div className="space-y-2">
+            {checks.map(c => (
+              <div key={c.key} className={`rounded border p-2 ${c.ok ? "bg-shGreen/10 border-shGreen/40" : c.severity === "danger" ? "bg-red-500/10 border-red-500/40" : "bg-shOrange/10 border-shOrange/40"}`}>
+                <p className={`text-[11px] font-black uppercase tracking-widest ${c.ok ? "text-shGreen" : c.severity === "danger" ? "text-red-300" : "text-shOrange"}`}><i className={`fas ${c.ok ? "fa-check-circle" : "fa-triangle-exclamation"} mr-1`}/>{c.label}</p>
+                <p className="text-[12px] text-gray-300 mt-0.5">{c.detail}</p>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2 uppercase tracking-widest font-black">Checked {new Date(data.checked_at).toLocaleString()}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HealthMini({ label, value, color }) {
+  return <div className="bg-bgBase/60 border border-bgHover rounded p-2"><p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">{label}</p><p className={`text-lg font-black ${color}`}>{value}</p></div>;
+}
+
 function DiskUsagePanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
