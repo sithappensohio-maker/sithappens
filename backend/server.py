@@ -12,6 +12,7 @@ import logging
 import contextvars
 import traceback
 from collections import deque
+from difflib import SequenceMatcher
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date
@@ -26882,6 +26883,261 @@ async def admin_client_setup_status(client_id: str, _: dict = Depends(require_ad
     else:
         full["badge"] = "Setup Incomplete"
     return full
+
+
+# -------- Duplicate finder / safe merge preview (Phase 8A) --------
+def _dupe_norm_email(v: Optional[str]) -> str:
+    return (v or "").strip().lower()
+
+
+def _dupe_norm_phone(v: Optional[str]) -> str:
+    digits = re.sub(r"\D+", "", v or "")
+    if len(digits) > 10 and digits.startswith("1"):
+        digits = digits[-10:]
+    return digits
+
+
+def _dupe_norm_name(v: Optional[str]) -> str:
+    txt = re.sub(r"[^a-z0-9 ]+", " ", (v or "").strip().lower())
+    parts = [p for p in txt.split() if p and p not in {"mr", "mrs", "ms", "miss", "dr"}]
+    return " ".join(parts)
+
+
+def _dupe_name_ratio(a: str, b: str) -> float:
+    a2, b2 = _dupe_norm_name(a), _dupe_norm_name(b)
+    if not a2 or not b2:
+        return 0.0
+    return SequenceMatcher(None, a2, b2).ratio()
+
+
+def _dupe_public_client(c: Dict[str, Any], dogs_by_owner: Dict[str, List[Dict[str, Any]]], users_by_client: Dict[str, int], bookings_by_client: Dict[str, int], future_by_client: Dict[str, int], ledger_by_client: Dict[str, int]) -> Dict[str, Any]:
+    cid = c.get("id") or ""
+    dogs = dogs_by_owner.get(cid, [])
+    credit_total = round(float(c.get("credits") or 0) + float(c.get("boarding_credits") or 0) + float(c.get("training_credits") or 0), 2)
+    return {
+        "id": cid,
+        "name": c.get("name") or "Unnamed client",
+        "email": c.get("email") or "",
+        "phone": c.get("phone") or "",
+        "status": c.get("client_status") or "active",
+        "deleted": bool(c.get("deleted") or c.get("archived")),
+        "created_at": c.get("created_at") or "",
+        "dogs": [{"id": d.get("id"), "name": d.get("name") or "Unnamed dog", "breed": d.get("breed") or ""} for d in dogs[:8]],
+        "dog_count": len(dogs),
+        "booking_count": int(bookings_by_client.get(cid, 0)),
+        "future_booking_count": int(future_by_client.get(cid, 0)),
+        "payment_ledger_count": int(ledger_by_client.get(cid, 0)),
+        "portal_user_count": int(users_by_client.get(cid, 0)),
+        "credits": {
+            "daycare": round(float(c.get("credits") or 0), 2),
+            "boarding": round(float(c.get("boarding_credits") or 0), 2),
+            "training": round(float(c.get("training_credits") or 0), 2),
+            "total": credit_total,
+        },
+        "account_balance": round(float(c.get("account_balance") or 0), 2),
+    }
+
+
+def _dupe_public_dog(d: Dict[str, Any], clients_by_id: Dict[str, Dict[str, Any]], bookings_by_dog: Dict[str, int], future_by_dog: Dict[str, int]) -> Dict[str, Any]:
+    owner = clients_by_id.get(d.get("owner_id") or "") or {}
+    return {
+        "id": d.get("id") or "",
+        "name": d.get("name") or "Unnamed dog",
+        "breed": d.get("breed") or "",
+        "owner_id": d.get("owner_id") or "",
+        "owner_name": owner.get("name") or "Unknown owner",
+        "owner_email": owner.get("email") or "",
+        "deleted": bool(d.get("deleted") or d.get("archived")),
+        "created_at": d.get("created_at") or "",
+        "booking_count": int(bookings_by_dog.get(d.get("id") or "", 0)),
+        "future_booking_count": int(future_by_dog.get(d.get("id") or "", 0)),
+    }
+
+
+async def _duplicate_finder_report(include_archived: bool = False) -> Dict[str, Any]:
+    client_q = {} if include_archived else {"deleted": {"$ne": True}, "archived": {"$ne": True}}
+    dog_q = {} if include_archived else {"deleted": {"$ne": True}, "archived": {"$ne": True}}
+    clients = await db.clients.find(client_q, {"_id": 0}).to_list(5000)
+    dogs = await db.dogs.find(dog_q, {"_id": 0}).to_list(5000)
+    clients_by_id = {c.get("id"): c for c in clients if c.get("id")}
+    dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
+    for d in dogs:
+        dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d)
+
+    booking_projection = {"_id": 0, "id": 1, "client_id": 1, "dog_id": 1, "date": 1, "status": 1}
+    active_bookings = await db.bookings.find({}, booking_projection).to_list(20000)
+    archived_bookings = await db.bookings_archive.find({}, booking_projection).to_list(20000)
+    all_bookings = active_bookings + archived_bookings
+    today_s = business_today().isoformat()
+    bookings_by_client: Dict[str, int] = {}
+    future_by_client: Dict[str, int] = {}
+    bookings_by_dog: Dict[str, int] = {}
+    future_by_dog: Dict[str, int] = {}
+    for b in all_bookings:
+        cid, did = b.get("client_id") or "", b.get("dog_id") or ""
+        if cid:
+            bookings_by_client[cid] = bookings_by_client.get(cid, 0) + 1
+        if did:
+            bookings_by_dog[did] = bookings_by_dog.get(did, 0) + 1
+        if (b.get("date") or "") >= today_s and (b.get("status") in ("pending", "approved")):
+            if cid:
+                future_by_client[cid] = future_by_client.get(cid, 0) + 1
+            if did:
+                future_by_dog[did] = future_by_dog.get(did, 0) + 1
+
+    users_by_client: Dict[str, int] = {}
+    for u in await db.users.find({"client_id": {"$exists": True}}, {"_id": 0, "client_id": 1}).to_list(10000):
+        cid = u.get("client_id") or ""
+        if cid:
+            users_by_client[cid] = users_by_client.get(cid, 0) + 1
+
+    ledger_by_client: Dict[str, int] = {}
+    for row in await db.payment_ledger.find({}, {"_id": 0, "client_id": 1}).to_list(30000):
+        cid = row.get("client_id") or ""
+        if cid:
+            ledger_by_client[cid] = ledger_by_client.get(cid, 0) + 1
+
+    client_candidates: List[Dict[str, Any]] = []
+    seen_sets = set()
+
+    def add_client_group(kind: str, reason: str, confidence: str, score: int, group: List[Dict[str, Any]], match_key: str):
+        ids = sorted([g.get("id") for g in group if g.get("id")])
+        if len(ids) < 2:
+            return
+        key = tuple(ids)
+        # Keep the stronger reason if the same exact group appears more than once.
+        if key in seen_sets:
+            return
+        seen_sets.add(key)
+        client_candidates.append({
+            "id": f"client:{kind}:{match_key}:{'-'.join(ids[:4])}",
+            "kind": kind,
+            "reason": reason,
+            "confidence": confidence,
+            "score": score,
+            "clients": [_dupe_public_client(c, dogs_by_owner, users_by_client, bookings_by_client, future_by_client, ledger_by_client) for c in sorted(group, key=lambda x: (x.get("name") or "").lower())],
+            "safe_action": "Preview only. No records were merged or changed.",
+        })
+
+    def grouped_by(fn):
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for c in clients:
+            val = fn(c)
+            if val:
+                out.setdefault(val, []).append(c)
+        return out
+
+    for email, group in grouped_by(lambda c: _dupe_norm_email(c.get("email"))).items():
+        if len(group) > 1:
+            add_client_group("same_email", f"Same email address: {email}", "high", 95, group, email)
+    for phone, group in grouped_by(lambda c: _dupe_norm_phone(c.get("phone"))).items():
+        if len(phone) >= 7 and len(group) > 1:
+            add_client_group("same_phone", f"Same phone number: {phone}", "high", 90, group, phone)
+
+    # Medium-confidence: same normalized name plus overlapping dog name.
+    by_name = grouped_by(lambda c: _dupe_norm_name(c.get("name")))
+    for nm, group in by_name.items():
+        if len(nm) >= 5 and len(group) > 1:
+            dog_name_sets = [{_dupe_norm_name(d.get("name")) for d in dogs_by_owner.get(c.get("id") or "", []) if _dupe_norm_name(d.get("name"))} for c in group]
+            shared_dogs = set.intersection(*dog_name_sets) if dog_name_sets and all(dog_name_sets) else set()
+            if shared_dogs:
+                add_client_group("same_name_same_dog", f"Same client name and same dog name: {', '.join(sorted(shared_dogs)[:3])}", "medium", 78, group, nm)
+
+    # Medium/low-confidence fuzzy scan; capped to avoid a giant report.
+    fuzzy_added = 0
+    for i, a in enumerate(clients[:1000]):
+        if fuzzy_added >= 30:
+            break
+        for b in clients[i+1:1000]:
+            if fuzzy_added >= 30:
+                break
+            ar = _dupe_norm_name(a.get("name")); br = _dupe_norm_name(b.get("name"))
+            if len(ar) < 6 or len(br) < 6:
+                continue
+            ratio = SequenceMatcher(None, ar, br).ratio()
+            if ratio < 0.92:
+                continue
+            a_dogs = {_dupe_norm_name(d.get("name")) for d in dogs_by_owner.get(a.get("id") or "", []) if _dupe_norm_name(d.get("name"))}
+            b_dogs = {_dupe_norm_name(d.get("name")) for d in dogs_by_owner.get(b.get("id") or "", []) if _dupe_norm_name(d.get("name"))}
+            shared_dog = bool(a_dogs and b_dogs and (a_dogs & b_dogs))
+            same_phone_tail = False
+            pa, pb = _dupe_norm_phone(a.get("phone")), _dupe_norm_phone(b.get("phone"))
+            if len(pa) >= 7 and len(pb) >= 7 and pa[-7:] == pb[-7:]:
+                same_phone_tail = True
+            if shared_dog or same_phone_tail:
+                fuzzy_added += 1
+                add_client_group("similar_name", f"Similar client names ({round(ratio*100)}%) with {'shared dog name' if shared_dog else 'similar phone'}", "medium", 70, [a, b], f"{a.get('id')}-{b.get('id')}")
+
+    dog_candidates: List[Dict[str, Any]] = []
+    seen_dog_sets = set()
+    def add_dog_group(kind: str, reason: str, confidence: str, score: int, group: List[Dict[str, Any]], match_key: str):
+        ids = sorted([g.get("id") for g in group if g.get("id")])
+        if len(ids) < 2:
+            return
+        key = tuple(ids)
+        if key in seen_dog_sets:
+            return
+        seen_dog_sets.add(key)
+        dog_candidates.append({
+            "id": f"dog:{kind}:{match_key}:{'-'.join(ids[:4])}",
+            "kind": kind,
+            "reason": reason,
+            "confidence": confidence,
+            "score": score,
+            "dogs": [_dupe_public_dog(d, clients_by_id, bookings_by_dog, future_by_dog) for d in sorted(group, key=lambda x: (x.get("name") or "").lower())],
+            "safe_action": "Preview only. No dog records were merged or changed.",
+        })
+
+    owner_name_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for d in dogs:
+        key = (d.get("owner_id") or "", _dupe_norm_name(d.get("name")))
+        if key[0] and key[1]:
+            owner_name_groups.setdefault(key, []).append(d)
+    for (owner_id, dog_name), group in owner_name_groups.items():
+        if len(group) > 1:
+            owner = clients_by_id.get(owner_id, {})
+            add_dog_group("same_owner_same_dog", f"Same owner and same dog name: {dog_name} ({owner.get('name') or 'owner unknown'})", "high", 93, group, f"{owner_id}:{dog_name}")
+
+    # Dogs with same name under suspected duplicate clients.
+    dup_client_id_groups = [[c["id"] for c in cand.get("clients", []) if c.get("id")] for cand in client_candidates if cand.get("confidence") in ("high", "medium")]
+    for ids in dup_client_id_groups[:100]:
+        possible = [d for d in dogs if d.get("owner_id") in ids]
+        by_dog_name: Dict[str, List[Dict[str, Any]]] = {}
+        for d in possible:
+            nm = _dupe_norm_name(d.get("name"))
+            if nm:
+                by_dog_name.setdefault(nm, []).append(d)
+        for nm, group in by_dog_name.items():
+            if len(group) > 1:
+                add_dog_group("same_dog_across_possible_duplicate_clients", f"Same dog name across possible duplicate client accounts: {nm}", "medium", 76, group, nm)
+
+    client_candidates = sorted(client_candidates, key=lambda x: (-x.get("score", 0), x.get("reason", "")))[:100]
+    dog_candidates = sorted(dog_candidates, key=lambda x: (-x.get("score", 0), x.get("reason", "")))[:100]
+    return {
+        "generated_at": now_iso(),
+        "mode": "preview_only",
+        "include_archived": include_archived,
+        "summary": {
+            "clients_scanned": len(clients),
+            "dogs_scanned": len(dogs),
+            "client_candidates": len(client_candidates),
+            "dog_candidates": len(dog_candidates),
+            "high_confidence": sum(1 for c in client_candidates + dog_candidates if c.get("confidence") == "high"),
+            "medium_confidence": sum(1 for c in client_candidates + dog_candidates if c.get("confidence") == "medium"),
+        },
+        "client_candidates": client_candidates,
+        "dog_candidates": dog_candidates,
+        "notes": [
+            "This is a safety preview only. It does not merge, delete, archive, or rewrite any client, dog, booking, credit, payment, vaccine, or message records.",
+            "High-confidence matches still require human review. Similar names can be different people, and shared dog names can be coincidence.",
+            "Phase 8B can add an actual merge workflow later, but only with a dry-run preview and audit log.",
+        ],
+    }
+
+
+@api.get("/admin/duplicates/report")
+async def admin_duplicates_report(include_archived: bool = False, _: dict = Depends(require_admin)):
+    return await _duplicate_finder_report(include_archived=include_archived)
 
 
 app.include_router(api)

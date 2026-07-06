@@ -19,6 +19,7 @@ import Pipeline from "./screens/Pipeline";
 import Income from "./screens/Income";
 import Trophies from "./screens/Trophies";
 import Rewards from "./screens/Rewards";
+import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
 import Register from "./screens/Register";
 import RecurringTemplates from "./screens/RecurringTemplates";
@@ -129,6 +130,7 @@ function AdminShell() {
     { id: "recurring", label: "Recurring", icon: "fa-rotate" },
     { id: "clients", label: "Clients", icon: "fa-users", perm: "clients_view" },
     { id: "dogs", label: "Dogs", icon: "fa-paw", perm: "dogs_view" },
+    { id: "duplicate_check", label: "Duplicate Check", icon: "fa-copy", perm: "settings" },
     { id: "pipeline", label: "Pipeline", icon: "fa-line-chart" },
     { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
     { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
@@ -306,6 +308,7 @@ function AdminShell() {
           {tab === "recurring" && <RecurringTemplates />}
           {tab === "clients" && <Clients focusId={searchTarget?.kind==="client"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "dogs" && <Dogs focusId={searchTarget?.kind==="dog"?searchTarget.id:null} focusMode={searchTarget?.mode || "scroll"} onConsumed={()=>setSearchTarget(null)} />}
+          {tab === "duplicate_check" && <DuplicateCheck />}
           {tab === "pipeline" && <Pipeline onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }} />}
           {tab === "homework" && featureOn("homework") && <Homework />}
           {tab === "rewards_center" && featureOn("rewards") && <Rewards />}
