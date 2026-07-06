@@ -11372,28 +11372,9 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
                 "cta": {"type": "open_screen", "screen": "dashboard"},
                 "icon": "fa-door-open",
             })
-        yesterday_iso = (business_today() - timedelta(days=1)).isoformat()
-        missing_cards = await db.bookings.count_documents({
-            "status": "completed",
-            "date": {"$gte": yesterday_iso},
-            "service_type": {"$in": ["daycare", "boarding", "training"]},
-            "$or": [
-                {"report_card": {"$exists": False}},
-                {"report_card": None},
-                {"report_card": {}},
-            ],
-        })
-        if missing_cards > 0:
-            items.append({
-                "id": f"missing-report-cards:{missing_cards}",
-                "kind": "missing_report_card",
-                "priority": "info",
-                "title": f"{missing_cards} recent completed visit{'s' if missing_cards != 1 else ''} missing report cards",
-                "subtitle": "Optional, but useful for client experience and photo follow-up",
-                "ts": now_dt.isoformat(),
-                "cta": {"type": "open_screen", "screen": "dashboard"},
-                "icon": "fa-file-lines",
-            })
+        # Report cards are intentionally optional. Do not turn missing cards into
+        # Action Center items; end-of-day closeout and real blockers should stay
+        # focused on safety/money items that actually require attention.
     except Exception as e:
         logger.warning("today-brain stuck/report-card checks failed: %s", e)
 
@@ -16160,6 +16141,27 @@ def _booking_balance_due(booking: dict) -> float:
     return 0.0
 
 
+def _booking_has_report_card(booking: dict) -> bool:
+    """True when staff saved any meaningful report-card content.
+
+    Report cards are optional for daily closeout, but when we show optional
+    follow-up lists we should not falsely flag a card that has mood tags,
+    notes, photos, or a created timestamp.
+    """
+    rc = booking.get("report_card") or {}
+    if not isinstance(rc, dict) or not rc:
+        return False
+    if str(rc.get("note") or rc.get("notes") or "").strip():
+        return True
+    if rc.get("photos"):
+        return True
+    if rc.get("mood_tags"):
+        return True
+    if rc.get("created_at"):
+        return True
+    return False
+
+
 def _cash_revenue(booking: dict) -> float:
     """Cash-basis revenue for reports.
 
@@ -19825,7 +19827,7 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         if _booking_balance_due(b) > 0
         and not b.get("is_prepaid_program_session")
     ]
-    missing_cards = [
+    optional_missing_cards = [
         {
             "booking_id": b["id"],
             "dog_name": b.get("dog_name", ""),
@@ -19833,8 +19835,7 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
             "service_type": b.get("service_type", ""),
         }
         for b in completed_today
-        if not (b.get("report_card") or {}).get("note")
-        and (b.get("report_card") or {}).get("photos", []) == []
+        if not _booking_has_report_card(b)
         and (b.get("service_type") or "") in ("daycare", "boarding", "training")
     ]
     revenue_cash = round(sum(_cash_revenue(b)
@@ -19850,7 +19851,10 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         "register": register,
         "still_on_premises": still_on,
         "unpaid_bookings": unpaid,
-        "missing_report_cards": missing_cards,
+        # Kept for backward compatibility with the existing UI/tests.
+        # Report cards are optional and do not block all-clear closeout.
+        "missing_report_cards": optional_missing_cards,
+        "optional_report_cards": optional_missing_cards,
         "revenue_cash": revenue_cash,
         "completed_count": len(completed_today),
         "care_log_totals": {
@@ -19859,7 +19863,8 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
             "pee": bathroom_pee,
             "poop": bathroom_poop,
         },
-        "all_clear": (not still_on and not unpaid and not missing_cards),
+        "hard_clear": (not still_on and not unpaid),
+        "all_clear": (not still_on and not unpaid),
     }
 
 

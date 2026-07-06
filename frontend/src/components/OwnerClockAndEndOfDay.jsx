@@ -179,7 +179,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     <div className="bg-shGreen/15 border border-shGreen/40 rounded-xl p-6 text-center" data-testid="eod-all-clear">
                       <i className="fas fa-circle-check text-shGreen text-5xl mb-2"/>
                       <p className="text-white font-black text-xl uppercase tracking-widest">All clear!</p>
-                      <p className="text-gray-400 text-sm mt-1">Everyone's gone home, every booking's paid, every report card's filed. Go relax — you've earned it. 🐾</p>
+                      <p className="text-gray-400 text-sm mt-1">Everyone's gone home and the money blockers are handled. Report cards are optional. Go relax — you've earned it. 🐾</p>
                     </div>
                   ) : (
                     <>
@@ -200,7 +200,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                                     onClick={(r)=>{ onJump(r.booking_id); close(); }}/>
                       )}
                       {data.missing_report_cards?.length > 0 && (
-                        <EodSection title="Missing report cards" icon="fa-camera-retro" tone="blue" items={data.missing_report_cards}
+                        <EodSection title="Optional report cards not filed" icon="fa-camera-retro" tone="blue" items={data.missing_report_cards}
                                     render={(r)=>(<div className="flex justify-between items-center">
                                       <div><span className="text-white font-black">{r.dog_name}</span> <span className="text-gray-500 text-xs">· {r.client_name || "—"}</span></div>
                                       <span className="text-[11px] text-gray-400">{r.service_type}</span>
@@ -257,7 +257,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                             data-testid="eod-save-closeout">
                       <i className="fas fa-lock mr-1"/>{closing ? "Saving…" : "Save End-of-Day Closeout"}
                     </button>
-                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but this day is not all-clear yet.</p>}
+                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but there are still safety or money items to resolve.</p>}
                   </div>
                 </>
               )}
