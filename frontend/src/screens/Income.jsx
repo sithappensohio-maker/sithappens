@@ -923,7 +923,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
     description: expense?.description || "",
     amount: expense?.amount ?? "",
     category: expense?.category || "",
-    payment_method: expense?.payment_method || "card",
+    payment_method: expense?.payment_method || "clover",
     notes: expense?.notes || "",
     receipt_image: expense?.receipt_image || "",
     receipt_filename: expense?.receipt_filename || "",
@@ -983,6 +983,9 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
         category: (form.category || "").trim(),
         notes: (form.notes || "").trim(),
         payment_method: form.payment_method,
+        vendor: form.vendor || "",
+        tax_deductible: !!form.tax_deductible,
+        from_cash_drawer: !!form.from_cash_drawer,
         receipt_image: form.receipt_image || "",
         receipt_filename: form.receipt_filename || "",
       };
@@ -1024,6 +1027,13 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-description" />
         </div>
 
+        <div>
+          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Vendor / store</label>
+          <input type="text" value={form.vendor || ""} onChange={(e)=>setForm({...form, vendor:e.target.value})}
+                 placeholder="e.g., Tractor Supply, Walmart, Chewy"
+                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-vendor" />
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Category</label>
@@ -1038,13 +1048,25 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="card">Card</option>
+              <option value="clover">Clover / Credit Card</option>
               <option value="cash">Cash</option>
-              <option value="transfer">Transfer</option>
+              <option value="venmo">Venmo</option>
+              <option value="paypal">PayPal</option>
               <option value="check">Check</option>
               <option value="other">Other</option>
             </select>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300">
+            <input type="checkbox" checked={!!form.tax_deductible} onChange={(e)=>setForm({...form, tax_deductible:e.target.checked})}/>
+            Tax deductible business expense
+          </label>
+          <label className="flex items-center gap-2 bg-bgBase border border-shOrange/40 rounded p-2 text-[13px] text-gray-300">
+            <input type="checkbox" checked={!!form.from_cash_drawer} onChange={(e)=>setForm({...form, from_cash_drawer:e.target.checked, payment_method: e.target.checked ? "cash" : form.payment_method})}/>
+            Paid out of cash drawer
+          </label>
         </div>
 
         <div>
@@ -1121,7 +1143,7 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
     description: sale?.description || "",
     amount: sale?.amount ?? "",
     category: sale?.category || "",
-    payment_method: sale?.payment_method || "card",
+    payment_method: sale?.payment_method || "clover",
     notes: sale?.notes || "",
     client_id: sale?.client_id || "",
   });
@@ -1213,9 +1235,10 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-payment-method">
-              <option value="card">Card</option>
+              <option value="clover">Clover / Credit Card</option>
               <option value="cash">Cash</option>
-              <option value="transfer">Transfer</option>
+              <option value="venmo">Venmo</option>
+              <option value="paypal">PayPal</option>
               <option value="check">Check</option>
               <option value="credits">Credits</option>
               <option value="other">Other</option>

@@ -119,7 +119,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [closing, setClosing] = useState(false);
-  const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", card_batch: "", venmo_paypal: "" });
+  const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
   const openPanel = async () => {
     setOpen(true);
     setLoading(true);
@@ -136,8 +136,10 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       const payload = {
         notes: closeout.notes || "",
         cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
-        card_batch: closeout.card_batch === "" ? null : Number(closeout.card_batch),
-        venmo_paypal: closeout.venmo_paypal === "" ? null : Number(closeout.venmo_paypal),
+        clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
+        venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
+        paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
+        check_total: closeout.check_total === "" ? null : Number(closeout.check_total),
       };
       await api.post("/admin/end-of-day/closeout", payload);
       toast.success("Closeout saved");
@@ -214,13 +216,28 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     <EodStat label="💧 · 💩" value={`${data.care_log_totals?.pee || 0} · ${data.care_log_totals?.poop || 0}`}/>
                   </div>
 
+                  {data.register && (
+                    <div className="bg-bgBase/60 border border-shGreen/30 rounded-xl p-3" data-testid="eod-register-expected">
+                      <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-cash-register mr-1"/>Expected register totals</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <EodStat label="Expected cash drawer" value={`$${(data.register.totals?.expected_cash || 0).toFixed(2)}`} color="text-shGreen"/>
+                        <EodStat label="Clover" value={`$${(data.register.incoming_by_method?.clover || 0).toFixed(2)}`}/>
+                        <EodStat label="Venmo" value={`$${(data.register.incoming_by_method?.venmo || 0).toFixed(2)}`}/>
+                        <EodStat label="PayPal" value={`$${(data.register.incoming_by_method?.paypal || 0).toFixed(2)}`}/>
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-2">Cash drawer = opening cash + cash payments - expenses marked paid from drawer.</p>
+                    </div>
+                  )}
+
                   <div className="bg-bgBase/60 border border-bgHover rounded-xl p-3 space-y-3" data-testid="eod-closeout-form">
                     <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-clipboard-check mr-1"/>Save closeout snapshot</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {[
                         ["cash_counted", "Cash counted"],
-                        ["card_batch", "Card batch"],
-                        ["venmo_paypal", "Venmo/PayPal"],
+                        ["clover_batch", "Clover batch"],
+                        ["venmo_total", "Venmo total"],
+                        ["paypal_total", "PayPal total"],
+                        ["check_total", "Checks total"],
                       ].map(([k,label]) => (
                         <label key={k} className="block">
                           <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>

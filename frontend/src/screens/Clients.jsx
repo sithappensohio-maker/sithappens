@@ -886,7 +886,7 @@ function SellPackModal({ client, packs, onClose, onSold }) {
             <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
+              <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           </div>
           <div>
@@ -1209,8 +1209,9 @@ function SellProgramModal({ client, onClose, onSold }) {
                     data-testid="sell-program-method"
                     className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
               <option value="cash">Cash</option>
-              <option value="card">Card</option>
+              <option value="clover">Clover / Credit Card</option>
               <option value="venmo">Venmo</option>
+              <option value="paypal">PayPal</option>
               <option value="check">Check</option>
               <option value="other">Other</option>
               <option value="complimentary">Complimentary</option>

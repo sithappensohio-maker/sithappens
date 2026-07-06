@@ -465,7 +465,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           {(!useCredits || addOnTotal > 0) && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
-              <option value="cash">Cash</option><option value="card">Card</option><option value="transfer">Transfer</option><option value="check">Check</option><option value="other">Other</option>
+              <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           )}
           <div>

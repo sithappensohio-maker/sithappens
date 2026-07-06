@@ -118,8 +118,8 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
         <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Method</label>
         <select value={method} onChange={(e)=>setMethod(e.target.value)} data-testid="take-payment-method"
                 className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-          <option value="cash">Cash</option><option value="card">Card</option>
-          <option value="transfer">Transfer</option><option value="check">Check</option>
+          <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option>
+          <option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option>
           <option value="other">Other</option>
         </select>
 

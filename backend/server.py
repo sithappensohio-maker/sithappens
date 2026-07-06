@@ -76,6 +76,70 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("sithappens")
 
 
+# -------- Register / payment method normalization --------
+# Canonical methods for the new POS-style register. Legacy values are still
+# accepted so old clients, old frontend builds, and historical records do not
+# break; reports group them into the clean labels Garrett actually uses.
+REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "clover", "venmo_paypal", "other"]
+REGISTER_METHOD_LABELS = {
+    "cash": "Cash",
+    "check": "Check",
+    "venmo": "Venmo",
+    "paypal": "PayPal",
+    "clover": "Clover / Credit Card",
+    "venmo_paypal": "Venmo / PayPal (legacy transfer)",
+    "credits": "Credits",
+    "other": "Other",
+}
+
+def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> str:
+    """Return a safe payment method key.
+
+    store=True rewrites old incoming UI values into the new preferred keys.
+    store=False is used for reporting historical rows and keeps legacy transfer
+    separate so old Venmo/PayPal rows are not falsely assigned to one app.
+    """
+    m = (method or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if m in ("credit", "credit_card", "cc", "clover", "card", "cards"):
+        return "clover"
+    if m in ("venmo",):
+        return "venmo"
+    if m in ("paypal", "pay_pal"):
+        return "paypal"
+    if m in ("transfer", "bank_transfer", "venmo_paypal", "venmo/paypal"):
+        return "venmo" if store else "venmo_paypal"
+    if m in ("cash", "check", "credits", "other"):
+        return m
+    return "other" if m else "other"
+
+def _method_label(method: Optional[str]) -> str:
+    return REGISTER_METHOD_LABELS.get(_normalize_payment_method(method), "Other")
+
+def _empty_method_totals(include_credits: bool = False) -> Dict[str, float]:
+    keys = REGISTER_METHOD_ORDER + (["credits"] if include_credits else [])
+    return {k: 0.0 for k in keys}
+
+def _add_method_total(totals: Dict[str, float], method: Optional[str], amount: float, *, store_mode: bool = False) -> None:
+    amt = round(float(amount or 0), 2)
+    if abs(amt) < 0.005:
+        return
+    key = _normalize_payment_method(method, store=store_mode)
+    if key == "credits":
+        return
+    if key not in totals:
+        totals[key] = 0.0
+    totals[key] = round(float(totals.get(key) or 0) + amt, 2)
+
+def _method_rows(totals: Dict[str, float]) -> List[Dict[str, Any]]:
+    keys = [k for k in REGISTER_METHOD_ORDER if abs(float(totals.get(k) or 0)) >= 0.005]
+    # Keep stable rows for the big methods even when zero so closeout screens
+    # have predictable boxes.
+    for k in REGISTER_METHOD_ORDER:
+        if k not in keys:
+            keys.append(k)
+    return [{"key": k, "label": REGISTER_METHOD_LABELS.get(k, k.title()), "amount": round(float(totals.get(k) or 0), 2)} for k in keys]
+
+
 # -------- Recent errors ring buffer --------
 # In-memory rolling log of the last 20 unhandled errors so admins can see
 # problems on the Settings page without having to SSH into the server.
@@ -473,7 +537,7 @@ class BookingOut(BaseModel):
     service_name: Optional[str] = None
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
     paid_at: Optional[str] = None
     # Sprint 110di-51 — Partial-payment / tab support. When a booking is
     # checked out and the client only paid part of the bill, `amount_paid`
@@ -571,7 +635,7 @@ class CheckoutIn(BaseModel):
     callers (legacy clients) still work — defaults to the previous behaviour:
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
-    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
     payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
     add_ons: List[CheckoutAddOn] = []
@@ -4201,7 +4265,7 @@ async def _write_ledger_row(
         "client_id": client_id,
         "type": type_,
         "amount": round(float(amount), 2),
-        "method": method or "",
+        "method": _normalize_payment_method(method, store=True) if method else "",
         "notes": notes or "",
         "booking_id": booking_id,
         "created_by": created_by,
@@ -4325,7 +4389,7 @@ class TabPaymentIn(BaseModel):
     """Apply a payment directly against a client's tab (NOT tied to a booking).
     Used by the 'Pay tab' button on the client detail page."""
     amount: float = Field(gt=0)
-    method: Literal["cash", "card", "transfer", "credits", "check", "other"] = "cash"
+    method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"] = "cash"
     notes: Optional[str] = ""
 
 
@@ -4920,7 +4984,7 @@ async def check_out(
                 remaining_cash = round(credit_shortfall * unit_rate, 2)
                 update["actual_price"] = remaining_cash
                 update["credit_shortfall"] = credit_shortfall
-                update["payment_method"] = body.payment_method or "cash"
+                update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
                 use_credits = False
                 had_credit = False
         else:
@@ -5166,7 +5230,7 @@ async def check_out(
             logger.warning("sales tax calc failed for %s: %s", booking_id, exc)
     if not is_paid_today and (update.get("actual_price") or 0) > 0:
         if body.payment_method:
-            update["payment_method"] = body.payment_method
+            update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
         if body.payment_status:
             update["payment_status"] = body.payment_status
         elif "payment_status" not in update and not booking.get("payment_status"):
@@ -5195,7 +5259,7 @@ async def check_out(
             update["payment_status"] = "paid"
             update["paid_at"] = ts
         if body.payment_method:
-            update["payment_method"] = body.payment_method
+            update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
 
     # Finalize cash-basis bookkeeping fields. `actual_price` is what the visit
     # was worth/charged; `cash_revenue` is money collected; `balance_due` is AR.
@@ -11343,7 +11407,7 @@ BACKUP_COLLECTIONS = [
     # Staff scheduling + actual clocked hours (drives payroll)
     "shifts", "time_clock_entries", "time_off_requests",
     # Tax tracker
-    "tax_payments", "mileage_log", "daily_closeouts",
+    "tax_payments", "mileage_log", "daily_closeouts", "cash_drawer_sessions",
     # Dog Trivia + Fact of the Day (engagement content + per-client streak history)
     # NOTE: trivia_daily is intentionally excluded — it's a 1-row daily cache
     # that regenerates from trivia_questions on the next portal hit. Including
@@ -14933,13 +14997,13 @@ class LogServiceIn(BaseModel):
     notes: Optional[str] = ""
     status: Literal["pending", "approved", "completed"] = "completed"
     payment_status: Literal["unpaid", "paid", "refunded", "comped"] = "paid"
-    payment_method: Literal["cash", "card", "transfer", "credits", "other"] = "cash"
+    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "other"] = "cash"
 
 
 class TransactionUpdateIn(BaseModel):
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "refunded", "comped"]] = None
-    payment_method: Optional[Literal["cash", "card", "transfer", "credits", "check", "other"]] = None
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
     status: Optional[Literal["pending", "approved", "rejected", "completed", "cancelled"]] = None
     service_id: Optional[str] = None
 
@@ -15089,7 +15153,7 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
         "service_name": svc["name"],
         "actual_price": price,
         "payment_status": body.payment_status,
-        "payment_method": body.payment_method,
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "amount_paid": round(float(price), 2) if body.payment_status == "paid" else 0.0,
         "balance_due": 0.0 if body.payment_status == "paid" else round(float(price), 2),
         "paid_at": now_iso() if body.payment_status == "paid" else None,
@@ -16612,7 +16676,7 @@ async def admin_production_health(_: dict = Depends(require_admin)):
     add("admin_password", not default_admin_risk, "Admin seed credentials", "Admin env credentials look custom." if not default_admin_risk else "ADMIN_EMAIL/ADMIN_PASSWORD env vars look missing or default-risk.", "danger")
 
     counts = {}
-    for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts"]:
+    for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts", "cash_drawer_sessions"]:
         try:
             counts[coll] = await db[coll].count_documents({})
         except Exception:
@@ -16620,11 +16684,153 @@ async def admin_production_health(_: dict = Depends(require_admin)):
     return {"checked_at": now_iso(), "checks": checks, "backup_runs": runs, "disk": disk, "counts": counts}
 
 
+class CashDrawerOpenIn(BaseModel):
+    date: Optional[str] = None
+    opening_cash: float = Field(ge=0)
+    notes: Optional[str] = ""
+
+
+async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
+    """POS/register view derived from existing safe source-of-truth rows.
+
+    This intentionally DOES NOT mutate old data. It reads bookings + retail_sales
+    + expenses + drawer sessions and produces one daily closeout picture.
+    """
+    d = day or business_today().isoformat()
+    start_ts = f"{d}T00:00:00"
+    end_ts = f"{d}T23:59:59.999Z"
+    incoming_by_method = _empty_method_totals()
+    expenses_by_method = _empty_method_totals()
+    incoming_sources = {
+        "booking_payments": 0.0,
+        "manual_sales": 0.0,
+        "credit_pack_sales": 0.0,
+        "training_program_sales": 0.0,
+        "tab_payments": 0.0,
+        "other_sales": 0.0,
+    }
+
+    # Booking checkout cash collected on the service date. This keeps the
+    # register closeout aligned with how the operator sees today's checked-out
+    # bookings. Credit redemptions return $0 from _cash_revenue.
+    bookings = await db.bookings.find({"date": d, "status": "completed"}, {"_id": 0}).to_list(5000)
+    for b in bookings:
+        amt = _cash_revenue(b)
+        if amt > 0:
+            _add_method_total(incoming_by_method, b.get("payment_method"), amt)
+            incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+
+    # Retail_sales is the existing cash-basis income ledger for log sales,
+    # credit-pack sales, training-program sales, and tab payments.
+    retail = await db.retail_sales.find({"date": d}, {"_id": 0}).to_list(10000)
+    for r in retail:
+        amt = round(float(r.get("amount") or 0), 2)
+        if amt <= 0:
+            continue
+        _add_method_total(incoming_by_method, r.get("payment_method"), amt)
+        kind = r.get("source_kind") or "manual_sale"
+        if kind == "credit_pack_sale":
+            incoming_sources["credit_pack_sales"] = round(incoming_sources["credit_pack_sales"] + amt, 2)
+        elif kind == "training_program_sale":
+            incoming_sources["training_program_sales"] = round(incoming_sources["training_program_sales"] + amt, 2)
+        elif kind == "tab_payment":
+            incoming_sources["tab_payments"] = round(incoming_sources["tab_payments"] + amt, 2)
+        elif kind in ("manual_sale", "retail", "retail_sale", None, ""):
+            incoming_sources["manual_sales"] = round(incoming_sources["manual_sales"] + amt, 2)
+        else:
+            incoming_sources["other_sales"] = round(incoming_sources["other_sales"] + amt, 2)
+
+    expenses = await db.expenses.find({"date": d}, {"_id": 0}).to_list(10000)
+    drawer_payouts = 0.0
+    expense_total = 0.0
+    for e in expenses:
+        amt = round(float(e.get("amount") or 0), 2)
+        if amt <= 0:
+            continue
+        expense_total = round(expense_total + amt, 2)
+        _add_method_total(expenses_by_method, e.get("payment_method"), amt)
+        if e.get("from_cash_drawer"):
+            drawer_payouts = round(drawer_payouts + amt, 2)
+
+    # Drawer session: use explicit opening cash when available; otherwise carry
+    # forward the most recent closeout cash count as a helpful default.
+    session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
+    opening_cash = 0.0
+    opening_source = "not_set"
+    if session and session.get("opening_cash") is not None:
+        opening_cash = round(float(session.get("opening_cash") or 0), 2)
+        opening_source = "drawer_session"
+    else:
+        prev = await db.daily_closeouts.find_one({"date": {"$lt": d}, "cash_counted": {"$ne": None}}, {"_id": 0}, sort=[("date", -1), ("created_at", -1)])
+        if prev and prev.get("cash_counted") is not None:
+            opening_cash = round(float(prev.get("cash_counted") or 0), 2)
+            opening_source = "previous_closeout"
+
+    cash_in = round(float(incoming_by_method.get("cash") or 0), 2)
+    expected_cash = round(opening_cash + cash_in - drawer_payouts, 2)
+    closeout = await db.daily_closeouts.find_one({"date": d}, {"_id": 0}, sort=[("created_at", -1)])
+
+    totals = {
+        "incoming_total": round(sum(float(v or 0) for v in incoming_by_method.values()), 2),
+        "expense_total": expense_total,
+        "cash_in": cash_in,
+        "cash_drawer_payouts": drawer_payouts,
+        "opening_cash": opening_cash,
+        "expected_cash": expected_cash,
+    }
+    if closeout and closeout.get("cash_counted") is not None:
+        totals["actual_cash_counted"] = round(float(closeout.get("cash_counted") or 0), 2)
+        totals["cash_over_short"] = round(totals["actual_cash_counted"] - expected_cash, 2)
+
+    return {
+        "date": d,
+        "method_labels": REGISTER_METHOD_LABELS,
+        "incoming_by_method": incoming_by_method,
+        "incoming_rows": _method_rows(incoming_by_method),
+        "expenses_by_method": expenses_by_method,
+        "expense_rows": _method_rows(expenses_by_method),
+        "incoming_sources": incoming_sources,
+        "totals": totals,
+        "drawer_session": session,
+        "opening_cash_source": opening_source,
+        "latest_closeout": closeout,
+        "notes": {
+            "cash": "Expected drawer cash = opening cash + cash payments - expenses marked as paid from drawer.",
+            "external": "Clover, Venmo, PayPal, and checks are expected totals from app entries; verify them against the external apps/batch at closeout.",
+        },
+    }
+
+
+@api.get("/admin/register/day")
+async def admin_register_day(date: Optional[str] = None, _: dict = Depends(require_admin)):
+    return await _register_day_summary(date)
+
+
+@api.post("/admin/register/open-drawer")
+async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin)):
+    d = body.date or business_today().isoformat()
+    doc = {
+        "date": d,
+        "opening_cash": round(float(body.opening_cash), 2),
+        "notes": (body.notes or "").strip()[:1000],
+        "opened_at": now_iso(),
+        "opened_by": user.get("id"),
+        "opened_by_name": user.get("name") or user.get("email") or "admin",
+    }
+    await db.cash_drawer_sessions.update_one({"date": d}, {"$set": doc}, upsert=True)
+    fresh = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
+    return {"ok": True, "drawer_session": fresh, "register": await _register_day_summary(d)}
+
+
 class EndOfDayCloseoutIn(BaseModel):
     notes: Optional[str] = ""
     cash_counted: Optional[float] = None
-    card_batch: Optional[float] = None
-    venmo_paypal: Optional[float] = None
+    card_batch: Optional[float] = None  # legacy field; maps to clover_batch
+    venmo_paypal: Optional[float] = None  # legacy combined field
+    clover_batch: Optional[float] = None
+    venmo_total: Optional[float] = None
+    paypal_total: Optional[float] = None
+    check_total: Optional[float] = None
 
 
 @api.post("/admin/end-of-day/closeout")
@@ -16641,8 +16847,14 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
         "snapshot": snapshot,
         "notes": (body.notes or "").strip()[:1000],
         "cash_counted": round(float(body.cash_counted), 2) if body.cash_counted is not None else None,
+        # Keep legacy fields for old UI/backups, but save the explicit methods too.
         "card_batch": round(float(body.card_batch), 2) if body.card_batch is not None else None,
         "venmo_paypal": round(float(body.venmo_paypal), 2) if body.venmo_paypal is not None else None,
+        "clover_batch": round(float(body.clover_batch if body.clover_batch is not None else body.card_batch), 2) if (body.clover_batch is not None or body.card_batch is not None) else None,
+        "venmo_total": round(float(body.venmo_total), 2) if body.venmo_total is not None else None,
+        "paypal_total": round(float(body.paypal_total), 2) if body.paypal_total is not None else None,
+        "check_total": round(float(body.check_total), 2) if body.check_total is not None else None,
+        "register_snapshot": await _register_day_summary(snapshot.get("date")),
         "all_clear": bool(snapshot.get("all_clear")),
     }
     await db.daily_closeouts.insert_one(doc.copy())
@@ -16763,7 +16975,9 @@ async def admin_quarterly_tax(
     expense_rows = await db.expenses.find(
         {"date": {"$gte": start, "$lte": end}}, {"_id": 0}
     ).to_list(20000)
-    recorded_expenses = sum(float(e.get("amount") or 0) for e in expense_rows)
+    recorded_expenses_total = sum(float(e.get("amount") or 0) for e in expense_rows)
+    recorded_expenses = sum(float(e.get("amount") or 0) for e in expense_rows if e.get("tax_deductible", True) is not False)
+    non_deductible_expenses = recorded_expenses_total - recorded_expenses
 
     # ---- Mileage deduction (IRS standard rate × YTD business miles) ----------
     mileage_rate = float(settings.get("mileage_rate_per_mile") or 0)
@@ -16880,6 +17094,8 @@ async def admin_quarterly_tax(
         },
         "expenses": {
             "recorded": round(recorded_expenses, 2),
+            "recorded_total": round(recorded_expenses_total, 2),
+            "non_deductible": round(non_deductible_expenses, 2),
             "labor_gross": round(labor_gross, 2),
             "labor_burden": round(labor_burden, 2),
             "labor_total": round(labor_total, 2),
@@ -18356,8 +18572,10 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
     meds_total = sum(len(b.get("medication_log") or []) for b in bookings)
     bathroom_pee = sum((b.get("bathroom_log") or {}).get("pee", 0) for b in bookings)
     bathroom_poop = sum((b.get("bathroom_log") or {}).get("poop", 0) for b in bookings)
+    register = await _register_day_summary(today)
     return {
         "date": today,
+        "register": register,
         "still_on_premises": still_on,
         "unpaid_bookings": unpaid,
         "missing_report_cards": missing_cards,
@@ -18971,7 +19189,10 @@ class ExpenseIn(BaseModel):
     amount: float = Field(ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
-    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "card"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "clover"
+    tax_deductible: Optional[bool] = True
+    from_cash_drawer: Optional[bool] = False
+    vendor: Optional[str] = ""
     # Sprint 110ap — optional photo/PDF/scan of the receipt for IRS audit
     # peace-of-mind. Stored inline as a base64 data URL (`data:image/jpeg;…`
     # or `data:application/pdf;…`). Front-end compresses images to <800kB
@@ -19011,7 +19232,10 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
         "amount": round(float(body.amount), 2),
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
-        "payment_method": body.payment_method or "card",
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
+        "tax_deductible": bool(body.tax_deductible),
+        "from_cash_drawer": bool(body.from_cash_drawer),
+        "vendor": (body.vendor or "").strip(),
         "receipt_image": (body.receipt_image or "") or None,
         "receipt_filename": (body.receipt_filename or "").strip() or None,
         "created_at": now_iso(),
@@ -19035,7 +19259,10 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
         "amount": round(float(body.amount), 2),
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
-        "payment_method": body.payment_method or "card",
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
+        "tax_deductible": bool(body.tax_deductible),
+        "from_cash_drawer": bool(body.from_cash_drawer),
+        "vendor": (body.vendor or "").strip(),
         "updated_at": now_iso(),
     }
     # Receipt is editable — empty string means "remove the receipt", non-empty
@@ -19082,7 +19309,7 @@ class RetailSaleIn(BaseModel):
     amount: float = Field(ge=0)
     category: Optional[str] = ""
     notes: Optional[str] = ""
-    payment_method: Optional[Literal["cash", "card", "transfer", "check", "credits", "other"]] = "card"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "credits", "other"]] = "clover"
     client_id: Optional[str] = None  # optional — link a sale to a specific client
     # Sprint 110aw — Sales tax. If true, `amount` is the TOTAL the customer
     # paid (incl. tax) and the backend back-calculates the tax slice. If false
@@ -19130,7 +19357,7 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
         "amount": round(float(body.amount), 2),
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
-        "payment_method": body.payment_method or "card",
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "client_id": body.client_id or None,
         "client_name": client_name,
         "created_at": now_iso(),
@@ -19175,7 +19402,7 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
             sale_kind="retail",
             sale_id=doc["id"],
             label=f"Retail · {doc['description']}",
-            method=body.payment_method or "cash",
+            method=_normalize_payment_method(body.payment_method, store=True),
         )
         # Rewrite the cash-side fields to only count today's actual payment.
         doc["amount"] = round(revenue_today, 2)
@@ -19209,7 +19436,7 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
         "amount": round(float(body.amount), 2),
         "category": (body.category or "").strip(),
         "notes": (body.notes or "").strip(),
-        "payment_method": body.payment_method or "card",
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "client_id": body.client_id or None,
         "client_name": client_name,
         "updated_at": now_iso(),
@@ -19519,7 +19746,7 @@ class CreditPackIn(BaseModel):
 
 class SellCreditPackIn(BaseModel):
     pack_id: str
-    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "cash"
     note: Optional[str] = ""
     # Sprint 110di-61 — Partial pay. When < pack price, the delta lands on
     # client.account_balance and today's recognized revenue = amount_paid.
@@ -19533,7 +19760,7 @@ class SellCreditPackItem(BaseModel):
 
 class SellCreditPacksBulkIn(BaseModel):
     items: List[SellCreditPackItem] = Field(min_length=1, max_length=20)
-    payment_method: Optional[Literal["cash", "card", "transfer", "check", "other"]] = "cash"
+    payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = "cash"
     note: Optional[str] = ""
     # Sprint 110di-61 — Partial pay across the whole bulk-sale cart.
     amount_paid: Optional[float] = Field(default=None, ge=0)
@@ -19702,7 +19929,7 @@ async def seed_credit_packs(_: dict = Depends(require_admin)):
 
 class SellProgramIn(BaseModel):
     program_id: str
-    payment_method: Literal["cash", "card", "venmo", "check", "other", "complimentary"] = "cash"
+    payment_method: Literal["cash", "card", "clover", "venmo", "paypal", "check", "other", "complimentary"] = "cash"
     override_price: Optional[float] = Field(default=None, ge=0)
     dog_id: Optional[str] = None       # If set, auto-creates a dog_programs row
     started_at: Optional[str] = None   # YYYY-MM-DD, defaults to today
@@ -19780,7 +20007,7 @@ async def sell_training_program(
         "price_paid": round(effective_price, 2),
         "list_price": round(list_price, 2),
         "value_each": value_each,
-        "payment_method": body.payment_method,
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "note": body.note or "",
         "sold_by": user.get("name", "Admin"),
         "purchased_at": now_iso(),
@@ -19810,7 +20037,7 @@ async def sell_training_program(
             sale_kind="training_program",
             sale_id=lot["id"],
             label=f"Training Program · {program['name']}",
-            method=body.payment_method or "cash",
+            method=_normalize_payment_method(body.payment_method, store=True),
         )
 
     if revenue_today > 0:
@@ -19821,7 +20048,7 @@ async def sell_training_program(
             "amount": round(revenue_today, 2),
             "category": "Training Program",
             "notes": body.note or "",
-            "payment_method": body.payment_method or "card",
+            "payment_method": _normalize_payment_method(body.payment_method, store=True),
             "client_id": client_id,
             "client_name": client.get("name") or "",
             "created_at": now_iso(),
@@ -20356,7 +20583,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
         "list_price": float(pack["price"]),
         "price_override_id": pricing["override_id"],
         "value_each": value_each,
-        "payment_method": body.payment_method,
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "note": body.note or "",
         "sold_by": user.get("name", "Admin"),
         "purchased_at": now_iso(),
@@ -20389,7 +20616,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
             sale_kind="credit_pack",
             sale_id=lot["id"],
             label=f"Credit pack · {pack['name']}",
-            method=body.payment_method or "cash",
+            method=_normalize_payment_method(body.payment_method, store=True),
         )
 
     # Sprint 110cs — Insert matching retail_sales row so income reports show
@@ -20402,7 +20629,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
             "client_name": client.get("name", ""),
             "amount": round(revenue_today, 2),
             "date": business_today().isoformat(),
-            "payment_method": body.payment_method,
+            "payment_method": _normalize_payment_method(body.payment_method, store=True),
             "source_kind": "credit_pack_sale",
             "lot_id": lot["id"],
             "pack_id": pack["id"],
@@ -20474,7 +20701,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
                 "list_price": float(pack["price"]),
                 "price_override_id": pricing["override_id"],
                 "value_each": value_each,
-                "payment_method": body.payment_method,
+                "payment_method": _normalize_payment_method(body.payment_method, store=True),
                 "note": body.note or "",
                 "sold_by": user.get("name", "Admin"),
                 "purchased_at": now,
@@ -20517,7 +20744,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             sale_kind="credit_pack",
             sale_id=new_lots[0]["id"] if new_lots else None,
             label=order_label,
-            method=body.payment_method or "cash",
+            method=_normalize_payment_method(body.payment_method, store=True),
         )
     # Sprint 110cs — Bulk-sell mirrors the singular path: log every lot as a
     # `retail_sales` row on today's business date so the operator sees the
@@ -20534,7 +20761,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             "client_name": client.get("name", ""),
             "amount": round(float(lot["price_paid"]) * payment_ratio, 2),
             "date": today_iso,
-            "payment_method": body.payment_method,
+            "payment_method": _normalize_payment_method(body.payment_method, store=True),
             "source_kind": "credit_pack_sale",
             "lot_id": lot["id"],
             "pack_id": lot["pack_id"],
@@ -20586,7 +20813,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
         "lines": receipt_lines,
         "totals": totals_by_pool,
         "total_price": grand_total,
-        "payment_method": body.payment_method,
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
         "note": body.note or "",
         "sold_by": user.get("name", "Admin"),
         "sold_at": now,
@@ -20598,7 +20825,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
             client=client,
             lines=receipt_lines,
             totals=totals_by_pool,
-            payment_method=body.payment_method or "cash",
+            payment_method=_normalize_payment_method(body.payment_method, store=True),
             note=body.note or "",
             sold_by=user.get("name", "Admin"),
             sold_at=now,

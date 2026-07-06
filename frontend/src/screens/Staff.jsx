@@ -83,6 +83,7 @@ export default function Staff() {
           ["taxes", "Payroll Tax", "fa-calculator"],
           ["quarterly", "Quarterly Tax", "fa-file-invoice-dollar"],
           ["money", "Money Audit", "fa-scale-balanced"],
+          ["register", "Register", "fa-cash-register"],
           ["timeoff", "Time Off", "fa-umbrella-beach"],
           ["corrections", "Corrections", "fa-clock-rotate-left"],
           ["training", "Training", "fa-clipboard-user"],
@@ -264,6 +265,7 @@ export default function Staff() {
       {subtab === "taxes" && <TaxEstimatorTab />}
       {subtab === "quarterly" && <QuarterlyTaxTab />}
       {subtab === "money" && <MoneyAuditTab />}
+      {subtab === "register" && <RegisterTab />}
       {subtab === "timeoff" && <TimeOffAdminTab />}
       {subtab === "corrections" && <PunchCorrectionsAdminTab />}
       {subtab === "training" && <TrainerScorecardTab />}
@@ -1310,7 +1312,8 @@ function QuarterlyTaxTab() {
             {Number(data.income?.service_unpaid_balance || 0) > 0 && <Row label="Unpaid service balances (not income yet)" value={data.income.service_unpaid_balance} neg/>}
             <Row label="GROSS INCOME" value={data.income.gross} bold/>
             <div className="border-t border-bgHover my-2"/>
-            <Row label="Recorded expenses" value={data.expenses.recorded} neg/>
+            <Row label="Deductible expenses" value={data.expenses.recorded} neg/>
+            {Number(data.expenses?.non_deductible || 0) > 0 && <Row label="Non-deductible / tracked only" value={data.expenses.non_deductible} color="shOrange"/>}
             <Row label="Labor (gross wages)" value={data.expenses.labor_gross} neg/>
             <Row label="Labor (employer burden)" value={data.expenses.labor_burden} neg/>
             {data.expenses.mileage_deduction > 0 && (
@@ -1677,6 +1680,104 @@ function AuditTile({ label, value = 0, color = "text-white" }) {
     <div className="bg-bgPanel border border-bgHover rounded-xl p-3">
       <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}</p>
       <p className={`text-xl font-black mt-1 ${color}`}>${Number(value || 0).toFixed(2)}</p>
+    </div>
+  );
+}
+
+
+// ─── Register / Cash Drawer ────────────────────────────────────────────────
+function RegisterTab() {
+  const [date, setDate] = useState(todayISO());
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [openingCash, setOpeningCash] = useState("");
+  const [notes, setNotes] = useState("");
+  const load = async () => {
+    setErr("");
+    try {
+      const r = await api.get("/admin/register/day", { params: { date } });
+      setData(r.data);
+      if (r.data?.drawer_session?.opening_cash != null) setOpeningCash(String(r.data.drawer_session.opening_cash));
+      else if (r.data?.totals?.opening_cash != null) setOpeningCash(String(r.data.totals.opening_cash));
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register"); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  const openDrawer = async () => {
+    setErr("");
+    try {
+      const r = await api.post("/admin/register/open-drawer", { date, opening_cash: Number(openingCash || 0), notes });
+      setData(r.data.register);
+      setNotes("");
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to set opening cash"); }
+  };
+  const totals = data?.totals || {};
+  const incoming = data?.incoming_by_method || {};
+  const sources = data?.incoming_sources || {};
+  return (
+    <div className="space-y-4" data-testid="register-tab">
+      <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300">
+        <i className="fas fa-cash-register text-shBlue mr-2"/>
+        Register Phase 1: tracks your expected drawer and outside payment totals from checkout, credit-pack sales, log sales, and drawer-paid expenses.
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
+        <button onClick={load} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Refresh</button>
+        {err && <span className="text-red-400 text-[13px] font-black">{err}</span>}
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <AuditTile label="Incoming recorded" value={totals.incoming_total} color="text-shGreen"/>
+        <AuditTile label="Expected cash drawer" value={totals.expected_cash} color="text-white"/>
+        <AuditTile label="Drawer payouts" value={totals.cash_drawer_payouts} color="text-shOrange"/>
+        <AuditTile label="Expenses logged" value={totals.expense_total} color="text-red-300"/>
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-door-open text-shGreen mr-2"/>Cash drawer</h4>
+          <p className="text-[12px] text-gray-500 mb-3">Opening source: <span className="text-gray-300 font-bold">{data?.opening_cash_source || "—"}</span></p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+            <label className="block sm:col-span-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening cash</span>
+              <input type="number" step="0.01" value={openingCash} onChange={e=>setOpeningCash(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            </label>
+            <label className="block sm:col-span-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Note</span>
+              <input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="optional" className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+            </label>
+            <button onClick={openDrawer} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening drawer</button>
+          </div>
+          <div className="mt-4 space-y-1 text-[13px]">
+            <Row label="Opening cash" value={totals.opening_cash || 0}/>
+            <Row label="Cash payments" value={totals.cash_in || 0}/>
+            <Row label="Cash drawer payouts" value={totals.cash_drawer_payouts || 0} neg/>
+            <Row label="Expected cash drawer" value={totals.expected_cash || 0} bold color="shGreen"/>
+            {totals.actual_cash_counted != null && <Row label="Last closeout counted" value={totals.actual_cash_counted || 0}/>} 
+            {totals.cash_over_short != null && <Row label="Over / short" value={totals.cash_over_short || 0} color={totals.cash_over_short === 0 ? "shGreen" : "shOrange"}/>} 
+          </div>
+        </div>
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+          <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-money-bill-transfer text-shBlue mr-2"/>Expected by payment method</h4>
+          <div className="space-y-1 text-[13px]">
+            <Row label="Cash" value={incoming.cash || 0}/>
+            <Row label="Clover / Credit Card" value={incoming.clover || 0}/>
+            <Row label="Venmo" value={incoming.venmo || 0}/>
+            <Row label="PayPal" value={incoming.paypal || 0}/>
+            <Row label="Checks" value={incoming.check || 0}/>
+            {(incoming.venmo_paypal || 0) > 0 && <Row label="Legacy transfer" value={incoming.venmo_paypal || 0}/>} 
+            <Row label="Other" value={incoming.other || 0}/>
+          </div>
+        </div>
+      </div>
+      <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+        <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-list-check text-shOrange mr-2"/>Where the money came from</h4>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <AuditTile label="Booking payments" value={sources.booking_payments}/>
+          <AuditTile label="Log/manual sales" value={sources.manual_sales}/>
+          <AuditTile label="Credit packs" value={sources.credit_pack_sales}/>
+          <AuditTile label="Training programs" value={sources.training_program_sales}/>
+          <AuditTile label="Tab payments" value={sources.tab_payments}/>
+        </div>
+        <p className="text-[11px] text-gray-500 mt-3">Clover, Venmo, PayPal, and checks are expected totals based on what staff entered. Verify those against the outside apps during closeout.</p>
+      </div>
     </div>
   );
 }
