@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./lib/auth";
 import { ThemeProvider, useTheme } from "./lib/theme";
 import Login from "./screens/Login";
 import Dashboard from "./screens/Dashboard";
+import ActionCenter from "./screens/ActionCenter";
 import Schedule from "./screens/Schedule";
 import Clients from "./screens/Clients";
 import Dogs from "./screens/Dogs";
@@ -118,6 +119,7 @@ function AdminShell() {
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
+    { id: "action_center", label: "Action Center", icon: "fa-list-check" },
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
     { id: "care", label: "Care Board", icon: "fa-bowl-food", perm: "care_complete" },
@@ -289,6 +291,11 @@ function AdminShell() {
             onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
             onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
             can={can}
+          />}
+          {tab === "action_center" && <ActionCenter
+            onNavigate={(t)=>setTab(t)}
+            onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}
+            onJumpToClient={(id)=>{ setSearchTarget({kind:"client", id, mode:"open"}); setTab("clients"); }}
           />}
           {tab === "schedule" && <Schedule />}
           {tab === "runsheet" && <RunSheet />}

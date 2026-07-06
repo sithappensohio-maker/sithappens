@@ -11056,6 +11056,39 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             "icon": "fa-clipboard-check",
         })
 
+    # 1b. Client-uploaded vaccine certificates waiting for admin review (urgent)
+    # These are different from expired/missing vaccine flags: the client has
+    # already uploaded proof, and the business needs to approve/reject it so
+    # booking lockouts clear.
+    try:
+        pending_vax_count = 0
+        pending_vax_names: List[str] = []
+        async for d in db.dogs.find(
+            {"vaccine_certs": {"$exists": True, "$ne": {}}},
+            {"_id": 0, "id": 1, "name": 1, "vaccine_certs": 1},
+        ):
+            for vacc, info in (d.get("vaccine_certs") or {}).items():
+                if not isinstance(info, dict):
+                    continue
+                if info.get("reviewed_at"):
+                    continue
+                pending_vax_count += 1
+                if len(pending_vax_names) < 4:
+                    pending_vax_names.append(f"{d.get('name','Dog')} · {str(vacc).upper()}")
+        if pending_vax_count > 0:
+            items.append({
+                "id": f"vax-upload-review:{pending_vax_count}",
+                "kind": "vaccine_upload_review",
+                "priority": "urgent",
+                "title": f"{pending_vax_count} vaccine upload{'s' if pending_vax_count != 1 else ''} awaiting approval",
+                "subtitle": ", ".join(pending_vax_names) + (f" · +{pending_vax_count-len(pending_vax_names)} more" if pending_vax_count > len(pending_vax_names) else ""),
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-file-medical",
+            })
+    except Exception as e:
+        logger.warning("today-brain pending vaccine uploads failed: %s", e)
+
     # 2. Vaccines expiring/expired (urgent if expired, warn if expiring)
     try:
         settings = await get_settings()
@@ -11197,6 +11230,171 @@ async def admin_today_brain(_: dict = Depends(require_admin)):
             })
     except Exception as e:
         logger.warning("today-brain pending-bookings failed: %s", e)
+
+    # 5b. Open client help requests / feedback (warn)
+    try:
+        new_help = await db.help_requests.count_documents({"status": "new"})
+        if new_help > 0:
+            items.append({
+                "id": f"help-requests:{new_help}",
+                "kind": "help_request",
+                "priority": "warn",
+                "title": f"{new_help} client help request{'s' if new_help != 1 else ''} need review",
+                "subtitle": "Feedback, problems, or feature requests from the client portal",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-life-ring",
+            })
+    except Exception as e:
+        logger.warning("today-brain help requests failed: %s", e)
+
+    # 5c. Open quote requests (warn)
+    try:
+        open_quotes = await db.quote_requests.count_documents({"status": "open"})
+        if open_quotes > 0:
+            items.append({
+                "id": f"quote-requests:{open_quotes}",
+                "kind": "quote_request",
+                "priority": "warn",
+                "title": f"{open_quotes} quote request{'s' if open_quotes != 1 else ''} waiting",
+                "subtitle": "Clients asked about services/programs and need follow-up",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-envelope-open-text",
+            })
+    except Exception as e:
+        logger.warning("today-brain quote requests failed: %s", e)
+
+    # 5d. Rewards/referrals/trivia needing admin action (warn/info)
+    try:
+        pending_referrals, _paid_referrals, _referral_meta = await _build_referral_rows(limit=200)
+        ready_referrals = sum(1 for r in pending_referrals if r.get("status") == "ready")
+        if ready_referrals > 0:
+            items.append({
+                "id": f"ready-referrals:{ready_referrals}",
+                "kind": "reward_referral",
+                "priority": "warn",
+                "title": f"{ready_referrals} referral reward{'s' if ready_referrals != 1 else ''} ready to grant",
+                "subtitle": "Referral reward = non-cash +1 daycare credit",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "rewards_center"},
+                "icon": "fa-gift",
+            })
+        trivia_pending = 0
+        async for c in db.clients.find(
+            {"$or": [{"deleted": {"$ne": True}}, {"deleted": {"$exists": False}}]},
+            {"_id": 0, "trivia_milestones": 1},
+        ):
+            for m in (c.get("trivia_milestones") or []):
+                if not m.get("redeemed_at"):
+                    trivia_pending += 1
+        if trivia_pending > 0:
+            items.append({
+                "id": f"trivia-rewards:{trivia_pending}",
+                "kind": "reward_trivia",
+                "priority": "info",
+                "title": f"{trivia_pending} trivia reward{'s' if trivia_pending != 1 else ''} pending",
+                "subtitle": "Mark prizes redeemed or grant configured credit rewards",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "rewards_center"},
+                "icon": "fa-gamepad",
+            })
+    except Exception as e:
+        logger.warning("today-brain rewards failed: %s", e)
+
+    # 5e. Money follow-up: unpaid balances / account tabs (warn)
+    try:
+        unpaid_bookings = await db.bookings.count_documents({
+            "status": {"$nin": ["cancelled", "rejected"]},
+            "balance_due": {"$gt": 0},
+        })
+        client_tabs = await db.clients.count_documents({"account_balance": {"$gt": 0}})
+        if unpaid_bookings or client_tabs:
+            bits = []
+            if unpaid_bookings:
+                bits.append(f"{unpaid_bookings} booking balance{'s' if unpaid_bookings != 1 else ''}")
+            if client_tabs:
+                bits.append(f"{client_tabs} client tab{'s' if client_tabs != 1 else ''}")
+            items.append({
+                "id": f"unpaid-balances:{unpaid_bookings}:{client_tabs}",
+                "kind": "unpaid_balance",
+                "priority": "warn",
+                "title": "Unpaid money needs follow-up",
+                "subtitle": " · ".join(bits),
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "register"},
+                "icon": "fa-hand-holding-dollar",
+            })
+    except Exception as e:
+        logger.warning("today-brain unpaid balances failed: %s", e)
+
+    # 5f. End-of-day closeout missing for yesterday if there was activity (warn)
+    try:
+        yday = (business_today() - timedelta(days=1)).isoformat()
+        ysum = await _register_day_summary(yday)
+        ytot = ysum.get("totals") or {}
+        had_activity = bool(ysum.get("activity")) or float(ytot.get("incoming_total") or 0) or float(ytot.get("expense_total") or 0)
+        if had_activity and not ysum.get("latest_closeout"):
+            items.append({
+                "id": f"missing-closeout:{yday}",
+                "kind": "missing_closeout",
+                "priority": "warn",
+                "title": f"No closeout saved for {yday}",
+                "subtitle": "Register activity exists; closeout was not saved",
+                "ts": f"{yday}T23:59:59",
+                "cta": {"type": "open_screen", "screen": "register"},
+                "icon": "fa-clipboard-check",
+            })
+    except Exception as e:
+        logger.warning("today-brain closeout check failed: %s", e)
+
+    # 5g. Stuck check-ins and missing report cards (warn/info)
+    try:
+        stuck = await db.bookings.count_documents({
+            "status": {"$in": ["approved", "completed"]},
+            "checked_in_at": {"$exists": True, "$nin": [None, ""]},
+            "checked_out_at": {"$in": [None, ""]},
+            "$or": [
+                {"end_date": {"$lt": today_iso}},
+                {"end_date": {"$exists": False}, "date": {"$lt": today_iso}},
+                {"end_date": "", "date": {"$lt": today_iso}},
+            ],
+        })
+        if stuck > 0:
+            items.append({
+                "id": f"stuck-checkout:{stuck}",
+                "kind": "stuck_checkout",
+                "priority": "urgent",
+                "title": f"{stuck} checked-in booking{'s' if stuck != 1 else ''} may be stuck",
+                "subtitle": "Checked in, not checked out, and scheduled stay already ended",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-door-open",
+            })
+        yesterday_iso = (business_today() - timedelta(days=1)).isoformat()
+        missing_cards = await db.bookings.count_documents({
+            "status": "completed",
+            "date": {"$gte": yesterday_iso},
+            "service_type": {"$in": ["daycare", "boarding", "training"]},
+            "$or": [
+                {"report_card": {"$exists": False}},
+                {"report_card": None},
+                {"report_card": {}},
+            ],
+        })
+        if missing_cards > 0:
+            items.append({
+                "id": f"missing-report-cards:{missing_cards}",
+                "kind": "missing_report_card",
+                "priority": "info",
+                "title": f"{missing_cards} recent completed visit{'s' if missing_cards != 1 else ''} missing report cards",
+                "subtitle": "Optional, but useful for client experience and photo follow-up",
+                "ts": now_dt.isoformat(),
+                "cta": {"type": "open_screen", "screen": "dashboard"},
+                "icon": "fa-file-lines",
+            })
+    except Exception as e:
+        logger.warning("today-brain stuck/report-card checks failed: %s", e)
 
     # 6. Unanswered homework questions (warn)
     try:
@@ -11380,16 +11578,16 @@ def _today_brain_signature(item: dict) -> str:
         # ("Name · 2 daycare · 0 training · 1 boarding left").
         nums = "|".join([t for t in title.replace("·", " ").split() if t.isdigit()])
         return f"low:{nums or title}"
-    if kind in ("booking_pending", "hw_review", "hw_question"):
-        # Title carries the count → encode it as the signature.
-        nums = "|".join([t for t in title.split() if t.isdigit()])
+    if kind in ("booking_pending", "hw_review", "hw_question", "vaccine_upload_review", "help_request", "quote_request", "reward_referral", "reward_trivia", "unpaid_balance", "stuck_checkout", "missing_report_card"):
+        # Title/subtitle carries the count → encode it as the signature.
+        nums = "|".join([t for t in (title + " " + subtitle).split() if t.isdigit()])
         return f"{kind}:{nums or title}"
     if kind == "pipeline_ready":
         # Bucket overall_pct into 5% steps so a 1% bump doesn't re-spam.
         nums = [int(t) for t in title.replace("%", " ").split() if t.isdigit()]
         pct_bucket = (nums[0] // 5) * 5 if nums else 0
         return f"pipeline:{item.get('id','').split(':')[-1]}:{pct_bucket}"
-    if kind in ("monday_digest", "no_checkin", "steps_incomplete"):
+    if kind in ("monday_digest", "no_checkin", "steps_incomplete", "missing_closeout"):
         # Date-scoped — these auto-roll over at midnight UTC anyway.
         return f"{kind}:{business_today().isoformat()}"
     if kind == "new_signup":
