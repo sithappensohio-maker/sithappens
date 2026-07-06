@@ -3689,6 +3689,7 @@ function BackupPanel() {
 
   return (
     <div className="space-y-6 max-w-2xl" data-testid="backup-panel">
+      <PreUpdateSafetyPanel />
       <ProductionHealthPanel />
       <DiskUsagePanel />
       <AutoBackupPanel />
@@ -4086,6 +4087,119 @@ function fmtBytes(n) {
   if (gb >= 1) return `${gb.toFixed(2)} GB`;
   const mb = n / (1024 ** 2);
   return `${mb.toFixed(1)} MB`;
+}
+
+
+function PreUpdateSafetyPanel() {
+  const [report, setReport] = useState(null);
+  const [valid, setValid] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const [{ data: r }, { data: h }] = await Promise.all([
+        api.get("/admin/backup-safety/report"),
+        api.get("/admin/backup-safety/validations", { params: { limit: 5 } }).catch(() => ({ data: [] })),
+      ]);
+      setReport(r); setHistory(h || []);
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Could not load backup safety report"); }
+    finally { setBusy(false); }
+  };
+  const validateLatest = async () => {
+    setBusy(true); setMsg(""); setValid(null);
+    try {
+      const { data } = await api.post("/admin/backup-safety/validate-latest");
+      setValid(data);
+      setMsg(data.ok ? "Latest in-app backup parsed successfully ✓" : "Latest backup parsed with warnings");
+      load();
+    } catch (e) { setMsg(formatErr(e.response?.data?.detail) || "Validation failed"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); }, []);
+  const warnings = report?.warnings || [];
+  const dangers = warnings.filter(w => w.severity === "danger").length;
+  const warns = warnings.filter(w => w.severity === "warn").length;
+  const infos = warnings.filter(w => w.severity === "info").length;
+  const goTone = report?.pre_update_ok ? "border-shGreen/50 bg-shGreen/10 text-shGreen" : "border-red-500/50 bg-red-500/10 text-red-300";
+  const file = report?.latest_file || {};
+  return (
+    <div className="border border-shBlue/40 rounded-xl p-4 bg-bgPanel" data-testid="pre-update-safety-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+        <div>
+          <h4 className="text-sm font-black text-shBlue uppercase tracking-widest"><i className="fas fa-shield-halved mr-2"/>Pre-Update Safety Check</h4>
+          <p className="text-[13px] text-gray-400">Use this before pulling GitHub updates on the Bazzite box. It does not change your data.</p>
+        </div>
+        <div className={`px-3 py-2 rounded border text-[12px] font-black uppercase tracking-widest ${goTone}`} data-testid="pre-update-verdict">
+          {report?.pre_update_ok ? "Looks safe to update" : "Do not update yet"}
+        </div>
+      </div>
+      {msg && <p className={`text-[13px] mb-2 ${msg.includes("✓") ? "text-shGreen" : "text-shOrange"}`}>{msg}</p>}
+      {report && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            <HealthMini label="Danger" value={dangers} color={dangers ? "text-red-300" : "text-shGreen"}/>
+            <HealthMini label="Warnings" value={warns} color={warns ? "text-shOrange" : "text-shGreen"}/>
+            <HealthMini label="Info" value={infos} color="text-shBlue"/>
+            <HealthMini label="Backup age" value={report.latest_age_hours == null ? "—" : `${Math.round(report.latest_age_hours)}h`} color={report.latest_age_hours > 24 ? "text-shOrange" : "text-shGreen"}/>
+          </div>
+          <div className="bg-bgBase/70 border border-bgHover rounded p-3 mb-3 text-[13px] text-gray-300">
+            <p><span className="text-gray-500 font-black uppercase tracking-widest">Latest in-app backup:</span> {file.exists ? `${file.size_mb} MB` : "not found"}</p>
+            <p className="truncate"><span className="text-gray-500 font-black uppercase tracking-widest">File:</span> {file.path || "—"}</p>
+            <p><span className="text-gray-500 font-black uppercase tracking-widest">Critical counts:</span> clients {report.critical_counts?.clients ?? "—"} · dogs {report.critical_counts?.dogs ?? "—"} · bookings {report.critical_counts?.bookings ?? "—"} · archive {report.critical_counts?.bookings_archive ?? "—"}</p>
+          </div>
+          <div className="space-y-2 mb-3">
+            {(report.checklist || []).map(item => (
+              <div key={item.key} className="flex gap-2 bg-bgBase/50 border border-bgHover rounded p-2">
+                <i className={`fas ${item.ok === true ? "fa-circle-check text-shGreen" : item.ok === false ? "fa-triangle-exclamation text-red-300" : "fa-square-check text-shBlue"} mt-0.5`}/>
+                <div>
+                  <p className="text-[12px] font-black uppercase tracking-widest text-white">{item.label}</p>
+                  <p className="text-[12px] text-gray-400">{item.detail}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {warnings.length > 0 && (
+            <div className="space-y-2 mb-3">
+              {warnings.map(w => (
+                <div key={w.key} className={`rounded border p-2 ${w.severity === "danger" ? "bg-red-500/10 border-red-500/40" : w.severity === "warn" ? "bg-shOrange/10 border-shOrange/40" : "bg-shBlue/10 border-shBlue/40"}`}>
+                  <p className={`text-[11px] font-black uppercase tracking-widest ${w.severity === "danger" ? "text-red-300" : w.severity === "warn" ? "text-shOrange" : "text-shBlue"}`}><i className="fas fa-circle-info mr-1"/>{w.title}</p>
+                  <p className="text-[12px] text-gray-300 mt-0.5">{w.detail}</p>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button onClick={load} disabled={busy} data-testid="pre-update-refresh"
+                    className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest hover:border-shBlue disabled:opacity-50">
+              <i className={`fas fa-rotate ${busy ? "fa-spin" : ""} mr-1`}/>Refresh
+            </button>
+            <button onClick={validateLatest} disabled={busy} data-testid="pre-update-validate-latest"
+                    className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+              <i className="fas fa-vial-circle-check mr-1"/>Validate Latest In-App Backup
+            </button>
+          </div>
+          {valid && (
+            <div className={`mt-3 rounded border p-3 ${valid.ok ? "bg-shGreen/10 border-shGreen/40" : "bg-shOrange/10 border-shOrange/40"}`} data-testid="latest-backup-validation-result">
+              <p className={`text-[12px] font-black uppercase tracking-widest ${valid.ok ? "text-shGreen" : "text-shOrange"}`}>{valid.ok ? "Backup parse test passed" : "Backup parse test needs review"}</p>
+              <p className="text-[13px] text-gray-300">Version {valid.version || "—"} · {valid.collections || 0} collections · {valid.total_docs || 0} documents</p>
+              {!!(valid.warnings || []).length && <p className="text-[12px] text-shOrange mt-1">{valid.warnings.length} warning(s). Open the validation details before relying on this file.</p>}
+            </div>
+          )}
+          {history.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[12px] text-gray-400 font-black uppercase tracking-widest">Recent validation history</summary>
+              <div className="mt-2 space-y-1">
+                {history.map(h => <div key={h.id} className="text-[12px] text-gray-400 flex justify-between gap-2 bg-bgBase/50 rounded px-2 py-1"><span>{new Date(h.created_at).toLocaleString()}</span><span className={h.ok ? "text-shGreen" : "text-shOrange"}>{h.ok ? "OK" : "Review"} · {h.total_docs || 0} docs</span></div>)}
+              </div>
+            </details>
+          )}
+        </>
+      )}
+      <p className="text-[11px] text-gray-500 mt-3 leading-relaxed"><strong>Host backup still matters:</strong> this validates the in-app JSON backup. For your Bazzite machine, still run <code className="text-gray-300">./backup-now.sh</code> before updates because that saves Mongo plus your environment file into <code className="text-gray-300">~/sit-happens-backups</code>.</p>
+    </div>
+  );
 }
 
 function ProductionHealthPanel() {

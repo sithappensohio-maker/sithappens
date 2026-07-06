@@ -11809,6 +11809,8 @@ BACKUP_COLLECTIONS = [
     "punch_corrections",
     "vaccine_uploads",
     "audit_log",
+    # Phase 7 — backup validation / restore-drill history
+    "backup_restore_drills",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -11817,11 +11819,11 @@ BACKUP_COLLECTIONS = [
 #   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
 STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
-# Bumped to v6 to include the newer business-critical workflow collections
+# Bumped to v7 to include the newer business-critical workflow collections
 # (payment_ledger, waitlist, intake, messages, announcements, etc.). Restore
 # accepts older v1–v5 backups too (missing collections are left untouched rather
 # than wiped).
-BACKUP_VERSION = 6
+BACKUP_VERSION = 7
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -12403,6 +12405,244 @@ async def run_auto_backup_now(_: dict = Depends(require_admin)):
 @api.get("/admin/auto-backup/runs")
 async def list_auto_backup_runs(limit: int = 30, _: dict = Depends(require_admin)):
     rows = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(limit)
+    return rows
+
+
+# ─────────────── Phase 7 · Backup / Restore Safety + Pre-Update Guardrails ───────────────
+def _safe_parse_iso(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _backup_age_hours(run: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not run:
+        return None
+    dt = _safe_parse_iso(run.get("finished_at") or run.get("started_at") or run.get("last_run"))
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 3600, 2)
+
+
+def _backup_file_info(path: Optional[str]) -> Dict[str, Any]:
+    if not path:
+        return {"path": None, "exists": False, "size_bytes": 0, "size_mb": 0}
+    try:
+        exists = os.path.exists(path)
+        size = os.path.getsize(path) if exists else 0
+        mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).isoformat() if exists else None
+        return {
+            "path": path,
+            "exists": exists,
+            "size_bytes": size,
+            "size_mb": round(size / (1024 ** 2), 2),
+            "modified_at": mtime,
+        }
+    except Exception as e:
+        return {"path": path, "exists": False, "size_bytes": 0, "size_mb": 0, "error": str(e)}
+
+
+_CRITICAL_BACKUP_COLLECTIONS = [
+    "clients", "dogs", "bookings", "bookings_archive",
+    "credit_lots", "credit_adjustments", "payment_ledger", "retail_sales",
+    "expenses", "daily_closeouts", "cash_drawer_sessions",
+    "vaccine_uploads", "referrals", "rewards_ledger", "audit_log",
+]
+
+
+@api.get("/admin/backup-safety/report")
+async def admin_backup_safety_report(_: dict = Depends(require_admin)):
+    """Pre-update safety report. Read-only.
+
+    This does not replace the host-level ./backup-now.sh tarball, but it gives the
+    operator a fast app-side sanity check: recent backup, file existence/size,
+    disk pressure, critical collection counts, and a clear go/no-go flag before
+    pulling a new branch on the Bazzite box.
+    """
+    cfg = await _get_auto_backup_config()
+    runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(10)
+    successful = [r for r in runs if r.get("ok") or r.get("status") == "ok"]
+    latest_ok = successful[0] if successful else None
+    latest_file = (latest_ok or {}).get("path") or cfg.get("last_file")
+    file_info = _backup_file_info(latest_file)
+    age_hours = _backup_age_hours(latest_ok) if latest_ok else None
+
+    counts: Dict[str, int] = {}
+    for c in _CRITICAL_BACKUP_COLLECTIONS:
+        try:
+            counts[c] = await db[c].count_documents({})
+        except Exception:
+            counts[c] = -1
+
+    disk = await admin_disk_usage(_={})
+    backup_target = cfg.get("path") or "/app/backups"
+    target_row = None
+    for row in disk.get("mountpoints", []):
+        if row.get("path") == backup_target or backup_target.startswith(str(row.get("path", "")).rstrip("/") + "/"):
+            target_row = row
+            break
+    danger_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "danger"]
+    warn_paths = [d for d in disk.get("mountpoints", []) if d.get("verdict") == "warn"]
+
+    warnings: List[Dict[str, Any]] = []
+    def warn(key: str, severity: str, title: str, detail: str):
+        warnings.append({"key": key, "severity": severity, "title": title, "detail": detail})
+
+    if not latest_ok:
+        warn("no_in_app_backup", "danger", "No successful in-app backup found", "Run Auto-Backup → Run now, or use ./backup-now.sh before updates.")
+    elif age_hours is not None and age_hours > 72:
+        warn("backup_old", "danger", "Latest in-app backup is older than 72 hours", f"Latest successful run is about {age_hours} hours old.")
+    elif age_hours is not None and age_hours > 24:
+        warn("backup_stale", "warn", "Latest in-app backup is older than 24 hours", f"Latest successful run is about {age_hours} hours old.")
+
+    if latest_ok and not file_info.get("exists"):
+        warn("backup_file_missing", "danger", "Latest backup file is missing", f"Expected file: {latest_file}")
+    if file_info.get("exists") and file_info.get("size_bytes", 0) < 10_000 and (counts.get("clients", 0) or counts.get("dogs", 0)):
+        warn("backup_tiny", "danger", "Latest backup file looks suspiciously small", f"File size is only {file_info.get('size_mb')} MB.")
+    if danger_paths:
+        warn("disk_danger", "danger", "Disk space danger", f"{len(danger_paths)} mount/path(s) are over the danger threshold.")
+    elif warn_paths:
+        warn("disk_warn", "warn", "Disk space warning", f"{len(warn_paths)} mount/path(s) need attention or may be ephemeral.")
+    if target_row and target_row.get("likely_ephemeral"):
+        warn("backup_ephemeral", "danger", "Backup target may be ephemeral", f"{backup_target} is on {target_row.get('fs_type')} storage. Backups may not survive rebuilds.")
+
+    # Login users are intentionally separate because hashed-password migration
+    # is a sensitive operation. Make this clear every time before migrations.
+    warn("users_separate", "info", "User login accounts are separate", "Full data backup protects business data. For new-machine migration, also use Users → Export with hashes.")
+
+    checklist = [
+        {
+            "key": "fresh_backup",
+            "ok": bool(latest_ok and (age_hours is None or age_hours <= 24) and file_info.get("exists")),
+            "label": "Fresh app backup exists",
+            "detail": "Run Settings → Backup & Restore → Auto-Backup → Run now before code updates.",
+        },
+        {
+            "key": "host_backup",
+            "ok": None,
+            "label": "Host tarball backup confirmed",
+            "detail": "On Bazzite, run ./backup-now.sh and confirm ~/sit-happens-backups has a new .tar.gz file.",
+        },
+        {
+            "key": "disk_ok",
+            "ok": not danger_paths,
+            "label": "Disk has safe free space",
+            "detail": f"{len(danger_paths)} danger path(s), {len(warn_paths)} warning path(s).",
+        },
+        {
+            "key": "rollback_branch",
+            "ok": None,
+            "label": "Rollback branch/tag exists",
+            "detail": "Before changing branches, keep backup-before-top-tier-test or create a new rollback branch.",
+        },
+        {
+            "key": "no_volume_delete",
+            "ok": True,
+            "label": "Never use destructive Docker volume commands",
+            "detail": "Do not run docker compose down -v, docker volume rm, reset_db.py, or cleanup_test_data.py unless intentionally restoring with a verified backup.",
+        },
+    ]
+    danger_count = sum(1 for w in warnings if w.get("severity") == "danger")
+    return {
+        "checked_at": now_iso(),
+        "pre_update_ok": danger_count == 0,
+        "auto_backup": cfg,
+        "latest_success": latest_ok,
+        "latest_age_hours": age_hours,
+        "latest_file": file_info,
+        "critical_counts": counts,
+        "disk_summary": {"danger": len(danger_paths), "warn": len(warn_paths), "backup_target": target_row},
+        "warnings": warnings,
+        "checklist": checklist,
+        "runs": runs,
+    }
+
+
+@api.post("/admin/backup-safety/validate-latest")
+async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
+    """Open and parse the latest in-app backup without restoring it.
+
+    This is a safe restore-drill-light: it proves the backup file is readable JSON,
+    contains the expected structure, and includes business-critical collections.
+    It does NOT write to MongoDB and does NOT mutate data.
+    """
+    cfg = await _get_auto_backup_config()
+    runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(25)
+    latest = next((r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("path")), None)
+    path = (latest or {}).get("path") or cfg.get("last_file")
+    info = _backup_file_info(path)
+    if not path or not info.get("exists"):
+        raise HTTPException(status_code=404, detail="No readable latest in-app backup file found")
+    try:
+        if str(path).endswith(".gz"):
+            with gzip.open(path, "rt", encoding="utf-8") as fh:
+                payload = _json.load(fh)
+        else:
+            with open(path, "r", encoding="utf-8") as fh:
+                payload = _json.load(fh)
+    except Exception as e:
+        return {
+            "ok": False,
+            "path": path,
+            "file": info,
+            "error": f"Could not parse backup: {type(e).__name__}: {e}",
+            "validated_at": now_iso(),
+        }
+    collections = payload.get("collections") or {}
+    missing_critical = [c for c in _CRITICAL_BACKUP_COLLECTIONS if c not in collections]
+    missing_known = [c for c in BACKUP_COLLECTIONS if c not in collections]
+    counts = {k: len(v or []) for k, v in collections.items() if isinstance(v, list)}
+    total_docs = sum(counts.values())
+    warnings: List[Dict[str, Any]] = []
+    if missing_critical:
+        warnings.append({"severity": "danger", "title": "Missing critical collections", "detail": ", ".join(missing_critical)})
+    if missing_known:
+        warnings.append({"severity": "warn", "title": "Backup missing newer known collections", "detail": ", ".join(missing_known[:20]) + ("…" if len(missing_known) > 20 else "")})
+    if total_docs == 0:
+        warnings.append({"severity": "danger", "title": "Backup contains zero documents", "detail": "This does not look like a usable business backup."})
+    ok = not any(w.get("severity") == "danger" for w in warnings)
+    run_row = {
+        "id": str(uuid.uuid4()),
+        "type": "validate_latest",
+        "created_at": now_iso(),
+        "ok": ok,
+        "path": path,
+        "size_bytes": info.get("size_bytes"),
+        "version": payload.get("version"),
+        "exported_at": payload.get("exported_at"),
+        "collections": len(collections),
+        "total_docs": total_docs,
+        "warnings": warnings,
+    }
+    try:
+        await db.backup_restore_drills.insert_one(run_row)
+    except Exception:
+        pass
+    run_row.pop("_id", None)
+    return {
+        "ok": ok,
+        "path": path,
+        "file": info,
+        "version": payload.get("version"),
+        "exported_at": payload.get("exported_at"),
+        "collections": len(collections),
+        "total_docs": total_docs,
+        "counts": counts,
+        "missing_critical": missing_critical,
+        "missing_known": missing_known,
+        "warnings": warnings,
+        "validated_at": run_row["created_at"],
+    }
+
+
+@api.get("/admin/backup-safety/validations")
+async def admin_backup_safety_validations(limit: int = 10, _: dict = Depends(require_admin)):
+    rows = await db.backup_restore_drills.find({}, {"_id": 0}).sort("created_at", -1).to_list(limit)
     return rows
 
 
