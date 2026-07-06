@@ -55,6 +55,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   const [pendingHomework, setPendingHomework] = useState([]);
   const [vaxPhoto, setVaxPhoto] = useState(null); // {photo, dog_name, vaccine}
   const [todayPnl, setTodayPnl] = useState(null);
+  const [registerDay, setRegisterDay] = useState(null);
   const [pnlExpanded, setPnlExpanded] = useState(false);
   const [leaderboard, setLeaderboard] = useState({ top_dogs: [], top_clients: [] });
   const [quoteRequests, setQuoteRequests] = useState([]);
@@ -70,7 +71,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
   const load = async () => {
     try {
-      const [s, st, pg, sv, vx, hw, lb, qr, pnl] = await Promise.all([
+      const [s, st, pg, sv, vx, hw, lb, qr, pnl, reg] = await Promise.all([
         api.get("/dashboard/stats"),
         api.get("/settings"),
         api.get("/programs/active-summary").catch(()=>({data:null})),
@@ -80,6 +81,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
         api.get("/admin/today-pnl").catch(()=>({data:null})),
+        api.get("/admin/register/day").catch(()=>({data:null})),
       ]);
       setStats(s.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
@@ -90,6 +92,7 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       setLeaderboard(lb.data || { top_dogs: [], top_clients: [] });
       setQuoteRequests(Array.isArray(qr.data) ? qr.data : []);
       setTodayPnl(pnl.data);
+      setRegisterDay(reg.data);
 
       // ── New-arrival toasts (skip the first load to avoid greeting flood)
       const currentBookings = [
@@ -242,6 +245,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
           {widgetOn("owner_clock") && <OwnerClock/>}
           {widgetOn("closing_routine") && <EndOfDayPanel onJump={(bid)=>setDetailFor({ id: bid })}/>}
         </div>
+      )}
+
+      {widgetOn("register") && can("finance_reports") && (
+        <RegisterDashboardCard data={registerDay} onNavigate={onNavigate} />
       )}
 
       {/* Operations polish — Quick links to new ops screens + readiness checklist */}
@@ -737,6 +744,80 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   );
 }
 
+
+function RegisterDashboardCard({ data, onNavigate }) {
+  const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const totals = data?.totals || {};
+  const incoming = data?.incoming_by_method || {};
+  const openRegister = (tab = "overview") => {
+    try { localStorage.setItem("sh_register_default_tab", tab); } catch { /* ignore */ }
+    onNavigate("register");
+  };
+  const collected = Number(totals.net_incoming || totals.incoming_total || 0);
+  const expectedCash = Number(totals.expected_cash || 0);
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-shGreen/40 bg-gradient-to-br from-bgPanel via-bgBase to-bgPanel p-5 shadow-xl" data-testid="dashboard-register-card">
+      <div className="absolute inset-0 pointer-events-none opacity-30"
+           style={{ background: "radial-gradient(circle at 10% 10%, rgba(140,198,63,0.32) 0%, transparent 36%), radial-gradient(circle at 90% 80%, rgba(0,169,224,0.24) 0%, transparent 42%)" }}/>
+      <div className="relative flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+            <i className="fas fa-cash-register mr-2"/>Today's Register
+          </p>
+          <h3 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight" data-testid="dashboard-register-total">
+            {money(collected)} <span className="text-[13px] text-gray-500 not-italic uppercase tracking-widest">net incoming</span>
+          </h3>
+          <p className="text-[13px] text-gray-400 mt-1">
+            Expected drawer: <span className="font-black text-shGreen" data-testid="dashboard-register-cash">{money(expectedCash)}</span>
+          </p>
+        </div>
+        <button onClick={()=>openRegister("overview")}
+                data-testid="dashboard-open-register"
+                className="bg-shGreen text-bgHeader px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 transition">
+          Open Register <i className="fas fa-arrow-right ml-1"/>
+        </button>
+      </div>
+      <div className="relative grid grid-cols-2 md:grid-cols-5 gap-2 mt-4">
+        <RegisterMiniTile label="Cash" value={incoming.cash} icon="fa-money-bill-wave" />
+        <RegisterMiniTile label="Clover" value={incoming.clover} icon="fa-credit-card" />
+        <RegisterMiniTile label="Venmo" value={incoming.venmo} icon="fa-mobile-screen" />
+        <RegisterMiniTile label="PayPal" value={incoming.paypal} icon="fa-p" />
+        <RegisterMiniTile label="Checks" value={incoming.check} icon="fa-money-check" />
+      </div>
+      <div className="relative flex flex-wrap gap-2 mt-4">
+        <QuickRegisterButton label="New Sale" icon="fa-plus" onClick={()=>openRegister("sale")} />
+        <QuickRegisterButton label="Sell Credits" icon="fa-ticket" onClick={()=>openRegister("credits")} />
+        <QuickRegisterButton label="Record Payment" icon="fa-hand-holding-dollar" onClick={()=>openRegister("payment")} />
+        <QuickRegisterButton label="Cash Payout" icon="fa-right-left" onClick={()=>openRegister("payout")} />
+        <QuickRegisterButton label="Close Day" icon="fa-clipboard-check" onClick={()=>openRegister("closeout")} />
+      </div>
+      {data?.closeout && (
+        <p className="relative mt-3 text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="dashboard-register-closeout-saved">
+          <i className="fas fa-check-circle mr-1"/>Closeout saved for today
+        </p>
+      )}
+    </div>
+  );
+}
+
+function RegisterMiniTile({ label, value, icon }) {
+  return (
+    <div className="bg-bgBase/70 border border-bgHover rounded-xl p-3" data-testid={`dashboard-register-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 text-shBlue`}/>{label}</p>
+      <p className="text-lg font-black text-white mt-1">${Number(value || 0).toFixed(2)}</p>
+    </div>
+  );
+}
+
+function QuickRegisterButton({ label, icon, onClick }) {
+  return (
+    <button onClick={onClick}
+            className="bg-bgBase border border-bgHover hover:border-shGreen hover:text-shGreen text-gray-300 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition"
+            data-testid={`dashboard-register-action-${label.toLowerCase().replace(/\s+/g, "-")}`}>
+      <i className={`fas ${icon} mr-1.5`}/>{label}
+    </button>
+  );
+}
 
 function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
   const fmt = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n)||0).toFixed(2)}`;

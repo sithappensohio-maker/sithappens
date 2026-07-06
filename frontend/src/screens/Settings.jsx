@@ -1392,6 +1392,7 @@ const DASHBOARD_WIDGET_META = [
   { id: "owner_clock",       label: "Owner clock",          desc: "Owner's clock-in/out widget." },
   { id: "closing_routine",   label: "Closing routine",      desc: "End-of-day checklist." },
   { id: "quick_links",       label: "Quick links",          desc: "Tile grid (clients, dogs, bookings, etc.)." },
+  { id: "register",          label: "Today's Register",     desc: "Dashboard cash register totals and quick actions." },
 ];
 
 function DashboardWidgetsPanel() {

@@ -5950,6 +5950,7 @@ def _default_dashboard_widgets() -> dict:
         "owner_clock":       True,
         "closing_routine":   True,
         "quick_links":       True,
+        "register":          True,
         "upcoming_bookings": True,
     }
 

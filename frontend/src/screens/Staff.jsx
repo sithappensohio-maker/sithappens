@@ -1686,12 +1686,21 @@ function AuditTile({ label, value = 0, color = "text-white" }) {
 
 
 // ─── Register / POS / Cash Drawer ─────────────────────────────────────────
-function RegisterTab() {
+export function RegisterTab() {
   const [date, setDate] = useState(todayISO());
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
-  const [active, setActive] = useState("overview");
+  const [active, setActive] = useState(() => {
+    try {
+      const wanted = localStorage.getItem("sh_register_default_tab");
+      if (wanted) {
+        localStorage.removeItem("sh_register_default_tab");
+        return wanted;
+      }
+    } catch { /* ignore */ }
+    return "overview";
+  });
   const [openingCash, setOpeningCash] = useState("");
   const [notes, setNotes] = useState("");
   const [clients, setClients] = useState([]);
