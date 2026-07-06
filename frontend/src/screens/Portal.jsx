@@ -700,13 +700,13 @@ export default function Portal() {
   // clicked through (or dismissed) it, remember that locally so it doesn't
   // permanently sit at the top of the portal.
   const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(() => {
-    try { return localStorage.getItem("sh_setup_success_dismissed") === "1"; } catch { return false; }
+    try { return localStorage.getItem("sh_setup_success_tour_dismissed_v2") === "1"; } catch { return false; }
   });
   const bookingLocked = setupStatus?.booking_locked === true;
   const readyToBook = setupStatus?.ready_to_book === true;
   const showSetupSuccess = readyToBook && !setupSuccessDismissed;
   const dismissSetupSuccess = () => {
-    try { localStorage.setItem("sh_setup_success_dismissed", "1"); } catch {}
+    try { localStorage.setItem("sh_setup_success_tour_dismissed_v2", "1"); } catch {}
     setSetupSuccessDismissed(true);
   };
   const bumpSetupRefresh = () => setSetupRefresh(n => n + 1);
@@ -1057,12 +1057,22 @@ export default function Portal() {
               dismissSetupSuccess();
               openBookingIfReady();
             }}
+            onHelp={sectionOn("messages") ? (() => setMessagesOpen(true)) : null}
             onDismiss={dismissSetupSuccess}
+            offerings={[
+              { id: "book", icon: "fa-calendar-plus", title: "Book Services", text: "Request daycare, boarding, training, grooming, or other services from one place." },
+              { id: "bookings", icon: "fa-calendar-day", title: "See Your Schedule", text: "Check upcoming visits, past bookings, and booking status without calling in." },
+              { id: "dogs", icon: "fa-dog", title: "Manage Dog Info", text: "Keep your dog's profile, notes, vaccine records, and important details updated." },
+              ...(sectionOn("messages") ? [{ id: "messages", icon: "fa-comments", title: "Message Us", text: "Send questions, updates, or help requests right from the portal." }] : []),
+              ...(sectionOn("credits") ? [{ id: "credits", icon: "fa-wallet", title: "Track Credits & Balances", text: "See daycare or boarding credits, payment options, and balances when available." }] : []),
+              ...(sectionOn("trivia_rewards") ? [{ id: "rewards", icon: "fa-trophy", title: "Rewards & Trivia", text: "Play trivia, earn rewards, and see fun extras when available." }] : []),
+            ]}
           />
         )}
         <PortalSetupChecklist
           refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}
+          onHelp={sectionOn("messages") ? (() => setMessagesOpen(true)) : null}
           onAction={(target) => {
             // Return true to prevent the default scroll/click fallback.
             if (target === "waiver") {
