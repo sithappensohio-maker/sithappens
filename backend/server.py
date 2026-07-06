@@ -16613,6 +16613,13 @@ async def admin_money_health(
     add_check("booking_price_sanity", len(weird_bookings) == 0, "Booking payment sanity", f"{len(weird_bookings)} completed booking(s) have odd paid/status math.", "danger")
     add_check("client_balance_reconciles", abs(client_balance_owed - booking_ar) < 1000000, "Client balances visible", f"Client AR total ${client_balance_owed:.2f}; booking AR in window ${booking_ar:.2f}. Use ledger for exact historical reconciliation.", "warn")
 
+    register_summary = await _register_range_summary(sd, ed)
+    register_alerts = register_summary.get("alerts") or []
+    add_check("register_closeouts", len([a for a in register_alerts if a.get("type") == "missing_closeout"]) == 0,
+              "Register closeouts", f"{len([a for a in register_alerts if a.get('type') == 'missing_closeout'])} day(s) with money activity are missing saved closeout records.", "warn")
+    add_check("register_reconciliation", len([a for a in register_alerts if a.get("type") == "closeout_difference"]) == 0,
+              "Closeout reconciliation", f"{len([a for a in register_alerts if a.get('type') == 'closeout_difference'])} closeout method difference(s) over $5 were found.", "warn")
+
     return {
         "range": {"start_date": sd, "end_date": ed},
         "cash": {
@@ -16623,6 +16630,14 @@ async def admin_money_health(
             "schedule_c_income": round(service_schedule_c + retail_schedule_c, 2),
             "service_schedule_c_income": service_schedule_c,
             "retail_schedule_c_income": retail_schedule_c,
+        },
+        "register": {
+            "basis": "register_first",
+            "incoming_by_method": register_summary.get("incoming_by_method") or {},
+            "incoming_sources": register_summary.get("incoming_sources") or {},
+            "totals": register_summary.get("totals") or {},
+            "alerts": register_alerts[:25],
+            "closeout_count": len(register_summary.get("closeouts") or []),
         },
         "receivables": {
             "booking_balance_due_in_window": booking_ar,
@@ -16723,7 +16738,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     # Booking checkout cash collected on the service date. This keeps the
     # register closeout aligned with how the operator sees today's checked-out
     # bookings. Credit redemptions return $0 from _cash_revenue.
-    bookings = await db.bookings.find({"date": d, "status": "completed"}, {"_id": 0}).to_list(5000)
+    bookings = await _booking_rows_anywhere({"date": d, "status": "completed"}, {"_id": 0}, limit=5000, sort_field="date")
     for b in bookings:
         amt = _cash_revenue(b)
         if amt > 0:
@@ -16837,6 +16852,262 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             "external": "Clover, Venmo, PayPal, and checks are expected totals from app entries; verify them against the external apps/batch at closeout.",
         },
     }
+
+
+
+def _date_range_for_register(start_date: Optional[str], end_date: Optional[str], *, max_days: int = 370) -> Tuple[str, str, List[str]]:
+    """Safe register reporting range helper.
+
+    Returns ISO start/end strings plus a bounded list of ISO days. We cap ranges
+    so a typo in the UI cannot accidentally loop over years of per-day summaries.
+    """
+    today = business_today()
+    sd = start_date or f"{today.year}-01-01"
+    ed = end_date or today.isoformat()
+    try:
+        sd_date = date.fromisoformat(sd[:10])
+        ed_date = date.fromisoformat(ed[:10])
+    except Exception:
+        raise HTTPException(400, "Dates must be YYYY-MM-DD")
+    if ed_date < sd_date:
+        raise HTTPException(400, "end_date must be on/after start_date")
+    span = (ed_date - sd_date).days + 1
+    if span > max_days:
+        raise HTTPException(400, f"Register report range is limited to {max_days} days")
+    days = [(sd_date + timedelta(days=i)).isoformat() for i in range(span)]
+    return sd_date.isoformat(), ed_date.isoformat(), days
+
+
+def _register_method_delta(expected: Dict[str, float], closeout: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compare app expected method totals to an end-of-day closeout."""
+    if not closeout:
+        return {}
+    fields = {
+        "cash": "cash_counted",
+        "clover": "clover_batch",
+        "venmo": "venmo_total",
+        "paypal": "paypal_total",
+        "check": "check_total",
+    }
+    out: Dict[str, Any] = {}
+    for method, field in fields.items():
+        if closeout.get(field) is None:
+            continue
+        exp = float(expected.get(method) or 0)
+        if method == "cash":
+            # Cash expected is drawer cash, not just cash payments.
+            snap = closeout.get("register_snapshot") or {}
+            exp = float(((snap.get("totals") or {}).get("expected_cash")) or exp)
+        actual = float(closeout.get(field) or 0)
+        out[method] = {"expected": round(exp, 2), "actual": round(actual, 2), "delta": round(actual - exp, 2)}
+    return out
+
+
+async def _register_range_summary(start_date: Optional[str] = None, end_date: Optional[str] = None) -> Dict[str, Any]:
+    """Register-first reporting summary over a date range.
+
+    This is Phase 3's reporting backbone: it reads the same register day view
+    used by the POS/dashboard and rolls it up without rewriting old records.
+    """
+    sd, ed, days = _date_range_for_register(start_date, end_date)
+    incoming_by_method = _empty_method_totals()
+    expenses_by_method = _empty_method_totals()
+    incoming_sources = {
+        "booking_payments": 0.0, "manual_sales": 0.0, "credit_pack_sales": 0.0,
+        "training_program_sales": 0.0, "tab_payments": 0.0, "refunds": 0.0, "other_sales": 0.0,
+    }
+    totals = {
+        "incoming_total": 0.0, "expense_total": 0.0, "net_incoming_total": 0.0,
+        "refund_total": 0.0, "cash_drawer_payouts": 0.0,
+    }
+    alerts: List[Dict[str, Any]] = []
+    closeout_rows: List[Dict[str, Any]] = []
+    recent_activity: List[Dict[str, Any]] = []
+    today = business_today().isoformat()
+
+    for d in days:
+        day = await _register_day_summary(d)
+        for k, v in (day.get("incoming_by_method") or {}).items():
+            incoming_by_method[k] = round(float(incoming_by_method.get(k, 0)) + float(v or 0), 2)
+        for k, v in (day.get("expenses_by_method") or {}).items():
+            expenses_by_method[k] = round(float(expenses_by_method.get(k, 0)) + float(v or 0), 2)
+        for k, v in (day.get("incoming_sources") or {}).items():
+            incoming_sources[k] = round(float(incoming_sources.get(k, 0)) + float(v or 0), 2)
+        for k, v in (day.get("totals") or {}).items():
+            if isinstance(v, (int, float)) and k in totals:
+                totals[k] = round(float(totals.get(k, 0)) + float(v or 0), 2)
+        recent_activity.extend(day.get("activity") or [])
+        has_activity = bool(day.get("activity")) or float((day.get("totals") or {}).get("incoming_total") or 0) or float((day.get("totals") or {}).get("expense_total") or 0)
+        closeout = day.get("latest_closeout")
+        if closeout:
+            expected_methods = day.get("incoming_by_method") or {}
+            deltas = _register_method_delta(expected_methods, closeout)
+            closeout_rows.append({
+                "date": d,
+                "created_at": closeout.get("created_at"),
+                "created_by_name": closeout.get("created_by_name") or "",
+                "notes": closeout.get("notes") or "",
+                "cash_counted": closeout.get("cash_counted"),
+                "clover_batch": closeout.get("clover_batch"),
+                "venmo_total": closeout.get("venmo_total"),
+                "paypal_total": closeout.get("paypal_total"),
+                "check_total": closeout.get("check_total"),
+                "deltas": deltas,
+            })
+            for method, row in deltas.items():
+                if abs(float(row.get("delta") or 0)) >= 5.0:
+                    alerts.append({
+                        "date": d, "severity": "warn", "type": "closeout_difference",
+                        "message": f"{REGISTER_METHOD_LABELS.get(method, method).title()} closeout difference is ${row['delta']:.2f}.",
+                    })
+        elif has_activity and d < today:
+            alerts.append({
+                "date": d, "severity": "warn", "type": "missing_closeout",
+                "message": "Register activity exists but no saved closeout was found.",
+            })
+
+    # Range-level sanity checks from raw records.
+    retail = await db.retail_sales.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).to_list(50000)
+    for r in retail:
+        amt = float(r.get("amount") or 0)
+        kind = r.get("source_kind") or "manual_sale"
+        if amt < 0 and kind != "refund":
+            alerts.append({"date": r.get("date"), "severity": "warn", "type": "negative_sale", "message": f"Negative register sale is not marked as a refund: {r.get('description') or r.get('id')}"})
+        if kind == "refund" and not (r.get("notes") or r.get("description")):
+            alerts.append({"date": r.get("date"), "severity": "warn", "type": "refund_missing_reason", "message": "Refund row has no reason/description."})
+        if amt > 0 and not r.get("payment_method"):
+            alerts.append({"date": r.get("date"), "severity": "warn", "type": "missing_payment_method", "message": f"Register sale is missing payment method: {r.get('description') or r.get('id')}"})
+
+    completed = await _booking_rows_anywhere(
+        {"date": {"$gte": sd, "$lte": ed}, "status": "completed"}, {"_id": 0}, limit=50000, sort_field="date"
+    )
+    for b in completed:
+        cash = _cash_revenue(b)
+        if cash > 0 and not b.get("payment_method"):
+            alerts.append({"date": b.get("date"), "severity": "warn", "type": "booking_missing_payment_method", "message": f"Paid booking missing payment method: {b.get('client_name') or ''} / {b.get('dog_name') or ''}"})
+        if (b.get("payment_status") == "paid" and _booking_balance_due(b) > 0.01):
+            alerts.append({"date": b.get("date"), "severity": "danger", "type": "paid_has_balance", "message": f"Booking marked paid but still has balance due: {b.get('client_name') or ''} / {b.get('dog_name') or ''}"})
+
+    totals["incoming_total"] = round(sum(float(v or 0) for v in incoming_by_method.values()), 2)
+    totals["expense_total"] = round(sum(float(v or 0) for v in expenses_by_method.values()), 2)
+    totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
+    totals["net_incoming_total"] = round(totals["incoming_total"], 2)
+    recent_activity = sorted(recent_activity, key=lambda x: x.get("created_at") or "", reverse=True)[:150]
+    return {
+        "range": {"start_date": sd, "end_date": ed, "days": len(days)},
+        "method_labels": REGISTER_METHOD_LABELS,
+        "incoming_by_method": incoming_by_method,
+        "incoming_rows": _method_rows(incoming_by_method),
+        "expenses_by_method": expenses_by_method,
+        "expense_rows": _method_rows(expenses_by_method),
+        "incoming_sources": incoming_sources,
+        "totals": totals,
+        "closeouts": sorted(closeout_rows, key=lambda x: x.get("date") or "", reverse=True),
+        "alerts": alerts[:100],
+        "activity": recent_activity,
+        "explain": {
+            "register_first": "These totals use the same Register/POS sources shown on the dashboard: completed booking cash, retail/manual sales, credit-pack sales, refunds, expenses, and closeouts.",
+            "credits": "Credit-pack sales count when sold. Credit redemptions are operational usage and are not counted again as new cash.",
+        },
+    }
+
+
+def _csv_response(rows: List[List[Any]], filename: str) -> Response:
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    for row in rows:
+        writer.writerow(["" if v is None else v for v in row])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+
+@api.get("/admin/register/range")
+async def admin_register_range(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    return await _register_range_summary(start_date, end_date)
+
+
+@api.get("/admin/register/closeouts")
+async def admin_register_closeouts(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    sd, ed, _days = _date_range_for_register(start_date, end_date)
+    rows = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
+    return {"range": {"start_date": sd, "end_date": ed}, "closeouts": rows, "count": len(rows)}
+
+
+@api.get("/admin/register/export.csv")
+async def admin_register_export_csv(
+    kind: Optional[str] = "activity",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(require_admin),
+):
+    perms = _perms_for(user)
+    if not perms.get("data_export") or not perms.get("finance_reports"):
+        raise HTTPException(status_code=403, detail="Missing permission: data_export + finance_reports")
+    sd, ed, days = _date_range_for_register(start_date, end_date)
+    safe_kind = (kind or "activity").strip().lower()
+    stamp = f"{sd}_to_{ed}"
+
+    if safe_kind == "activity":
+        rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
+        for d in days:
+            day = await _register_day_summary(d)
+            for a in day.get("activity") or []:
+                rows.append([d, a.get("created_at"), a.get("kind"), a.get("label"), a.get("description"), a.get("client_name"), a.get("payment_method"), f"{float(a.get('amount') or 0):.2f}"])
+        return _csv_response(rows, f"sit-happens-register-activity-{stamp}.csv")
+
+    if safe_kind == "payment-methods":
+        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts"]]
+        for d in days:
+            day = await _register_day_summary(d)
+            m = day.get("incoming_by_method") or {}
+            t = day.get("totals") or {}
+            src = day.get("incoming_sources") or {}
+            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}"])
+        return _csv_response(rows, f"sit-happens-register-methods-{stamp}.csv")
+
+    if safe_kind == "closeouts":
+        rows = [["Date", "Created At", "Closed By", "Cash Counted", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Notes"]]
+        closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
+        for c in closeouts:
+            rows.append([c.get("date"), c.get("created_at"), c.get("created_by_name"), c.get("cash_counted"), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("notes")])
+        return _csv_response(rows, f"sit-happens-closeouts-{stamp}.csv")
+
+    if safe_kind == "expenses":
+        rows = [["Date", "Vendor", "Category", "Description", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Notes"]]
+        exps = await db.expenses.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(50000)
+        for e in exps:
+            rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("notes")])
+        return _csv_response(rows, f"sit-happens-expenses-{stamp}.csv")
+
+    if safe_kind == "tax-summary":
+        summary = await _register_range_summary(sd, ed)
+        rows = [["Metric", "Amount"]]
+        rows += [
+            ["Gross cash collected", f"{summary['totals'].get('incoming_total',0):.2f}"],
+            ["Refunds", f"{summary['totals'].get('refund_total',0):.2f}"],
+            ["Expenses", f"{summary['totals'].get('expense_total',0):.2f}"],
+            ["Credit pack sales", f"{summary['incoming_sources'].get('credit_pack_sales',0):.2f}"],
+            ["Booking payments", f"{summary['incoming_sources'].get('booking_payments',0):.2f}"],
+            ["Manual sales", f"{summary['incoming_sources'].get('manual_sales',0):.2f}"],
+            ["Training program sales", f"{summary['incoming_sources'].get('training_program_sales',0):.2f}"],
+        ]
+        return _csv_response(rows, f"sit-happens-tax-register-summary-{stamp}.csv")
+
+    raise HTTPException(400, "kind must be activity, payment-methods, closeouts, expenses, or tax-summary")
 
 
 @api.get("/admin/register/day")
@@ -17198,6 +17469,11 @@ async def admin_quarterly_tax(
             "service_cash_before_sales_tax": round(service_cash_gross, 2),
             "retail_cash_before_sales_tax": round(retail_cash_gross, 2),
             "service_unpaid_balance": round(service_unpaid_balance, 2),
+        },
+        "register_basis": {
+            "source": "register_first_with_legacy_fallback",
+            "note": "Tax estimate uses completed booking cash + register/retail rows, separates refunds and credit redemptions to avoid double-counting.",
+            "payment_methods": (await _register_range_summary(start, end)).get("incoming_by_method") if True else {},
         },
         "expenses": {
             "recorded": round(recorded_expenses, 2),

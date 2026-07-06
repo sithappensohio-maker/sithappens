@@ -1684,6 +1684,15 @@ function AuditTile({ label, value = 0, color = "text-white" }) {
   );
 }
 
+function CountTile({ label, value = 0, color = "text-white" }) {
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-xl p-3">
+      <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+      <p className={`text-xl font-black mt-1 ${color}`}>{Number(value || 0)}</p>
+    </div>
+  );
+}
+
 
 // ─── Register / POS / Cash Drawer ─────────────────────────────────────────
 export function RegisterTab() {
@@ -1711,6 +1720,9 @@ export function RegisterTab() {
   const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "clover", reason: "", notes: "" });
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [closeout, setCloseout] = useState({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+  const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
+  const [reportEnd, setReportEnd] = useState(todayISO());
+  const [reportData, setReportData] = useState(null);
 
   const methodOptions = [
     ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
@@ -1817,6 +1829,30 @@ export function RegisterTab() {
     showDone("Closeout saved.");
   });
 
+  const loadReports = async () => {
+    setErr("");
+    try {
+      const r = await api.get("/admin/register/range", { params: { start_date: reportStart, end_date: reportEnd } });
+      setReportData(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register reports"); }
+  };
+  const downloadRegisterCsv = async (kind) => {
+    try {
+      const token = localStorage.getItem("sh_token") || "";
+      const API_ROOT = process.env.REACT_APP_BACKEND_URL || "";
+      const qs = new URLSearchParams({ kind, start_date: reportStart, end_date: reportEnd }).toString();
+      const r = await fetch(`${API_ROOT}/api/admin/register/export.csv?${qs}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) { setErr(`CSV download failed (${r.status})`); return; }
+      const blob = await r.blob();
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = obj;
+      a.download = `sit-happens-${kind}-${reportStart}-to-${reportEnd}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(obj), 5000);
+    } catch (e) { setErr(formatErr(e.message) || "CSV download failed"); }
+  };
+
   const totals = data?.totals || {};
   const incoming = data?.incoming_by_method || {};
   const sources = data?.incoming_sources || {};
@@ -1851,7 +1887,7 @@ export function RegisterTab() {
     <div className="space-y-4" data-testid="register-tab">
       <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300">
         <i className="fas fa-cash-register text-shBlue mr-2"/>
-        Register Phase 2: one money hub for sales, credit packs, client payments, refunds, cash payouts, drawer totals, and closeout.
+        Register Phase 3: one money hub plus register-first reports, closeout history, exports, and reconciliation warnings.
       </div>
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Register date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
@@ -1863,7 +1899,7 @@ export function RegisterTab() {
       <div className="flex gap-1 overflow-x-auto border-b border-bgHover/70">
         {[
           ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
-          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["closeout", "Close Day", "fa-clipboard-check"],
+          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
         ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
@@ -2037,6 +2073,65 @@ export function RegisterTab() {
           <FormInput label="Closeout notes" value={closeout.notes} onChange={v=>setCloseout({...closeout, notes:v})}/>
         </div>
         <button onClick={submitCloseout} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-save mr-1"/>Save closeout</button>
+      </div>}
+
+
+      {active === "reports" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-reports-tab">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h4 className="text-white font-black uppercase italic"><i className="fas fa-file-csv text-shBlue mr-2"/>Reports, Exports & Warnings</h4>
+            <p className="text-[12px] text-gray-500 mt-1">Register-first reporting: payment methods, closeouts, exports, and sanity warnings from the same money sources shown on the dashboard.</p>
+          </div>
+          <button onClick={loadReports} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Run report</button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+          <FormInput label="Start date" type="date" value={reportStart} onChange={setReportStart}/>
+          <FormInput label="End date" type="date" value={reportEnd} onChange={setReportEnd}/>
+          <div className="flex flex-wrap gap-2">
+            {[ ["activity","Activity"], ["payment-methods","Methods"], ["closeouts","Closeouts"], ["expenses","Expenses"], ["tax-summary","Tax summary"] ].map(([k,l]) => (
+              <button key={k} onClick={()=>downloadRegisterCsv(k)} className="bg-bgBase border border-bgHover text-gray-300 hover:text-white px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-1"/>{l}</button>
+            ))}
+          </div>
+        </div>
+        {!reportData && <div className="text-gray-500 text-sm p-4 text-center border border-bgHover rounded bg-bgBase/40">Run the report to see range totals, closeout history, and warnings.</div>}
+        {reportData && <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <AuditTile label="Gross collected" value={reportData.totals?.incoming_total}/>
+            <AuditTile label="Refunds" value={reportData.totals?.refund_total} color="text-red-300"/>
+            <AuditTile label="Expenses" value={reportData.totals?.expense_total} color="text-shOrange"/>
+            <AuditTile label="Credit packs" value={reportData.incoming_sources?.credit_pack_sales}/>
+            <CountTile label="Closeouts" value={(reportData.closeouts || []).length}/>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="bg-bgBase/70 border border-bgHover rounded-xl p-4">
+              <h5 className="text-white font-black uppercase italic mb-2"><i className="fas fa-triangle-exclamation text-shOrange mr-2"/>Sanity warnings</h5>
+              <div className="space-y-2 max-h-[320px] overflow-auto">
+                {(reportData.alerts || []).length === 0 && <p className="text-shGreen text-sm font-black"><i className="fas fa-circle-check mr-1"/>No register warnings in this range.</p>}
+                {(reportData.alerts || []).map((a,idx) => (
+                  <div key={idx} className={`rounded border p-3 ${a.severity === "danger" ? "bg-red-500/10 border-red-500/40" : "bg-shOrange/10 border-shOrange/40"}`}>
+                    <p className="text-[11px] font-black uppercase tracking-widest text-gray-400">{a.date} · {a.type}</p>
+                    <p className="text-[13px] text-gray-300 mt-1">{a.message}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="bg-bgBase/70 border border-bgHover rounded-xl p-4">
+              <h5 className="text-white font-black uppercase italic mb-2"><i className="fas fa-clipboard-check text-shGreen mr-2"/>Closeout history</h5>
+              <div className="space-y-2 max-h-[320px] overflow-auto">
+                {(reportData.closeouts || []).length === 0 && <p className="text-gray-500 text-sm">No saved closeouts in this range.</p>}
+                {(reportData.closeouts || []).map((c,idx) => {
+                  const deltas = c.deltas || {};
+                  return <div key={`${c.date}-${idx}`} className="border border-bgHover rounded p-3 text-sm">
+                    <div className="flex justify-between gap-2"><p className="text-white font-black">{c.date}</p><p className="text-gray-500">{c.created_by_name || "—"}</p></div>
+                    <p className="text-[12px] text-gray-400 mt-1">Cash {money(c.cash_counted)} · Clover {money(c.clover_batch)} · Venmo {money(c.venmo_total)} · PayPal {money(c.paypal_total)} · Checks {money(c.check_total)}</p>
+                    {Object.keys(deltas).length > 0 && <p className="text-[11px] text-gray-500 mt-1">Diffs: {Object.entries(deltas).map(([m,row]) => `${m} ${money(row.delta)}`).join(" · ")}</p>}
+                    {c.notes && <p className="text-[12px] text-gray-500 italic mt-1">{c.notes}</p>}
+                  </div>;
+                })}
+              </div>
+            </div>
+          </div>
+        </>}
       </div>}
     </div>
   );
