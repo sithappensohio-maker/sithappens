@@ -1783,6 +1783,7 @@ async def _quote_base_service_price(
             unit_price = float(pricing.get("effective_price", list_price) or 0)
         except Exception:
             unit_price = list_price
+    additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
     if service_type == "boarding":
         units = _billable_boarding_nights(start_date, end_date, legacy_minimum=legacy_boarding_minimum)
         unit_label = "nights"
@@ -1793,6 +1794,7 @@ async def _quote_base_service_price(
         "service_id": svc.get("id"),
         "service_name": svc.get("name"),
         "unit_price": round(unit_price, 2),
+        "additional_dog_unit_price": round(additional_dog_unit_price, 2),
         "units": int(units),
         "unit_label": unit_label,
         "estimated_price": round(unit_price * int(units), 2),
@@ -1807,6 +1809,9 @@ class PricingQuoteIn(BaseModel):
     client_id: Optional[str] = None
     service_id: Optional[str] = None
     addon_service_ids: List[str] = []
+    # Read-only estimate helper for grouped bookings. First dog bills at the
+    # standard rate; additional dogs can receive the configured sibling discount.
+    dog_count: int = 1
 
 
 @api.post("/pricing/quote")
@@ -1849,9 +1854,36 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         for a in add_ons:
             add_on_total += float(a.get("price") or 0) * int(a.get("qty") or 1)
 
-    subtotal = float(quote.get("estimated_price") or 0)
-    total = round(subtotal + add_on_total, 2)
     units = int(quote.get("units") or 0)
+    dog_count = max(1, min(12, int(body.dog_count or 1)))
+    additional_dogs = max(0, dog_count - 1)
+
+    first_dog_base = float(quote.get("estimated_price") or 0)
+    additional_dog_unit_price = float(quote.get("additional_dog_unit_price") or quote.get("unit_price") or 0)
+    raw_additional_dog_base = round(additional_dogs * additional_dog_unit_price * units, 2)
+
+    settings = await get_settings()
+    md_cfg = _multi_dog_discount_config_for(settings, body.service_type)
+    multi_dog_discount_amount = _discount_amount_for_extra_dogs(raw_additional_dog_base, md_cfg, additional_dogs)
+    discounted_additional_dog_base = max(0.0, round(raw_additional_dog_base - multi_dog_discount_amount, 2))
+
+    # Base estimate means service/base price for all dogs after sibling
+    # discount. Add-ons remain separate and full price.
+    subtotal = round(first_dog_base + discounted_additional_dog_base, 2)
+    total = round(subtotal + add_on_total, 2)
+    credit_units = _credit_units_required(body.service_type, body.date, body.end_date) * dog_count
+
+    multi_dog_discount = None
+    if additional_dogs > 0 and multi_dog_discount_amount > 0 and md_cfg:
+        multi_dog_discount = {
+            "amount": round(multi_dog_discount_amount, 2),
+            "mode": md_cfg.get("mode") or "percent",
+            "value": float(md_cfg.get("value") or 0),
+            "label": md_cfg.get("label") or "Additional dog discount",
+            "additional_dogs": additional_dogs,
+            "discount_base_price": round(raw_additional_dog_base, 2),
+        }
+
     return {
         "service_type": body.service_type,
         "service_id": quote.get("service_id"),
@@ -1862,11 +1894,18 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "billable_units": units,
         "unit_label": quote.get("unit_label"),
         "unit_price": quote.get("unit_price"),
+        "additional_dog_unit_price": round(additional_dog_unit_price, 2),
+        "dog_count": dog_count,
+        "additional_dogs": additional_dogs,
+        "first_dog_base_price": round(first_dog_base, 2),
+        "additional_dog_base_price": round(raw_additional_dog_base, 2),
+        "multi_dog_discount": multi_dog_discount,
+        "multi_dog_discount_amount": round(multi_dog_discount_amount, 2),
         "base_estimated_price": round(subtotal, 2),
         "add_ons": add_ons,
         "add_on_total": round(add_on_total, 2),
         "estimated_price": total,
-        "credit_units_required": _credit_units_required(body.service_type, body.date, body.end_date),
+        "credit_units_required": credit_units,
     }
 
 
@@ -3648,6 +3687,75 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
         logger.warning("Low-credit email failed for client=%s pool=%s: %s", client_id, service_type, exc)
 
 
+def _multi_dog_discount_config_for(settings: dict, service_type: str) -> Optional[Dict[str, Any]]:
+    """Return the active multi-dog discount config for a service type.
+
+    Business rule for Sit Happens: daycare and boarding default to 50% off
+    additional dogs. Add-ons are not discounted. Explicit admin settings still
+    win, including disabling the rule.
+    """
+    service_type = service_type or "daycare"
+    if service_type not in ("daycare", "boarding"):
+        # Other service types can still be enabled manually through settings,
+        # but they do not receive the Sit Happens default sibling discount.
+        per_service = settings.get("multi_dog_discount_by_service") or {}
+        cfg = per_service.get(service_type)
+        if not cfg:
+            return None
+        if not cfg.get("enabled"):
+            return None
+        return cfg
+
+    per_service = settings.get("multi_dog_discount_by_service") or {}
+    cfg = per_service.get(service_type)
+    if isinstance(cfg, dict) and cfg:
+        if not cfg.get("enabled"):
+            return None
+        return {
+            "enabled": True,
+            "mode": cfg.get("mode") or "percent",
+            "value": float(cfg.get("value") if cfg.get("value") is not None else 50.0),
+            "label": cfg.get("label") or "Additional dog discount",
+        }
+
+    # Legacy/global config fallback. If the global keys exist and the admin
+    # intentionally turned the master toggle off, respect that.
+    if "multi_dog_discount_enabled" in settings and not settings.get("multi_dog_discount_enabled"):
+        return None
+
+    return {
+        "enabled": True,
+        "mode": settings.get("multi_dog_discount_mode") or "percent",
+        "value": float(settings.get("multi_dog_discount_value") if settings.get("multi_dog_discount_value") is not None else 50.0),
+        "label": settings.get("multi_dog_discount_label") or "Additional dog discount",
+    }
+
+
+def _discount_amount_for_extra_dogs(raw_additional_dog_base: float, cfg: Optional[Dict[str, Any]], additional_dogs: int = 1) -> float:
+    if not cfg or raw_additional_dog_base <= 0 or additional_dogs <= 0:
+        return 0.0
+    mode = (cfg.get("mode") or "percent").lower()
+    value = float(cfg.get("value") or 0)
+    if value <= 0:
+        return 0.0
+    if mode == "percent":
+        pct = max(0.0, min(100.0, value))
+        return round(raw_additional_dog_base * pct / 100.0, 2)
+    if mode == "flat":
+        return round(min(raw_additional_dog_base, value * max(1, additional_dogs)), 2)
+    return 0.0
+
+
+def _booking_addon_total_from(booking: dict) -> float:
+    total = 0.0
+    for ao in (booking.get("add_ons") or []):
+        try:
+            total += float(ao.get("line_total") if ao.get("line_total") is not None else (float(ao.get("price") or 0) * int(ao.get("qty") or 1)))
+        except Exception:
+            continue
+    return round(total, 2)
+
+
 async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Sprint 110 — return the dollar discount that should apply to the
     booking being checked out, given the multi-dog household setting.
@@ -3665,21 +3773,9 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
       - First dog full price → subsequent dogs (in checkout order) discounted.
     """
     settings = await get_settings()
-    if not settings.get("multi_dog_discount_enabled"):
-        return None
-
     service_type = booking.get("service_type") or "daycare"
-    per_service = settings.get("multi_dog_discount_by_service") or {}
-    cfg = per_service.get(service_type)
+    cfg = _multi_dog_discount_config_for(settings, service_type)
     if not cfg:
-        # Legacy single-config fallback (applied to all services as before)
-        cfg = {
-            "enabled": True,
-            "mode": settings.get("multi_dog_discount_mode") or "percent",
-            "value": float(settings.get("multi_dog_discount_value") or 0),
-            "label": settings.get("multi_dog_discount_label") or "Multi-dog discount",
-        }
-    if not cfg.get("enabled"):
         return None
     mode = (cfg.get("mode") or "percent").lower()
     if mode not in ("percent", "flat"):
@@ -3705,15 +3801,17 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
     if sibling_count < 1:
         return None
 
-    base_price = float(booking.get("actual_price") or 0)
+    # Discount only the service/base portion for the additional dog. Add-ons
+    # stay full price so nail trims, baths, etc. do not get accidentally cut.
+    gross_price = float(booking.get("actual_price") or 0)
+    addon_total = _booking_addon_total_from(booking)
+    base_price = max(0.0, gross_price - addon_total)
     if base_price <= 0:
         return None
-    if mode == "percent":
-        pct = max(0.0, min(100.0, value))
-        amount = round(base_price * pct / 100.0, 2)
-    else:
-        amount = round(min(base_price, value), 2)
-    label = cfg.get("label") or "Multi-dog discount"
+    amount = _discount_amount_for_extra_dogs(base_price, cfg, additional_dogs=1)
+    if amount <= 0:
+        return None
+    label = cfg.get("label") or "Additional dog discount"
     return {
         "amount": amount,
         "mode": mode,
@@ -3721,6 +3819,7 @@ async def _compute_multi_dog_discount(booking: dict, *, exclude_id: Optional[str
         "label": label,
         "service_type": service_type,
         "sibling_count": sibling_count,
+        "discount_base_price": round(base_price, 2),
     }
 
 
@@ -5318,6 +5417,18 @@ def _default_settings() -> dict:
                 "retail": True,
                 "credit_packs": False,
             },
+        },
+        # Sit Happens pricing rule: first dog pays the normal daycare/boarding
+        # rate; every additional dog in the same client booking is 50% off the
+        # BASE service price. Add-ons stay full price. These defaults are
+        # backfilled onto existing installs only when the keys are missing.
+        "multi_dog_discount_enabled": True,
+        "multi_dog_discount_mode": "percent",
+        "multi_dog_discount_value": 50.0,
+        "multi_dog_discount_label": "Additional dog discount",
+        "multi_dog_discount_by_service": {
+            "daycare": {"enabled": True, "mode": "percent", "value": 50.0, "label": "Additional dog discount"},
+            "boarding": {"enabled": True, "mode": "percent", "value": 50.0, "label": "Additional dog discount"},
         },
         # Sprint 110aw — Birthday auto-email toggle. Default ON to preserve
         # existing behavior (the email job has been firing since Sprint 38).

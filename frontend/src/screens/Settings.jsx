@@ -2640,15 +2640,15 @@ function RulesPanel({ s, save, saving }) {
   // Sprint 110h — per-service multi-dog discount: daycare and boarding can be
   // configured separately. Falls back to the legacy flat fields as default.
   const SERVICES = [
-    { key: "daycare",     label: "Daycare",     icon: "fa-paw",        defaultValue: 10 },
-    { key: "boarding",    label: "Boarding",    icon: "fa-bed",        defaultValue: 15 },
+    { key: "daycare",     label: "Daycare",     icon: "fa-paw",        defaultValue: 50 },
+    { key: "boarding",    label: "Boarding",    icon: "fa-bed",        defaultValue: 50 },
     { key: "training",    label: "Training",    icon: "fa-graduation-cap", defaultValue: 10 },
     { key: "grooming",    label: "Grooming",    icon: "fa-scissors",   defaultValue: 10 },
     { key: "photography", label: "Photography", icon: "fa-camera",     defaultValue: 10 },
   ];
   const legacyMode  = s.multi_dog_discount_mode  || "percent";
-  const legacyValue = s.multi_dog_discount_value ?? 10;
-  const legacyLabel = s.multi_dog_discount_label || "Multi-dog discount";
+  const legacyValue = s.multi_dog_discount_value ?? 50;
+  const legacyLabel = s.multi_dog_discount_label || "Additional dog discount";
   const initialByService = {};
   for (const svc of SERVICES) {
     const existing = (s.multi_dog_discount_by_service || {})[svc.key];
@@ -2658,13 +2658,13 @@ function RulesPanel({ s, save, saving }) {
       value: existing.value ?? svc.defaultValue,
       label: existing.label || `${svc.label} multi-dog discount`,
     } : {
-      enabled: !!s.multi_dog_discount_enabled && svc.key === "daycare",  // migrate legacy onto daycare
+      enabled: (svc.key === "daycare" || svc.key === "boarding") ? s.multi_dog_discount_enabled !== false : false,
       mode: legacyMode,
-      value: svc.key === "daycare" ? legacyValue : svc.defaultValue,
-      label: svc.key === "daycare" ? legacyLabel : `${svc.label} multi-dog discount`,
+      value: (svc.key === "daycare" || svc.key === "boarding") ? legacyValue : svc.defaultValue,
+      label: (svc.key === "daycare" || svc.key === "boarding") ? legacyLabel : `${svc.label} multi-dog discount`,
     };
   }
-  const [mdEnabled, setMdEnabled] = useState(!!s.multi_dog_discount_enabled);
+  const [mdEnabled, setMdEnabled] = useState(s.multi_dog_discount_enabled !== false);
   const [byService, setByService] = useState(initialByService);
   const setSvc = (svcKey, patch) => setByService((p) => ({ ...p, [svcKey]: { ...p[svcKey], ...patch } }));
 
@@ -2722,7 +2722,7 @@ function RulesPanel({ s, save, saving }) {
         </div>
       </Section>
 
-      <Section title="Multi-dog household discount" subtitle="Auto-applied at check-out for the 2nd-and-later dog from the same client on the same date. Each service has its OWN discount tier — set daycare and boarding to whatever margins make sense for each.">
+      <Section title="Multi-dog household discount" subtitle="Auto-applied at check-out for the 2nd-and-later dog from the same client on the same date. Each service has its OWN discount tier. Sit Happens default is 50% off the BASE service price for additional daycare/boarding dogs.">
         <label className="flex items-center gap-3 cursor-pointer mb-4">
           <input type="checkbox" checked={mdEnabled}
                  onChange={(e)=>setMdEnabled(e.target.checked)}
@@ -2771,7 +2771,7 @@ function RulesPanel({ s, save, saving }) {
         </div>
         <p className="text-[12px] text-gray-500 mt-2 italic">
           <i className="fas fa-circle-info mr-1"/>
-          Each service uses its own tier. Disable per-service for the ones you don't want discounted (e.g. keep daycare at 15% but leave photography full price).
+          Each service uses its own tier. Daycare and boarding default to 50% off additional dogs. Add-ons stay full price.
         </p>
       </Section>
 

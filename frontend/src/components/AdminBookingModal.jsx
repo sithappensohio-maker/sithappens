@@ -19,6 +19,38 @@ const pluralUnit = (count, label) => {
   return `${count} ${Number(count) === 1 ? clean : `${clean}s`}`;
 };
 
+const getMultiDogDiscountConfig = (settings, serviceType) => {
+  if (!settings) return null;
+  const eligibleDefault = serviceType === "daycare" || serviceType === "boarding";
+  const per = settings.multi_dog_discount_by_service || {};
+  const svcCfg = per[serviceType];
+  if (svcCfg && Object.keys(svcCfg).length > 0) {
+    if (!svcCfg.enabled) return null;
+    return {
+      mode: svcCfg.mode || "percent",
+      value: Number(svcCfg.value ?? 50),
+      label: svcCfg.label || "Additional dog discount",
+    };
+  }
+  if (!eligibleDefault) return null;
+  if (settings.multi_dog_discount_enabled === false) return null;
+  return {
+    mode: settings.multi_dog_discount_mode || "percent",
+    value: Number(settings.multi_dog_discount_value ?? 50),
+    label: settings.multi_dog_discount_label || "Additional dog discount",
+  };
+};
+
+const calcDiscountAmount = (rawAdditionalDogBase, cfg, additionalDogs) => {
+  const raw = Math.max(0, Number(rawAdditionalDogBase) || 0);
+  const dogs = Math.max(0, Number(additionalDogs) || 0);
+  if (!cfg || raw <= 0 || dogs <= 0) return 0;
+  const value = Number(cfg.value || 0);
+  if (value <= 0) return 0;
+  if ((cfg.mode || "percent") === "flat") return Math.min(raw, value * dogs);
+  return raw * (Math.min(100, Math.max(0, value)) / 100);
+};
+
 export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
@@ -63,6 +95,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [quoteError, setQuoteError] = useState("");
   const [quoteLines, setQuoteLines] = useState([]);
+  const [multiDogDiscountSettings, setMultiDogDiscountSettings] = useState({});
 
   // Sprint 110di-38 — Multi-dog group booking (admin variant).
   // Mirrors the portal wizard pattern: primary dog + extras share the same
@@ -102,6 +135,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setDogs(dRes.data);
         setKennels(sRes.data.kennels || []);
         setClosedDates(Array.isArray(sRes.data?.closed_dates) ? sRes.data.closed_dates : []);
+        setMultiDogDiscountSettings({
+          multi_dog_discount_enabled: sRes.data?.multi_dog_discount_enabled,
+          multi_dog_discount_mode: sRes.data?.multi_dog_discount_mode || "percent",
+          multi_dog_discount_value: Number(sRes.data?.multi_dog_discount_value ?? 50),
+          multi_dog_discount_label: sRes.data?.multi_dog_discount_label || "Additional dog discount",
+          multi_dog_discount_by_service: sRes.data?.multi_dog_discount_by_service || {},
+        });
         if (!existing) {
           if (isQuickCheckin) {
             // Pre-select the first dog and its owner so the form is ready to submit.
@@ -289,7 +329,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
   const quoteSummary = useMemo(() => {
     if (!quoteLines.length) return null;
-    const total = quoteLines.reduce((sum, l) => sum + Number(l.quote?.estimated_price || 0), 0);
+    const rawTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.estimated_price || 0), 0);
     const baseTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
     const addonTotal = quoteLines.reduce((sum, l) => sum + Number(l.quote?.add_on_total || 0), 0);
     const units = quoteLines.reduce((sum, l) => sum + Number(l.quote?.billable_units || 0), 0);
@@ -298,8 +338,25 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     const serviceName = quoteLines[0]?.quote?.service_name || serviceType;
     const pool = creditPoolForService(serviceType);
     const creditsAvailable = pool && selectedClient ? Number(selectedClient[pool.key] || 0) : 0;
-    return { total, baseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable };
-  }, [quoteLines, serviceType, selectedClient]);
+
+    // Admin creates grouped bookings as one row per dog. Quote lines are
+    // therefore full-price per dog; apply the sibling discount to the extra
+    // dogs' BASE service lines here so admin sees the same total clients see.
+    const additionalDogBase = quoteLines
+      .filter(l => l.dog_id && l.dog_id !== dogId && (serviceType === "daycare" || serviceType === "boarding"))
+      .reduce((sum, l) => sum + Number(l.quote?.base_estimated_price || 0), 0);
+    const additionalDogCount = new Set(quoteLines.filter(l => l.dog_id && l.dog_id !== dogId).map(l => l.dog_id)).size;
+    const mdCfg = getMultiDogDiscountConfig(multiDogDiscountSettings, serviceType);
+    const multiDogDiscountAmount = calcDiscountAmount(additionalDogBase, mdCfg, additionalDogCount);
+    const total = Math.max(0, rawTotal - multiDogDiscountAmount);
+
+    return {
+      total, rawTotal, baseTotal, addonTotal, units, unitLabel, creditUnitsRequired, serviceName, pool, creditsAvailable,
+      additionalDogBase, additionalDogCount,
+      multiDogDiscountAmount,
+      multiDogDiscountLabel: mdCfg?.label || "Additional dog discount",
+    };
+  }, [quoteLines, serviceType, selectedClient, dogId, multiDogDiscountSettings]);
 
   const submit = async () => {
     setErr("");
@@ -778,6 +835,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                     <div className="flex justify-between" data-testid="admin-booking-estimate-addons">
                       <span className="text-gray-400"><i className="fas fa-plus-circle text-shGreen mr-1.5 opacity-60"/>Add-ons</span>
                       <span className="text-white font-black">{fmtUSD(quoteSummary.addonTotal)}</span>
+                    </div>
+                  )}
+
+                  {quoteSummary.multiDogDiscountAmount > 0 && (
+                    <div className="flex justify-between text-shGreen" data-testid="admin-booking-estimate-multi-dog-discount">
+                      <span>
+                        <i className="fas fa-tag mr-1.5"/>{quoteSummary.multiDogDiscountLabel}
+                        <span className="text-gray-500 ml-1">({quoteSummary.additionalDogCount} additional dog{quoteSummary.additionalDogCount === 1 ? "" : "s"})</span>
+                      </span>
+                      <span className="font-black">−{fmtUSD(quoteSummary.multiDogDiscountAmount)}</span>
                     </div>
                   )}
 

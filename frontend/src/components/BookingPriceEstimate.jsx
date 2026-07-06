@@ -63,7 +63,7 @@ export default function BookingPriceEstimate({
   // Sprint 110di-49 — Multi-dog discount config, surfaced upfront in the
   // estimate (matches what the checkout flow applies — single source of
   // truth via /settings/public).
-  const [mdDiscount, setMdDiscount] = useState({ enabled: false, by_service: {}, label: "Multi-dog discount" });
+  const [mdDiscount, setMdDiscount] = useState({ enabled: true, mode: "percent", value: 50, by_service: {}, label: "Additional dog discount" });
   const [loading, setLoading] = useState(true);
   const [serverQuote, setServerQuote] = useState(null);
 
@@ -88,17 +88,19 @@ export default function BookingPriceEstimate({
         });
         setRules(settRes.data?.booking_rules || {});
         setMdDiscount({
-          enabled: !!settRes.data?.multi_dog_discount_enabled,
+          // Default Sit Happens rule: daycare/boarding additional dogs are 50% off.
+          // Explicit settings can still override/disable this.
+          enabled: settRes.data?.multi_dog_discount_enabled !== false,
           mode: settRes.data?.multi_dog_discount_mode || "percent",
-          value: Number(settRes.data?.multi_dog_discount_value || 0),
-          label: settRes.data?.multi_dog_discount_label || "Multi-dog discount",
+          value: Number(settRes.data?.multi_dog_discount_value ?? 50),
+          label: settRes.data?.multi_dog_discount_label || "Additional dog discount",
           by_service: settRes.data?.multi_dog_discount_by_service || {},
         });
       })
       .catch(() => {
         if (!cancelled) {
           setServices([]); setCredits({ daycare: 0, training: 0, boarding: 0 }); setRules({});
-          setMdDiscount({ enabled: false, by_service: {} });
+          setMdDiscount({ enabled: true, mode: "percent", value: 50, label: "Additional dog discount", by_service: {} });
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -110,7 +112,7 @@ export default function BookingPriceEstimate({
   useEffect(() => {
     let cancelled = false;
     const addonIds = (addons || []).map(a => a?.id).filter(Boolean);
-    const canUseBackendQuote = !!serviceType && !!date && !isMultiDate && !addonsPerDog && Number(dogCount || 1) === 1;
+    const canUseBackendQuote = !!serviceType && !!date && !isMultiDate && !addonsPerDog;
     if (!canUseBackendQuote) { setServerQuote(null); return () => { cancelled = true; }; }
     api.post("/pricing/quote", {
       service_type: serviceType,
@@ -118,6 +120,7 @@ export default function BookingPriceEstimate({
       end_date: endDate || null,
       dog_id: primaryDogId || undefined,
       addon_service_ids: addonIds,
+      dog_count: Math.max(1, Number(dogCount || 1)),
     })
       .then(({ data }) => { if (!cancelled) setServerQuote(data || null); })
       .catch(() => { if (!cancelled) setServerQuote(null); });
@@ -256,7 +259,7 @@ export default function BookingPriceEstimate({
       // Sprint 110di-49 — Expose the upfront multi-dog discount so the
       // breakdown UI can render it as its own "you save" line.
       md_discount_amount: mdDiscountAmount,
-      md_discount_label: mdDiscount?.label || "Multi-dog discount",
+      md_discount_label: mdDiscount?.label || "Additional dog discount",
       md_discount_applied: applyMd,
     };
   }, [headlineService, serviceType, dogCount, date, endDate, multiDates, isMultiDate, credits, addons, addonsPerDog, dropoffTime, pickupTime, rules, mdDiscount]);
@@ -279,7 +282,10 @@ export default function BookingPriceEstimate({
     return {
       ...legacyCalc,
       base,
-      base_price: Number(serverQuote.base_estimated_price || 0),
+      base_price: Number(serverQuote.first_dog_base_price ?? serverQuote.base_estimated_price ?? 0),
+      extraDogRate: Number(serverQuote.additional_dog_unit_price || legacyCalc.extraDogRate || base),
+      additional_dogs: Number(serverQuote.additional_dogs || legacyCalc.additional_dogs || 0),
+      additional_dog_price: Number(serverQuote.additional_dog_base_price || 0) - Number(serverQuote.multi_dog_discount_amount || 0),
       addon_total: Number(serverQuote.add_on_total || 0),
       addon_lines: addonLines,
       units,
@@ -291,6 +297,9 @@ export default function BookingPriceEstimate({
       credits_applied: creditUnits,
       credit_value: creditValue,
       balance_due: Math.max(0, total - creditValue),
+      md_discount_amount: Number(serverQuote.multi_dog_discount_amount || 0),
+      md_discount_label: serverQuote.multi_dog_discount?.label || legacyCalc.md_discount_label || "Additional dog discount",
+      md_discount_applied: Number(serverQuote.multi_dog_discount_amount || 0) > 0,
     };
   }, [serverQuote, legacyCalc]);
 
