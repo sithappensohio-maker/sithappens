@@ -25,7 +25,7 @@ export default function Staff() {
   const [userFilter, setUserFilter] = useState("");
   const [tcData, setTcData] = useState(null);
   const [editingEntry, setEditingEntry] = useState(null);
-  const [subtab, setSubtab] = useState("employees");
+  const [subtab, setSubtab] = useState("ops");
   const [paySnap, setPaySnap] = useState(null);
 
   const loadEmployees = async () => {
@@ -76,6 +76,7 @@ export default function Staff() {
       {/* Sub-tabs */}
       <div className="flex gap-1 border-b border-bgHover overflow-x-auto" data-testid="staff-subtabs">
         {[
+          ["ops", "Ops Hub", "fa-tower-observation"],
           ["employees", "Employees", "fa-users"],
           ["timecards", "Timecards", "fa-clock"],
           ["schedule", "Schedule", "fa-calendar-week"],
@@ -95,6 +96,8 @@ export default function Staff() {
           </button>
         ))}
       </div>
+
+      {subtab === "ops" && <StaffOpsTab onGo={setSubtab} />}
 
       {subtab === "employees" && (<>
 
@@ -278,6 +281,167 @@ export default function Staff() {
                                           onClose={()=>setEditingEntry(null)}
                                           onSaved={()=>{ setEditingEntry(null); loadTimecards(); }}/>}
     </div>
+  );
+}
+
+
+function StaffOpsTab({ onGo }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true); setErr("");
+    try {
+      const r = await api.get("/admin/staff/readiness");
+      setData(r.data);
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Could not load staff readiness"); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const warnings = data?.warnings || [];
+  const ratio = data?.dogs_per_staff == null ? "—" : `1:${data.dogs_per_staff}`;
+  const serviceCounts = data?.service_counts || {};
+
+  return (
+    <div className="space-y-4" data-testid="staff-ops-tab">
+      {err && <div className="text-red-300 bg-red-500/10 border border-red-500/30 rounded p-3 text-[13px] font-black uppercase tracking-widest">{err}</div>}
+
+      <div className="bg-bgPanel border border-shGreen/40 rounded-2xl p-5 relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none opacity-25" style={{ background: "radial-gradient(circle at 15% 15%, rgba(140,198,63,.35), transparent 35%), radial-gradient(circle at 90% 70%, rgba(0,169,224,.28), transparent 40%)" }}/>
+        <div className="relative flex flex-col lg:flex-row justify-between gap-4">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen"><i className="fas fa-clipboard-check mr-2"/>Staff Ops Hub</p>
+            <h3 className="text-2xl sm:text-3xl font-black uppercase italic text-white mt-1">Today’s staffing readiness.</h3>
+            <p className="text-[13px] text-gray-400 mt-1">One clean place to check schedule, clock-ins, dog load, time off, and punch corrections.</p>
+          </div>
+          <div className="flex gap-2 flex-wrap items-start">
+            <button onClick={load} disabled={loading} className="bg-bgBase border border-bgHover text-gray-200 px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50" data-testid="staff-ops-refresh">
+              <i className="fas fa-rotate mr-1"/>{loading ? "Loading" : "Refresh"}
+            </button>
+            <button onClick={()=>onGo("schedule")} className="bg-shBlue text-white px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest">Schedule</button>
+            <button onClick={()=>onGo("timecards")} className="bg-shGreen text-bgHeader px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest">Timecards</button>
+          </div>
+        </div>
+      </div>
+
+      {!data ? (
+        <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-gray-500 text-sm">Loading staff readiness…</div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <OpsStat label="Scheduled today" value={data.scheduled_count || 0} icon="fa-calendar-day" color="text-shBlue"/>
+            <OpsStat label="Clocked in now" value={data.clocked_in_count || 0} icon="fa-user-check" color="text-shGreen"/>
+            <OpsStat label="Expected dogs" value={data.expected_dogs || 0} icon="fa-paw" color="text-shOrange"/>
+            <OpsStat label="Dogs per staff" value={ratio} icon="fa-scale-balanced" color={data.ratio_warn ? "text-red-300" : "text-shGreen"}/>
+          </div>
+
+          {warnings.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="staff-ops-warnings">
+              {warnings.map((w, i) => (
+                <div key={`${w.kind}-${i}`} className={`border rounded-xl p-4 ${w.level === "warn" ? "bg-shOrange/10 border-shOrange/40" : "bg-shBlue/10 border-shBlue/40"}`}>
+                  <p className={`text-[12px] font-black uppercase tracking-widest ${w.level === "warn" ? "text-shOrange" : "text-shBlue"}`}><i className="fas fa-triangle-exclamation mr-1"/>{w.title}</p>
+                  <p className="text-[13px] text-gray-400 mt-1">{w.detail}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-4" data-testid="staff-ops-clear">
+              <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-circle-check text-shGreen mr-2"/>No staffing warnings right now</p>
+              <p className="text-[13px] text-gray-400 mt-1">Still use common sense, but nothing obvious is screaming from schedule, clock-ins, ratio, or pending requests.</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="staff-ops-schedule-list">
+              <div className="flex justify-between items-center gap-2 mb-3">
+                <div>
+                  <h4 className="text-white font-black uppercase italic"><i className="fas fa-calendar-week text-shBlue mr-2"/>Today’s Shift Plan</h4>
+                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Scheduled vs clocked in</p>
+                </div>
+                <button onClick={()=>onGo("schedule")} className="text-shBlue text-[12px] font-black uppercase tracking-widest hover:underline">Edit</button>
+              </div>
+              {(data.scheduled || []).length === 0 ? (
+                <p className="text-gray-500 text-sm">No shifts scheduled today. That is okay if you are solo, but the ratio warning will use clocked-in staff only.</p>
+              ) : (
+                <div className="space-y-2">
+                  {(data.scheduled || []).map(s => (
+                    <div key={s.id} className={`bg-bgBase border rounded-lg p-3 flex justify-between gap-3 ${s.late_not_clocked_in ? "border-shOrange/60" : "border-bgHover"}`} data-testid={`staff-ops-shift-${s.id}`}>
+                      <div className="min-w-0">
+                        <p className="text-white font-black truncate">{s.employee_name}</p>
+                        <p className="text-[12px] text-gray-500">{s.start_time}–{s.end_time}{s.role ? ` · ${s.role}` : ""}</p>
+                      </div>
+                      <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded self-center ${s.clocked_in_now ? "bg-shGreen/20 text-shGreen" : s.late_not_clocked_in ? "bg-shOrange/20 text-shOrange" : "bg-bgPanel text-gray-400"}`}>
+                        {s.clocked_in_now ? "Clocked in" : s.late_not_clocked_in ? "Missing" : "Scheduled"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-bgPanel border border-bgHover rounded-xl p-4" data-testid="staff-ops-live-list">
+              <div className="flex justify-between items-center gap-2 mb-3">
+                <div>
+                  <h4 className="text-white font-black uppercase italic"><i className="fas fa-bolt text-shGreen mr-2"/>Live Floor</h4>
+                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Clocked in staff + dog load</p>
+                </div>
+                <button onClick={()=>onGo("timecards")} className="text-shGreen text-[12px] font-black uppercase tracking-widest hover:underline">Timecards</button>
+              </div>
+              {(data.clocked_in || []).length === 0 ? (
+                <p className="text-gray-500 text-sm">Nobody is clocked in right now.</p>
+              ) : (
+                <div className="space-y-2 mb-3">
+                  {(data.clocked_in || []).map(c => (
+                    <div key={c.entry_id || c.user_id} className="bg-bgBase border border-bgHover rounded-lg p-3 flex justify-between gap-3">
+                      <span className="text-white font-black truncate">{c.name}</span>
+                      <span className="text-[11px] text-shGreen font-black uppercase tracking-widest">Since {fmtTime(c.clock_in_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-2 text-[12px]">
+                <MiniLine label="Daycare" value={serviceCounts.daycare || 0}/>
+                <MiniLine label="Boarding" value={serviceCounts.boarding || 0}/>
+                <MiniLine label="Training" value={serviceCounts.training || 0}/>
+                <MiniLine label="Grooming" value={serviceCounts.grooming || 0}/>
+                <MiniLine label="Stayovers" value={data.boarding_stayovers || 0}/>
+                <MiniLine label="Arrivals left" value={data.arrivals_remaining || 0}/>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <ActionTile label="Pending time off" value={data.pending_time_off_count || 0} icon="fa-umbrella-beach" onClick={()=>onGo("timeoff")} warn={(data.pending_time_off_count || 0) > 0}/>
+            <ActionTile label="Punch corrections" value={data.pending_punch_correction_count || 0} icon="fa-clock-rotate-left" onClick={()=>onGo("corrections")} warn={(data.pending_punch_correction_count || 0) > 0}/>
+            <ActionTile label="Staff training" value="Open" icon="fa-clipboard-user" onClick={()=>onGo("training")}/>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function OpsStat({ label, value, icon, color }) {
+  return (
+    <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
+      <p className="text-[11px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 ${color || "text-shGreen"}`}/>{label}</p>
+      <p className={`text-2xl font-black mt-1 ${color || "text-white"}`}>{value}</p>
+    </div>
+  );
+}
+
+function MiniLine({ label, value }) {
+  return <div className="bg-bgBase border border-bgHover rounded p-2 flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest">{label}</span><span className="text-white font-black">{value}</span></div>;
+}
+
+function ActionTile({ label, value, icon, onClick, warn=false }) {
+  return (
+    <button onClick={onClick} className={`bg-bgPanel border rounded-xl p-4 text-left hover:border-shGreen transition ${warn ? "border-shOrange/50" : "border-bgHover"}`}>
+      <p className={`text-[11px] font-black uppercase tracking-widest ${warn ? "text-shOrange" : "text-gray-500"}`}><i className={`fas ${icon} mr-1`}/>{label}</p>
+      <p className="text-xl font-black text-white mt-1">{value}</p>
+    </button>
   );
 }
 

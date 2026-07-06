@@ -244,6 +244,25 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                         <p><i className="fas fa-moon text-shBlue mr-1"/>Boarding dogs already staying over are expected on-site.</p>
                         <p><i className="fas fa-cash-register text-shGreen mr-1"/>Drawer starts from the opening cash you save here.</p>
                       </div>
+
+                      {data.staff_readiness && (
+                        <div className={`border rounded-xl p-3 ${data.staff_readiness.ratio_warn ? "bg-shOrange/10 border-shOrange/40" : "bg-bgBase/60 border-shGreen/30"}`} data-testid="start-day-staff-readiness">
+                          <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2"><i className="fas fa-users-gear mr-1"/>Staff readiness</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <EodStat label="Scheduled" value={data.staff_readiness.scheduled_count || 0}/>
+                            <EodStat label="Clocked in" value={data.staff_readiness.clocked_in_count || 0} color="text-shGreen"/>
+                            <EodStat label="Expected dogs" value={data.staff_readiness.expected_dogs || 0} color="text-shOrange"/>
+                            <EodStat label="Dogs/staff" value={data.staff_readiness.dogs_per_staff == null ? "—" : `1:${data.staff_readiness.dogs_per_staff}`} color={data.staff_readiness.ratio_warn ? "text-red-300" : "text-shGreen"}/>
+                          </div>
+                          {data.staff_readiness.warnings?.length > 0 && (
+                            <div className="mt-2 space-y-1">
+                              {data.staff_readiness.warnings.slice(0,3).map((w, idx)=>(
+                                <p key={`${w.kind}-${idx}`} className="text-[11px] text-shOrange font-black uppercase tracking-widest"><i className="fas fa-triangle-exclamation mr-1"/>{w.title}</p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <button onClick={saveStartDay} disabled={starting}
                               className="w-full bg-shBlue text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
                               data-testid="start-day-save">

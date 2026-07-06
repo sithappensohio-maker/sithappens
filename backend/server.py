@@ -17263,6 +17263,200 @@ async def time_clock_me(
     }
 
 
+# Sprint 110fz — Staff Ops readiness. Read-only daily summary used by the
+# Staff Hub and the dashboard Start Day checklist. This does not change
+# schedules, clock entries, bookings, or payroll rows; it only points out
+# staffing risks before the day gets away from the operator.
+def _time_to_minutes(value: Optional[str]) -> Optional[int]:
+    try:
+        hh, mm = (value or "").split(":")[:2]
+        return int(hh) * 60 + int(mm)
+    except Exception:
+        return None
+
+
+def _service_counts_blank() -> Dict[str, int]:
+    return {"daycare": 0, "boarding": 0, "training": 0, "grooming": 0, "photography": 0, "other": 0}
+
+
+async def _staff_readiness_summary(day: Optional[str] = None) -> Dict[str, Any]:
+    d = day or business_today().isoformat()
+    today_date = datetime.strptime(d, "%Y-%m-%d").date()
+    now_loc = now_local()
+    now_minutes = now_loc.hour * 60 + now_loc.minute
+    is_today = d == business_today().isoformat()
+
+    employees = await db.users.find(
+        {"role": "employee", "active": True},
+        {"_id": 0, "id": 1, "name": 1, "display_name": 1, "email": 1, "hourly_rate": 1, "staff_role": 1, "is_owner": 1},
+    ).sort("name", 1).to_list(500)
+    employee_map = {e["id"]: e for e in employees}
+
+    shifts = await db.shifts.find({"date": d}, {"_id": 0}).sort([("start_time", 1), ("end_time", 1)]).to_list(500)
+
+    open_entries = await db.time_clock_entries.find(
+        {"$or": [{"clock_out_at": None}, {"clock_out_at": ""}, {"clock_out_at": {"$exists": False}}]},
+        {"_id": 0},
+    ).sort("clock_in_at", -1).to_list(500)
+    # Only staff/admin can create these rows through the clock endpoint. Keep
+    # unknown user_ids visible too so an owner clocked in as the admin account
+    # still counts for the live floor ratio.
+    open_user_ids = {e.get("user_id") for e in open_entries if e.get("user_id")}
+
+    scheduled = []
+    scheduled_now = 0
+    late_not_clocked = []
+    for sh in shifts:
+        emp = employee_map.get(sh.get("user_id"), {})
+        s_min = _time_to_minutes(sh.get("start_time"))
+        e_min = _time_to_minutes(sh.get("end_time"))
+        active_now = bool(is_today and s_min is not None and e_min is not None and s_min <= now_minutes <= e_min)
+        late = bool(is_today and s_min is not None and now_minutes >= s_min + 10 and sh.get("user_id") not in open_user_ids)
+        if active_now:
+            scheduled_now += 1
+        row = {
+            **sh,
+            "employee_name": emp.get("display_name") or emp.get("name") or sh.get("user_name") or "Staff",
+            "clocked_in_now": sh.get("user_id") in open_user_ids,
+            "active_now": active_now,
+            "late_not_clocked_in": late,
+        }
+        scheduled.append(row)
+        if late:
+            late_not_clocked.append(row)
+
+    clocked_in = []
+    for e in open_entries:
+        emp = employee_map.get(e.get("user_id"), {})
+        clocked_in.append({
+            "user_id": e.get("user_id"),
+            "name": emp.get("display_name") or emp.get("name") or e.get("user_name") or "Staff",
+            "clock_in_at": e.get("clock_in_at"),
+            "entry_id": e.get("id"),
+            "note": e.get("clock_in_note") or e.get("note") or "",
+        })
+
+    # Approved time-off that overlaps the day + pending requests waiting on admin.
+    time_off_today = await db.time_off_requests.find(
+        {"status": "approved", "start_date": {"$lte": d}, "end_date": {"$gte": d}},
+        {"_id": 0},
+    ).sort("start_date", 1).to_list(500)
+    pending_time_off = await db.time_off_requests.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    pending_punch = await db.punch_corrections.find({"status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(200)
+
+    # Expected dog load for the day. Same stay-over rule as dashboard/EOD: boarding
+    # stays spanning today count, but already-checked-out rows do not.
+    win_start = (today_date - timedelta(days=60)).isoformat()
+    bookings = await db.bookings.find(
+        {"status": {"$in": ["approved", "completed"]}, "date": {"$gte": win_start, "$lte": d}},
+        {"_id": 0, "id": 1, "date": 1, "end_date": 1, "service_type": 1, "dog_name": 1, "client_name": 1, "checked_in_at": 1, "checked_out_at": 1, "kennel": 1},
+    ).to_list(5000)
+    service_counts = _service_counts_blank()
+    expected_dogs = 0
+    checked_in_dogs = 0
+    boarding_stayovers = 0
+    due_out_today = 0
+    arrivals_remaining = 0
+    for b in bookings:
+        days = _dates_in_range(b.get("date"), b.get("end_date"))
+        if d not in days:
+            continue
+        if b.get("checked_out_at"):
+            continue
+        svc = (b.get("service_type") or "other").lower()
+        if svc not in service_counts:
+            svc = "other"
+        service_counts[svc] += 1
+        expected_dogs += 1
+        checked_in = bool(b.get("checked_in_at"))
+        if checked_in:
+            checked_in_dogs += 1
+        else:
+            arrivals_remaining += 1
+        end_date = b.get("end_date") or b.get("date") or d
+        if svc == "boarding" and checked_in and end_date > d:
+            boarding_stayovers += 1
+        if svc == "boarding" and end_date <= d and checked_in:
+            due_out_today += 1
+
+    settings = await get_settings()
+    try:
+        ratio_warn_at = int(((settings.get("day_to_day") or {}).get("guardrails") or {}).get("staff_dog_ratio_warn_at") or 10)
+    except Exception:
+        ratio_warn_at = 10
+    staff_for_ratio = max(len(clocked_in), scheduled_now, 0)
+    dogs_per_staff = round(expected_dogs / staff_for_ratio, 1) if staff_for_ratio else None
+    ratio_warn = bool(expected_dogs > 0 and (staff_for_ratio == 0 or (dogs_per_staff is not None and dogs_per_staff > ratio_warn_at)))
+
+    warnings = []
+    if ratio_warn:
+        warnings.append({
+            "kind": "ratio",
+            "level": "warn",
+            "title": "Staff-to-dog ratio needs attention",
+            "detail": f"{expected_dogs} expected dog(s) with {staff_for_ratio} staff counted. Warns above 1:{ratio_warn_at}.",
+        })
+    if late_not_clocked:
+        warnings.append({
+            "kind": "late_clockin",
+            "level": "warn",
+            "title": f"{len(late_not_clocked)} scheduled staff not clocked in",
+            "detail": "Their shift start time has passed by more than 10 minutes.",
+        })
+    if pending_time_off:
+        warnings.append({
+            "kind": "time_off",
+            "level": "info",
+            "title": f"{len(pending_time_off)} pending time-off request(s)",
+            "detail": "Review before finalizing the schedule.",
+        })
+    if pending_punch:
+        warnings.append({
+            "kind": "punch",
+            "level": "info",
+            "title": f"{len(pending_punch)} pending punch correction(s)",
+            "detail": "Approve or deny before payroll export.",
+        })
+
+    return {
+        "date": d,
+        "generated_at": now_iso(),
+        "active_employee_count": len(employees),
+        "scheduled_count": len(shifts),
+        "scheduled_now_count": scheduled_now,
+        "clocked_in_count": len(clocked_in),
+        "expected_dogs": expected_dogs,
+        "checked_in_dogs": checked_in_dogs,
+        "arrivals_remaining": arrivals_remaining,
+        "boarding_stayovers": boarding_stayovers,
+        "boarding_due_out_today": due_out_today,
+        "staff_for_ratio": staff_for_ratio,
+        "dogs_per_staff": dogs_per_staff,
+        "ratio_warn_at": ratio_warn_at,
+        "ratio_warn": ratio_warn,
+        "service_counts": service_counts,
+        "scheduled": scheduled,
+        "clocked_in": clocked_in,
+        "late_not_clocked_in": late_not_clocked,
+        "time_off_today": time_off_today,
+        "pending_time_off": pending_time_off[:25],
+        "pending_time_off_count": len(pending_time_off),
+        "pending_punch_corrections": pending_punch[:25],
+        "pending_punch_correction_count": len(pending_punch),
+        "warnings": warnings,
+    }
+
+
+@api.get("/admin/staff/readiness")
+async def admin_staff_readiness(date: Optional[str] = None, _: dict = Depends(require_admin)):
+    d = date or business_today().isoformat()
+    try:
+        datetime.strptime(d, "%Y-%m-%d")
+    except Exception:
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    return await _staff_readiness_summary(d)
+
+
 # Sprint 110bb — Bulk pay snapshot of every employee for the admin's Staff
 # list. Same math as /time-clock/me but loops across all active employees in
 # a single round-trip so the admin can see labor pacing mid-week.
@@ -19856,9 +20050,11 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
     bathroom_pee = sum((b.get("bathroom_log") or {}).get("pee", 0) for b in bookings)
     bathroom_poop = sum((b.get("bathroom_log") or {}).get("poop", 0) for b in bookings)
     register = await _register_day_summary(today)
+    staff_readiness = await _staff_readiness_summary(today)
     return {
         "date": today,
         "register": register,
+        "staff_readiness": staff_readiness,
         "still_on_premises": still_on,
         "boarding_stayovers": boarding_stayovers,
         "unpaid_bookings": unpaid,
