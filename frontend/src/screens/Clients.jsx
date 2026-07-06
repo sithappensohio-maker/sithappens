@@ -23,6 +23,10 @@ import LazyMount from "../components/LazyMount";
 import SendClientEmailModal from "../components/SendClientEmailModal";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
+const fmtCredits = (n) => {
+  const val = Math.round((Number(n) || 0) * 10) / 10;
+  return Number.isInteger(val) ? String(val) : val.toFixed(1);
+};
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
 export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {} }) {
@@ -346,15 +350,15 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-bgHover pt-3">
               <div>
                 <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
-                <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{c.credits || 0}</p>
+                <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
               </div>
               <div>
                 <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Training</p>
-                <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{c.training_credits || 0}</p>
+                <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{fmtCredits(c.training_credits || 0)}</p>
               </div>
               <div>
                 <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
-                <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{c.boarding_credits || 0}</p>
+                <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
               </div>
               {/* Sprint 110di-51 — Running tab. Positive = client owes,
                   negative = pre-paid credit on file. Hidden when balance is
@@ -493,7 +497,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <Input label="Address" value={form.address} onChange={(v)=>setForm({...form, address:v})} />
             <div className="grid grid-cols-2 gap-4">
               <Input label="Phone" value={form.phone} onChange={(v)=>setForm({...form, phone:v})} />
-              <Input label="Credits" type="number" color="text-shBlue" value={form.credits} onChange={(v)=>setForm({...form, credits:parseInt(v)||0})} testId="client-credits-input" />
+              <Input label="Credits" type="number" step="0.5" color="text-shBlue" value={form.credits} onChange={(v)=>setForm({...form, credits:parseFloat(v)||0})} testId="client-credits-input" />
             </div>
             <Input label="Email" type="email" value={form.email} onChange={(v)=>setForm({...form, email:v})} />
             <Input label="Emergency Contact" color="text-red-400" value={form.emerg} onChange={(v)=>setForm({...form, emerg:v})} />
@@ -706,17 +710,17 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
           <div key={r.key} className="bg-bgBase/60 border border-bgHover rounded p-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">{r.label}</p>
-              <p className="text-[14px] text-gray-500">Current <span className="text-white font-black">{current[r.key]}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{next[r.key]}</span></p>
+              <p className="text-[14px] text-gray-500">Current <span className="text-white font-black">{fmtCredits(current[r.key])}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{fmtCredits(next[r.key])}</span></p>
             </div>
             <div className="flex items-center gap-1 shrink-0">
-              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) - 1 }))}
+              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) - (r.key === "training" ? 1 : 0.5) }))}
                       data-testid={`${r.testid}-minus`}
                       className="w-9 h-9 bg-bgHover hover:bg-red-500/30 text-red-400 rounded font-black"><i className="fas fa-minus"/></button>
-              <input type="number" value={deltas[r.key]}
+              <input type="number" step={r.key === "training" ? "1" : "0.5"} value={deltas[r.key]}
                      onChange={(e)=>setDeltas(d => ({ ...d, [r.key]: e.target.value }))}
                      data-testid={`${r.testid}-input`}
                      className="w-16 bg-bgPanel border border-bgHover rounded p-2 text-center text-white text-sm" />
-              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) + 1 }))}
+              <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) + (r.key === "training" ? 1 : 0.5) }))}
                       data-testid={`${r.testid}-plus`}
                       className="w-9 h-9 bg-bgHover hover:bg-shGreen/30 text-shGreen rounded font-black"><i className="fas fa-plus"/></button>
             </div>

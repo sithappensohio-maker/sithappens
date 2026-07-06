@@ -3444,7 +3444,7 @@ async def credit_referral(client_id: str, body: dict, user: dict = Depends(requi
         "id": str(uuid.uuid4()),
         "client_id": client_id,
         "client_name": client.get("name", ""),
-        "changes": {"daycare": {"before": int(client.get("credits") or 0), "delta": bonus, "after": int(client.get("credits") or 0) + bonus}},
+        "changes": {"daycare": {"before": round(float(client.get("credits") or 0), 2), "delta": bonus, "after": round(float(client.get("credits") or 0) + bonus, 2)}},
         "note": f"Referral bonus — referred {rclient.get('name','')}",
         "adjusted_by": user.get("name", "Admin"),
         "adjusted_at": now_iso(),
@@ -4943,30 +4943,53 @@ async def check_out(
         if body.base_price is not None:
             base_price = float(body.base_price)
             update["actual_price"] = base_price
-        elif not booking.get("service_id"):
-            # Sprint 110ar — Training visits are sold via packages, so a
-            # check-out without an explicit amount means "$0 owed today".
-            # Don't pre-fill from the catalog (was causing phantom revenue).
-            if booking.get("service_type") == "training":
-                base_price = 0.0
-                update["actual_price"] = 0.0
-            else:
-                default_svc = await db.services.find_one(
-                    {"service_type": booking.get("service_type"), "is_default": True, "active": True},
-                    {"_id": 0},
-                )
-                if default_svc:
-                    update["service_id"] = default_svc["id"]
-                    update["service_name"] = default_svc["name"]
-                    # Sprint 110dk — use the stay-pricing aware resolver so
-                    # boarding/daycare auto-bill from actual check-in/out hours
-                    # and the configurable half-day rules.
-                    base_price = await _resolve_service_value(0.0)
-                    # Sprint 110dm — layer holiday/peak surcharges + late pickup
-                    base_price = _apply_money_modifiers(base_price)
-                    update["actual_price"] = round(base_price, 2)
         else:
-            base_price = float(booking.get("actual_price") or 0)
+            # Prefer the booking's saved price snapshot. This is critical for:
+            #   • grandfathered clients whose rate may differ from today's catalog,
+            #   • admin/client estimates that were accepted before a later price edit,
+            #   • multi-dog group rows where additional dogs already have the 50%
+            #     sibling discount pre-applied.
+            # `estimated_price` includes booking-time add-ons, so subtract those
+            # here because the add-on section below adds them as locked line items.
+            snap_total = float(booking.get("estimated_price") or 0)
+            snap_addons = _booking_addon_total_from(booking)
+            snap_base = max(0.0, round(snap_total - snap_addons, 2))
+            if snap_base > 0:
+                base_price = snap_base
+                update["actual_price"] = round(base_price, 2)
+                ps = booking.get("pricing_snapshot") or {}
+                if ps.get("service_id") and not booking.get("service_id"):
+                    update["service_id"] = ps.get("service_id")
+                if ps.get("service_name") and not booking.get("service_name"):
+                    update["service_name"] = ps.get("service_name")
+            elif not booking.get("service_id"):
+                # Sprint 110ar — Training visits are sold via packages, so a
+                # check-out without an explicit amount means "$0 owed today".
+                # Don't pre-fill from the catalog (was causing phantom revenue).
+                if booking.get("service_type") == "training":
+                    base_price = 0.0
+                    update["actual_price"] = 0.0
+                else:
+                    default_svc = await db.services.find_one(
+                        {"service_type": booking.get("service_type"), "is_default": True, "active": True},
+                        {"_id": 0},
+                    )
+                    if default_svc:
+                        update["service_id"] = default_svc["id"]
+                        update["service_name"] = default_svc["name"]
+                        # Sprint 110dk — use the stay-pricing aware resolver so
+                        # boarding/daycare auto-bill from actual check-in/out hours
+                        # and the configurable half-day rules.
+                        base_price = await _resolve_service_value(0.0)
+                        # Sprint 110dm — layer holiday/peak surcharges + late pickup
+                        base_price = _apply_money_modifiers(base_price)
+                        update["actual_price"] = round(base_price, 2)
+            else:
+                # Last-resort fallback for old rows that have a service_id but no
+                # estimated_price snapshot.
+                base_price = await _resolve_service_value(0.0)
+                if base_price > 0:
+                    update["actual_price"] = round(_apply_money_modifiers(base_price), 2)
     elif booking.get("actual_price"):
         base_price = float(booking["actual_price"])
 
@@ -4986,10 +5009,17 @@ async def check_out(
         except Exception:
             pass
         # First, try to draw from remaining boarding credits if the client opted in.
+        # Multi-dog group rows may represent an additional dog that only costs
+        # 0.5 boarding credit per extra night. Use the booking's saved group
+        # snapshot instead of assuming every row burns 1 full credit/night.
+        ps = booking.get("pricing_snapshot") or {}
+        pre_discount = booking.get("multi_dog_discount") or {}
+        extra_credit_units_per_night = 0.5 if (ps.get("group_dog_index") not in (None, 0) or pre_discount.get("pre_applied")) else 1.0
+        extra_credit_need = round(float(extra_nights) * extra_credit_units_per_night, 2)
         client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
         if body.extra_nights_use_credits and client_doc:
-            available = int(client_doc.get("boarding_credits") or 0)
-            extra_credits_used = min(extra_nights, available)
+            available = float(client_doc.get("boarding_credits") or 0)
+            extra_credits_used = round(min(extra_credit_need, available), 2)
             if extra_credits_used > 0:
                 extra_credit_value, extra_lot_ids = await _consume_credit_lots(
                     booking["client_id"], extra_credits_used, "boarding"
@@ -4999,16 +5029,17 @@ async def check_out(
                 )
                 # Sprint 110g — low-credit email when extra-night burns drop pool.
                 await _maybe_send_low_credit_email(
-                    booking["client_id"], "boarding", available - extra_credits_used
+                    booking["client_id"], "boarding", round(available - extra_credits_used, 2)
                 )
                 # Stack onto whatever credit_value already existed on the booking.
                 prev_credit_value = float(booking.get("credit_value") or 0)
                 update["credit_value"] = round(prev_credit_value + float(extra_credit_value), 2)
-                update["credits_deducted"] = float(booking.get("credits_deducted") or 0) + extra_credits_used
+                update["credits_deducted"] = round(float(booking.get("credits_deducted") or 0) + extra_credits_used, 2)
                 # Track lots for refund-on-cancel safety.
                 update["credit_lot_ids"] = list(booking.get("credit_lot_ids") or []) + list(extra_lot_ids or [])
-        # Whatever nights weren't covered by credits get billed.
-        extra_nights_billed = extra_nights - extra_credits_used
+        # Whatever credit-units weren't covered get billed at the per-night rate.
+        # If this row is an additional dog, the shortfall can be 0.5 unit/night.
+        extra_nights_billed = round(max(0.0, extra_credit_need - float(extra_credits_used or 0)), 2)
         if extra_nights_billed > 0:
             settings = await get_settings()
             rules = (settings.get("booking_rules") or {})
@@ -5225,8 +5256,8 @@ async def check_out(
                     referrer = await db.clients.find_one({"referral_code": ref_code}, {"_id": 0})
                     # Don't credit self-referrals
                     if referrer and referrer.get("id") != client_id:
-                        before_balance = int(referrer.get("credits") or 0)
-                        new_balance = before_balance + 1
+                        before_balance = round(float(referrer.get("credits") or 0), 2)
+                        new_balance = round(before_balance + 1, 2)
                         await db.clients.update_one(
                             {"id": referrer["id"]},
                             {"$inc": {"credits": 1}},
@@ -10617,9 +10648,9 @@ async def dashboard_stats(_: dict = Depends(require_admin)):
             {"_id": 0, "id": 1, "credits": 1, "training_credits": 1, "boarding_credits": 1},
         ).to_list(2000):
             client_bal_map[c["id"]] = {
-                "credits": int(c.get("credits") or 0),
-                "training_credits": int(c.get("training_credits") or 0),
-                "boarding_credits": int(c.get("boarding_credits") or 0),
+                "credits": round(float(c.get("credits") or 0), 2),
+                "training_credits": round(float(c.get("training_credits") or 0), 2),
+                "boarding_credits": round(float(c.get("boarding_credits") or 0), 2),
             }
     daycare_today = 0
     boarding_today = 0
@@ -19313,9 +19344,9 @@ async def delete_credit_pack(pack_id: str, _: dict = Depends(require_admin)):
 
 
 class CreditAdjustIn(BaseModel):
-    daycare: int = 0       # positive = add, negative = subtract
-    training: int = 0
-    boarding: int = 0
+    daycare: float = 0       # positive = add, negative = subtract; supports .5 balances
+    training: float = 0
+    boarding: float = 0
     note: Optional[str] = ""
 
 
@@ -19329,9 +19360,9 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
         raise HTTPException(status_code=404, detail="Client not found")
 
     pool_map = {
-        "daycare": ("credits", int(body.daycare or 0)),
-        "training": ("training_credits", int(body.training or 0)),
-        "boarding": ("boarding_credits", int(body.boarding or 0)),
+        "daycare": ("credits", round(float(body.daycare or 0), 2)),
+        "training": ("training_credits", round(float(body.training or 0), 2)),
+        "boarding": ("boarding_credits", round(float(body.boarding or 0), 2)),
     }
     if not any(delta for _, delta in pool_map.values()):
         raise HTTPException(status_code=400, detail="No adjustment specified.")
@@ -19340,22 +19371,23 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
     for pool, (field, delta) in pool_map.items():
         if delta == 0:
             continue
-        current = int(client.get(field) or 0)
-        if current + delta < 0:
+        current = round(float(client.get(field) or 0), 2)
+        if current + delta < -0.0001:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot subtract {abs(delta)} {pool} credit(s): client only has {current}.",
+                detail=f"Cannot subtract {abs(delta):g} {pool} credit(s): client only has {current:g}.",
             )
 
-    inc_doc: Dict[str, int] = {}
-    changes: Dict[str, Dict[str, int]] = {}
+    inc_doc: Dict[str, float] = {}
+    changes: Dict[str, Dict[str, float]] = {}
     for pool, (field, delta) in pool_map.items():
-        if delta:
+        if abs(delta) > 0.0001:
+            before = round(float(client.get(field) or 0), 2)
             inc_doc[field] = delta
             changes[pool] = {
-                "before": int(client.get(field) or 0),
+                "before": before,
                 "delta": delta,
-                "after": int(client.get(field) or 0) + delta,
+                "after": round(before + delta, 2),
             }
 
     await db.clients.update_one({"id": client_id}, {"$inc": inc_doc})
@@ -19363,7 +19395,7 @@ async def adjust_client_credits(client_id: str, body: CreditAdjustIn, user: dict
     # the threshold, clear its email-sent stamp so the NEXT dip re-fires the
     # heads-up email instead of silently being skipped by the idempotency guard.
     for pool, (field, delta) in pool_map.items():
-        if delta and (int(client.get(field) or 0) + delta) > 2:
+        if delta and (float(client.get(field) or 0) + delta) > 2:
             await db.clients.update_one(
                 {"id": client_id, f"low_credit_emailed_at.{pool}": {"$exists": True}},
                 {"$unset": {f"low_credit_emailed_at.{pool}": ""}},

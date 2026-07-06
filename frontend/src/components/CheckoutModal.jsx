@@ -162,6 +162,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const cartItems = Object.values(cart);
   const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
+  const existingAddonTotal = (booking.add_ons || []).reduce(
+    (s, ao) => s + (Number(ao.price || 0) * Number(ao.qty || 1)),
+    0,
+  );
+  const bookingBaseEstimate = Math.max(0, Number(booking.estimated_price || 0) - existingAddonTotal);
 
   // Sprint 110eg — When paying with credits, the `basePrice` input is
   // interpreted as the EXTRA cash to charge today on top of credits
@@ -176,7 +181,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     basePreview = creditAmt;
   } else {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
-    basePreview = defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0);
+    // Prefer the booking's saved estimate/snapshot. This keeps checkout aligned
+    // with grandfathered rates and with pre-applied 50% additional-dog group rows.
+    basePreview = bookingBaseEstimate > 0
+      ? bookingBaseEstimate
+      : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0));
   }
   const extraNightsCharge = isBoarding && extraNights > 0 && !extraUseCredits
     ? Math.round(extraNights * extraRateEffective * 100) / 100
@@ -590,6 +599,16 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
           <div>
             <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Base · ${basePreview.toFixed(2)}</p>
+            {booking.preferred_rate_applied && (
+              <p className="text-[12px] uppercase tracking-widest text-amber-400 font-black" data-testid="checkout-preferred-rate">
+                <i className="fas fa-lock mr-1"/>Preferred client rate applied
+              </p>
+            )}
+            {booking.multi_dog_discount?.pre_applied && (
+              <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-preapplied-dog-discount">
+                <i className="fas fa-dog mr-1"/>Additional dog discount already included
+              </p>
+            )}
             {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
             {multiDogDiscount > 0 && (
               <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-multi-dog-discount">
