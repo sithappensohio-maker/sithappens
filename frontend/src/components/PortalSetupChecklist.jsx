@@ -152,11 +152,11 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shOrange mb-1">
-              <i className="fas fa-clipboard-check mr-1.5"/>First Time Setup
+            <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shOrange mb-1">
+              <i className="fas fa-route mr-1.5"/>Start Here · New Client Setup
             </p>
-            <h2 className="text-xl sm:text-3xl font-black text-white uppercase italic tracking-tight leading-tight">
-              Welcome to <span className="text-shGreen">Sit Happens.</span>
+            <h2 className="text-2xl sm:text-4xl font-black text-white uppercase italic tracking-tight leading-tight">
+              Finish These Steps, <span className="text-shGreen">Then Book.</span>
             </h2>
           </div>
           <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
@@ -166,8 +166,8 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
         </div>
 
         <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1 max-w-3xl leading-relaxed">
-          We&apos;ll walk you through this one step at a time. Finish the items below and booking will unlock automatically.
-          You only need to do this setup once unless something expires or changes.
+          Don&apos;t hunt around the portal. Do the green button below first, then the next one.
+          Booking unlocks automatically when the required setup items are finished or approved.
         </p>
 
         <div className="mt-4 h-2 rounded-full bg-bgBase overflow-hidden">
@@ -175,13 +175,28 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                style={{ width: `${Math.max(pct, 4)}%` }} data-testid="portal-setup-progress"/>
         </div>
 
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4" data-testid="portal-setup-how-it-works">
+          <div className="rounded-xl border border-shOrange/30 bg-bgBase/80 p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-1 mr-1"/>Do Next Step</p>
+            <p className="text-[12px] text-gray-400 mt-1 leading-snug">Tap the big green button. We&apos;ll open the right screen for you.</p>
+          </div>
+          <div className="rounded-xl border border-shBlue/30 bg-bgBase/80 p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-2 mr-1"/>We Review</p>
+            <p className="text-[12px] text-gray-400 mt-1 leading-snug">Vaccines may show waiting review after upload. That means you&apos;re done for now.</p>
+          </div>
+          <div className="rounded-xl border border-shGreen/30 bg-bgBase/80 p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-3 mr-1"/>Book</p>
+            <p className="text-[12px] text-gray-400 mt-1 leading-snug">When setup clears, the portal explains booking, credits, messages, and rewards.</p>
+          </div>
+        </div>
+
         {nextStep && (
-          <div className="mt-5 rounded-2xl border-2 border-shGreen/45 bg-shGreen/10 p-4 sm:p-5 shadow-xl"
+          <div className="mt-5 rounded-2xl border-2 border-shGreen bg-shGreen/10 p-4 sm:p-6 shadow-2xl ring-2 ring-shGreen/20"
                data-testid="portal-setup-next-step">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
-                  Next Step · {nextIndex + 1} of {total_count}
+                <p className="inline-flex items-center rounded-full bg-shGreen text-bgHeader px-3 py-1 text-[11px] font-black uppercase tracking-[0.25em]">
+                  <i className="fas fa-arrow-right mr-1.5"/>Do This Next · Step {nextIndex + 1} of {total_count}
                 </p>
                 <h3 className="text-lg sm:text-2xl text-white font-black uppercase italic tracking-tight mt-1">
                   {nextStep.label}
@@ -223,7 +238,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   data-testid="portal-setup-next-action"
                   className="w-full bg-shGreen text-bgHeader text-[13px] sm:text-[14px] font-black uppercase tracking-widest py-3 rounded hover:bg-white active:scale-[0.98] transition min-h-[44px] shadow-lg"
                 >
-                  <i className="fas fa-arrow-right mr-2"/>{nextStep.action_label}
+                  <i className="fas fa-hand-pointer mr-2"/>Tap Here: {nextStep.action_label}
                 </button>
               )}
               {onHelp && (
@@ -241,7 +256,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
 
         <div className="mt-5 flex items-center justify-between gap-3 flex-wrap">
           <p className="text-[12px] font-black uppercase tracking-widest text-gray-400">
-            Setup checklist · {remaining} left
+            Full setup checklist · {remaining} left
           </p>
           <p className="text-[12px] text-gray-500">
             Green means done. Orange means it needs you. Blue means Sit Happens is reviewing it.
@@ -338,11 +353,11 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
           <div className="mt-5 bg-shOrange/10 border border-shOrange/30 rounded-lg p-4"
                data-testid="portal-setup-lock-message">
             <p className="text-[13px] text-shOrange font-black uppercase tracking-widest">
-              <i className="fas fa-lock mr-1.5"/>Booking unlocks after setup
+              <i className="fas fa-lock mr-1.5"/>Booking is locked for safety
             </p>
             <p className="text-[13px] text-gray-300 mt-1">
-              Finish the highlighted next step above. When your info, dog profile, emergency contact,
-              vaccines, waiver, and any assigned forms are complete, the Book button turns on automatically.
+              Follow the big green button above. When your info, dog profile, emergency contact,
+              vaccines, waiver, and any assigned forms are complete or approved, the Book button turns on automatically.
             </p>
             {onHelp && (
               <button onClick={onHelp} data-testid="portal-setup-lock-help"
@@ -386,14 +401,14 @@ export function PortalSetupSuccess({ onBook, onDismiss, onHelp, dismissable = tr
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
-              <i className="fas fa-circle-check mr-1.5"/>Setup Complete
+            <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+              <i className="fas fa-circle-check mr-1.5"/>Portal Unlocked
             </p>
-            <h3 className="text-xl sm:text-3xl font-black text-white uppercase italic tracking-tight leading-tight">
-              You&apos;re ready to book.
+            <h3 className="text-2xl sm:text-4xl font-black text-white uppercase italic tracking-tight leading-tight">
+              You&apos;re Ready. Here&apos;s What You Can Do.
             </h3>
-            <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1 max-w-3xl leading-relaxed">
-              Nice work — your account is ready. Here&apos;s what the Sit Happens portal can do for you.
+            <p className="text-[13px] sm:text-[15px] text-gray-300 mt-1 max-w-3xl leading-relaxed">
+              Your setup is complete. Before you start clicking around, here are the main things this portal is for.
             </p>
           </div>
           {onBook && (

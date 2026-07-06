@@ -502,22 +502,10 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
  *  incomplete. Always visible (not dismissible) because the action is
  *  blocking — they literally can't book daycare without it. */
 function OnboardingBanner({ missingCount, onOpen }) {
-  if (!missingCount) return null;
-  return (
-    <button onClick={onOpen} data-testid="vaccine-onboarding-banner"
-            className="w-full bg-gradient-to-r from-shOrange/25 to-shOrange/10 border-b border-shOrange/50 px-4 py-3 flex items-center gap-3 hover:from-shOrange/35 transition text-left">
-      <i className="fas fa-shield-virus text-shOrange text-lg shrink-0"/>
-      <div className="flex-1 min-w-0">
-        <p className="text-white font-black text-[15px] uppercase tracking-widest">
-          {missingCount} vaccine{missingCount > 1 ? "s" : ""} need uploading before you can book
-        </p>
-        <p className="text-[13px] text-gray-300 normal-case tracking-normal">Tap to finish setting up your account</p>
-      </div>
-      <span className="bg-shOrange text-bgHeader text-[13px] font-black uppercase tracking-widest px-3 py-1.5 rounded shrink-0">
-        Finish setup <i className="fas fa-arrow-right ml-1 text-[12px]"/>
-      </span>
-    </button>
-  );
+  // Legacy vaccine-only banner intentionally disabled.
+  // The real client guidance now lives in PortalSetupChecklist so clients see
+  // one clear Start Here flow instead of two different setup systems.
+  return null;
 }
 
 
@@ -700,13 +688,13 @@ export default function Portal() {
   // clicked through (or dismissed) it, remember that locally so it doesn't
   // permanently sit at the top of the portal.
   const [setupSuccessDismissed, setSetupSuccessDismissed] = useState(() => {
-    try { return localStorage.getItem("sh_setup_success_tour_dismissed_v2") === "1"; } catch { return false; }
+    try { return localStorage.getItem("sh_setup_success_tour_dismissed_v3") === "1"; } catch { return false; }
   });
   const bookingLocked = setupStatus?.booking_locked === true;
   const readyToBook = setupStatus?.ready_to_book === true;
   const showSetupSuccess = readyToBook && !setupSuccessDismissed;
   const dismissSetupSuccess = () => {
-    try { localStorage.setItem("sh_setup_success_tour_dismissed_v2", "1"); } catch {}
+    try { localStorage.setItem("sh_setup_success_tour_dismissed_v3", "1"); } catch {}
     setSetupSuccessDismissed(true);
   };
   const bumpSetupRefresh = () => setSetupRefresh(n => n + 1);
@@ -2339,7 +2327,7 @@ export default function Portal() {
           onClose={() => setVaccineWizard(null)} />
       )}
       {showRecurringModal && <MyRecurringModal dogs={dogs} onClose={()=>setShowRecurringModal(false)} />}
-      {onboardingNeeded && !onboardingDismissed && (
+      {false && onboardingNeeded && !onboardingDismissed && (
         <OnboardingChecklist
           dogs={dogs}
           client={client}
