@@ -11812,6 +11812,8 @@ BACKUP_COLLECTIONS = [
     "audit_log",
     # Phase 7 — backup validation / restore-drill history
     "backup_restore_drills",
+    # Phase 8B — duplicate merge/archive dry-run + action history
+    "duplicate_merge_audit",
 ]
 # Collections whose primary key is a string `_id` (no separate `id` field).
 # These get special handling during export (we preserve `_id`) and restore
@@ -12452,7 +12454,7 @@ _CRITICAL_BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "bookings_archive",
     "credit_lots", "credit_adjustments", "payment_ledger", "retail_sales",
     "expenses", "daily_closeouts", "cash_drawer_sessions",
-    "vaccine_uploads", "referrals", "rewards_ledger", "audit_log",
+    "vaccine_uploads", "referrals", "rewards_ledger", "audit_log", "duplicate_merge_audit",
 ]
 
 
@@ -27078,14 +27080,25 @@ async def _duplicate_finder_report(include_archived: bool = False) -> Dict[str, 
         if key in seen_dog_sets:
             return
         seen_dog_sets.add(key)
+        public_dogs = [_dupe_public_dog(d, clients_by_id, bookings_by_dog, future_by_dog) for d in sorted(group, key=lambda x: (x.get("name") or "").lower())]
+        recommended_primary = None
+        recommended_duplicate = None
+        if public_dogs:
+            ranked = sorted(public_dogs, key=lambda d: (int(d.get("future_booking_count") or 0), int(d.get("booking_count") or 0), str(d.get("created_at") or "")), reverse=True)
+            recommended_primary = ranked[0].get("id")
+            # Choose the duplicate with the least business history first.
+            dupe_ranked = sorted([d for d in public_dogs if d.get("id") != recommended_primary], key=lambda d: (int(d.get("future_booking_count") or 0), int(d.get("booking_count") or 0), str(d.get("created_at") or "")))
+            recommended_duplicate = (dupe_ranked[0].get("id") if dupe_ranked else None)
         dog_candidates.append({
             "id": f"dog:{kind}:{match_key}:{'-'.join(ids[:4])}",
             "kind": kind,
             "reason": reason,
             "confidence": confidence,
             "score": score,
-            "dogs": [_dupe_public_dog(d, clients_by_id, bookings_by_dog, future_by_dog) for d in sorted(group, key=lambda x: (x.get("name") or "").lower())],
-            "safe_action": "Preview only. No dog records were merged or changed.",
+            "dogs": public_dogs,
+            "recommended_primary_id": recommended_primary,
+            "recommended_duplicate_id": recommended_duplicate,
+            "safe_action": "Preview first. Same-owner dog duplicates can be merged by archiving the duplicate, never hard-deleting it.",
         })
 
     owner_name_groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
@@ -27130,9 +27143,263 @@ async def _duplicate_finder_report(include_archived: bool = False) -> Dict[str, 
         "notes": [
             "This is a safety preview only. It does not merge, delete, archive, or rewrite any client, dog, booking, credit, payment, vaccine, or message records.",
             "High-confidence matches still require human review. Similar names can be different people, and shared dog names can be coincidence.",
-            "Phase 8B can add an actual merge workflow later, but only with a dry-run preview and audit log.",
+            "Dog merge is available for same-owner duplicate dogs only. It always previews first and archives the duplicate instead of deleting it.",
         ],
     }
+
+
+# -------- Duplicate dog merge/archive workflow (Phase 8B) --------
+class DuplicateDogMergeIn(BaseModel):
+    primary_dog_id: str
+    duplicate_dog_id: str
+    confirm_text: Optional[str] = None
+    note: Optional[str] = ""
+
+
+_DOG_MERGE_REF_COLLECTIONS: List[Tuple[str, str]] = [
+    ("bookings", "dog_id"),
+    ("bookings_archive", "dog_id"),
+    ("vaccine_uploads", "dog_id"),
+    ("incidents", "dog_id"),
+    ("homework", "dog_id"),
+    ("homework_media", "dog_id"),
+    ("training_sessions", "dog_id"),
+    ("training_session_log", "dog_id"),
+    ("dog_programs", "dog_id"),
+    ("program_enrollments", "dog_id"),
+    ("awarded_trophies", "dog_id"),
+    ("step_events", "dog_id"),
+    ("client_files", "dog_id"),
+    ("review_requests", "dog_id"),
+]
+
+
+def _dog_merge_score(dog: Dict[str, Any], bookings: int, future: int, refs: int) -> Tuple[int, int, int, str]:
+    # Higher wins. Future bookings are most important, then history, then refs,
+    # then older created_at. String sort is safe enough for ISO timestamps.
+    created = str(dog.get("created_at") or "9999")
+    return (future, bookings, refs, "" if created else "")
+
+
+def _dog_public_merge_row(dog: Dict[str, Any], owner: Dict[str, Any], ref_counts: Dict[str, int], booking_count: int, future_count: int) -> Dict[str, Any]:
+    return {
+        "id": dog.get("id") or "",
+        "name": dog.get("name") or "Unnamed dog",
+        "breed": dog.get("breed") or "",
+        "owner_id": dog.get("owner_id") or "",
+        "owner_name": owner.get("name") or "Unknown owner",
+        "owner_email": owner.get("email") or "",
+        "created_at": dog.get("created_at") or "",
+        "deleted": bool(dog.get("deleted_at") or dog.get("deleted") or dog.get("archived")),
+        "booking_count": int(booking_count or 0),
+        "future_booking_count": int(future_count or 0),
+        "reference_count": int(sum(ref_counts.values())),
+        "ref_counts": ref_counts,
+    }
+
+
+async def _dog_reference_counts(dog_id: str) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for coll, field in _DOG_MERGE_REF_COLLECTIONS:
+        try:
+            counts[coll] = await db[coll].count_documents({field: dog_id})
+        except Exception:
+            counts[coll] = 0
+    return counts
+
+
+async def _dog_merge_preview(primary_dog_id: str, duplicate_dog_id: str) -> Dict[str, Any]:
+    primary_id = (primary_dog_id or "").strip()
+    duplicate_id = (duplicate_dog_id or "").strip()
+    if not primary_id or not duplicate_id:
+        raise HTTPException(status_code=400, detail="Pick both a main dog and a duplicate dog")
+    if primary_id == duplicate_id:
+        raise HTTPException(status_code=400, detail="Main dog and duplicate dog cannot be the same")
+
+    primary = await db.dogs.find_one({"id": primary_id}, {"_id": 0})
+    duplicate = await db.dogs.find_one({"id": duplicate_id}, {"_id": 0})
+    if not primary or not duplicate:
+        raise HTTPException(status_code=404, detail="Dog not found")
+
+    same_owner = bool(primary.get("owner_id") and primary.get("owner_id") == duplicate.get("owner_id"))
+    owners = await db.clients.find({"id": {"$in": [primary.get("owner_id"), duplicate.get("owner_id")]}}, {"_id": 0}).to_list(5)
+    owners_by_id = {o.get("id"): o for o in owners}
+
+    p_refs = await _dog_reference_counts(primary_id)
+    d_refs = await _dog_reference_counts(duplicate_id)
+    today_s = business_today().isoformat()
+    p_bookings = int(p_refs.get("bookings", 0) + p_refs.get("bookings_archive", 0))
+    d_bookings = int(d_refs.get("bookings", 0) + d_refs.get("bookings_archive", 0))
+    p_future = await db.bookings.count_documents({"dog_id": primary_id, "date": {"$gte": today_s}, "status": {"$in": ["pending", "approved"]}})
+    d_future = await db.bookings.count_documents({"dog_id": duplicate_id, "date": {"$gte": today_s}, "status": {"$in": ["pending", "approved"]}})
+
+    moves = []
+    for coll, field in _DOG_MERGE_REF_COLLECTIONS:
+        count = int(d_refs.get(coll, 0))
+        if count:
+            moves.append({"collection": coll, "field": field, "count": count, "action": f"set {field} from duplicate dog to main dog"})
+
+    warnings: List[str] = []
+    allowed = True
+    if not same_owner:
+        allowed = False
+        warnings.append("These dogs are under different client accounts. Merge/clean up duplicate clients first, or move the dog manually after review.")
+    if duplicate.get("deleted_at") or duplicate.get("archived"):
+        warnings.append("The duplicate dog is already archived/deleted. Running merge again is usually unnecessary.")
+    if d_future:
+        warnings.append(f"Duplicate dog has {d_future} future booking(s). They will move to the main dog if merged.")
+    if not moves:
+        warnings.append("Duplicate dog has no linked records to move. Merge will mainly archive the duplicate dog and add an audit note.")
+
+    recommended_primary_id = primary_id
+    recommended_duplicate_id = duplicate_id
+    # If the selected primary has less business history, warn. The frontend's
+    # recommended button should already choose this correctly, but protect admins.
+    if (d_future, d_bookings, sum(d_refs.values())) > (p_future, p_bookings, sum(p_refs.values())):
+        warnings.append("The selected duplicate has more history/future bookings than the selected main dog. Consider swapping main/duplicate before merging.")
+
+    return {
+        "allowed": allowed,
+        "requires_confirm_text": "MERGE DOG",
+        "operation": "dog_merge_archive",
+        "primary": _dog_public_merge_row(primary, owners_by_id.get(primary.get("owner_id")) or {}, p_refs, p_bookings, p_future),
+        "duplicate": _dog_public_merge_row(duplicate, owners_by_id.get(duplicate.get("owner_id")) or {}, d_refs, d_bookings, d_future),
+        "moves": moves,
+        "warnings": warnings,
+        "summary": {
+            "records_to_repoint": int(sum(m["count"] for m in moves)),
+            "future_bookings_to_move": int(d_future),
+            "duplicate_will_be_archived": True,
+            "hard_delete": False,
+            "same_owner": same_owner,
+        },
+        "safe_notes": [
+            "No hard delete is performed.",
+            "The duplicate dog is archived with duplicate_of_dog_id set to the main dog.",
+            "Bookings, vaccines, homework, training, incidents, files, trophies, and program records that point at the duplicate dog are repointed to the main dog.",
+            "A duplicate_merge_audit row is saved for history.",
+        ],
+        "recommended_primary_id": recommended_primary_id,
+        "recommended_duplicate_id": recommended_duplicate_id,
+    }
+
+
+@api.post("/admin/duplicates/dogs/merge-preview")
+async def admin_duplicate_dog_merge_preview(body: DuplicateDogMergeIn, _: dict = Depends(require_admin)):
+    return await _dog_merge_preview(body.primary_dog_id, body.duplicate_dog_id)
+
+
+def _merge_unique_list(primary_list: Any, duplicate_list: Any, limit: int = 200) -> List[Any]:
+    out: List[Any] = []
+    seen = set()
+    for item in (primary_list or []) + (duplicate_list or []):
+        key = repr(item)[:2000]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _merge_vaccines(primary_v: Any, duplicate_v: Any) -> Dict[str, Any]:
+    p = dict(primary_v or {})
+    d = dict(duplicate_v or {})
+    for k, v in d.items():
+        if not v:
+            continue
+        cur = p.get(k)
+        # Keep the later-looking ISO/date string when both exist.
+        if not cur or str(v) > str(cur):
+            p[k] = v
+    return p
+
+
+def _merge_vaccine_certs(primary_c: Any, duplicate_c: Any) -> Dict[str, Any]:
+    p = dict(primary_c or {})
+    d = dict(duplicate_c or {})
+    for k, v in d.items():
+        if k not in p or not p.get(k):
+            p[k] = v
+    return p
+
+
+@api.post("/admin/duplicates/dogs/merge")
+async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depends(require_admin)):
+    perms = _perms_for(user)
+    if not perms.get("delete_records"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_records")
+    if (body.confirm_text or "").strip().upper() != "MERGE DOG":
+        raise HTTPException(status_code=400, detail='Type MERGE DOG to confirm this safe merge/archive')
+
+    preview = await _dog_merge_preview(body.primary_dog_id, body.duplicate_dog_id)
+    if not preview.get("allowed"):
+        raise HTTPException(status_code=400, detail="This dog merge is not allowed because the dogs are not under the same owner")
+
+    primary_id = preview["primary"]["id"]
+    duplicate_id = preview["duplicate"]["id"]
+    primary = await db.dogs.find_one({"id": primary_id}, {"_id": 0}) or {}
+    duplicate = await db.dogs.find_one({"id": duplicate_id}, {"_id": 0}) or {}
+    ts = now_iso()
+
+    moved_counts: Dict[str, int] = {}
+    for coll, field in _DOG_MERGE_REF_COLLECTIONS:
+        try:
+            res = await db[coll].update_many({field: duplicate_id}, {"$set": {field: primary_id, "merged_from_dog_id": duplicate_id, "merged_at": ts}})
+            moved_counts[coll] = int(getattr(res, "modified_count", 0) or 0)
+        except Exception as exc:
+            logger.warning("dog merge: failed updating %s.%s %s->%s: %s", coll, field, duplicate_id, primary_id, exc)
+            moved_counts[coll] = 0
+
+    # Merge useful dog-profile details without overwriting the main dog with worse data.
+    set_doc: Dict[str, Any] = {
+        "vaccines": _merge_vaccines(primary.get("vaccines"), duplicate.get("vaccines")),
+        "vaccine_certs": _merge_vaccine_certs(primary.get("vaccine_certs"), duplicate.get("vaccine_certs")),
+        "training_logs": _merge_unique_list(primary.get("training_logs"), duplicate.get("training_logs"), limit=500),
+        "feeding_schedule": _merge_unique_list(primary.get("feeding_schedule"), duplicate.get("feeding_schedule"), limit=100),
+        "medications": _merge_unique_list(primary.get("medications"), duplicate.get("medications"), limit=100),
+        "training_skills": _merge_unique_list(primary.get("training_skills"), duplicate.get("training_skills"), limit=200),
+        "photos": _merge_unique_list(primary.get("photos"), duplicate.get("photos"), limit=30),
+        "tags": sorted(list({*(primary.get("tags") or []), *(duplicate.get("tags") or []), "merged_duplicate"})),
+        "merged_duplicate_dog_ids": sorted(list({*(primary.get("merged_duplicate_dog_ids") or []), duplicate_id})),
+        "last_duplicate_merge_at": ts,
+    }
+    # Fill blanks on main dog from duplicate only when main is empty.
+    for field in ("breed", "birthday", "vet_name", "vet_phone", "photo"):
+        if not primary.get(field) and duplicate.get(field):
+            set_doc[field] = duplicate.get(field)
+    notes = (primary.get("notes") or "").strip()
+    dup_notes = (duplicate.get("notes") or "").strip()
+    if dup_notes and dup_notes not in notes:
+        set_doc["notes"] = (notes + "\n\n" if notes else "") + f"[Merged from duplicate dog {duplicate.get('name') or duplicate_id} on {ts[:10]}]\n{dup_notes}"
+
+    await db.dogs.update_one({"id": primary_id}, {"$set": set_doc})
+    await db.dogs.update_one({"id": duplicate_id}, {"$set": {
+        "deleted_at": ts,
+        "archived": True,
+        "active": False,
+        "duplicate_of_dog_id": primary_id,
+        "duplicate_merge_at": ts,
+        "duplicate_merge_by": user.get("id"),
+        "duplicate_merge_note": (body.note or "").strip(),
+    }})
+
+    audit_row = {
+        "id": str(uuid.uuid4()),
+        "type": "dog_merge_archive",
+        "primary_dog_id": primary_id,
+        "duplicate_dog_id": duplicate_id,
+        "owner_id": primary.get("owner_id"),
+        "actor_id": user.get("id"),
+        "actor_email": user.get("email"),
+        "created_at": ts,
+        "note": (body.note or "").strip(),
+        "preview_summary": preview.get("summary"),
+        "moved_counts": moved_counts,
+    }
+    await db.duplicate_merge_audit.insert_one(audit_row)
+    return {"ok": True, "merged": True, "audit": audit_row, "preview_before": preview}
 
 
 @api.get("/admin/duplicates/report")

@@ -21,6 +21,10 @@ function Stat({ label, value, icon }) {
   );
 }
 
+function Info({ label, value }) {
+  return <div className="bg-black/20 border border-bgHover/60 rounded-lg px-2 py-1.5"><div className="text-gray-500 font-black uppercase tracking-widest text-[9px]">{label}</div><div className="text-gray-200 font-black mt-0.5">{value}</div></div>;
+}
+
 function MiniClient({ c }) {
   return (
     <div className="bg-bgBase border border-bgHover rounded-xl p-3 text-sm" data-testid={`duplicate-client-${c.id}`}>
@@ -66,11 +70,37 @@ function MiniDog({ d }) {
   );
 }
 
-function Info({ label, value }) {
-  return <div className="bg-black/20 border border-bgHover/60 rounded-lg px-2 py-1.5"><div className="text-gray-500 font-black uppercase tracking-widest text-[9px]">{label}</div><div className="text-gray-200 font-black mt-0.5">{value}</div></div>;
+function DogMergeControls({ cand, onPreview }) {
+  const dogs = cand.dogs || [];
+  const firstPrimary = cand.recommended_primary_id || dogs[0]?.id || "";
+  const firstDuplicate = cand.recommended_duplicate_id || dogs.find((d)=>d.id !== firstPrimary)?.id || "";
+  const [primary, setPrimary] = useState(firstPrimary);
+  const [duplicate, setDuplicate] = useState(firstDuplicate);
+  if (dogs.length < 2) return null;
+  return (
+    <div className="bg-shBlue/10 border border-shBlue/30 rounded-xl p-3 space-y-3">
+      <div className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-wand-magic-sparkles mr-2"/>Phase 8B safe dog merge</div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <label className="text-xs text-gray-400 font-bold uppercase tracking-widest">Main dog to keep
+          <select value={primary} onChange={(e)=>{ setPrimary(e.target.value); if (e.target.value === duplicate) setDuplicate(dogs.find((d)=>d.id !== e.target.value)?.id || ""); }} className="mt-1 w-full bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-white normal-case tracking-normal">
+            {dogs.map((d)=><option key={d.id} value={d.id}>{d.name} · {d.booking_count || 0} bookings · {(d.created_at || "").slice(0,10)}</option>)}
+          </select>
+        </label>
+        <label className="text-xs text-gray-400 font-bold uppercase tracking-widest">Duplicate to archive
+          <select value={duplicate} onChange={(e)=>setDuplicate(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-white normal-case tracking-normal">
+            {dogs.filter((d)=>d.id !== primary).map((d)=><option key={d.id} value={d.id}>{d.name} · {d.booking_count || 0} bookings · {(d.created_at || "").slice(0,10)}</option>)}
+          </select>
+        </label>
+      </div>
+      <button onClick={()=>onPreview(primary, duplicate)} disabled={!primary || !duplicate || primary === duplicate} className="bg-shGreen text-black px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+        <i className="fas fa-eye mr-2"/>Preview safe merge
+      </button>
+      <p className="text-[11px] text-gray-500">This opens a dry-run first. The duplicate dog is archived, never hard-deleted.</p>
+    </div>
+  );
 }
 
-function CandidateCard({ cand, type }) {
+function CandidateCard({ cand, type, onDogMergePreview }) {
   return (
     <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-3" data-testid={`duplicate-candidate-${cand.id}`}>
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -84,6 +114,75 @@ function CandidateCard({ cand, type }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {type === "client" ? (cand.clients || []).map((c)=><MiniClient key={c.id} c={c}/>) : (cand.dogs || []).map((d)=><MiniDog key={d.id} d={d}/>) }
       </div>
+      {type === "dog" && <DogMergeControls cand={cand} onPreview={onDogMergePreview} />}
+      {type === "client" && <div className="text-xs text-gray-500 bg-bgBase border border-bgHover rounded-lg p-3"><i className="fas fa-lock mr-2 text-shOrange"/>Client merging is still preview-only. Dog merge is safe for same-owner duplicates. Client account merge needs a separate dry-run workflow.</div>}
+    </div>
+  );
+}
+
+function MergePreviewModal({ preview, busy, confirmText, setConfirmText, note, setNote, onClose, onMerge, error, result }) {
+  if (!preview && !result) return null;
+  const p = preview || result?.preview_before || {};
+  const primary = p.primary || {};
+  const duplicate = p.duplicate || {};
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-bgPanel border border-shBlue/40 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-white text-xl font-black uppercase italic"><i className="fas fa-paw text-shGreen mr-2"/>Dog merge dry-run</h2>
+            <p className="text-sm text-gray-400 mt-1">Main dog is kept. Duplicate dog is archived. No hard delete.</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white"><i className="fas fa-times text-xl"/></button>
+        </div>
+
+        {error && <div className="bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-red-300 text-sm font-semibold">{error}</div>}
+        {result?.ok && <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-3 text-shGreen text-sm font-black uppercase tracking-widest"><i className="fas fa-check mr-2"/>Merge complete. Duplicate dog archived.</div>}
+        {!p.allowed && <div className="bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-red-300 text-sm font-semibold">This merge is blocked. These dogs are probably under different client accounts.</div>}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-bgBase border border-shGreen/35 rounded-xl p-3">
+            <div className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2">Keep this dog</div>
+            <MiniDog d={primary} />
+          </div>
+          <div className="bg-bgBase border border-red-500/35 rounded-xl p-3">
+            <div className="text-[11px] font-black uppercase tracking-widest text-red-300 mb-2">Archive this duplicate</div>
+            <MiniDog d={duplicate} />
+          </div>
+        </div>
+
+        <div className="bg-bgBase border border-bgHover rounded-xl p-3">
+          <div className="text-[11px] font-black uppercase tracking-widest text-gray-400 mb-2">Records that will point to the main dog</div>
+          {(p.moves || []).length === 0 ? <div className="text-sm text-gray-500">No linked records to move. The duplicate will just be archived with an audit note.</div> : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {(p.moves || []).map((m)=><Info key={`${m.collection}-${m.field}`} label={m.collection} value={`${m.count} record${m.count === 1 ? "" : "s"}`} />)}
+            </div>
+          )}
+        </div>
+
+        {(p.warnings || []).length > 0 && <div className="bg-shOrange/10 border border-shOrange/35 rounded-xl p-3 text-sm text-shOrange space-y-1">
+          {(p.warnings || []).map((w, i)=><div key={i}><i className="fas fa-triangle-exclamation mr-2"/>{w}</div>)}
+        </div>}
+
+        <div className="bg-shBlue/10 border border-shBlue/30 rounded-xl p-3 text-xs text-gray-300 space-y-1">
+          {(p.safe_notes || []).map((n, i)=><div key={i}><i className="fas fa-shield-halved text-shBlue mr-2"/>{n}</div>)}
+        </div>
+
+        {!result?.ok && <>
+          <label className="block text-xs text-gray-400 font-black uppercase tracking-widest">Optional merge note
+            <textarea value={note} onChange={(e)=>setNote(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded-lg p-3 text-white font-normal normal-case tracking-normal" rows={2} placeholder="Example: Oreo duplicate created by mistake; keep older record with bookings." />
+          </label>
+          <label className="block text-xs text-gray-400 font-black uppercase tracking-widest">Type MERGE DOG to confirm
+            <input value={confirmText} onChange={(e)=>setConfirmText(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded-lg p-3 text-white font-normal normal-case tracking-normal" placeholder="MERGE DOG" />
+          </label>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest">Cancel</button>
+            <button onClick={onMerge} disabled={!p.allowed || confirmText.trim().toUpperCase() !== "MERGE DOG" || busy} className="bg-shGreen text-black px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+              <i className="fas fa-wand-magic-sparkles mr-2"/>{busy ? "Merging…" : "Merge/archive duplicate"}
+            </button>
+          </div>
+        </>}
+      </div>
     </div>
   );
 }
@@ -94,6 +193,12 @@ export default function DuplicateCheck() {
   const [err, setErr] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [mergePreview, setMergePreview] = useState(null);
+  const [mergeError, setMergeError] = useState("");
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [mergeNote, setMergeNote] = useState("");
+  const [mergeResult, setMergeResult] = useState(null);
 
   const run = async () => {
     setLoading(true); setErr("");
@@ -104,6 +209,36 @@ export default function DuplicateCheck() {
       setErr(e.response?.data?.detail || "Could not run duplicate check");
     } finally { setLoading(false); }
   };
+
+  const previewDogMerge = async (primary_dog_id, duplicate_dog_id) => {
+    setMergeError(""); setMergeResult(null); setConfirmText(""); setMergeNote(""); setMergeBusy(true);
+    try {
+      const r = await api.post('/admin/duplicates/dogs/merge-preview', { primary_dog_id, duplicate_dog_id });
+      setMergePreview(r.data || {});
+    } catch (e) {
+      setMergeError(e.response?.data?.detail || "Could not preview dog merge");
+      setMergePreview({ allowed: false, primary: {}, duplicate: {}, warnings: [e.response?.data?.detail || "Could not preview dog merge"] });
+    } finally { setMergeBusy(false); }
+  };
+
+  const doDogMerge = async () => {
+    if (!mergePreview?.primary?.id || !mergePreview?.duplicate?.id) return;
+    setMergeBusy(true); setMergeError("");
+    try {
+      const r = await api.post('/admin/duplicates/dogs/merge', {
+        primary_dog_id: mergePreview.primary.id,
+        duplicate_dog_id: mergePreview.duplicate.id,
+        confirm_text: confirmText,
+        note: mergeNote,
+      });
+      setMergeResult(r.data || {});
+      await run();
+    } catch (e) {
+      setMergeError(e.response?.data?.detail || "Could not complete merge");
+    } finally { setMergeBusy(false); }
+  };
+
+  const closeMerge = () => { setMergePreview(null); setMergeResult(null); setMergeError(""); setConfirmText(""); setMergeNote(""); };
 
   const clientCandidates = useMemo(() => {
     const arr = data?.client_candidates || [];
@@ -120,15 +255,17 @@ export default function DuplicateCheck() {
       <PageHero
         eyebrow={{ icon: "fa-copy", text: "Data safety", color: "text-shBlue" }}
         title="Duplicate check."
-        highlight="Preview only."
-        subtitle="Find possible duplicate clients and dogs before they split credits, bookings, payments, vaccines, or portal accounts. This phase does not merge, delete, archive, or rewrite anything."
+        highlight="Safe merge preview."
+        subtitle="Find possible duplicate clients and dogs. Same-owner duplicate dogs can be merged only after a dry-run preview. Clients are still preview-only."
         right={<button onClick={run} disabled={loading} className="bg-shGreen text-black px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest"><i className="fas fa-magnifying-glass mr-2"/>{loading ? "Scanning…" : "Run Check"}</button>}
         testid="duplicate-check-hero"
       />
 
+      <MergePreviewModal preview={mergePreview} result={mergeResult} busy={mergeBusy} confirmText={confirmText} setConfirmText={setConfirmText} note={mergeNote} setNote={setMergeNote} onClose={closeMerge} onMerge={doDogMerge} error={mergeError} />
+
       <div className="bg-shBlue/10 border border-shBlue/30 rounded-xl p-4 text-sm text-gray-300">
-        <p className="font-black text-shBlue uppercase tracking-widest text-xs mb-2"><i className="fas fa-shield-halved mr-2"/>Safe preview only</p>
-        <p>This screen only searches for likely duplicates. It does not merge records. It does not move credits. It does not touch bookings or payment history. Phase 8B can add an actual merge workflow later with a dry-run preview and audit log.</p>
+        <p className="font-black text-shBlue uppercase tracking-widest text-xs mb-2"><i className="fas fa-shield-halved mr-2"/>Safe workflow</p>
+        <p>This screen searches for likely duplicates. Dog merge is available only for same-owner dogs and always archives the duplicate instead of deleting it. Client merges remain preview-only until they get their own dry-run workflow.</p>
       </div>
 
       <div className="bg-bgPanel border border-bgHover rounded-xl p-4 flex flex-col md:flex-row md:items-center gap-3 justify-between">
@@ -157,12 +294,12 @@ export default function DuplicateCheck() {
 
           <section className="space-y-3">
             <h2 className="text-white font-black uppercase italic"><i className="fas fa-users text-shOrange mr-2"/>Possible duplicate clients</h2>
-            {clientCandidates.length === 0 ? <div className="bg-bgPanel border border-bgHover rounded-xl p-5 text-gray-400 text-sm">No possible duplicate clients in this filter.</div> : clientCandidates.map((cand)=><CandidateCard key={cand.id} cand={cand} type="client" />)}
+            {clientCandidates.length === 0 ? <div className="bg-bgPanel border border-bgHover rounded-xl p-5 text-gray-400 text-sm">No possible duplicate clients in this filter.</div> : clientCandidates.map((cand)=><CandidateCard key={cand.id} cand={cand} type="client" onDogMergePreview={previewDogMerge} />)}
           </section>
 
           <section className="space-y-3">
             <h2 className="text-white font-black uppercase italic"><i className="fas fa-paw text-shGreen mr-2"/>Possible duplicate dogs</h2>
-            {dogCandidates.length === 0 ? <div className="bg-bgPanel border border-bgHover rounded-xl p-5 text-gray-400 text-sm">No possible duplicate dogs in this filter.</div> : dogCandidates.map((cand)=><CandidateCard key={cand.id} cand={cand} type="dog" />)}
+            {dogCandidates.length === 0 ? <div className="bg-bgPanel border border-bgHover rounded-xl p-5 text-gray-400 text-sm">No possible duplicate dogs in this filter.</div> : dogCandidates.map((cand)=><CandidateCard key={cand.id} cand={cand} type="dog" onDogMergePreview={previewDogMerge} />)}
           </section>
         </>
       )}
