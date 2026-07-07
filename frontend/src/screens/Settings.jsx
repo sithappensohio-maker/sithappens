@@ -81,7 +81,7 @@ export default function Settings() {
           desc: "Turn major app features (Daycare, Boarding, Training, Grooming, Photography, Retail, Rewards, Trivia, Homework, Staff Portal, Messaging, Payment Plans, Manual Payments, Waitlist) on or off app-wide. Disabled features hide from the portal, nav, dashboard, and booking.",
           badges: ["Live", "Admin-only"] },
         { id: "client_portal_controls", label: "Client Portal Controls", icon: "fa-mobile-screen-button",
-          desc: "Show/hide portal sections, set landing priority, edit client-facing labels, post an announcement banner, and customize empty-state copy. Feature Visibility above is the master switch — anything turned off there stays hidden here.",
+          desc: "Show or hide portal sections, edit client-facing labels, post an announcement banner, and customize empty-state copy. The portal now chooses the most important client action automatically.",
           badges: ["Live", "Client-facing"] },
         { id: "booking_flow_controls", label: "Booking Flow Controls", icon: "fa-calendar-check",
           desc: "Per-service overrides on top of the global Booking Rules: require approval, instant book, same-day allowed, minimum lead time, maximum advance days. Empty values fall back to the global defaults.",
@@ -813,8 +813,8 @@ function FeatureVisibilityPanel() {
 
 // ────────────────────────────────────────────────────────────────────────
 // Sprint 110di-18 — Client Portal Controls. One panel for ALL client-portal
-// behavior: section visibility, landing order, announcement banner, custom
-// labels, booking-locked message, empty-state copy. Stored under
+// behavior: section visibility, announcement banner, custom labels,
+// booking-locked message, and empty-state copy. Stored under
 // settings.client_portal_controls — re-uses the existing /api/settings
 // endpoint, no duplicate panel created.
 // ────────────────────────────────────────────────────────────────────────
@@ -843,15 +843,6 @@ const CPC_SECTION_META = [
     desc: "Two-way chat button + modal. Hidden if Client Messaging is OFF in Feature Visibility." },
   { id: "help_button",         label: "Help / How-to button",       masterFeature: null,
     desc: "'How to Use' tutorial drawer link in the portal header." },
-];
-
-const CPC_LANDING_OPTIONS = [
-  { id: "setup",             label: "Requirements to Book" },
-  { id: "announcements",     label: "Announcements" },
-  { id: "credits",           label: "Credits" },
-  { id: "upcoming_bookings", label: "Upcoming Bookings" },
-  { id: "my_dogs",           label: "My Dogs" },
-  { id: "messages",          label: "Messages" },
 ];
 
 const CPC_ANNOUNCEMENT_STYLES = [
@@ -904,17 +895,7 @@ function ClientPortalControlsPanel() {
     setCpc(p => ({ ...p, announcement: { ...p.announcement, [k]: v } }));
     setDirty(true);
   };
-  const setLanding = (idx, id) => {
-    setCpc(p => {
-      const next = [...(p.landing_priority || [])];
-      const cur = next.indexOf(id);
-      // swap if already in list, else replace at idx
-      if (cur !== -1 && cur !== idx) { next[cur] = next[idx]; }
-      next[idx] = id;
-      return { ...p, landing_priority: next };
-    });
-    setDirty(true);
-  };
+
 
   const saveAll = async () => {
     setSaving(true); setMsg("");
@@ -943,8 +924,8 @@ function ClientPortalControlsPanel() {
               What clients <span className="text-shGreen">see &amp; do.</span>
             </h2>
             <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
-              Tune what the client portal shows, what comes first, and the wording on common buttons + empty states.
-              Feature Visibility is the master switch — anything turned off there stays hidden here automatically.
+              Tune what the client portal shows and the wording on common buttons + empty states.
+              The new smart overview automatically surfaces the most important action; Feature Visibility remains the master switch.
             </p>
           </div>
           <button onClick={saveAll} disabled={!dirty || saving} data-testid="cpc-save"
@@ -985,28 +966,14 @@ function ClientPortalControlsPanel() {
         </div>
       </div>
 
-      {/* ── Landing priority ─────────────────────────────────────────── */}
-      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5">
+      {/* ── Smart landing priority ─────────────────────────────────── */}
+      <div className="bg-bgPanel border border-bgHover rounded-2xl p-5" data-testid="cpc-smart-priority-info">
         <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-2">
-          <i className="fas fa-list-ol mr-1.5"/>Portal landing order
+          <i className="fas fa-wand-magic-sparkles mr-1.5"/>Smart landing priority
         </p>
-        <p className="text-[12px] text-gray-400 mb-3 leading-snug">
-          Choose what clients see first. Requirements-to-Book always shows first when setup is incomplete, regardless of this order.
+        <p className="text-[12px] text-gray-300 leading-relaxed">
+          The client portal now chooses one clear top action automatically: finish setup, read a new message, view a checked-in visit or report card, complete homework, review an upcoming booking, check low credits, or book the next visit. This keeps clients from having to understand or configure the portal themselves.
         </p>
-        <div className="space-y-2">
-          {(cpc.landing_priority || []).map((id, idx) => (
-            <div key={idx} className="flex items-center gap-2" data-testid={`cpc-landing-row-${idx}`}>
-              <span className="text-[11px] text-gray-500 font-black w-6">{idx + 1}.</span>
-              <select value={id} onChange={e => setLanding(idx, e.target.value)}
-                      data-testid={`cpc-landing-${idx}`}
-                      className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1.5 text-[13px] text-white">
-                {CPC_LANDING_OPTIONS.map(o => (
-                  <option key={o.id} value={o.id}>{o.label}</option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
       </div>
 
       {/* ── Announcement banner ──────────────────────────────────────── */}

@@ -33,6 +33,7 @@ import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
 import PortalAnnouncementsCard from "../components/PortalAnnouncementsCard";
 import PortalTrainingTipCard from "../components/PortalTrainingTipCard";
+import PortalEngagementHub from "../components/PortalEngagementHub";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -1102,76 +1103,55 @@ export default function Portal() {
           }}
         />
 
-        {/* Sprint 110di-21 — Landing priority reorder for the upper portal
-            blocks. The admin-set order in cpc.landing_priority controls the
-            sequence of: announcements, credits-callout, upcoming_bookings-callout,
-            my_dogs-callout. The setup checklist (when locked) ALWAYS appears
-            first regardless of this order — that rule is enforced lower down
-            where PortalSetupChecklist is rendered before the two-column grid. */}
-        {(() => {
-          const priority = Array.isArray(cpc.landing_priority) && cpc.landing_priority.length
-            ? cpc.landing_priority : ["setup","announcements","credits","upcoming_bookings","my_dogs","messages"];
-          const blocks = {
-            announcements: <PortalAnnouncementsCard key="announcements" />,
-            credits: sectionOn("credits") && (feat.daycare || feat.boarding || feat.training) ? (
-              <div key="credits-callout" data-testid="portal-credits-callout"
-                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
-                <span className="text-[12px] font-black uppercase tracking-widest text-shGreen">
-                  <i className="fas fa-wallet mr-1.5"/>{label("credits", "Credits")} ready
-                </span>
-                <button onClick={()=>{ document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-                        data-testid="portal-credits-callout-jump"
-                        className="text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
-                  View <i className="fas fa-arrow-right ml-1"/>
-                </button>
-              </div>
-            ) : null,
-            upcoming_bookings: bookings.length > 0 ? (
-              <div key="upcoming-callout" data-testid="portal-upcoming-callout"
-                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
-                <span className="text-[12px] font-black uppercase tracking-widest text-shBlue">
-                  <i className="fas fa-calendar-day mr-1.5"/>{label("my_bookings", "My Bookings")} · {bookings.length}
-                </span>
-                <button onClick={()=>{ document.getElementById("portal-bookings-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}
-                        data-testid="portal-upcoming-callout-jump"
-                        className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
-                  View <i className="fas fa-arrow-right ml-1"/>
-                </button>
-              </div>
-            ) : null,
-            my_dogs: dogs.length > 0 ? (
-              <div key="dogs-callout" data-testid="portal-dogs-callout"
-                   className="mb-4 rounded-xl border border-bgHover bg-bgPanel/60 px-4 py-2.5 flex items-center justify-between gap-3">
-                <span className="text-[12px] font-black uppercase tracking-widest text-purple-400">
-                  <i className="fas fa-dog mr-1.5"/>{label("my_dogs", "My Dogs")} · {dogs.length}
-                </span>
-              </div>
-            ) : null,
-            messages: sectionOn("messages") && messagesUnread > 0 ? (
-              <div key="msg-callout" data-testid="portal-msg-callout"
-                   className="mb-4 rounded-xl border border-shOrange/40 bg-shOrange/10 px-4 py-2.5 flex items-center justify-between gap-3">
-                <span className="text-[12px] font-black uppercase tracking-widest text-shOrange">
-                  <i className="fas fa-comments mr-1.5"/>{messagesUnread} unread {label("messages", "Messages")}
-                </span>
-                <button onClick={()=>setMessagesOpen(true)} data-testid="portal-msg-callout-jump"
-                        className="text-[11px] font-black uppercase tracking-widest text-shOrange hover:underline">
-                  Open <i className="fas fa-arrow-right ml-1"/>
-                </button>
-              </div>
-            ) : null,
-          };
-          return priority.filter(k => k !== "setup").map(k => blocks[k] || null);
-        })()}
-
-        {/* Sprint 110di-3 — Pared the old 3-step "onboarding banner" down to a
-            simple welcome line. The full first-time-setup gating now lives in
-            `PortalSetupChecklist` below — keeping both was redundant. */}
-        <div className="mb-4 sm:mb-6 card-hero rounded-xl p-4 sm:p-5 shadow-2xl"
-             data-testid="portal-welcome-banner">
-          <h3 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">
-            Hi {user.name.split(" ")[0]}! <span aria-hidden="true">🐾</span> Welcome to Sit Happens
-          </h3>
-        </div>
+        {/* Phase 10A — One organized client overview replaces the old stack of
+            tiny landing callouts and the redundant welcome-only card. Existing
+            booking, setup, homework, trophy, dog, and credit data is reused. */}
+        <PortalAnnouncementsCard />
+        <PortalEngagementHub
+          dogs={dogs}
+          bookings={bookings}
+          homework={homework}
+          trophies={trophies}
+          setupStatus={setupStatus}
+          messagesUnread={messagesUnread}
+          credits={credits}
+          trainingCredits={client?.training_credits || 0}
+          boardingCredits={client?.boarding_credits || 0}
+          showMessages={sectionOn("messages")}
+          showHomework={feat.homework}
+          showCredits={sectionOn("credits")}
+          showRewards={sectionOn("trivia_rewards") && feat.rewards}
+          showUpload={sectionOn("vaccines_compliance")}
+          onSetup={() => document.querySelector('[data-testid="portal-setup-checklist"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          onMessages={() => setMessagesOpen(true)}
+          onBookings={() => {
+            setBookingsTab("upcoming");
+            document.getElementById("portal-bookings-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          onReportCards={() => {
+            setBookingsTab("past");
+            document.getElementById("portal-bookings-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          onHomework={() => document.getElementById("portal-homework-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          onCredits={() => document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          onRewards={() => document.querySelector('[data-testid="portal-trophies-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          onBook={() => {
+            if (dogs.length === 0) setDogModal({ open: true, dog: null });
+            else openBookingIfReady();
+          }}
+          onUpload={() => {
+            const todayIso = new Date().toISOString().slice(0, 10);
+            const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
+            const candidate = dogs.find(d => needs(d, "rabies"))
+                           || dogs.find(d => needs(d, "bordetella"))
+                           || dogs.find(d => needs(d, "dhpp"))
+                           || dogs[0];
+            if (candidate) setVaccineQuick({ initialDogId: candidate.id });
+            else setDogModal({ open: true, dog: null });
+          }}
+          onHelp={sectionOn("help_button") ? (() => setTutorialsOpen(true)) : null}
+          onDogOpen={(dog) => setDogModal({ open: true, dog })}
+        />
 
         {/* Sprint 110di-51 — Account balance / tab banner. Shown only when the
             client has an outstanding balance OR a pre-paid credit on file so
@@ -1235,16 +1215,28 @@ export default function Portal() {
           ))
         )}
 
-        {/* Sprint 110ax — Daily dog fact, pinned above the main content.
-            Sprint 110di-18 — Gated by Client Portal Controls. */}
-        {sectionOn("dog_facts") && <div className="mb-6"><DogFactCard variant="big" /></div>}
-
-        {/* Sprint 110di-79 — Training Tip of the Day (client-facing). */}
-        {sectionOn("training_tip") && <div className="mb-6"><PortalTrainingTipCard /></div>}
-
-        {/* Sprint 110bi — Dog Trivia of the Day (Wordle-style streak game).
-            Sprint 110di-18 — Gated by Client Portal Controls (trivia_rewards). */}
-        {sectionOn("trivia_rewards") && feat.trivia && <div className="mb-6"><DailyTriviaCard /></div>}
+        {/* Phase 10A — Fun extras remain available without competing with the
+            client's real tasks. The drawer is closed by default so the home
+            screen stays calm for people who are uncomfortable with new apps. */}
+        {(sectionOn("dog_facts") || sectionOn("training_tip") || (sectionOn("trivia_rewards") && feat.trivia)) && (
+          <details className="mb-6 group bg-bgPanel border border-bgHover rounded-2xl shadow-xl overflow-hidden" data-testid="portal-fun-drawer">
+            <summary className="list-none cursor-pointer px-4 sm:px-5 py-4 flex items-center justify-between gap-3 hover:bg-bgHover/40 transition">
+              <div className="flex items-center gap-3 min-w-0">
+                <span className="w-10 h-10 rounded-full bg-shOrange/15 text-shOrange grid place-items-center shrink-0"><i className="fas fa-bone"/></span>
+                <div className="min-w-0">
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">Optional fun</p>
+                  <p className="text-[15px] sm:text-base font-black text-white uppercase italic tracking-tight truncate">Dog facts, training tips & trivia</p>
+                </div>
+              </div>
+              <i className="fas fa-chevron-down text-gray-500 group-open:rotate-180 transition-transform"/>
+            </summary>
+            <div className="border-t border-bgHover p-4 sm:p-5 space-y-5">
+              {sectionOn("dog_facts") && <DogFactCard variant="big" />}
+              {sectionOn("training_tip") && <PortalTrainingTipCard />}
+              {sectionOn("trivia_rewards") && feat.trivia && <DailyTriviaCard />}
+            </div>
+          </details>
+        )}
 
         {/* Sprint 110dh-5 — Mobile-only hoist: Action Needed (intake forms) is
             the most important item so it should be the first thing visible on
@@ -1436,56 +1428,13 @@ export default function Portal() {
                    style={{ background: "radial-gradient(circle at 50% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
               <div className="relative">
                 <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
-                  <i className="fas fa-bookmark mr-1.5"/>Shortcuts
+                  <i className="fas fa-ellipsis mr-1.5"/>Extra tools
                 </p>
-                <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">Quick Links.</h3>
+                <h3 className="text-xl font-black text-white uppercase italic tracking-tight mb-4">More Options.</h3>
                 <div className="grid grid-cols-2 gap-2.5">
-                  {/* Sprint 110dh-5 — Reordered to prioritise the most useful
-                      client actions first: Book → My Bookings → Vaccines →
-                      Pricing → Training files → Refer. External convenience
-                      links (Website, Photo Gallery) sit at the end. */}
-                  {dogs.length > 0 && !waiverNeeded && (
-                    <QuickLinkTile
-                      onClick={openBookingIfReady}
-                      testid="portal-ql-book-service"
-                      icon="fa-calendar-plus"
-                      color="#8cc63f"
-                      title="Book a Service"
-                      subtitle="Daycare · Boarding · Training"
-                    />
-                  )}
-                  <QuickLinkTile
-                    onClick={()=>{
-                      const el = document.getElementById("portal-bookings-anchor");
-                      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-                    }}
-                    testid="portal-ql-my-bookings"
-                    icon="fa-calendar-day"
-                    color="#00a9e0"
-                    title="My Bookings"
-                    subtitle={`${bookings.length} on file`}
-                  />
-                  {dogs.length > 0 && sectionOn("vaccines_compliance") && (
-                    <QuickLinkTile
-                      onClick={()=>{
-                        // Open the multi-vaccine quick-upload modal. Pre-pick
-                        // the first dog with a missing/expired required vaccine
-                        // so the form is already targeted at the right pup.
-                        const todayIso = new Date().toISOString().slice(0, 10);
-                        const needs = (d, k) => !d?.vaccines?.[k] || String(d.vaccines[k]).slice(0, 10) < todayIso;
-                        const candidate = dogs.find(d => needs(d, "rabies"))
-                                       || dogs.find(d => needs(d, "bordetella"))
-                                       || dogs.find(d => needs(d, "dhpp"))
-                                       || dogs[0];
-                        setVaccineQuick({ initialDogId: candidate?.id || "" });
-                      }}
-                      testid="portal-ql-upload-vaccines"
-                      icon="fa-shield-virus"
-                      color="#f26522"
-                      title="Upload Vaccine Records"
-                      subtitle={dogs.length > 1 ? "Pick dog · multi-vax" : "Keep records current"}
-                    />
-                  )}
+                  {/* Primary actions now live in the organized overview above.
+                      Keep only occasional tools here so clients do not have to
+                      choose between duplicate Book, Messages, or Upload buttons. */}
                   {(publicServices.length > 0 || publicPrograms.length > 0) && (
                     <QuickLinkTile
                       onClick={()=>setShowServicesModal(true)}
