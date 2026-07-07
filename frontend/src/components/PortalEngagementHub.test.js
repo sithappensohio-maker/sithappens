@@ -1,6 +1,7 @@
-import { buildPortalActivity, buildPortalPriority, getDogPortalSnapshot } from "./PortalEngagementHub";
+import { buildPortalActivity, buildPortalPriority, getDogPortalSnapshot, isActiveOnPremisesBooking, scopeBookingsToDogs } from "./PortalEngagementHub";
 
 const dog = { id: "dog-1", name: "Lexi", vaccines: { rabies: "2099-01-01", bordetella: "2099-01-01", dhpp: "2099-01-01" } };
+const today = new Date().toISOString().slice(0, 10);
 
 test("setup lock always wins the priority card", () => {
   const priority = buildPortalPriority({
@@ -14,7 +15,7 @@ test("setup lock always wins the priority card", () => {
 test("checked-in visit is prioritized before homework and upcoming visits", () => {
   const priority = buildPortalPriority({
     dogs: [dog],
-    bookings: [{ id: "b1", dog_id: dog.id, dog_name: dog.name, service_type: "daycare", checked_in_at: new Date().toISOString(), checked_out_at: null, status: "approved", date: "2099-01-01" }],
+    bookings: [{ id: "b1", dog_id: dog.id, dog_name: dog.name, service_type: "daycare", checked_in_at: new Date().toISOString(), checked_out_at: null, status: "approved", date: today }],
     homework: [{ id: "h1", dog_id: dog.id, dog_name: dog.name, title: "Place", status: "assigned" }],
     setupStatus: { booking_locked: false },
   });
@@ -59,4 +60,76 @@ test("priority falls back to a direct booking action when nothing needs attentio
   });
   expect(priority.kind).toBe("book");
   expect(priority.title).toContain("Lexi");
+});
+
+
+test("stale or off-schedule check-in timestamps never show a dog as checked in", () => {
+  expect(isActiveOnPremisesBooking({
+    checked_in_at: new Date().toISOString(), checked_out_at: null,
+    status: "approved", date: "2020-01-01",
+  }, today)).toBe(false);
+
+  expect(isActiveOnPremisesBooking({
+    checked_in_at: new Date().toISOString(), checked_out_at: null,
+    status: "cancelled", date: today,
+  }, today)).toBe(false);
+
+  const priority = buildPortalPriority({
+    dogs: [dog],
+    bookings: [{
+      id: "stale", dog_id: dog.id, dog_name: dog.name, service_type: "daycare",
+      checked_in_at: new Date().toISOString(), checked_out_at: null,
+      status: "approved", date: "2020-01-01",
+    }],
+    setupStatus: { booking_locked: false },
+  });
+  expect(priority.title).not.toContain("checked in");
+});
+
+test("boarding is active when today falls inside the scheduled stay", () => {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  expect(isActiveOnPremisesBooking({
+    checked_in_at: new Date().toISOString(), checked_out_at: null, status: "approved",
+    date: yesterday.toISOString().slice(0, 10), end_date: tomorrow.toISOString().slice(0, 10),
+  }, today)).toBe(true);
+});
+
+
+test("portal status ignores active bookings that belong to a different dog", () => {
+  const otherBooking = {
+    id: "other-active", dog_id: "dog-someone-else", dog_name: "Not Lexi",
+    service_type: "daycare", checked_in_at: new Date().toISOString(),
+    checked_out_at: null, status: "approved", date: today,
+  };
+  expect(scopeBookingsToDogs([otherBooking], [dog])).toEqual([]);
+
+  const priority = buildPortalPriority({
+    dogs: [dog], bookings: [otherBooking], homework: [],
+    setupStatus: { booking_locked: false }, credits: 5,
+  });
+  expect(priority.kind).toBe("book");
+  expect(priority.title).not.toContain("checked in");
+});
+
+test("recent activity excludes bookings for dogs outside the portal account", () => {
+  const activity = buildPortalActivity({
+    dogs: [dog],
+    bookings: [{
+      id: "other-active", dog_id: "dog-someone-else", dog_name: "Not Lexi",
+      service_type: "daycare", checked_in_at: new Date().toISOString(),
+      checked_out_at: null, status: "approved", date: today,
+    }],
+    homework: [], trophies: { client_trophies: [], dog_trophies: [] },
+  });
+  expect(activity).toEqual([]);
+});
+
+test("pending booking with a check-in timestamp is not treated as on premises", () => {
+  expect(isActiveOnPremisesBooking({
+    checked_in_at: new Date().toISOString(), checked_out_at: null,
+    status: "pending", date: today,
+  }, today)).toBe(false);
 });

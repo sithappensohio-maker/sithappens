@@ -32,6 +32,33 @@ const friendlyDate = (value) => {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: date.getFullYear() !== today.getFullYear() ? "numeric" : undefined });
 };
 
+
+export function isActiveOnPremisesBooking(booking, today = isoDay()) {
+  if (!booking?.checked_in_at || booking?.checked_out_at) return false;
+
+  const status = String(booking.status || "").toLowerCase();
+  // Only an approved (or legacy checked_in) booking can represent a real
+  // on-premises visit. A pending/cancelled/completed row with an old timestamp
+  // must never leak into the client-facing status.
+  if (!["approved", "checked_in"].includes(status)) return false;
+
+  // A stale check-in timestamp by itself must never make the portal say a dog
+  // is currently on site. The booking also has to cover the current business
+  // day. This protects client previews from old/incomplete checkout records and
+  // future bookings that were accidentally stamped with checked_in_at.
+  const start = String(booking.date || "").slice(0, 10);
+  const end = String(booking.end_date || booking.date || "").slice(0, 10);
+  if (!start || !end) return false;
+  return start <= today && today <= end;
+}
+
+
+export function scopeBookingsToDogs(bookings = [], dogs = []) {
+  const dogIds = new Set((dogs || []).map((dog) => String(dog?.id || "")).filter(Boolean));
+  if (!dogIds.size) return [];
+  return (bookings || []).filter((booking) => dogIds.has(String(booking?.dog_id || "")));
+}
+
 const relativeTime = (value) => {
   const date = toDate(value);
   if (!date) return "Recently";
@@ -51,8 +78,8 @@ const relativeTime = (value) => {
 
 export function getDogPortalSnapshot(dog, bookings = [], homework = []) {
   const today = isoDay();
-  const dogBookings = bookings.filter((b) => b.dog_id === dog.id);
-  const activeVisit = dogBookings.find((b) => b.checked_in_at && !b.checked_out_at);
+  const dogBookings = bookings.filter((b) => String(b.dog_id || "") === String(dog.id || ""));
+  const activeVisit = dogBookings.find((b) => isActiveOnPremisesBooking(b, today));
   const upcoming = dogBookings
     .filter((b) => ["pending", "approved"].includes(b.status) && (b.end_date || b.date || "") >= today)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];
@@ -93,6 +120,7 @@ export function buildPortalPriority({
 }) {
   const today = isoDay();
   const firstDog = dogs[0];
+  const portalBookings = scopeBookingsToDogs(bookings, dogs);
 
   if (setupStatus?.booking_locked) {
     return {
@@ -114,7 +142,7 @@ export function buildPortalPriority({
     };
   }
 
-  const checkedIn = bookings.find((b) => b.checked_in_at && !b.checked_out_at);
+  const checkedIn = portalBookings.find((b) => isActiveOnPremisesBooking(b, today));
   if (checkedIn) {
     return {
       kind: "bookings", tone: "blue", icon: "fa-paw",
@@ -125,7 +153,7 @@ export function buildPortalPriority({
     };
   }
 
-  const recentReport = bookings
+  const recentReport = portalBookings
     .filter((b) => b.report_card)
     .sort((a, b) => String(b.report_card?.created_at || b.checked_out_at || b.date || "").localeCompare(String(a.report_card?.created_at || a.checked_out_at || a.date || "")))[0];
   if (recentReport) {
@@ -157,7 +185,7 @@ export function buildPortalPriority({
     };
   }
 
-  const upcoming = bookings
+  const upcoming = portalBookings
     .filter((b) => ["pending", "approved"].includes(b.status) && (b.end_date || b.date || "") >= today)
     .sort((a, b) => String(a.date || "").localeCompare(String(b.date || "")))[0];
   if (upcoming) {
@@ -195,10 +223,11 @@ export function buildPortalPriority({
   };
 }
 
-export function buildPortalActivity({ bookings = [], homework = [], trophies = { client_trophies: [], dog_trophies: [] } }) {
+export function buildPortalActivity({ bookings = [], dogs = null, homework = [], trophies = { client_trophies: [], dog_trophies: [] } }) {
   const items = [];
+  const portalBookings = Array.isArray(dogs) ? scopeBookingsToDogs(bookings, dogs) : bookings;
 
-  bookings.forEach((b) => {
+  portalBookings.forEach((b) => {
     if (b.report_card) {
       items.push({
         id: `report-${b.id}`, kind: "report", icon: "fa-camera-retro", tone: "green",
@@ -207,7 +236,7 @@ export function buildPortalActivity({ bookings = [], homework = [], trophies = {
         ts: b.report_card?.created_at || b.checked_out_at || `${b.date}T18:00:00`,
       });
     }
-    else if (b.checked_in_at && !b.checked_out_at) {
+    else if (isActiveOnPremisesBooking(b)) {
       items.push({
         id: `checkin-${b.id}`, kind: "bookings", icon: "fa-location-dot", tone: "blue",
         title: `${b.dog_name || "Your dog"} checked in`,
@@ -287,8 +316,9 @@ export default function PortalEngagementHub({
     showMessages, showHomework, showCredits,
   }), [dogs, bookings, homework, messagesUnread, setupStatus, credits, trainingCredits, boardingCredits, showMessages, showHomework, showCredits]);
 
-  const activity = useMemo(() => buildPortalActivity({ bookings, homework: showHomework ? homework : [], trophies: showRewards ? trophies : { client_trophies: [], dog_trophies: [] } }), [bookings, homework, trophies, showHomework, showRewards]);
-  const dogSnapshots = useMemo(() => dogs.map((dog) => getDogPortalSnapshot(dog, bookings, showHomework ? homework : [])), [dogs, bookings, homework, showHomework]);
+  const portalBookings = useMemo(() => scopeBookingsToDogs(bookings, dogs), [bookings, dogs]);
+  const activity = useMemo(() => buildPortalActivity({ bookings: portalBookings, dogs, homework: showHomework ? homework : [], trophies: showRewards ? trophies : { client_trophies: [], dog_trophies: [] } }), [portalBookings, dogs, homework, trophies, showHomework, showRewards]);
+  const dogSnapshots = useMemo(() => dogs.map((dog) => getDogPortalSnapshot(dog, portalBookings, showHomework ? homework : [])), [dogs, portalBookings, homework, showHomework]);
   const tone = TONES[priority.tone] || TONES.green;
   const actionCount = 1 + (showMessages ? 1 : 0) + (showUpload ? 1 : 0) + (showCredits ? 1 : 0) + (onHelp ? 1 : 0);
   const actions = { onSetup, onMessages, onBookings, onReportCards, onHomework, onCredits, onRewards, onBook };
