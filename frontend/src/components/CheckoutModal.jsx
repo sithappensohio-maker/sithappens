@@ -251,6 +251,14 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       } else {
         if (basePrice !== "") body.base_price = notionalBaseForCredits;
       }
+      // Mixed credits + cash (add-ons, overages, tips, uncovered nights).
+      // Send both the tender and exact cash portion so the backend can put
+      // that money into the physical drawer without counting credits again.
+      if (useCredits && chargedToday > 0) {
+        body.payment_method = payMethod;
+        body.payment_status = "paid";
+        body.amount_paid = Number(chargedToday.toFixed(2));
+      }
       // Silent geolocation capture (audit trail)
       try {
         if (navigator.geolocation) {
@@ -462,7 +470,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         {/* Section 3 — Payment method + Service value */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
           <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Payment</p>
-          {(!useCredits || addOnTotal > 0) && (
+          {(!useCredits || chargedToday > 0) && (
             <select value={payMethod} onChange={(e)=>setPayMethod(e.target.value)} data-testid="checkout-pay-method"
                     className="w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm mb-3">
               <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>

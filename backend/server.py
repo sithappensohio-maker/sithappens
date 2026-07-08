@@ -226,6 +226,22 @@ def now_local() -> datetime:
     return datetime.now(BUSINESS_TZ).replace(tzinfo=None)
 
 
+def _business_day_utc_bounds(day_iso: str) -> Tuple[str, str]:
+    """Return UTC ISO bounds for one America/New_York business date.
+
+    Register activity must follow the local day when money was actually
+    collected. Using a plain UTC ``YYYY-MM-DD`` prefix can put evening cash
+    payments into tomorrow's drawer, especially during daylight-saving time.
+    """
+    local_day = date.fromisoformat(day_iso)
+    start_local = datetime.combine(local_day, datetime.min.time(), tzinfo=BUSINESS_TZ)
+    end_local = start_local + timedelta(days=1)
+    return (
+        start_local.astimezone(timezone.utc).isoformat(),
+        end_local.astimezone(timezone.utc).isoformat(),
+    )
+
+
 # Context-var flag used by bulk-booking endpoints (recurring, multi-dates) to
 # suppress the per-booking admin notification. After the bulk loop completes,
 # the bulk endpoint sends a SINGLE summary email instead — so the admin gets
@@ -5456,6 +5472,22 @@ async def check_out(
             update["paid_at"] = ts
         if body.payment_method:
             update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
+
+    # Mixed credits + cash: credits may cover the base visit while add-ons,
+    # overages, tips, or uncovered extra nights are paid today. Preserve the
+    # credit redemption as the primary booking method, but explicitly record
+    # the cash portion and its real tender so the physical drawer/reporting
+    # receives it exactly once.
+    mixed_preview = {**booking, **update}
+    if mixed_preview.get("payment_method") == "credits":
+        actual_now = float(mixed_preview.get("actual_price") or 0)
+        credit_now = float(mixed_preview.get("credit_value") or 0)
+        explicit_cash = float(body.amount_paid or 0) if body.amount_paid is not None else 0.0
+        cash_component = round(explicit_cash if explicit_cash > 0 else max(0.0, actual_now - credit_now), 2)
+        if cash_component > 0:
+            update["amount_paid"] = cash_component
+            chosen_tender = body.payment_method if body.payment_method not in (None, "credits") else booking.get("cash_payment_method")
+            update["cash_payment_method"] = _normalize_payment_method(chosen_tender or "cash", store=True)
 
     # Finalize cash-basis bookkeeping fields. `actual_price` is what the visit
     # was worth/charged; `cash_revenue` is money collected; `balance_due` is AR.
@@ -17739,8 +17771,6 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     + expenses + drawer sessions and produces one daily closeout picture.
     """
     d = day or business_today().isoformat()
-    start_ts = f"{d}T00:00:00"
-    end_ts = f"{d}T23:59:59.999Z"
     incoming_by_method = _empty_method_totals()
     expenses_by_method = _empty_method_totals()
     incoming_sources = {
@@ -17754,22 +17784,109 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     }
     activity: List[Dict[str, Any]] = []
 
-    # Booking checkout cash collected on the service date. This keeps the
-    # register closeout aligned with how the operator sees today's checked-out
-    # bookings. Credit redemptions return $0 from _cash_revenue.
-    bookings = await _booking_rows_anywhere({"date": d, "status": "completed"}, {"_id": 0}, limit=5000, sort_field="date")
-    for b in bookings:
+    # Service payments belong to the drawer on the BUSINESS DATE the money was
+    # collected — not merely the booking/service date. There are three safe
+    # sources, in priority order:
+    #   1) payment_ledger rows written for explicit/partial checkout payments,
+    #   2) bookings stamped paid_at for normal full payments, and
+    #   3) a legacy fallback for old completed rows that predate both systems.
+    # The booking-id guards below prevent the same payment being counted twice.
+    utc_start, utc_end = _business_day_utc_bounds(d)
+    ledger_payments = await db.payment_ledger.find(
+        {
+            "type": "payment",
+            "booking_id": {"$nin": [None, ""]},
+            "created_at": {"$gte": utc_start, "$lt": utc_end},
+        },
+        {"_id": 0},
+    ).to_list(10000)
+    ledger_booking_ids = {row.get("booking_id") for row in ledger_payments if row.get("booking_id")}
+    ledger_booking_map: Dict[str, Dict[str, Any]] = {}
+    if ledger_booking_ids:
+        ledger_bookings = await _booking_rows_anywhere(
+            {"id": {"$in": list(ledger_booking_ids)}},
+            {"_id": 0},
+            limit=max(5000, len(ledger_booking_ids) * 2),
+        )
+        ledger_booking_map = {b.get("id"): b for b in ledger_bookings if b.get("id")}
+
+    for pay in ledger_payments:
+        # Ledger payments are credits to the client's account and therefore
+        # stored as negative values. Convert them back to positive cash-in.
+        amt = round(abs(float(pay.get("amount") or 0)), 2)
+        if amt <= 0:
+            continue
+        method = pay.get("method") or "other"
+        booking = ledger_booking_map.get(pay.get("booking_id")) or {}
+        _add_method_total(incoming_by_method, method, amt)
+        incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+        activity.append({
+            "id": pay.get("id"), "kind": "booking_payment", "label": "Booking payment",
+            "description": pay.get("notes") or f"{booking.get('service_type','service').title()} · {booking.get('dog_name','')}",
+            "client_name": booking.get("client_name") or "", "amount": amt,
+            "payment_method": _normalize_payment_method(method),
+            "created_at": pay.get("created_at") or f"{d}T12:00:00",
+            "booking_id": pay.get("booking_id"),
+        })
+
+    paid_bookings = await _booking_rows_anywhere(
+        {"paid_at": {"$gte": utc_start, "$lt": utc_end}},
+        {"_id": 0},
+        limit=10000,
+        sort_field="paid_at",
+    )
+    for b in paid_bookings:
+        if b.get("id") in ledger_booking_ids:
+            continue
         amt = _cash_revenue(b)
-        if amt > 0:
-            _add_method_total(incoming_by_method, b.get("payment_method"), amt)
-            incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
-            activity.append({
-                "id": b.get("id"), "kind": "booking_payment", "label": "Booking checkout",
-                "description": f"{b.get('service_type','service').title()} · {b.get('dog_name','')}",
-                "client_name": b.get("client_name") or "", "amount": round(amt, 2),
-                "payment_method": _normalize_payment_method(b.get("payment_method")),
-                "created_at": b.get("checked_out_at") or b.get("paid_at") or b.get("updated_at") or b.get("created_at") or f"{d}T12:00:00",
-            })
+        if amt <= 0:
+            continue
+        collected_method = b.get("cash_payment_method") if b.get("payment_method") == "credits" else b.get("payment_method")
+        _add_method_total(incoming_by_method, collected_method, amt)
+        incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+        activity.append({
+            "id": b.get("id"), "kind": "booking_payment", "label": "Booking payment",
+            "description": f"{b.get('service_type','service').title()} · {b.get('dog_name','')}",
+            "client_name": b.get("client_name") or "", "amount": round(amt, 2),
+            "payment_method": _normalize_payment_method(collected_method),
+            "created_at": b.get("paid_at") or b.get("checked_out_at") or b.get("updated_at") or b.get("created_at") or f"{d}T12:00:00",
+            "booking_id": b.get("id"),
+        })
+
+    # Legacy fallback: old rows often have no paid_at and no payment-ledger
+    # event. Count them on their completed service date exactly as the previous
+    # register did, but never when any modern ledger payment exists.
+    legacy_bookings = await _booking_rows_anywhere(
+        {"date": d, "status": "completed", "$or": [{"paid_at": None}, {"paid_at": {"$exists": False}}, {"paid_at": ""}]},
+        {"_id": 0},
+        limit=5000,
+        sort_field="date",
+    )
+    legacy_ids = [b.get("id") for b in legacy_bookings if b.get("id")]
+    ledger_ever_ids = set()
+    if legacy_ids:
+        rows = await db.payment_ledger.find(
+            {"type": "payment", "booking_id": {"$in": legacy_ids}},
+            {"_id": 0, "booking_id": 1},
+        ).to_list(10000)
+        ledger_ever_ids = {r.get("booking_id") for r in rows if r.get("booking_id")}
+    for b in legacy_bookings:
+        if b.get("id") in ledger_ever_ids:
+            continue
+        amt = _cash_revenue(b)
+        if amt <= 0:
+            continue
+        collected_method = b.get("cash_payment_method") if b.get("payment_method") == "credits" else b.get("payment_method")
+        _add_method_total(incoming_by_method, collected_method, amt)
+        incoming_sources["booking_payments"] = round(incoming_sources["booking_payments"] + amt, 2)
+        activity.append({
+            "id": b.get("id"), "kind": "booking_payment", "label": "Booking payment · legacy",
+            "description": f"{b.get('service_type','service').title()} · {b.get('dog_name','')}",
+            "client_name": b.get("client_name") or "", "amount": round(amt, 2),
+            "payment_method": _normalize_payment_method(collected_method),
+            "created_at": b.get("checked_out_at") or b.get("updated_at") or b.get("created_at") or f"{d}T12:00:00",
+            "booking_id": b.get("id"),
+        })
 
     # Retail_sales is the existing cash-basis income ledger for log sales,
     # credit-pack sales, training-program sales, and tab payments.
@@ -18066,7 +18183,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
         "alerts": alerts[:100],
         "activity": recent_activity,
         "explain": {
-            "register_first": "These totals use the same Register/POS sources shown on the dashboard: completed booking cash, retail/manual sales, credit-pack sales, refunds, expenses, till adjustments, and closeouts.",
+            "register_first": "These totals use the same Register/POS sources shown on the dashboard: booking payments on the date collected, retail/manual sales, credit-pack sales, refunds, expenses, till adjustments, and closeouts.",
             "till_adjustments": "Till adjustments affect drawer reconciliation only and are excluded from revenue and expense totals.",
             "credits": "Credit-pack sales count when sold. Credit redemptions are operational usage and are not counted again as new cash.",
         },
