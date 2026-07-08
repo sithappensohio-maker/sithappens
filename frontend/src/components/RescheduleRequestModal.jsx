@@ -51,7 +51,7 @@ export default function RescheduleRequestModal({ booking, onClose, onSubmitted }
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
          onClick={onClose}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-7 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto"
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-7 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
            onClick={(e) => e.stopPropagation()}
            data-testid="reschedule-request-modal">
         <div className="mb-4">

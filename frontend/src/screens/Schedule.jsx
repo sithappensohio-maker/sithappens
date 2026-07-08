@@ -336,7 +336,7 @@ export default function Schedule() {
              onClick={()=>{ setDayOpen(null); setNewBooking(null); }}
              data-testid="day-roster-modal">
           <div onClick={(e)=>e.stopPropagation()}
-               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[92vh] overflow-y-auto">
+               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
             <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
               <div className="min-w-0">
                 <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Day Roster</p>

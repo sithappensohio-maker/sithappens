@@ -594,7 +594,7 @@ function ReminderSettingsModal({ onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="reminder-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-5 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-5 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-3">
           <h3 className="text-lg font-black text-white uppercase italic tracking-tight">
             <i className="fas fa-bell text-shBlue mr-2"/>Practice reminders

@@ -144,7 +144,7 @@ export default function CreditPacksSettings() {
              onClick={closeModal}
              data-testid="pack-form-modal">
           <div onClick={(e)=>e.stopPropagation()}
-               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] overflow-y-auto">
+               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
             <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
               <h5 className="text-white font-black text-[16px] uppercase italic tracking-tight">{editing ? `Edit · ${editing.name}` : "New Pack"}</h5>
               <button onClick={closeModal} className="text-gray-500 hover:text-white" data-testid="pack-form-close">

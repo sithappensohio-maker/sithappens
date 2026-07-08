@@ -20,7 +20,7 @@ export default function Lightbox({ photos, index, onClose, onIndex }) {
         <button onClick={(e)=>{e.stopPropagation(); onIndex(index-1);}}
                 className="absolute left-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white text-3xl" data-testid="lightbox-prev"><i className="fas fa-chevron-left" /></button>
       )}
-      <img src={photos[index]} alt="" className="max-h-[90vh] max-w-[92vw] rounded shadow-2xl" onClick={(e)=>e.stopPropagation()} />
+      <img src={photos[index]} alt="" className="max-h-[calc(var(--app-height)_-_2rem)] max-w-[92vw] rounded shadow-2xl" onClick={(e)=>e.stopPropagation()} />
       {index < photos.length - 1 && (
         <button onClick={(e)=>{e.stopPropagation(); onIndex(index+1);}}
                 className="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white text-3xl" data-testid="lightbox-next"><i className="fas fa-chevron-right" /></button>

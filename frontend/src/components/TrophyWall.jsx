@@ -25,7 +25,7 @@ function TrophyDetailModal({ award, onClose }) {
   // stacking context can't trap us behind a sibling card.
   return createPortal((
     <div className="fixed inset-0 z-[100] bg-black/85 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-detail-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-4">
             <TrophyBadge trophy={award} size="lg"/>
@@ -125,7 +125,7 @@ export function ManualAwardPicker({ recipientType, recipientId, onClose, onAward
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="manual-award-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-xl font-black uppercase italic text-white"><i className="fas fa-trophy text-shOrange mr-2"/>Award a Trophy</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>

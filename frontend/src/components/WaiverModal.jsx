@@ -37,7 +37,7 @@ export default function WaiverModal({ waiverText, version, dogNames, onSigned, o
 
   return (
     <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-50" data-testid="waiver-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in card-waiver">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in card-waiver">
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="text-2xl font-black text-white uppercase italic tracking-tight">Client Waiver</h3>

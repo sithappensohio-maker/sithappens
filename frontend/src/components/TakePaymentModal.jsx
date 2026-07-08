@@ -64,7 +64,7 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
     <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-4"
          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
          data-testid="take-payment-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto card-payment">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto card-payment">
         <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
           <i className="fas fa-cash-register text-shGreen mr-2"/>Take Payment
         </h3>

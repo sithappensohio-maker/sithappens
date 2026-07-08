@@ -461,7 +461,7 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
           after ~4s. Two flavors: a next-day unlock celebration and a final
           plan-complete celebration. */}
       {celebration && createPortal(
-        <div className="fixed inset-x-0 bottom-6 z-[10000] flex justify-center px-4 pointer-events-none"
+        <div className="safe-bottom-6 fixed inset-x-0 bottom-6 z-[10000] flex justify-center px-4 pointer-events-none"
              data-testid={`day-advance-toast-${celebration.kind}`}>
           <div className={`pointer-events-auto relative max-w-md w-full rounded-xl shadow-2xl border px-4 py-3 flex items-center gap-3 animate-slide-in overflow-visible ${
                   celebration.kind === "complete"
@@ -546,7 +546,7 @@ function CatchUpModal({ target, onApply, onClose }) {
   };
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="catch-up-modal">
-      <div className="bg-bgPanel border border-shOrange/40 rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-shOrange/40 rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h4 className="text-lg font-black text-white uppercase italic tracking-tight">
           <i className="fas fa-clock-rotate-left text-shOrange mr-2"/>Catch up — {target.dog_name}
         </h4>

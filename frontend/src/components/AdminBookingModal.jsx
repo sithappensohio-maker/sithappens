@@ -515,7 +515,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-2 sm:p-4 z-50" data-testid="admin-booking-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto overflow-x-hidden animate-slide-in">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto overflow-x-hidden animate-slide-in">
         <div className="flex items-center justify-between mb-5">
           <div>
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>

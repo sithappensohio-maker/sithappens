@@ -97,7 +97,7 @@ export default function IntakeFormsSection({ clientId = null, dogId = null, labe
 
       {open && createPortal((
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Send intake form</h4>
               <button onClick={()=>setOpen(false)} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>

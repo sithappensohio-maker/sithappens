@@ -397,7 +397,7 @@ function TemplateEditorModal({ tpl, setTpl, onCancel, onSave }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in" data-testid="template-editor">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="template-editor">
         <div className="flex items-center justify-between mb-5">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{tpl.id ? "Edit Form Template" : "New Form Template"}</h4>
           <button onClick={onCancel} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
@@ -530,7 +530,7 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in" data-testid="submission-reviewer">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="submission-reviewer">
         <div className="flex items-center justify-between mb-3">
           <div>
             <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{sub.template_name}</h4>

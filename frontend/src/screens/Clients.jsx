@@ -1311,7 +1311,7 @@ function SellProgramModal({ client, onClose, onSold }) {
 function Modal({ title, children, onClose, maxWidth = "max-w-md" }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className={`bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full ${maxWidth} p-5 sm:p-8 shadow-2xl animate-slide-in max-h-[95vh] sm:max-h-[90vh] overflow-y-auto`}>
+      <div className={`bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full ${maxWidth} p-5 sm:p-8 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] sm:max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto`}>
         <div className="flex items-center justify-between mb-5 sm:mb-6 sticky top-0 bg-bgPanel pt-1 -mt-1 z-10">
           <h4 className="text-lg sm:text-xl font-black text-white uppercase italic tracking-tight pr-3">{title}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white text-xl shrink-0 p-1 -m-1"><i className="fas fa-times" /></button>

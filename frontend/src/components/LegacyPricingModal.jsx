@@ -99,7 +99,7 @@ export default function LegacyPricingModal({ client, onClose }) {
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 grid place-items-center p-4"
          onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
          data-testid="legacy-pricing-modal">
-      <div className="bg-bgCard border border-bgHover rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div className="bg-bgCard border border-bgHover rounded-2xl shadow-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="sticky top-0 bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-b border-amber-500/30 p-5 z-10">
           <div className="flex items-start justify-between gap-4">
             <div>

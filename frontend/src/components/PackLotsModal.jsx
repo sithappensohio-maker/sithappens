@@ -81,7 +81,7 @@ export default function PackLotsModal({ client, onClose }) {
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto"
          data-testid="pack-lots-modal" onClick={onClose}>
       <div onClick={(e)=>e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-xl p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+           className="bg-bgPanel border border-bgHover rounded-xl p-5 max-w-2xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex justify-between items-start mb-1">
           <div>
             <h2 className="text-[20px] font-black text-white uppercase italic tracking-tight">Pack Lots</h2>

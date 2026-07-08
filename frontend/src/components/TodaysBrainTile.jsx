@@ -154,7 +154,7 @@ function TodaysBrainModal({ items, counts, onClose, onCTA, onDismiss, onClearAll
 
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3" onClick={onClose} data-testid="todays-brain-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-hidden flex flex-col min-h-0 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-bgHover gap-2 flex-wrap">
           <h4 className="text-lg font-black uppercase italic tracking-tight text-white">
             <i className="fas fa-list-check text-shBlue mr-2"/>Today's tasks · {items.length}

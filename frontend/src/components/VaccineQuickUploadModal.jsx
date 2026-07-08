@@ -102,7 +102,7 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4"
          data-testid="vaccine-quick-upload-modal" onClick={onClose}>
       <div onClick={(e)=>e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl animate-slide-in max-h-[92vh] overflow-y-auto pb-safe">
+           className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto pb-safe">
         {/* Header */}
         <div className="sticky top-0 z-10 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover flex items-start justify-between gap-3">
           <div className="min-w-0">

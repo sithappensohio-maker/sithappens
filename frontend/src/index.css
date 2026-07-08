@@ -440,7 +440,7 @@ input[type="week"]::-webkit-calendar-picker-indicator {
 
 /* PWA safe-area insets — respect iPhone notch + Android nav bar */
 .pt-safe { padding-top: env(safe-area-inset-top); }
-.pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+.pb-safe { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
 .pl-safe { padding-left: env(safe-area-inset-left); }
 .pr-safe { padding-right: env(safe-area-inset-right); }
 .mb-safe { margin-bottom: env(safe-area-inset-bottom); }
@@ -1799,3 +1799,119 @@ html[data-case="sentence"] h1.italic.uppercase,
 html[data-case="sentence"] .text-5xl.italic.uppercase,
 html[data-case="sentence"] .text-6xl.italic.uppercase,
 html[data-case="sentence"] .sh-display { text-transform: none !important; }
+
+/* ── Mobile viewport + bottom-scroll hardening (July 2026 UI audit) ────────
+   Mobile browsers often report `100vh` as taller than the actually visible
+   area because the address bar, navigation bar, or software keyboard covers
+   part of it. The JS bootstrap keeps --app-height synced to visualViewport.
+   These rules make every primary shell and modal use that visible height and
+   guarantee that content can shrink and scroll all the way to its last row. */
+:root {
+  --app-height: 100vh;
+  --visual-viewport-offset-top: 0px;
+}
+@supports (height: 100dvh) {
+  :root { --app-height: 100dvh; }
+}
+
+html, body, #root {
+  min-height: var(--app-height);
+}
+
+/* Override Tailwind's static viewport helpers with the visible viewport. */
+.h-screen { height: var(--app-height) !important; }
+.min-h-screen { min-height: var(--app-height) !important; }
+.max-h-screen { max-height: var(--app-height) !important; }
+
+.app-shell {
+  height: var(--app-height) !important;
+  min-height: 0;
+  max-height: var(--app-height);
+}
+.app-shell > main,
+.app-shell > .app-scroll-root,
+.app-shell main,
+.app-mobile-drawer,
+.app-mobile-drawer nav {
+  min-height: 0;
+}
+.app-mobile-drawer {
+  height: var(--app-height);
+  max-height: var(--app-height);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.app-scroll-root,
+[data-scroll-root] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+.app-scroll-root {
+  padding-bottom: max(1rem, calc(1rem + env(safe-area-inset-bottom)));
+}
+
+/* Keep phone-only fixed actions above the home indicator/navigation bar. */
+.employee-incident-fab {
+  bottom: calc(1.25rem + env(safe-area-inset-bottom)) !important;
+}
+
+/* Any full-screen overlay must itself be allowed to scroll. This catches the
+   older hand-built modals as well as newer bottom sheets without requiring
+   every screen to reinvent the same phone-height fix. */
+@media (max-width: 767px) {
+  .fixed.inset-0 {
+    max-height: var(--app-height);
+  }
+
+  .fixed.inset-0.flex,
+  .fixed.inset-0.grid {
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  /* Center dialogs when they fit. When they are taller than the phone, auto
+     margins collapse to zero so the top and bottom remain reachable. */
+  .fixed.inset-0.flex.items-center.justify-center {
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+  }
+  .fixed.inset-0.grid.place-items-center {
+    place-items: start center !important;
+  }
+  .fixed.inset-0.flex.items-center.justify-center > :not(.absolute),
+  .fixed.inset-0.grid.place-items-center > :not(.absolute) {
+    margin-top: auto;
+    margin-bottom: auto;
+    max-height: calc(var(--app-height) - max(1.5rem, env(safe-area-inset-top)) - max(1.5rem, env(safe-area-inset-bottom))) !important;
+  }
+
+  /* Simple modal cards previously had no max-height or overflow rule. Make
+     those cards independently scrollable, while preserving components that
+     intentionally use an internal flex-body scroller via overflow-hidden. */
+  .fixed.inset-0.flex.items-center.justify-center > .bg-bgPanel:not(.overflow-hidden):not(.flex-col),
+  .fixed.inset-0.grid.place-items-center > .bg-bgPanel:not(.overflow-hidden):not(.flex-col),
+  .fixed.inset-0.flex.items-end > .bg-bgPanel:not(.overflow-hidden):not(.flex-col) {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  .fixed.inset-0.flex.items-end > :not(.absolute) {
+    max-height: calc(var(--app-height) - max(0.75rem, env(safe-area-inset-top))) !important;
+  }
+
+  /* Sticky action bars need enough bottom padding to clear gesture areas. */
+  .sticky.bottom-0 {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+}
+
+.mobile-dialog-content { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+.mobile-sheet-content { padding-bottom: max(1.5rem, env(safe-area-inset-bottom)); }
+.mobile-drawer-content { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+
+.safe-bottom-4 { bottom: calc(1rem + env(safe-area-inset-bottom)) !important; }
+.safe-bottom-6 { bottom: calc(1.5rem + env(safe-area-inset-bottom)) !important; }

@@ -309,7 +309,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-2 sm:p-4" onClick={onClose} data-testid="portal-book-wizard">
-      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-2xl w-full max-h-[92vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-2xl w-full max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5" onClick={(e)=>e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>

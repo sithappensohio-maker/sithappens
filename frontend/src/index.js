@@ -3,6 +3,22 @@ import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
 
+// Keep the app aligned to the *visible* mobile viewport. `100vh` can include
+// browser chrome or the area hidden by the on-screen keyboard, which makes
+// the bottom of pages and dialogs impossible to reach on some phones.
+const syncVisualViewport = () => {
+  const viewport = window.visualViewport;
+  const height = Math.max(320, Math.round(viewport?.height || window.innerHeight));
+  const offsetTop = Math.max(0, Math.round(viewport?.offsetTop || 0));
+  document.documentElement.style.setProperty("--app-height", `${height}px`);
+  document.documentElement.style.setProperty("--visual-viewport-offset-top", `${offsetTop}px`);
+};
+syncVisualViewport();
+window.addEventListener("resize", syncVisualViewport, { passive: true });
+window.addEventListener("orientationchange", syncVisualViewport, { passive: true });
+window.visualViewport?.addEventListener("resize", syncVisualViewport, { passive: true });
+window.visualViewport?.addEventListener("scroll", syncVisualViewport, { passive: true });
+
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <React.StrictMode>

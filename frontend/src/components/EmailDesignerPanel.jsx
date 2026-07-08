@@ -541,7 +541,7 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid="template-create-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 shadow-2xl max-h-[calc(100vh-2rem)] overflow-y-auto">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
           <i className="fas fa-envelope-open-text text-shGreen mr-2"/>Create Custom Template
         </h3>
@@ -726,7 +726,7 @@ function TemplateEditorModal({ slug, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
-        className="bg-bgPanel border border-bgHover rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
+        className="bg-bgPanel border border-bgHover rounded-xl shadow-2xl max-w-3xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
         onClick={e => e.stopPropagation()}
         data-testid={`template-editor-${slug}`}
       >

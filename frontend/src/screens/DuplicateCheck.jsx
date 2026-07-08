@@ -127,7 +127,7 @@ function MergePreviewModal({ preview, busy, confirmText, setConfirmText, note, s
   const duplicate = p.duplicate || {};
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-bgPanel border border-shBlue/40 rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5 space-y-4 shadow-2xl">
+      <div className="bg-bgPanel border border-shBlue/40 rounded-2xl max-w-4xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto p-5 space-y-4 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-white text-xl font-black uppercase italic"><i className="fas fa-paw text-shGreen mr-2"/>Dog merge dry-run</h2>

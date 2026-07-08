@@ -407,7 +407,7 @@ function BrowseServicesModal({ services, onClose, onCta }) {
          onClick={onClose}
          data-testid="landing-browse-modal">
       <div onClick={(e) => e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[92vh] overflow-y-auto shadow-2xl animate-slide-in">
+           className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto shadow-2xl animate-slide-in">
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover">
           <div className="min-w-0">
             <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight">

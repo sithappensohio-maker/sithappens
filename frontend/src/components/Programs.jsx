@@ -135,13 +135,13 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="program-editor">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
           <h4 className="text-base font-black text-white uppercase italic">{program.id?"Edit Program":"New Program"}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
 
-        <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
+        <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Name *">
               <input value={program.name} onChange={(e)=>set({name:e.target.value})} data-testid="prog-name"

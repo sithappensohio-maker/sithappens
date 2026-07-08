@@ -148,7 +148,7 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[95vh] overflow-y-auto animate-slide-in"
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in"
            data-testid="portal-intake-modal">
         <div className="flex items-start justify-between mb-1">
           <div className="flex-1 min-w-0 pr-3">

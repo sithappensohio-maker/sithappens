@@ -2406,7 +2406,7 @@ export function RegisterTab() {
             </div>)}
           </div>
         </div>
-        {expenseReceiptPreview && <div className="fixed inset-0 bg-black/90 z-[90] flex items-center justify-center p-4" onClick={()=>setExpenseReceiptPreview(null)}><img src={expenseReceiptPreview} alt="receipt preview" className="max-h-[90vh] max-w-[92vw] rounded shadow-2xl" onClick={e=>e.stopPropagation()}/><button onClick={()=>setExpenseReceiptPreview(null)} className="absolute top-4 right-6 text-white/70 hover:text-white text-3xl"><i className="fas fa-times"/></button></div>}
+        {expenseReceiptPreview && <div className="fixed inset-0 bg-black/90 z-[90] flex items-center justify-center p-4" onClick={()=>setExpenseReceiptPreview(null)}><img src={expenseReceiptPreview} alt="receipt preview" className="max-h-[calc(var(--app-height)_-_2rem)] max-w-[92vw] rounded shadow-2xl" onClick={e=>e.stopPropagation()}/><button onClick={()=>setExpenseReceiptPreview(null)} className="absolute top-4 right-6 text-white/70 hover:text-white text-3xl"><i className="fas fa-times"/></button></div>}
       </div>}
 
       {active === "closeout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">

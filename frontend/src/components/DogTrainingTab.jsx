@@ -273,7 +273,7 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid={`lesson-plan-modal-${enrollment.id}`}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-hidden flex flex-col min-h-0">
         <div className="px-5 py-4 border-b border-bgHover flex items-center justify-between" style={{background: color + "10"}}>
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.3em]" style={{color}}>Lesson Plan · Trainer view</p>
@@ -420,12 +420,12 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
   const grouped = Object.values(typeMeta).map(t => ({ ...t, items: programs.filter(p => p.type === t.key) }));
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="enroll-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
           <h4 className="text-base font-black text-white uppercase italic">Enroll in Program</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
-        <div className="overflow-y-auto flex-1 p-4 space-y-4">
+        <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-4">
           {grouped.filter(g => g.items.length > 0).map(g => (
             <div key={g.key}>
               <p className="text-[15px] font-black uppercase tracking-widest mb-2" style={{color: g.color}}>{g.label}</p>

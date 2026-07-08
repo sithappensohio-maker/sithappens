@@ -267,7 +267,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
           scrolls inside the card on small screens. Previously the bottom
           action row (Cancel / Create Plan) overflowed past the bottom and
           visually bled into the page underneath. */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[calc(100vh-2rem)]"
+      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-lg shadow-2xl flex flex-col min-h-0 max-h-[calc(var(--app-height)_-_2rem)]"
            onClick={e => e.stopPropagation()}
            data-testid="create-plan-modal">
         <div className="px-6 py-4 border-b border-bgHover flex items-baseline justify-between shrink-0">

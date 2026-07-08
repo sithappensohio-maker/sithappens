@@ -40,7 +40,7 @@ export default function InstallPrompt() {
     return (
       <div
         data-testid="install-app-prompt"
-        className="fixed bottom-4 left-4 z-[9998] flex items-center gap-3 bg-bgPanel border border-shGreen/40 shadow-2xl rounded-xl px-4 py-3 max-w-xs"
+        className="safe-bottom-4 fixed bottom-4 left-4 z-[9998] flex items-center gap-3 bg-bgPanel border border-shGreen/40 shadow-2xl rounded-xl px-4 py-3 max-w-xs"
       >
         <img src="/icon-192.png" alt="" className="h-10 w-10 rounded-lg flex-shrink-0" />
         <div className="flex-1 min-w-0">
@@ -65,7 +65,7 @@ export default function InstallPrompt() {
     return (
       <div
         data-testid="install-ios-hint"
-        className="fixed bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm z-[9998] flex items-start gap-3 bg-bgPanel border border-shBlue/40 shadow-2xl rounded-xl px-4 py-3"
+        className="safe-bottom-4 fixed bottom-4 left-4 right-4 sm:right-auto sm:max-w-sm z-[9998] flex items-start gap-3 bg-bgPanel border border-shBlue/40 shadow-2xl rounded-xl px-4 py-3"
       >
         <img src="/icon-192.png" alt="" className="h-10 w-10 rounded-lg flex-shrink-0" />
         <div className="flex-1 min-w-0">

@@ -52,7 +52,7 @@ export default function EmployeePortal() {
   const [incidentOpen, setIncidentOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-bgBase flex flex-col" data-scroll-root data-testid="employee-portal">
+    <div className="min-h-screen bg-bgBase flex flex-col pb-safe" data-scroll-root data-testid="employee-portal">
       <header className="bg-bgPanel border-b border-bgHover p-3 sm:p-4 flex items-center justify-between gap-2 sticky top-0 z-30">
         <div className="flex items-center gap-2 min-w-0">
           <img src="/logo.png" alt="Sit Happens" className="w-10 h-10 sm:w-12 sm:h-12 object-contain shrink-0" />
@@ -85,7 +85,7 @@ export default function EmployeePortal() {
         ))}
       </nav>
 
-      <main className="flex-1 p-3 sm:p-5 pb-safe max-w-3xl w-full mx-auto">
+      <main className="flex-1 p-3 sm:p-5 pb-28 sm:pb-8 max-w-3xl w-full mx-auto">
         {tab === "clock" && <ClockTab />}
         {tab === "roster" && <RosterTab />}
         {tab === "tasks" && <MyTasksTab />}
@@ -104,7 +104,7 @@ export default function EmployeePortal() {
         type="button"
         onClick={() => setIncidentOpen(true)}
         data-testid="emp-incident-fab"
-        className="fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-2xl shadow-red-900/40 px-5 py-4 font-black uppercase tracking-widest text-[13px] flex items-center gap-2 transition-transform active:scale-95"
+        className="employee-incident-fab fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-2xl shadow-red-900/40 px-5 py-4 font-black uppercase tracking-widest text-[13px] flex items-center gap-2 transition-transform active:scale-95"
         title="Log an incident — bite, injury, escape, etc."
       >
         <i className="fas fa-triangle-exclamation"/>
@@ -1130,7 +1130,7 @@ function IncidentLogModal({ onClose }) {
   };
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-2" data-testid="incident-modal">
-      <div className="bg-bgPanel w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-red-500/30 max-h-[92vh] overflow-y-auto">
+      <div className="bg-bgPanel w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl border border-red-500/30 max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-4 py-3 flex justify-between items-center">
           <p className="font-black text-white uppercase tracking-widest"><i className="fas fa-triangle-exclamation text-red-400 mr-2"/>Log Incident</p>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><i className="fas fa-xmark"/></button>
@@ -1246,7 +1246,7 @@ function PunchCorrectionModal({ seed, onClose }) {
   };
   return (
     <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-2" data-testid="punch-correction-modal">
-      <div className="bg-bgPanel w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-shOrange/30 max-h-[92vh] overflow-y-auto">
+      <div className="bg-bgPanel w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl border border-shOrange/30 max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-4 py-3 flex justify-between items-center">
           <p className="font-black text-white uppercase tracking-widest"><i className="fas fa-clock-rotate-left text-shOrange mr-2"/>Punch correction</p>
           <button onClick={onClose} className="text-gray-400 hover:text-white"><i className="fas fa-xmark"/></button>

@@ -179,7 +179,7 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
             </div>
 
             {/* Active conversation */}
-            <div className="sm:col-span-2 flex flex-col max-h-[70vh]">
+            <div className="sm:col-span-2 flex flex-col min-h-0 max-h-[70vh]">
               {!active && (
                 <p className="text-[13px] text-gray-500 p-8 text-center">Select a message or start a new one.</p>
               )}
@@ -192,7 +192,7 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
                       {active.dog_name && <span> · 🐾 {active.dog_name}</span>}
                     </p>
                   </div>
-                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
                     {(active.messages || []).map(m => {
                       const isMe = m.sender_role === "client";
                       return (

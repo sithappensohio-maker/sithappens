@@ -242,7 +242,7 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="session-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl max-h-[92vh] flex flex-col shadow-2xl">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
           <div>
             <h4 className="text-lg font-black text-white uppercase italic">Log Training Session</h4>
@@ -251,7 +251,7 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
 
-        <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
+        <div className="px-6 py-4 space-y-3 overflow-y-auto flex-1 min-h-0">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
               <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Date</label>
@@ -329,12 +329,12 @@ function SessionLogModal({ dogId, dogName, meta, existingCurric, onClose, onSave
 function HistoryModal({ sessions, meta, commandsById, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="history-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
         <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
           <h4 className="text-base font-black text-white uppercase italic">Session History · {sessions.length}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
         </div>
-        <div className="overflow-y-auto flex-1 divide-y divide-bgHover">
+        <div className="overflow-y-auto flex-1 min-h-0 divide-y divide-bgHover">
           {sessions.length === 0 && <p className="px-6 py-8 text-center text-gray-500 text-sm">No sessions logged yet.</p>}
           {sessions.map(s => (
             <div key={s.id} className="px-6 py-3">

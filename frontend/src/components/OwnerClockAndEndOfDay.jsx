@@ -207,7 +207,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       </button>
       {open && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-end sm:items-center justify-center p-2" onClick={close} data-testid="end-of-day-modal">
-          <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
+          <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto" onClick={(e)=>e.stopPropagation()}>
             <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-3 flex justify-between items-center">
               <div>
                 <p className={`text-[10px] font-black uppercase tracking-[0.3em] ${latestCloseout ? "text-shGreen" : dayStarted ? "text-shOrange" : "text-shBlue"}`}><i className={`fas ${latestCloseout ? "fa-circle-check" : dayStarted ? "fa-moon" : "fa-list-check"} mr-1`}/>{latestCloseout ? "Day complete" : dayStarted ? "End of day" : "Start day"}</p>

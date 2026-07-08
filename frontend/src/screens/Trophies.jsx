@@ -160,7 +160,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-editor">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-black uppercase italic text-white"><i className="fas fa-trophy text-shOrange mr-2"/>{isNew ? "New Trophy" : "Edit Trophy"}</h3>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>

@@ -76,7 +76,7 @@ export default function TemplatePicker({ dogs, defaultDogId = "", onClose, onAss
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="template-picker">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-2xl" onClick={(e)=>e.stopPropagation()}>
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover p-5 flex items-center justify-between z-10">
           <div>
             <h3 className="text-xl font-black text-white uppercase italic tracking-tight">{selected ? "Customize & Assign" : "Pick a Homework Template"}</h3>

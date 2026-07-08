@@ -142,7 +142,7 @@ function SignAgreementModal({ plan, onClose, onSigned }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl"
+      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto shadow-2xl"
            onClick={e => e.stopPropagation()}
            data-testid={`sign-modal-${plan.id}`}>
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-6 py-4 flex items-baseline justify-between z-10">

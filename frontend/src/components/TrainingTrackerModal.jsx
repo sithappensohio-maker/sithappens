@@ -132,7 +132,7 @@ export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, o
     <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid="training-tracker-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl max-h-[95vh] flex flex-col">
+      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl max-h-[calc(var(--app-height)_-_0.75rem)] flex flex-col min-h-0">
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b border-bgHover flex items-center justify-between sticky top-0 bg-bgPanel rounded-t-2xl">
           <div className="min-w-0">
@@ -153,7 +153,7 @@ export default function TrainingTrackerModal({ bookingId, dogId, enrollmentId, o
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto px-4 sm:px-6 py-4 space-y-4">
+        <div className="overflow-y-auto flex-1 min-h-0 px-4 sm:px-6 py-4 space-y-4">
           {ctx.current_module?.description && (
             <div data-testid="tracker-module-description"
                  className="bg-bgBase/60 border-l-2 border-shBlue/40 rounded p-3 text-[14px] text-gray-300 leading-relaxed whitespace-pre-wrap">

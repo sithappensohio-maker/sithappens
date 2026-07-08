@@ -242,7 +242,7 @@ function AdminShell() {
   );
 
   return (
-    <div className="h-screen w-screen flex bg-bgBase overflow-hidden">
+    <div className="app-shell h-screen w-screen flex bg-bgBase overflow-hidden">
       {/* Desktop sidebar — Sprint 110di-41: width responds to collapsed
           state (w-16 icon-only / w-64 full). Transition kept short so the
           page reflow feels snappy. */}
@@ -255,16 +255,16 @@ function AdminShell() {
            onClick={()=>setDrawerOpen(false)} data-testid="drawer-backdrop">
         <div className="absolute inset-0 bg-black/70" />
       </div>
-      <aside className={`md:hidden fixed top-0 left-0 bottom-0 z-50 w-64 bg-bgHeader border-r border-bgHover flex flex-col transition-transform duration-200 ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
+      <aside className={`app-mobile-drawer md:hidden fixed top-0 left-0 bottom-0 z-50 w-64 bg-bgHeader border-r border-bgHover flex flex-col min-h-0 transition-transform duration-200 ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
              data-testid="mobile-drawer">
         {sidebarContent("mobile-")}
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
+      <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
         {/* Sprint 110u — top header gets the same backdrop-blur + accent glow
             treatment as the landing page nav. Page title becomes a big
             uppercase-italic-black badge instead of a tiny label. */}
-        <header className="relative bg-bgHeader/95 backdrop-blur border-b border-bgHover h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden">
+        <header className="relative shrink-0 bg-bgHeader/95 backdrop-blur border-b border-bgHover h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden">
           <div className="absolute inset-0 pointer-events-none opacity-25"
                style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.35) 0%, transparent 40%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.25) 0%, transparent 45%)" }}/>
           <div className="relative flex items-center gap-3 min-w-0">
@@ -287,7 +287,7 @@ function AdminShell() {
           </button>
           <button onClick={()=>setSearchOpen(true)} className="relative md:hidden text-gray-300 p-2 hover:text-shGreen transition"><i className="fas fa-search" /></button>
         </header>
-        <div className="flex-1 overflow-y-auto p-4 md:p-8 relative" data-scroll-root>
+        <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 relative" data-scroll-root>
           {tab === "dashboard" && <Dashboard
             onNavigate={(t)=>setTab(t)}
             onJumpToDog={(id)=>{ setSearchTarget({kind:"dog", id, mode:"open"}); setTab("dogs"); }}

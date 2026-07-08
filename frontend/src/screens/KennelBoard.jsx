@@ -285,7 +285,7 @@ function LabelsModal({ labels, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-slide-in max-h-[95vh] overflow-y-auto" data-testid="labels-modal">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto" data-testid="labels-modal">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Kennel Board Labels</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>

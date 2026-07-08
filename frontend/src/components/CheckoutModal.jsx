@@ -283,7 +283,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto">
+      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
             <i className="fas fa-sign-out-alt text-shBlue mr-2"/>Check Out · {booking.dog_name}

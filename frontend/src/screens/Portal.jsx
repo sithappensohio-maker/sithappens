@@ -112,7 +112,7 @@ function MyRecurringModal({ dogs, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-3 sm:p-6" onClick={onClose} data-testid="my-recurring-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg shadow-2xl max-h-[92vh] overflow-y-auto">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
         <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
           <div className="flex items-center gap-2 min-w-0">
             {step === "form" && <button onClick={()=>setStep("list")} className="text-gray-400 hover:text-white"><i className="fas fa-arrow-left"/></button>}
@@ -279,7 +279,7 @@ function ReferFriendModal({ code, onClose }) {
   const email = `mailto:?subject=${encodeURIComponent("Try Sit Happens with my code!")}&body=${encodeURIComponent(message)}`;
   return (
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="refer-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe">
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-3"><span className="text-shOrange text-2xl"><i className="fas fa-gift"/></span><h4 className="text-xl font-black text-white uppercase italic tracking-tight">Refer a Friend</h4></div>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
@@ -329,7 +329,7 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
   const label = { rabies: "Rabies", bordetella: "Bordetella", dhpp: "DHPP" }[vaccine] || vaccine;
   return (
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="vaccine-upload-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe">
         <div className="flex items-start justify-between gap-3 mb-3">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Update {label} for {dog.name}</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
@@ -391,7 +391,7 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
   return (
     <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
          data-testid="vaccine-onboarding-modal">
-      <div className="bg-bgPanel border border-shOrange/60 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl animate-slide-in max-h-[92vh] overflow-y-auto"
+      <div className="bg-bgPanel border border-shOrange/60 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto"
            onClick={(e)=>e.stopPropagation()}>
         <div className="bg-gradient-to-br from-shOrange/25 to-shBlue/10 p-5 sm:p-6 border-b border-shOrange/30">
           <div className="flex items-center gap-2 mb-1">
@@ -581,7 +581,7 @@ function ServiceInfoModal({ type, onClose, customDescriptions }) {
   const summary = customDescriptions?.[type] || info.summary;
   return (
     <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose} data-testid="service-info-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[90vh] overflow-y-auto pb-safe" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe" onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-start justify-between gap-3 mb-3">
           <div className="flex items-center gap-3 min-w-0">
             <span className={`text-2xl ${info.color}`}><i className={`fas ${info.icon}`}/></span>
@@ -954,12 +954,12 @@ export default function Portal() {
   // header. No need to track per-step state here anymore.
 
   return (
-    <div className="h-full flex flex-col bg-bgBase" data-testid="client-portal">
+    <div className="app-shell h-full min-h-0 flex flex-col bg-bgBase" data-testid="client-portal">
       <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
       {/* Sprint 110u — landing-page-style portal header. Bigger glowing logo,
           richer welcome line, brand-color glow backdrop. Same buttons, same
           behaviour — purely visual upgrade. */}
-      <header className="relative bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-28 overflow-hidden">
+      <header className="relative shrink-0 bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-28 overflow-hidden">
         <div className="absolute inset-0 pointer-events-none opacity-30"
              style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.45) 0%, transparent 38%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.4) 0%, transparent 42%)" }}/>
         <div className="relative flex items-center gap-2 sm:gap-4 min-w-0">
@@ -1007,7 +1007,7 @@ export default function Portal() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8">
+      <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8" data-scroll-root>
         {/* Sprint 110di-18 — Admin-set announcement banner. Renders at the
             very top whenever enabled + within the date window. */}
         {announcementVisible && (() => {
@@ -2236,7 +2236,7 @@ export default function Portal() {
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}
       {showServicesModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-3 sm:p-6 animate-fade-in" onClick={()=>setShowServicesModal(false)} data-testid="services-modal">
-          <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto shadow-2xl animate-slide-in">
+          <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-5xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto shadow-2xl animate-slide-in">
             <div className="sticky top-0 z-10 flex items-center justify-between gap-3 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover">
               <div className="min-w-0">
                 <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight"><i className="fas fa-list-check text-shGreen mr-2"/>Services & Pricing</h2>
