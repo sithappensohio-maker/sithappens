@@ -1884,6 +1884,7 @@ export function RegisterTab() {
   const [payment, setPayment] = useState({ client_id: "", amount: "", method: "clover", notes: "" });
   const [refund, setRefund] = useState({ client_id: "", amount: "", payment_method: "clover", reason: "", notes: "" });
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
+  const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
   const [closeout, setCloseout] = useState({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
   const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
   const [reportEnd, setReportEnd] = useState(todayISO());
@@ -2004,6 +2005,18 @@ export function RegisterTab() {
     setPayout({ amount: "", description: "", category: payout.category, vendor: "", notes: "", tax_deductible: true });
     showDone("Cash payout logged as an expense and removed from expected drawer.");
     loadExpenses();
+  });
+  const submitTillAdjustment = () => submit(async () => {
+    await api.post("/admin/register/till-adjustment", {
+      date,
+      direction: tillAdjustment.direction,
+      amount: Number(tillAdjustment.amount || 0),
+      adjustment_type: tillAdjustment.adjustment_type,
+      reason: tillAdjustment.reason,
+      notes: tillAdjustment.notes,
+    });
+    setTillAdjustment({ ...tillAdjustment, amount: "", reason: "", notes: "" });
+    showDone(`Till adjustment saved: cash ${tillAdjustment.direction === "add" ? "added" : "removed"}.`);
   });
   const submitExpense = () => submit(async () => {
     const qty = Math.max(1, Number(expense.quantity || 1));
@@ -2137,7 +2150,7 @@ export function RegisterTab() {
     <div className="space-y-4" data-testid="register-tab">
       <div className="bg-shBlue/10 border border-shBlue/40 rounded p-3 text-[13px] text-gray-300">
         <i className="fas fa-cash-register text-shBlue mr-2"/>
-        Register Phase 4: one money hub with POS sales, expenses, receipts, closeouts, tax packet exports, and reconciliation warnings.
+        One money hub for sales, expenses, till adjustments, receipts, closeouts, tax packet exports, and reconciliation warnings.
       </div>
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[12px] font-black uppercase tracking-widest text-gray-400"><span className="block mb-1">Register date</span><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{colorScheme:"dark"}} className="bg-bgPanel border border-bgHover rounded px-3 py-2 text-white"/></label>
@@ -2149,7 +2162,7 @@ export function RegisterTab() {
       <div className="flex gap-1 overflow-x-auto border-b border-bgHover/70">
         {[
           ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
-          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["payout", "Cash Payout", "fa-money-bill-transfer"], ["expenses", "Expenses", "fa-receipt"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
+          ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["adjustment", "Till Adjustment", "fa-scale-balanced"], ["payout", "Cash Expense", "fa-money-bill-transfer"], ["expenses", "Expenses", "fa-receipt"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
         ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
@@ -2175,7 +2188,10 @@ export function RegisterTab() {
               <div className="mt-4 space-y-1 text-[13px]">
                 <Row label="Opening cash" value={totals.opening_cash || 0}/>
                 <Row label="Cash payments/refunds" value={totals.cash_in || 0}/>
-                <Row label="Cash drawer payouts" value={totals.cash_drawer_payouts || 0} neg/>
+                <Row label="Cash expense payouts" value={totals.cash_drawer_payouts || 0} neg/>
+                <Row label="Till cash added" value={totals.till_additions || 0}/>
+                <Row label="Till cash removed" value={totals.till_removals || 0} neg/>
+                <Row label="Net till adjustments" value={totals.till_adjustment_net || 0} color={Number(totals.till_adjustment_net || 0) === 0 ? undefined : Number(totals.till_adjustment_net || 0) > 0 ? "shGreen" : "shOrange"}/>
                 <Row label="Expected cash drawer" value={totals.expected_cash || 0} bold color="shGreen"/>
                 {totals.actual_cash_counted != null && <Row label="Last closeout counted" value={totals.actual_cash_counted || 0}/>} 
                 {totals.cash_over_short != null && <Row label="Over / short" value={totals.cash_over_short || 0} color={totals.cash_over_short === 0 ? "shGreen" : "shOrange"}/>} 
@@ -2290,9 +2306,37 @@ export function RegisterTab() {
         <button disabled={!Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record refund</button>
       </div>}
 
+      {active === "adjustment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-till-adjustment-tab">
+        <div>
+          <h4 className="text-white font-black uppercase italic"><i className="fas fa-scale-balanced text-shBlue mr-2"/>Till Adjustment</h4>
+          <p className="text-[12px] text-gray-500 mt-1">Use this when cash physically enters or leaves the drawer outside of a sale, refund, or business expense. Owner draws belong here. Every adjustment requires a reason and changes drawer reconciliation only.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <Select label="Cash movement" value={tillAdjustment.direction} onChange={v=>setTillAdjustment({...tillAdjustment, direction:v})}>
+            <option value="add">Add cash to till</option>
+            <option value="remove">Remove cash from till</option>
+          </Select>
+          <Select label="Adjustment type" value={tillAdjustment.adjustment_type} onChange={v=>setTillAdjustment({...tillAdjustment, adjustment_type:v, direction: v === "owner_draw" || v === "bank_deposit" ? "remove" : tillAdjustment.direction})}>
+            <option value="owner_draw">Owner draw</option>
+            <option value="change_fund">Add/remove change fund</option>
+            <option value="bank_deposit">Bank deposit</option>
+            <option value="cash_correction">Cash count correction</option>
+            <option value="other">Other adjustment</option>
+          </Select>
+          <FormInput label="Amount" type="number" step="0.01" value={tillAdjustment.amount} onChange={v=>setTillAdjustment({...tillAdjustment, amount:v})} placeholder="0.00"/>
+          <FormInput label="Reason (required)" value={tillAdjustment.reason} onChange={v=>setTillAdjustment({...tillAdjustment, reason:v})} placeholder="Owner draw, added change, bank deposit, correction..."/>
+          <FormInput label="Notes" value={tillAdjustment.notes} onChange={v=>setTillAdjustment({...tillAdjustment, notes:v})} placeholder="optional details"/>
+        </div>
+        <div className={`rounded-xl border p-3 text-[13px] ${tillAdjustment.direction === "add" ? "bg-shGreen/10 border-shGreen/40 text-shGreen" : "bg-shOrange/10 border-shOrange/40 text-shOrange"}`}>
+          <i className={`fas ${tillAdjustment.direction === "add" ? "fa-plus" : "fa-minus"} mr-2`}/>
+          This will {tillAdjustment.direction === "add" ? "increase" : "decrease"} expected drawer cash by <strong>{money(tillAdjustment.amount)}</strong>. It will not change sales income or business expenses.
+        </div>
+        <button disabled={!Number(tillAdjustment.amount) || !tillAdjustment.reason.trim()} onClick={submitTillAdjustment} className={`${tillAdjustment.direction === "add" ? "bg-shGreen" : "bg-shOrange"} disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest`} data-testid="save-till-adjustment"><i className="fas fa-save mr-1"/>Save till adjustment</button>
+      </div>}
+
       {active === "payout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
-        <h4 className="text-white font-black uppercase italic"><i className="fas fa-money-bill-transfer text-shOrange mr-2"/>Cash Drawer Payout</h4>
-        <p className="text-[12px] text-gray-500">Use this when you physically take cash from the drawer for a business expense. It logs the expense and lowers expected drawer cash.</p>
+        <h4 className="text-white font-black uppercase italic"><i className="fas fa-money-bill-transfer text-shOrange mr-2"/>Cash Business Expense</h4>
+        <p className="text-[12px] text-gray-500">Use this only when cash from the drawer paid a real business expense. For owner draws, bank deposits, change funds, or corrections, use Till Adjustment instead.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           <FormInput label="Amount" type="number" step="0.01" value={payout.amount} onChange={v=>setPayout({...payout, amount:v})}/>
           <FormInput label="Description" value={payout.description} onChange={v=>setPayout({...payout, description:v})} placeholder="Poop bags, cleaner, etc."/>
@@ -2399,7 +2443,7 @@ export function RegisterTab() {
           <FormInput label="Start date" type="date" value={reportStart} onChange={setReportStart}/>
           <FormInput label="End date" type="date" value={reportEnd} onChange={setReportEnd}/>
           <div className="flex flex-wrap gap-2">
-            {[ ["activity","Activity"], ["payment-methods","Methods"], ["closeouts","Closeouts"], ["expenses","Expenses"], ["tax-summary","Tax summary"] ].map(([k,l]) => (
+            {[ ["activity","Activity"], ["payment-methods","Methods"], ["closeouts","Closeouts"], ["expenses","Expenses"], ["till-adjustments","Till adjustments"], ["tax-summary","Tax summary"] ].map(([k,l]) => (
               <button key={k} onClick={()=>downloadRegisterCsv(k)} className="bg-bgBase border border-bgHover text-gray-300 hover:text-white px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-1"/>{l}</button>
             ))}
             <button onClick={downloadTaxPacket} className="bg-shGreen text-bgHeader px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-file-zipper mr-1"/>Tax packet</button>
@@ -2407,10 +2451,11 @@ export function RegisterTab() {
         </div>
         {!reportData && <div className="text-gray-500 text-sm p-4 text-center border border-bgHover rounded bg-bgBase/40">Run the report to see range totals, closeout history, and warnings.</div>}
         {reportData && <>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <AuditTile label="Gross collected" value={reportData.totals?.incoming_total}/>
             <AuditTile label="Refunds" value={reportData.totals?.refund_total} color="text-red-300"/>
             <AuditTile label="Expenses" value={reportData.totals?.expense_total} color="text-shOrange"/>
+            <AuditTile label="Till net" value={reportData.totals?.till_adjustment_net} color="text-shBlue"/>
             <AuditTile label="Credit packs" value={reportData.incoming_sources?.credit_pack_sales}/>
             <CountTile label="Closeouts" value={(reportData.closeouts || []).length}/>
           </div>

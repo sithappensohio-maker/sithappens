@@ -8,7 +8,7 @@ export default function Register() {
         eyebrow={{ icon: "fa-cash-register", text: "Money hub", color: "text-shGreen" }}
         title="Register."
         highlight="Daily money in one spot."
-        subtitle="Sales, credit packs, client payments, refunds, expenses, receipts, cash drawer, closeout, and reports."
+        subtitle="Sales, credit packs, client payments, refunds, expenses, till adjustments, receipts, cash drawer, closeout, and reports."
         testid="register-hero"
       />
       <RegisterTab />

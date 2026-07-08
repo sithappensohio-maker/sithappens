@@ -11758,7 +11758,7 @@ BACKUP_COLLECTIONS = [
     # Staff scheduling + actual clocked hours (drives payroll)
     "shifts", "time_clock_entries", "time_off_requests",
     # Tax tracker
-    "tax_payments", "mileage_log", "daily_closeouts", "cash_drawer_sessions",
+    "tax_payments", "mileage_log", "daily_closeouts", "cash_drawer_sessions", "till_adjustments",
     # Dog Trivia + Fact of the Day (engagement content + per-client streak history)
     # NOTE: trivia_daily is intentionally excluded — it's a 1-row daily cache
     # that regenerates from trivia_questions on the next portal hit. Including
@@ -12434,7 +12434,7 @@ def _backup_file_info(path: Optional[str]) -> Dict[str, Any]:
 _CRITICAL_BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "bookings_archive",
     "credit_lots", "credit_adjustments", "payment_ledger", "retail_sales",
-    "expenses", "daily_closeouts", "cash_drawer_sessions",
+    "expenses", "daily_closeouts", "cash_drawer_sessions", "till_adjustments",
     "vaccine_uploads", "referrals", "rewards_ledger", "audit_log", "duplicate_merge_audit",
 ]
 
@@ -15657,6 +15657,8 @@ async def startup():
         (db.retail_sales, "date", {}),
         (db.retail_sales, [("date", 1), ("source_kind", 1)], {}),
         (db.expenses, "date", {}),
+        (db.till_adjustments, "date", {}),
+        (db.till_adjustments, "id", {"unique": True}),
         (db.time_clock_entries, "clock_in_at", {}),
         (db.time_clock_entries, [("user_id", 1), ("clock_in_at", 1)], {}),
         # `pack_kind=training_program` filter used by the double-count fix
@@ -17707,7 +17709,7 @@ async def admin_production_health(_: dict = Depends(require_admin)):
     add("admin_password", not default_admin_risk, "Admin seed credentials", "Admin env credentials look custom." if not default_admin_risk else "ADMIN_EMAIL/ADMIN_PASSWORD env vars look missing or default-risk.", "danger")
 
     counts = {}
-    for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts", "cash_drawer_sessions"]:
+    for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts", "cash_drawer_sessions", "till_adjustments"]:
         try:
             counts[coll] = await db[coll].count_documents({})
         except Exception:
@@ -17718,6 +17720,15 @@ async def admin_production_health(_: dict = Depends(require_admin)):
 class CashDrawerOpenIn(BaseModel):
     date: Optional[str] = None
     opening_cash: float = Field(ge=0)
+    notes: Optional[str] = ""
+
+
+class TillAdjustmentIn(BaseModel):
+    date: Optional[str] = None
+    direction: Literal["add", "remove"]
+    amount: float = Field(gt=0)
+    reason: str = Field(min_length=1, max_length=200)
+    adjustment_type: Optional[Literal["owner_draw", "change_fund", "bank_deposit", "cash_correction", "other"]] = "other"
     notes: Optional[str] = ""
 
 
@@ -17809,6 +17820,41 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             "created_at": e.get("created_at") or f"{d}T12:00:00",
         })
 
+    # Till adjustments are physical cash movements that are intentionally NOT
+    # sales, refunds, or expenses. Examples: owner draw, adding a change fund,
+    # bank deposit, or correcting the physical till after a counting mistake.
+    till_rows = await db.till_adjustments.find({"date": d}, {"_id": 0}).sort("created_at", -1).to_list(10000)
+    till_additions = 0.0
+    till_removals = 0.0
+    for row in till_rows:
+        amt = round(float(row.get("amount") or 0), 2)
+        if amt <= 0:
+            continue
+        direction = "add" if row.get("direction") == "add" else "remove"
+        if direction == "add":
+            till_additions = round(till_additions + amt, 2)
+            signed = amt
+        else:
+            till_removals = round(till_removals + amt, 2)
+            signed = -amt
+        kind = row.get("adjustment_type") or "other"
+        kind_label = {
+            "owner_draw": "Owner draw",
+            "change_fund": "Change fund",
+            "bank_deposit": "Bank deposit",
+            "cash_correction": "Cash correction",
+            "other": "Till adjustment",
+        }.get(kind, "Till adjustment")
+        activity.append({
+            "id": row.get("id"), "kind": "till_adjustment",
+            "label": f"{kind_label} · {'cash added' if direction == 'add' else 'cash removed'}",
+            "description": row.get("reason") or "Till adjustment",
+            "client_name": row.get("created_by_name") or "", "amount": signed,
+            "payment_method": "cash drawer",
+            "created_at": row.get("created_at") or f"{d}T12:00:00",
+            "adjustment_type": kind, "direction": direction,
+        })
+
     # Drawer session: use explicit opening cash when available; otherwise carry
     # forward the most recent closeout cash count as a helpful default.
     session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
@@ -17824,7 +17870,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
             opening_source = "previous_closeout"
 
     cash_in = round(float(incoming_by_method.get("cash") or 0), 2)
-    expected_cash = round(opening_cash + cash_in - drawer_payouts, 2)
+    expected_cash = round(opening_cash + cash_in - drawer_payouts + till_additions - till_removals, 2)
     closeout = await db.daily_closeouts.find_one({"date": d}, {"_id": 0}, sort=[("created_at", -1)])
 
     totals = {
@@ -17832,6 +17878,9 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "expense_total": expense_total,
         "cash_in": cash_in,
         "cash_drawer_payouts": drawer_payouts,
+        "till_additions": till_additions,
+        "till_removals": till_removals,
+        "till_adjustment_net": round(till_additions - till_removals, 2),
         "opening_cash": opening_cash,
         "expected_cash": expected_cash,
     }
@@ -17853,10 +17902,12 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "activity": activity,
         "totals": totals,
         "drawer_session": session,
+        "till_adjustments": till_rows,
         "opening_cash_source": opening_source,
         "latest_closeout": closeout,
         "notes": {
-            "cash": "Expected drawer cash = opening cash + cash payments - expenses marked as paid from drawer.",
+            "cash": "Expected drawer cash = opening cash + cash payments - cash-drawer expenses + till additions - till removals.",
+            "till_adjustments": "Till adjustments change physical cash only. They are not treated as sales, refunds, or business expenses.",
             "external": "Clover, Venmo, PayPal, and checks are expected totals from app entries; verify them against the external apps/batch at closeout.",
         },
     }
@@ -17927,6 +17978,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
     totals = {
         "incoming_total": 0.0, "expense_total": 0.0, "net_incoming_total": 0.0,
         "refund_total": 0.0, "cash_drawer_payouts": 0.0,
+        "till_additions": 0.0, "till_removals": 0.0, "till_adjustment_net": 0.0,
     }
     alerts: List[Dict[str, Any]] = []
     closeout_rows: List[Dict[str, Any]] = []
@@ -18014,7 +18066,8 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
         "alerts": alerts[:100],
         "activity": recent_activity,
         "explain": {
-            "register_first": "These totals use the same Register/POS sources shown on the dashboard: completed booking cash, retail/manual sales, credit-pack sales, refunds, expenses, and closeouts.",
+            "register_first": "These totals use the same Register/POS sources shown on the dashboard: completed booking cash, retail/manual sales, credit-pack sales, refunds, expenses, till adjustments, and closeouts.",
+            "till_adjustments": "Till adjustments affect drawer reconciliation only and are excluded from revenue and expense totals.",
             "credits": "Credit-pack sales count when sold. Credit redemptions are operational usage and are not counted again as new cash.",
         },
     }
@@ -18078,13 +18131,13 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-register-activity-{stamp}.csv")
 
     if safe_kind == "payment-methods":
-        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts"]]
+        rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
         for d in days:
             day = await _register_day_summary(d)
             m = day.get("incoming_by_method") or {}
             t = day.get("totals") or {}
             src = day.get("incoming_sources") or {}
-            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}"])
+            rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
         return _csv_response(rows, f"sit-happens-register-methods-{stamp}.csv")
 
     if safe_kind == "closeouts":
@@ -18101,6 +18154,13 @@ async def admin_register_export_csv(
             rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), e.get("quantity", 1), e.get("unit_price"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("recurring", False), bool(e.get("receipt_image")), e.get("notes")])
         return _csv_response(rows, f"sit-happens-expenses-{stamp}.csv")
 
+    if safe_kind == "till-adjustments":
+        rows = [["Date", "Created At", "Direction", "Type", "Amount", "Reason", "Notes", "Recorded By"]]
+        adjustments = await db.till_adjustments.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(50000)
+        for a in adjustments:
+            rows.append([a.get("date"), a.get("created_at"), a.get("direction"), a.get("adjustment_type"), f"{float(a.get('amount') or 0):.2f}", a.get("reason"), a.get("notes"), a.get("created_by_name")])
+        return _csv_response(rows, f"sit-happens-till-adjustments-{stamp}.csv")
+
     if safe_kind == "tax-summary":
         summary = await _register_range_summary(sd, ed)
         rows = [["Metric", "Amount"]]
@@ -18115,7 +18175,7 @@ async def admin_register_export_csv(
         ]
         return _csv_response(rows, f"sit-happens-tax-register-summary-{stamp}.csv")
 
-    raise HTTPException(400, "kind must be activity, payment-methods, closeouts, expenses, or tax-summary")
+    raise HTTPException(400, "kind must be activity, payment-methods, closeouts, expenses, till-adjustments, or tax-summary")
 
 
 @api.get("/admin/register/tax-packet.zip")
@@ -18149,7 +18209,7 @@ async def admin_register_tax_packet_zip(
     files: Dict[str, bytes] = {}
 
     activity_rows = [["Date", "Created At", "Kind", "Label", "Description", "Client/Vendor", "Payment Method", "Amount"]]
-    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts"]]
+    methods_rows = [["Date", "Cash", "Check", "Venmo", "PayPal", "Clover / Credit Card", "Legacy Transfer", "Other", "Incoming Total", "Refunds", "Expenses", "Cash Payouts", "Till Added", "Till Removed", "Till Net"]]
     for d in days:
         day = await _register_day_summary(d)
         for a in day.get("activity") or []:
@@ -18157,7 +18217,7 @@ async def admin_register_tax_packet_zip(
         m = day.get("incoming_by_method") or {}
         t = day.get("totals") or {}
         src = day.get("incoming_sources") or {}
-        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}"])
+        methods_rows.append([d, f"{m.get('cash',0):.2f}", f"{m.get('check',0):.2f}", f"{m.get('venmo',0):.2f}", f"{m.get('paypal',0):.2f}", f"{m.get('clover',0):.2f}", f"{m.get('venmo_paypal',0):.2f}", f"{m.get('other',0):.2f}", f"{t.get('incoming_total',0):.2f}", f"{src.get('refunds',0):.2f}", f"{t.get('expense_total',0):.2f}", f"{t.get('cash_drawer_payouts',0):.2f}", f"{t.get('till_additions',0):.2f}", f"{t.get('till_removals',0):.2f}", f"{t.get('till_adjustment_net',0):.2f}"])
     files[f"register-activity-{stamp}.csv"] = csv_bytes(activity_rows)
     files[f"payment-methods-{stamp}.csv"] = csv_bytes(methods_rows)
 
@@ -18173,6 +18233,12 @@ async def admin_register_tax_packet_zip(
         expense_rows.append([e.get("date"), e.get("vendor"), e.get("category"), e.get("description"), e.get("quantity", 1), e.get("unit_price"), _normalize_payment_method(e.get("payment_method")), f"{float(e.get('amount') or 0):.2f}", e.get("tax_deductible", True), e.get("from_cash_drawer", False), e.get("recurring", False), bool(e.get("receipt_image")), e.get("notes")])
     files[f"expenses-{stamp}.csv"] = csv_bytes(expense_rows)
 
+    adjustment_rows = [["Date", "Created At", "Direction", "Type", "Amount", "Reason", "Notes", "Recorded By"]]
+    adjustments = await db.till_adjustments.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(50000)
+    for a in adjustments:
+        adjustment_rows.append([a.get("date"), a.get("created_at"), a.get("direction"), a.get("adjustment_type"), f"{float(a.get('amount') or 0):.2f}", a.get("reason"), a.get("notes"), a.get("created_by_name")])
+    files[f"till-adjustments-{stamp}.csv"] = csv_bytes(adjustment_rows)
+
     summary = await _register_range_summary(sd, ed)
     tax_rows = [["Metric", "Amount"]]
     tax_rows += [
@@ -18185,7 +18251,7 @@ async def admin_register_tax_packet_zip(
         ["Training program sales", f"{summary['incoming_sources'].get('training_program_sales',0):.2f}"],
     ]
     files[f"tax-summary-{stamp}.csv"] = csv_bytes(tax_rows)
-    files["README.txt"] = (f"Sit Happens tax/export packet\nRange: {sd} to {ed}\n\nIncludes register activity, payment method totals, closeouts, expenses, and tax summary. This is a bookkeeping aid, not CPA/legal tax advice.\n").encode("utf-8")
+    files["README.txt"] = (f"Sit Happens tax/export packet\nRange: {sd} to {ed}\n\nIncludes register activity, payment method totals, closeouts, expenses, till adjustments, and tax summary. This is a bookkeeping aid, not CPA/legal tax advice.\n").encode("utf-8")
 
     zbuf = _io.BytesIO()
     with _zipfile.ZipFile(zbuf, "w", _zipfile.ZIP_DEFLATED) as zf:
@@ -18214,6 +18280,35 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     await db.cash_drawer_sessions.update_one({"date": d}, {"$set": doc}, upsert=True)
     fresh = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
     return {"ok": True, "drawer_session": fresh, "register": await _register_day_summary(d)}
+
+
+@api.post("/admin/register/till-adjustment")
+async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = Depends(require_admin)):
+    """Record physical cash added to or removed from the till without
+    classifying it as income or an expense. The required reason provides an
+    audit trail for owner draws, change funds, bank deposits, and corrections.
+    """
+    d = body.date or business_today().isoformat()
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A reason is required for every till adjustment")
+    if body.adjustment_type in ("owner_draw", "bank_deposit") and body.direction != "remove":
+        raise HTTPException(status_code=400, detail=f"{body.adjustment_type.replace('_', ' ').title()} must remove cash from the till")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": d,
+        "direction": body.direction,
+        "amount": round(float(body.amount), 2),
+        "reason": reason,
+        "adjustment_type": body.adjustment_type or "other",
+        "notes": (body.notes or "").strip()[:1000],
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email") or "admin",
+    }
+    await db.till_adjustments.insert_one(doc.copy())
+    doc.pop("_id", None)
+    return {"ok": True, "adjustment": doc, "register": await _register_day_summary(d)}
 
 
 class RegisterRefundIn(BaseModel):
