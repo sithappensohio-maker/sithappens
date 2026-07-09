@@ -1,11 +1,8 @@
-"""Sprint 110dk — Auto-price daycare + boarding stays at checkout using
-actual check-in / check-out timestamps and configurable half-day rules.
+"""Stay pricing regression coverage.
 
-Validates the new `stay_pricing_enabled` logic in `_resolve_service_value`
-inside the `check_out` endpoint:
-  - Boarding multi-night: nights * full + half-day adjust for trailing partial
-  - Daycare half-day vs full-day based on `daycare_half_day_max_hours`
-  - Manual `base_price` at checkout always wins
+Boarding uses calendar nights plus pickup-day care: before 5 PM is a half day,
+and 5 PM or later is a full day. Daycare continues to use elapsed-hour rules.
+Manual checkout overrides always win.
 """
 import os
 import sys
@@ -107,16 +104,17 @@ def _make_dog(headers, client_id):
     return r.json()
 
 
-def _make_booking_then_checkin(headers, client_id, dog_id, svc_type, hours_ago):
+def _make_booking_then_checkin(headers, client_id, dog_id, svc_type, hours_ago, *, end_days=1, pickup_time="16:00"):
     """Create a booking dated today, force a back-dated check-in via direct
     motor write (no admin API exposes this), return booking id."""
     today_iso = datetime.now(timezone.utc).date().isoformat()
-    end_iso = (datetime.now(timezone.utc).date() + timedelta(days=5)).isoformat()
+    end_iso = (datetime.now(timezone.utc).date() + timedelta(days=end_days)).isoformat()
     r = requests.post(f"{API}/bookings", headers=headers,
                       json={"dog_id": dog_id,
                             "service_type": svc_type,
                             "date": today_iso,
                             "end_date": end_iso,
+                            "pickup_time": pickup_time if svc_type == "boarding" else "",
                             "override_capacity": True,
                             "override_vaccines": True},
                       timeout=15)
@@ -142,37 +140,46 @@ def _get_booking(headers, bid):
     return r.json()
 
 
-def test_boarding_three_nights_exact(admin_headers):
-    """72 hours = 3 nights, no trailing remainder → 3 × $50 = $150."""
+def test_boarding_two_nights_before_five(admin_headers):
+    """2 nights + half pickup day at 4 PM = 2.5 × $50 = $125."""
     _set_rules(admin_headers)
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
     dog = _make_dog(admin_headers, client["id"])
-    bid = _make_booking_then_checkin(admin_headers, client["id"], dog["id"], "boarding", hours_ago=72)
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding",
+        hours_ago=62, end_days=2, pickup_time="16:00",
+    )
+    _checkout(admin_headers, bid)
+    bk = _get_booking(admin_headers, bid)
+    assert bk.get("actual_price") == 125.0, f"got {bk.get('actual_price')}"
+
+
+def test_boarding_two_nights_at_or_after_five(admin_headers):
+    """2 nights + full pickup day at 5 PM = 3 × $50 = $150."""
+    _set_rules(admin_headers)
+    _seed_default_service(admin_headers, "boarding", 50.0)
+    client = _make_client(admin_headers)
+    dog = _make_dog(admin_headers, client["id"])
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding",
+        hours_ago=30, end_days=2, pickup_time="17:00",
+    )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
     assert bk.get("actual_price") == 150.0, f"got {bk.get('actual_price')}"
 
 
-def test_boarding_two_nights_plus_late_checkout(admin_headers):
-    """62 hours = 2 nights + 14h trailing → > 12h threshold → +1 full day → 3 × $50 = $150."""
+def test_boarding_pickup_rule_ignores_elapsed_hours(admin_headers):
+    """Scheduled 4 PM pickup remains half-day even if checkout is clicked later."""
     _set_rules(admin_headers)
     _seed_default_service(admin_headers, "boarding", 50.0)
     client = _make_client(admin_headers)
     dog = _make_dog(admin_headers, client["id"])
-    bid = _make_booking_then_checkin(admin_headers, client["id"], dog["id"], "boarding", hours_ago=62)
-    _checkout(admin_headers, bid)
-    bk = _get_booking(admin_headers, bid)
-    assert bk.get("actual_price") == 150.0, f"got {bk.get('actual_price')}"
-
-
-def test_boarding_one_night_plus_early_pickup(admin_headers):
-    """30 hours = 1 night + 6h trailing → ≤ 12h threshold → +0.5 day → 1.5 × $50 = $75."""
-    _set_rules(admin_headers)
-    _seed_default_service(admin_headers, "boarding", 50.0)
-    client = _make_client(admin_headers)
-    dog = _make_dog(admin_headers, client["id"])
-    bid = _make_booking_then_checkin(admin_headers, client["id"], dog["id"], "boarding", hours_ago=30)
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding",
+        hours_ago=80, end_days=1, pickup_time="16:00",
+    )
     _checkout(admin_headers, bid)
     bk = _get_booking(admin_headers, bid)
     assert bk.get("actual_price") == 75.0, f"got {bk.get('actual_price')}"

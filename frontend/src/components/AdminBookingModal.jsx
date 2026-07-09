@@ -76,8 +76,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   const [isMultiDate, setIsMultiDate] = useState(false);
   const [multiDates, setMultiDates] = useState([]);
   const [kennel, setKennel] = useState(existing?.kennel || "");
-  const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "");
-  const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "");
+  const [dropoffTime, setDropoffTime] = useState(existing?.dropoff_time || "09:00");
+  const [pickupTime, setPickupTime] = useState(existing?.pickup_time || "17:00");
   // Distinct appointment time for training/grooming/photography — these are
   // scheduled SLOTS, not drop-off windows. Persisted on the booking as `time`.
   const [appointmentTime, setAppointmentTime] = useState(existing?.time || "");
@@ -312,6 +312,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             date: d,
             end_date: serviceType === "boarding" ? endDate : null,
             dog_id: row.dog_id,
+            dropoff_time: serviceType === "boarding" ? (dropoffTime || undefined) : undefined,
+            pickup_time: serviceType === "boarding" ? (pickupTime || undefined) : undefined,
             addon_service_ids: row.addon_service_ids || [],
           }).then(({ data }) => ({
             dog_id: row.dog_id,
@@ -342,6 +344,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     serviceType,
     date,
     endDate,
+    dropoffTime,
+    pickupTime,
     isMultiDate,
     JSON.stringify(multiDates),
     JSON.stringify(selectedAddonIds),

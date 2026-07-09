@@ -27,7 +27,7 @@ def test_full_backup_includes_bookings_archive(admin_headers):
     assert "bookings_archive" in data.get("collections", {})
 
 
-def test_backend_pricing_quote_three_night_boarding(admin_headers):
+def test_backend_pricing_quote_three_night_boarding_with_pickup_day(admin_headers):
     # Ensure a default boarding service exists at a known price.
     svcs = requests.get(f"{API}/services", headers=admin_headers, timeout=15).json()
     default = next((s for s in svcs if s.get("service_type") == "boarding" and s.get("is_default")), None)
@@ -49,13 +49,70 @@ def test_backend_pricing_quote_three_night_boarding(admin_headers):
         "service_type": "boarding",
         "date": start.isoformat(),
         "end_date": end.isoformat(),
+        "pickup_time": "16:30",
     }, timeout=15)
     r.raise_for_status()
     q = r.json()
-    assert q["billable_units"] == 3
-    assert q["unit_label"] == "nights"
-    assert q["estimated_price"] == 150.0
+    assert q["billable_units"] == 3.5
+    assert q["unit_label"] == "boarding days"
+    assert q["pickup_day_units"] == 0.5
+    assert q["estimated_price"] == 175.0
 
+
+
+def test_boarding_quote_two_dogs_late_pickup_and_addons(admin_headers):
+    """Friday→Sunday after 5 PM: 2 nights + 1 pickup day for both dogs.
+
+    First dog: 3 × $50 = $150
+    Second dog: 3 × $25 = $75
+    Bath + nails: $20 + $10 = $30
+    Total: $255
+    """
+    svcs = requests.get(f"{API}/services", headers=admin_headers, timeout=15).json()
+    default = next((s for s in svcs if s.get("service_type") == "boarding" and s.get("is_default")), None)
+    assert default is not None
+    payload = {k: v for k, v in default.items() if k not in ("id", "_id", "created_at")}
+    payload.update({"base_price": 50.0, "active": True, "is_default": True})
+    rr = requests.put(f"{API}/services/{default['id']}", headers=admin_headers, json=payload, timeout=15)
+    rr.raise_for_status()
+
+    created = []
+    try:
+        for name, price in (("Boarding Bath", 20.0), ("Boarding Nail Trim", 10.0)):
+            r = requests.post(f"{API}/services", headers=admin_headers, json={
+                "name": f"{name} {uuid.uuid4().hex[:6]}",
+                "service_type": "grooming",
+                "base_price": price,
+                "active": True,
+                "is_addon": True,
+                "addon_for": ["boarding"],
+            }, timeout=15)
+            r.raise_for_status()
+            created.append(r.json())
+
+        start = date.today() + timedelta(days=30)
+        end = start + timedelta(days=2)
+        r = requests.post(f"{API}/pricing/quote", headers=admin_headers, json={
+            "service_type": "boarding",
+            "date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "pickup_time": "18:00",
+            "dog_count": 2,
+            "addon_service_ids": [x["id"] for x in created],
+        }, timeout=15)
+        r.raise_for_status()
+        q = r.json()
+        assert q["billable_units"] == 3
+        assert q["pickup_day_units"] == 1
+        assert q["first_dog_base_price"] == 150.0
+        assert q["additional_dog_base_price"] == 150.0
+        assert q["multi_dog_discount_amount"] == 75.0
+        assert q["base_estimated_price"] == 225.0
+        assert q["add_on_total"] == 30.0
+        assert q["estimated_price"] == 255.0
+    finally:
+        for svc in created:
+            requests.delete(f"{API}/services/{svc['id']}", headers=admin_headers, timeout=15)
 
 def test_zero_night_quote_rejected(admin_headers):
     d = date.today() + timedelta(days=21)

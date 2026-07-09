@@ -124,13 +124,15 @@ export default function BookingPriceEstimate({
       date,
       end_date: endDate || null,
       dog_id: primaryDogId || undefined,
+      dropoff_time: dropoffTime || undefined,
+      pickup_time: pickupTime || undefined,
       addon_service_ids: addonIds,
       dog_count: Math.max(1, Number(dogCount || 1)),
     })
       .then(({ data }) => { if (!cancelled) setServerQuote(data || null); })
       .catch(() => { if (!cancelled) setServerQuote(null); });
     return () => { cancelled = true; };
-  }, [serviceType, date, endDate, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
+  }, [serviceType, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
 
   // Use the configured default service matching this service_type. If there is
   // no explicit default, fall back to the first active service. We intentionally
@@ -165,39 +167,22 @@ export default function BookingPriceEstimate({
       units = isMultiDate ? Math.max(1, multiDates.length) : 1;
       unitLabel = units === 1 ? "day" : "days";
     } else if (serviceType === "boarding") {
-      // Sprint 110di-31 — Mirror the server's half-day rule when the
-      // client picks drop-off + pickup times. Total hours come from the
-      // two datetimes; boarding_half_day_max_hours (default 12) decides
-      // whether the trailing partial day is full or half.
-      const totalHours = (date && endDate && dropoffTime && pickupTime)
-        ? Math.max(0, (
-            new Date(`${endDate}T${pickupTime}:00`).getTime() -
-            new Date(`${date}T${dropoffTime}:00`).getTime()
-          ) / 3600000)
-        : null;
-      const maxHalfH = Number(rules.boarding_half_day_max_hours ?? 12);
-      const halfPct  = Number(rules.half_day_pct ?? 50) / 100;
-      if (totalHours !== null && totalHours > 0) {
-        const wholeNights = Math.floor(totalHours / 24);
-        const remainder   = totalHours - wholeNights * 24;
-        if (remainder > maxHalfH) {
-          units = wholeNights + 1;
-        } else if (remainder > 0.1) {
-          // Half-day surcharge applies to the trailing partial day.
-          units = wholeNights + halfPct;
-          halfDay = true;
-        } else {
-          units = wholeNights;
-        }
-        if (units < 1) unitsValid = false;
+      // Sit Happens boarding rule: calendar nights plus pickup-day care.
+      // Pickup BEFORE 5:00 PM is a half day; pickup AT/AFTER 5:00 PM is
+      // a full day. This is intentionally clock-based, not hours-since-check-in.
+      const nights = nightsBetween(date, endDate);
+      if (nights < 1) {
+        unitsValid = false;
+        units = nights;
       } else {
-        // No times yet — fall back to calendar-night count so the panel
-        // is still informative on the first render before the time
-        // pickers have settled.
-        units = nightsBetween(date, endDate);
-        if (units < 1) unitsValid = false;
+        const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
+          ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
+          : null;
+        const pickupUnits = pickupMinutes === null ? 0 : (pickupMinutes < 17 * 60 ? 0.5 : 1);
+        units = nights + pickupUnits;
+        halfDay = pickupUnits === 0.5;
       }
-      unitLabel = units === 1 ? "night" : "nights";
+      unitLabel = "boarding days";
     }
 
     const basePrice = base * units;

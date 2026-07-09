@@ -2664,7 +2664,7 @@ function RulesPanel({ s, save, saving }) {
       </Section>
 
       <Section title="Stay-duration pricing (auto-bill at check-out)"
-               subtitle="When a dog is checked out, the system computes the dollar charge from the actual hours on premises. Boarding rolls up nights from check-in to check-out, and a trailing partial day either bills as half-day or whole-day depending on the threshold below.">
+               subtitle="Daycare can price from elapsed hours. Boarding uses the fixed Sit Happens rule: overnight nights plus pickup-day care; pickup before 5:00 PM is a half day and pickup at or after 5:00 PM is a full day.">
         <label className="flex items-center gap-3 cursor-pointer mb-4">
           <input type="checkbox" checked={r.stay_pricing_enabled !== false}
                  onChange={(e)=>set("stay_pricing_enabled", e.target.checked)}
@@ -2672,8 +2672,8 @@ function RulesPanel({ s, save, saving }) {
                  className="accent-shGreen w-4 h-4" />
           <span className="text-[15px] font-black uppercase tracking-widest text-gray-300">Auto-price stays at check-out (recommended)</span>
         </label>
-        <div className={`grid grid-cols-3 gap-4 ${r.stay_pricing_enabled !== false ? "" : "opacity-50 pointer-events-none"}`}>
-          <Field label="Half-day rate (% of full)"
+        <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${r.stay_pricing_enabled !== false ? "" : "opacity-50 pointer-events-none"}`}>
+          <Field label="Daycare half-day rate (% of full)"
                  type="number"
                  value={r.half_day_pct ?? 50}
                  onChange={(v)=>set("half_day_pct", Math.max(0, Math.min(100, parseInt(v)||0)))}
@@ -2683,15 +2683,10 @@ function RulesPanel({ s, save, saving }) {
                  value={r.daycare_half_day_max_hours ?? 5}
                  onChange={(v)=>set("daycare_half_day_max_hours", Math.max(0, parseFloat(v)||0))}
                  testId="stay-daycare-half-h" />
-          <Field label="Boarding: final partial day ≤ X hours = half day"
-                 type="number"
-                 value={r.boarding_half_day_max_hours ?? 12}
-                 onChange={(v)=>set("boarding_half_day_max_hours", Math.max(0, parseFloat(v)||0))}
-                 testId="stay-boarding-half-h" />
         </div>
         <div className="mt-3 text-xs text-gray-400 leading-relaxed">
           <div><span className="text-shGreen font-black">Daycare:</span> total hours ≤ threshold → bill as half day, otherwise full day.</div>
-          <div><span className="text-shBlue font-black">Boarding:</span> nights = floor(hours ÷ 24). Trailing remainder &gt; boarding threshold → +1 full day, otherwise +half day (or no extra if remainder is zero).</div>
+          <div><span className="text-shBlue font-black">Boarding:</span> every overnight night is billed, then pickup before 5:00 PM adds a half day; pickup at or after 5:00 PM adds a full day. Additional dogs receive 50% off every night and the pickup day.</div>
           <div className="text-shOrange mt-1"><i className="fas fa-info-circle mr-1" />The admin can still override the auto-price by typing a manual amount in the check-out modal.</div>
         </div>
       </Section>

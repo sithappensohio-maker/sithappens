@@ -55,9 +55,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [date, setDate] = useState(todayISO());
   const [endDate, setEndDate] = useState("");
   const [time, setTime] = useState("");
-  // Sprint 110di-31 — Boarding drop-off / pickup TIMES. Used by the estimate
-  // to apply the existing half-day pricing rule (boarding_half_day_max_hours
-  // from booking_rules). Sensible defaults match typical kennel hours so a
+  // Boarding drop-off / pickup TIMES. The estimate uses the Sit Happens
+  // pickup rule: before 5 PM is a half day; 5 PM or later is a full day.
+  // Sensible defaults match typical kennel hours so a
   // client who skips the picker still gets a reasonable estimate.
   const [dropoffTime, setDropoffTime] = useState("09:00");
   const [pickupTime, setPickupTime]  = useState("17:00");

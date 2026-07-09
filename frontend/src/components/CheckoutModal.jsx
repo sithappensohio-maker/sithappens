@@ -183,9 +183,14 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     const defaultSvc = (services || []).find(s => s.is_default && s.service_type === booking.service_type && s.active);
     // Prefer the booking's saved estimate/snapshot. This keeps checkout aligned
     // with grandfathered rates and with pre-applied 50% additional-dog group rows.
-    basePreview = bookingBaseEstimate > 0
-      ? bookingBaseEstimate
-      : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0));
+    const correctedBoardingPreview = booking.service_type === "boarding"
+      ? Number(discountPreview?.preview_base_price || 0)
+      : 0;
+    basePreview = correctedBoardingPreview > 0
+      ? correctedBoardingPreview
+      : (bookingBaseEstimate > 0
+          ? bookingBaseEstimate
+          : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0)));
   }
   const extraNightsCharge = isBoarding && extraNights > 0 && !extraUseCredits
     ? Math.round(extraNights * extraRateEffective * 100) / 100
@@ -193,7 +198,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Multi-dog discount preview: recompute against the CURRENT basePreview (so
   // if the operator overrides the base price, the discount updates live).
   let multiDogDiscount = 0;
-  if (discountPreview?.eligible && discountPreview.discount && basePreview > 0 && !useCredits) {
+  if (discountPreview?.eligible && discountPreview.discount && basePreview > 0 && !useCredits && !booking.multi_dog_discount?.pre_applied) {
     const d = discountPreview.discount;
     if (d.mode === "percent") {
       multiDogDiscount = Math.round(basePreview * (Math.max(0, Math.min(100, d.value)) / 100) * 100) / 100;
@@ -201,11 +206,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       multiDogDiscount = Math.min(basePreview, Math.round(d.value * 100) / 100);
     }
   }
-  // What hits today's P&L. For credit checkouts: extra cash on top + add-ons +
-  // extra-night cash charges. For non-credit: full base + add-ons + extras.
+  // What hits today's P&L. Pre-attached add-ons are locked onto the booking
+  // and must be included alongside any new checkout add-ons. Previously they
+  // were displayed but omitted from this total, which underquoted checkout.
   const chargedToday = Math.max(
     0,
-    (useCredits ? extraCashOnCredits : basePreview) + addOnTotal + extraNightsCharge - multiDogDiscount,
+    (useCredits ? extraCashOnCredits : basePreview) + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
   );
 
   const submit = async () => {
@@ -617,7 +623,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <i className="fas fa-dog mr-1"/>Additional dog discount already included
               </p>
             )}
-            {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">Add-ons · ${addOnTotal.toFixed(2)}</p>}
+            {existingAddonTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-amber-400 font-black">Booked add-ons · ${existingAddonTotal.toFixed(2)}</p>}
+            {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">New add-ons · ${addOnTotal.toFixed(2)}</p>}
             {multiDogDiscount > 0 && (
               <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-multi-dog-discount">
                 <i className="fas fa-dog mr-1"/>
@@ -635,7 +642,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             {useCredits && hadCredit && <p className="text-[12px] uppercase tracking-widest text-shGreen font-black">−${creditAmt.toFixed(2)} via credits</p>}
           </div>
           <div className="text-right">
-            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 ? "Total" : "Charged today"}</p>
+            <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">{useCredits && hadCredit && addOnTotal === 0 && existingAddonTotal === 0 ? "Total" : "Charged today"}</p>
             <p className="text-shGreen text-3xl font-black" data-testid="checkout-total">${chargedToday.toFixed(2)}</p>
           </div>
         </div>

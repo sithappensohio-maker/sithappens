@@ -1750,12 +1750,11 @@ def _presence_dates(start: str, end: Optional[str]) -> List[str]:
 
 
 def _billable_boarding_nights(start: str, end: Optional[str], *, legacy_minimum: int = 0) -> int:
-    """Exclusive pickup-date math for boarding billing.
+    """Exclusive pickup-date math for overnight boarding nights only.
 
-    July 1 → July 2 = 1 night. July 1 → July 4 = 3 nights.
-    New boarding bookings reject zero-night stays before they get here, so the
-    default minimum is 0. Some old reporting/legacy rows used same-day boarding;
-    callers can pass legacy_minimum=1 when they need backward-compatible display.
+    July 1 → July 2 = 1 night. July 1 → July 4 = 3 nights. Pickup-day
+    boarding is deliberately handled by `_billable_boarding_units` so every
+    quote, credit calculation, and checkout uses the same clock-time rule.
     """
     try:
         s = datetime.fromisoformat(str(start)[:10]).date()
@@ -1765,7 +1764,54 @@ def _billable_boarding_nights(start: str, end: Optional[str], *, legacy_minimum:
     return max(legacy_minimum, (e - s).days)
 
 
-def _credit_units_required(service_type: str, start: str, end: Optional[str], dog_count: int = 1) -> float:
+BOARDING_FULL_DAY_PICKUP_CUTOFF = "17:00"
+
+
+def _clock_minutes(value: Optional[str]) -> Optional[int]:
+    """Parse HH:MM (or an ISO-ish time prefix) into minutes after midnight."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        hh, mm = raw[:5].split(":", 1)
+        hours = int(hh)
+        minutes = int(mm)
+        if not (0 <= hours <= 23 and 0 <= minutes <= 59):
+            return None
+        return hours * 60 + minutes
+    except Exception:
+        return None
+
+
+def _boarding_pickup_day_units(pickup_time: Optional[str]) -> float:
+    """Sit Happens pickup-day rule.
+
+    Pickup before 5:00 PM is a half boarding day. Pickup at or after 5:00 PM
+    is a full boarding day. Missing times keep legacy overnight-only pricing
+    rather than inventing a charge on old records.
+    """
+    pickup_minutes = _clock_minutes(pickup_time)
+    cutoff_minutes = _clock_minutes(BOARDING_FULL_DAY_PICKUP_CUTOFF) or (17 * 60)
+    if pickup_minutes is None:
+        return 0.0
+    return 0.5 if pickup_minutes < cutoff_minutes else 1.0
+
+
+def _billable_boarding_units(
+    start: str,
+    end: Optional[str],
+    pickup_time: Optional[str],
+    *,
+    legacy_minimum: int = 0,
+) -> float:
+    """Overnight nights plus the pickup-day boarding charge."""
+    nights = _billable_boarding_nights(start, end, legacy_minimum=legacy_minimum)
+    if nights <= 0:
+        return float(nights)
+    return round(float(nights) + _boarding_pickup_day_units(pickup_time), 2)
+
+
+def _credit_units_required(service_type: str, start: str, end: Optional[str], dog_count: int = 1, pickup_time: Optional[str] = None) -> float:
     """Credit units are intentionally separate from dollars.
 
     Sit Happens rule for daycare/boarding credits mirrors cash pricing:
@@ -1778,7 +1824,7 @@ def _credit_units_required(service_type: str, start: str, end: Optional[str], do
     """
     dogs = max(1, int(dog_count or 1))
     if service_type == "boarding":
-        units = _billable_boarding_nights(start, end, legacy_minimum=1)
+        units = _billable_boarding_units(start, end, pickup_time, legacy_minimum=1)
         dog_weight = 1.0 + (0.5 * max(0, dogs - 1))
         return round(float(units) * dog_weight, 2)
     if service_type == "daycare":
@@ -1795,7 +1841,20 @@ def _credit_unit_value_from_quote(quote: Dict[str, Any]) -> float:
 
 
 def _service_base_credit_units_for_booking(booking: dict) -> float:
-    """Stored credit-unit snapshot wins; legacy rows fall back to one-dog math."""
+    """Return service credit units using the same rule as cash pricing.
+
+    Boarding is recalculated from the stored pickup time so legacy snapshots
+    that omitted pickup-day care cannot under-deduct credits.
+    """
+    if booking.get("service_type") == "boarding" and booking.get("end_date"):
+        ps = booking.get("pricing_snapshot") or {}
+        is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+        units = _billable_boarding_units(
+            booking.get("date"), booking.get("end_date"),
+            booking.get("pickup_time") or BOARDING_FULL_DAY_PICKUP_CUTOFF,
+            legacy_minimum=1,
+        )
+        return round(units * (0.5 if is_extra_group_dog else 1.0), 2)
     try:
         snap = float(booking.get("credit_units_required") or 0)
         if snap > 0:
@@ -1807,6 +1866,7 @@ def _service_base_credit_units_for_booking(booking: dict) -> float:
         booking.get("date"),
         booking.get("end_date"),
         dog_count=1,
+        pickup_time=booking.get("pickup_time"),
     )
 
 async def _booking_days_count(target_date: str) -> int:
@@ -1874,6 +1934,7 @@ async def _quote_base_service_price(
     service_type: str,
     start_date: str,
     end_date: Optional[str] = None,
+    pickup_time: Optional[str] = None,
     service_id: Optional[str] = None,
     legacy_boarding_minimum: int = 0,
 ) -> Dict[str, Any]:
@@ -1938,8 +1999,10 @@ async def _quote_base_service_price(
     else:
         additional_dog_unit_price = float(svc.get("additional_dog_rate") if svc.get("additional_dog_rate") is not None else unit_price)
     if service_type == "boarding":
-        units = _billable_boarding_nights(start_date, end_date, legacy_minimum=legacy_boarding_minimum)
-        unit_label = "nights"
+        units = _billable_boarding_units(
+            start_date, end_date, pickup_time, legacy_minimum=legacy_boarding_minimum
+        )
+        unit_label = "boarding days"
     else:
         units = 1 if service_type else 0
         unit_label = "visits"
@@ -1953,9 +2016,9 @@ async def _quote_base_service_price(
         "price_source": "preferred_client_rate" if preferred_rate_applied else "catalog_rate",
         "price_label": "Preferred client rate" if preferred_rate_applied else "Standard rate",
         "additional_dog_unit_price": round(additional_dog_unit_price, 2),
-        "units": int(units),
+        "units": round(float(units), 2),
         "unit_label": unit_label,
-        "estimated_price": round(unit_price * int(units), 2),
+        "estimated_price": round(unit_price * float(units), 2),
     }
 
 
@@ -1963,6 +2026,8 @@ class PricingQuoteIn(BaseModel):
     service_type: Literal["daycare", "boarding", "training", "grooming", "photography"]
     date: str
     end_date: Optional[str] = None
+    dropoff_time: Optional[str] = None
+    pickup_time: Optional[str] = None
     dog_id: Optional[str] = None
     client_id: Optional[str] = None
     service_id: Optional[str] = None
@@ -1996,11 +2061,13 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         if nights <= 0:
             raise HTTPException(status_code=400, detail="Boarding pickup date must be after drop-off date.")
 
+    effective_pickup_time = (body.pickup_time or BOARDING_FULL_DAY_PICKUP_CUTOFF) if body.service_type == "boarding" else body.pickup_time
     quote = await _quote_base_service_price(
         client_id=client_id,
         service_type=body.service_type,
         start_date=body.date,
         end_date=body.end_date,
+        pickup_time=effective_pickup_time,
         service_id=body.service_id,
     )
     add_ons: List[Dict[str, Any]] = []
@@ -2012,7 +2079,7 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         for a in add_ons:
             add_on_total += float(a.get("price") or 0) * int(a.get("qty") or 1)
 
-    units = int(quote.get("units") or 0)
+    units = float(quote.get("units") or 0)
     dog_count = max(1, min(12, int(body.dog_count or 1)))
     additional_dogs = max(0, dog_count - 1)
 
@@ -2029,7 +2096,10 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
     # discount. Add-ons remain separate and full price.
     subtotal = round(first_dog_base + discounted_additional_dog_base, 2)
     total = round(subtotal + add_on_total, 2)
-    credit_units = _credit_units_required(body.service_type, body.date, body.end_date, dog_count=dog_count)
+    credit_units = _credit_units_required(
+        body.service_type, body.date, body.end_date,
+        dog_count=dog_count, pickup_time=effective_pickup_time,
+    )
     credit_pool_field = _credit_balance_field(body.service_type)
     credit_unit_value = _credit_unit_value_from_quote(quote)
     credits_available = 0.0
@@ -2063,6 +2133,10 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         "service_name": quote.get("service_name"),
         "date": body.date,
         "end_date": body.end_date,
+        "dropoff_time": body.dropoff_time,
+        "pickup_time": effective_pickup_time,
+        "pickup_day_units": _boarding_pickup_day_units(effective_pickup_time) if body.service_type == "boarding" else 0.0,
+        "pickup_cutoff_time": BOARDING_FULL_DAY_PICKUP_CUTOFF if body.service_type == "boarding" else None,
         "presence_dates": _presence_dates(body.date, body.end_date),
         "billable_units": units,
         "unit_label": quote.get("unit_label"),
@@ -2335,14 +2409,22 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 
     # Credit units and money are separate. `cost` remains the old daycare-credit
     # field for backward compatibility; dollars go into `estimated_price`.
+    # New boarding rows always carry a pickup time so the pickup-day charge
+    # cannot silently disappear. A missing selection defaults to the 5 PM
+    # full-day cutoff rather than underquoting the stay.
+    effective_pickup_time = (body.pickup_time or BOARDING_FULL_DAY_PICKUP_CUTOFF) if body.service_type == "boarding" else (body.pickup_time or "")
     days = _presence_dates(body.date, body.end_date)
     cost = _service_cost(rules, body.service_type, len(days))
-    credit_units_required = _credit_units_required(body.service_type, body.date, body.end_date, dog_count=1)
+    credit_units_required = _credit_units_required(
+        body.service_type, body.date, body.end_date,
+        dog_count=1, pickup_time=effective_pickup_time,
+    )
     quote = await _quote_base_service_price(
         client_id=client.get("id"),
         service_type=body.service_type,
         start_date=body.date,
         end_date=body.end_date,
+        pickup_time=effective_pickup_time,
         service_id=body.service_id,
     )
     estimated_price = float(quote.get("estimated_price") or 0)
@@ -2366,7 +2448,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         "time": body.time or "",
         "duration_minutes": duration_minutes_used,  # snapshot for future conflict checks
         "dropoff_time": body.dropoff_time or "",
-        "pickup_time": body.pickup_time or "",
+        "pickup_time": effective_pickup_time,
         "created_at": now_iso(),
         "cost": cost,
         "credit_units_required": credit_units_required,
@@ -2782,11 +2864,13 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
     if created and body.service_type in ("daycare", "boarding") and len(created) > 1:
         try:
             client_id_for_quote = created[0].get("client_id")
+            group_pickup_time = (body.pickup_time or BOARDING_FULL_DAY_PICKUP_CUTOFF) if body.service_type == "boarding" else body.pickup_time
             q = await _quote_base_service_price(
                 client_id=client_id_for_quote,
                 service_type=body.service_type,
                 start_date=body.date,
                 end_date=body.end_date,
+                pickup_time=group_pickup_time,
                 service_id=body.service_id,
             )
             units = float(q.get("units") or 1)
@@ -4319,17 +4403,19 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
             )
             unit = pricing["effective_price"]
             if booking.get("service_type") == "boarding":
-                try:
-                    s = date.fromisoformat(booking.get("date"))
-                    e = date.fromisoformat(booking.get("end_date") or booking.get("date"))
-                    nights = max(1, (e - s).days or 1)
-                except Exception:
-                    nights = 1
-                tentative_price = unit * nights
+                pickup_clock = booking.get("pickup_time") or BOARDING_FULL_DAY_PICKUP_CUTOFF
+                units = _billable_boarding_units(
+                    booking.get("date"), booking.get("end_date"), pickup_clock,
+                    legacy_minimum=1,
+                )
+                ps = booking.get("pricing_snapshot") or {}
+                is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+                tentative_price = unit * units * (0.5 if is_extra_group_dog else 1.0)
             else:
                 tentative_price = unit
     preview_booking = {**booking, "actual_price": round(tentative_price, 2)}
-    disc = await _compute_multi_dog_discount(preview_booking, exclude_id=booking_id)
+    pre_applied = bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+    disc = None if pre_applied else await _compute_multi_dog_discount(preview_booking, exclude_id=booking_id)
     return {
         "eligible": bool(disc and disc["amount"] > 0),
         "preview_base_price": round(tentative_price, 2),
@@ -5022,6 +5108,17 @@ async def check_out(
                 rules = (settings.get("booking_rules") or {})
                 stay_enabled = bool(rules.get("stay_pricing_enabled", True))
                 half_pct = float(rules.get("half_day_pct", 50)) / 100.0
+                # Boarding is not priced by elapsed hours. It is overnight nights
+                # plus pickup-day care: before 5 PM = half day; 5 PM or later =
+                # full day. The stored reservation pickup time is the source of
+                # truth so clicking Check Out late does not change the invoice.
+                if svc_type == "boarding":
+                    pickup_clock = booking.get("pickup_time") or BOARDING_FULL_DAY_PICKUP_CUTOFF
+                    units = _billable_boarding_units(
+                        booking.get("date"), booking.get("end_date"), pickup_clock,
+                        legacy_minimum=1,
+                    )
+                    return round(unit_price * units, 2)
                 ci = booking.get("checked_in_at")
                 co_ts = ts  # this checkout timestamp
                 if stay_enabled and ci and co_ts:
@@ -5037,27 +5134,6 @@ async def check_out(
                             if total_hours <= max_half_h:
                                 return round(unit_price * half_pct, 2)
                             return round(unit_price, 2)
-                        # boarding
-                        max_half_h = float(rules.get("boarding_half_day_max_hours", 12))
-                        nights = int(total_hours // 24)
-                        remainder_h = total_hours - (nights * 24)
-                        full_units = nights
-                        half_units = 0
-                        # 6-minute tolerance — ignore tiny remainders from clock
-                        # skew (network latency between back-dated check-in and
-                        # checkout-now timestamps).
-                        if remainder_h > max_half_h:
-                            full_units += 1
-                        elif remainder_h > 0.1:
-                            half_units = 1
-                        # Always charge at least 1 unit (even if dog leaves same day)
-                        if full_units == 0 and half_units == 0:
-                            half_units = 1
-                        return round(unit_price * full_units + unit_price * half_pct * half_units, 2)
-                # Fallback (pre-timestamp bookings) — calendar nights for boarding.
-                if svc_type == "boarding":
-                    nights_stayed = _billable_boarding_nights(booking.get("date"), booking.get("end_date"), legacy_minimum=1)
-                    return round(unit_price * nights_stayed, 2)
             return unit_price
         return default_for_zero
 
@@ -5203,6 +5279,7 @@ async def check_out(
                         service_type=svc_type,
                         start_date=booking.get("date"),
                         end_date=booking.get("end_date"),
+                        pickup_time=booking.get("pickup_time"),
                         service_id=booking.get("service_id"),
                         legacy_boarding_minimum=1,
                     )
@@ -5244,6 +5321,32 @@ async def check_out(
             snap_total = float(booking.get("estimated_price") or 0)
             snap_addons = _booking_addon_total_from(booking)
             snap_base = max(0.0, round(snap_total - snap_addons, 2))
+
+            # Repair legacy boarding estimates that counted only overnight
+            # nights and omitted pickup-day care. Use the saved unit rate so
+            # grandfathered pricing remains intact, and preserve the 50% row
+            # price for additional dogs in a grouped booking.
+            if booking.get("service_type") == "boarding" and booking.get("end_date"):
+                ps = booking.get("pricing_snapshot") or {}
+                unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
+                if unit_rate > 0:
+                    pickup_clock = booking.get("pickup_time") or BOARDING_FULL_DAY_PICKUP_CUTOFF
+                    boarding_units = _billable_boarding_units(
+                        booking.get("date"), booking.get("end_date"), pickup_clock,
+                        legacy_minimum=1,
+                    )
+                    is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool((booking.get("multi_dog_discount") or {}).get("pre_applied"))
+                    row_factor = 0.5 if is_extra_group_dog else 1.0
+                    corrected_base = round(unit_rate * boarding_units * row_factor, 2)
+                    if corrected_base > 0:
+                        snap_base = corrected_base
+                        update["boarding_pricing_correction"] = {
+                            "rule": "pickup_before_5_half_day_at_or_after_5_full_day",
+                            "billable_units": boarding_units,
+                            "pickup_time": pickup_clock,
+                            "applied_at": ts,
+                        }
+
             if snap_base > 0:
                 base_price = snap_base
                 update["actual_price"] = round(base_price, 2)
@@ -5884,14 +5987,13 @@ def _default_settings() -> dict:
             "daycare_cost": 1,
             "boarding_cost_per_night": 1,
             "training_cost": 1,
-            # Sprint 110dk — auto-price stays at checkout based on actual
-            # check-in / check-out timestamps. Settings define what counts
-            # as a "half day" vs "whole day" for each service. half_day_pct
-            # is applied to the service's full-day base_price.
+            # Auto-price stays at checkout. Daycare still uses elapsed hours.
+            # Boarding uses the fixed Sit Happens pickup rule: before 5 PM is
+            # half-day care; 5 PM or later is a full pickup day.
             "stay_pricing_enabled": True,
             "half_day_pct": 50,            # half-day bills at 50% of full rate
             "daycare_half_day_max_hours": 5,    # daycare stays ≤ 5h = half day
-            "boarding_half_day_max_hours": 12,  # boarding final-day ≤ 12h since prior midnight = half day surcharge
+            "boarding_half_day_max_hours": 12,  # legacy setting retained for compatibility; boarding now uses the fixed 5 PM cutoff
         },
         "required_vaccines": DEFAULT_VACCINES,
         "vaccine_warning_days": 30,
