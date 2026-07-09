@@ -121,12 +121,16 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [closing, setClosing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [closeout, setCloseout] = useState({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
-  const [startDay, setStartDay] = useState({ opening_cash: "", notes: "" });
+  const [closeoutReview, setCloseoutReview] = useState(false);
+  const [startDay, setStartDay] = useState({ opening_cash: "", notes: "", opening_override_reason: "" });
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopening, setReopening] = useState(false);
   const loadStatus = async () => {
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
-      const opening = r.data?.register?.totals?.opening_cash;
+      const suggested = r.data?.register?.opening_rollover?.suggested_cash;
+      const opening = suggested ?? r.data?.register?.totals?.opening_cash;
       if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
         setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
       }
@@ -139,7 +143,8 @@ export function EndOfDayPanel({ onJump = () => {} }) {
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
-      const opening = r.data?.register?.totals?.opening_cash;
+      const suggested = r.data?.register?.opening_rollover?.suggested_cash;
+      const opening = suggested ?? r.data?.register?.totals?.opening_cash;
       if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
         setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
       }
@@ -153,34 +158,71 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       await api.post("/admin/register/open-drawer", {
         opening_cash: startDay.opening_cash === "" ? 0 : Number(startDay.opening_cash),
         notes: startDay.notes || "Start-day checklist completed",
+        opening_override_reason: startDay.opening_override_reason || "",
       });
       toast.success("Day started");
+      setStartDay(s => ({ ...s, opening_override_reason: "" }));
       await loadStatus();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't start day"); }
     finally { setStarting(false); }
   };
 
+
+  const reviewCloseout = () => {
+    if (closeout.cash_counted === "" || !Number.isFinite(Number(closeout.cash_counted)) || Number(closeout.cash_counted) < 0) {
+      toast.error("Count the cash drawer before closing the day. Enter 0.00 if it is intentionally empty.");
+      return;
+    }
+    setCloseoutReview(true);
+  };
+
   const saveCloseout = async () => {
     setClosing(true);
     try {
+      const counted = Number(closeout.cash_counted);
       const payload = {
         notes: closeout.notes || "",
-        cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
+        cash_counted: counted,
+        rollover_confirmed: true,
+        confirmed_rollover_cash: counted,
         clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
         venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
         paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
         check_total: closeout.check_total === "" ? null : Number(closeout.check_total),
       };
       await api.post("/admin/end-of-day/closeout", payload);
-      toast.success("Closeout saved");
+      toast.success(`Day closed. $${counted.toFixed(2)} will carry forward.`);
+      setCloseoutReview(false);
+      setCloseout({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
       close();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Closeout failed"); }
     finally { setClosing(false); }
   };
 
+  const reopenDay = async () => {
+    if (reopenReason.trim().length < 3) {
+      toast.error("Enter a reason for reopening the register.");
+      return;
+    }
+    setReopening(true);
+    try {
+      const r = await api.post("/admin/register/reopen-day", { reason: reopenReason.trim() });
+      setData(d => ({ ...d, register: r.data.register }));
+      setReopenReason("");
+      toast.success("Register reopened. Save a new closeout after making changes.");
+    } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't reopen the register"); }
+    finally { setReopening(false); }
+  };
+
+
   const latestCloseout = data?.register?.latest_closeout;
   const dayStarted = Boolean(data?.register?.drawer_session);
   const hasBlockers = Boolean((data?.still_on_premises?.length || 0) || (data?.unpaid_bookings?.length || 0));
+  const expectedCash = Number(data?.register?.totals?.expected_cash || 0);
+  const countedCash = closeout.cash_counted === "" ? null : Number(closeout.cash_counted);
+  const cashOverShort = countedCash === null || !Number.isFinite(countedCash) ? null : countedCash - expectedCash;
+  const suggestedOpening = data?.register?.opening_rollover?.suggested_cash;
+  const openingOverride = suggestedOpening != null && startDay.opening_cash !== "" && Math.abs(Number(startDay.opening_cash) - Number(suggestedOpening)) > 0.005;
   const card = latestCloseout
     ? { eyebrow: "Day complete", title: "Closeout saved", sub: "View today’s wrap-up", icon: "fa-circle-check", tone: "green" }
     : dayStarted
@@ -225,11 +267,18 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                         <p className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-sun mr-1"/>Start-the-day checklist</p>
                         <p className="text-[13px] text-gray-400 mt-1">This does not block the app. It just opens the drawer and gives you a clean daily starting point.</p>
                       </div>
+                      {suggestedOpening != null && (
+                        <div className="bg-bgPanel/70 border border-shGreen/30 rounded-lg p-3">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Carried forward from {data.register?.opening_rollover?.from_date}</p>
+                          <p className="text-xl text-white font-black mt-1">${Number(suggestedOpening).toFixed(2)}</p>
+                          <p className="text-[11px] text-gray-500 mt-1">This is the actual cash count confirmed at the previous closeout.</p>
+                        </div>
+                      )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <label className="block">
                           <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening cash drawer</span>
-                          <input type="number" step="0.01" value={startDay.opening_cash} onChange={(e)=>setStartDay({...startDay, opening_cash: e.target.value})}
-                                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                          <input type="number" min="0" step="0.01" value={startDay.opening_cash} onChange={(e)=>setStartDay({...startDay, opening_cash: e.target.value})}
+                                 className={`mt-1 w-full bg-bgPanel border rounded p-2 text-white text-sm ${openingOverride ? "border-shOrange" : "border-bgHover"}`}/>
                         </label>
                         <label className="block">
                           <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Opening notes</span>
@@ -238,6 +287,14 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                                  className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
                         </label>
                       </div>
+                      {openingOverride && (
+                        <label className="block bg-shOrange/10 border border-shOrange/40 rounded-lg p-3">
+                          <span className="text-[10px] font-black uppercase tracking-widest text-shOrange">Reason for changing the rollover amount · required</span>
+                          <input value={startDay.opening_override_reason} onChange={(e)=>setStartDay({...startDay, opening_override_reason: e.target.value})}
+                                 placeholder="Bank deposit, owner removed cash, recount, correction…"
+                                 className="mt-1 w-full bg-bgPanel border border-shOrange/50 rounded p-2 text-white text-sm"/>
+                        </label>
+                      )}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px] text-gray-300">
                         <p><i className="fas fa-calendar-day text-shGreen mr-1"/>Review today’s bookings and arrivals.</p>
                         <p><i className="fas fa-shield-dog text-shOrange mr-1"/>Check vaccines, meds, meals, behavior notes, and low credits.</p>
@@ -263,7 +320,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                           )}
                         </div>
                       )}
-                      <button onClick={saveStartDay} disabled={starting}
+                      <button onClick={saveStartDay} disabled={starting || (openingOverride && startDay.opening_override_reason.trim().length < 3)}
                               className="w-full bg-shBlue text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
                               data-testid="start-day-save">
                         <i className="fas fa-door-open mr-1"/>{starting ? "Starting…" : "Start Day"}
@@ -272,9 +329,23 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                   )}
 
                   {data.register?.latest_closeout && (
-                    <div className="bg-shGreen/15 border border-shGreen/40 rounded-xl p-4" data-testid="day-complete-banner">
-                      <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-circle-check text-shGreen mr-2"/>Day Complete</p>
-                      <p className="text-[13px] text-gray-400 mt-1">Closeout saved. You can still reopen this panel to view totals or save an additional note if something changed.</p>
+                    <div className="bg-shGreen/15 border border-shGreen/40 rounded-xl p-4 space-y-3" data-testid="day-complete-banner">
+                      <div>
+                        <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-circle-check text-shGreen mr-2"/>Day Complete</p>
+                        <p className="text-[13px] text-gray-400 mt-1">Actual cash counted: <span className="text-white font-black">{data.register.latest_closeout.cash_counted == null ? "Not entered" : `$${Number(data.register.latest_closeout.cash_counted).toFixed(2)}`}</span>. {data.register.latest_closeout.cash_counted == null ? "Reopen the day and save a corrected closeout so tomorrow has a rollover amount." : "That amount is locked in for the next opening."}</p>
+                      </div>
+                      <div className="bg-bgPanel/70 border border-bgHover rounded-lg p-3">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-shOrange">Need to change something after close?</p>
+                        <p className="text-[11px] text-gray-500 mt-1">Reopening creates an audit record. Make the correction, then save a fresh closeout.</p>
+                        <div className="flex flex-col sm:flex-row gap-2 mt-2">
+                          <input value={reopenReason} onChange={(e)=>setReopenReason(e.target.value)} placeholder="Reason for reopening · required"
+                                 className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                          <button onClick={reopenDay} disabled={reopening || reopenReason.trim().length < 3}
+                                  className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                            <i className="fas fa-lock-open mr-1"/>{reopening ? "Reopening…" : "Reopen Day"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -341,36 +412,74 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                     </div>
                   )}
 
-                  <div className="bg-bgBase/60 border border-bgHover rounded-xl p-3 space-y-3" data-testid="eod-closeout-form">
-                    <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-clipboard-check mr-1"/>Save closeout snapshot</p>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {[
-                        ["cash_counted", "Cash counted"],
-                        ["clover_batch", "Clover batch"],
-                        ["venmo_total", "Venmo total"],
-                        ["paypal_total", "PayPal total"],
-                        ["check_total", "Checks total"],
-                      ].map(([k,label]) => (
-                        <label key={k} className="block">
-                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
-                          <input type="number" step="0.01" value={closeout[k]} onChange={(e)=>setCloseout({...closeout, [k]: e.target.value})}
-                                 className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
-                        </label>
-                      ))}
+                  {!data.register?.latest_closeout && (
+                    <div className="bg-bgBase/60 border border-bgHover rounded-xl p-3 space-y-3" data-testid="eod-closeout-form">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-clipboard-check mr-1"/>Close and carry forward</p>
+                        <button type="button" onClick={()=>setCloseout({...closeout, cash_counted: expectedCash.toFixed(2)})}
+                                className="bg-bgPanel border border-shGreen/40 text-shGreen px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-widest">
+                          Use expected ${expectedCash.toFixed(2)}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {[
+                          ["cash_counted", "Actual cash counted · required"],
+                          ["clover_batch", "Clover batch"],
+                          ["venmo_total", "Venmo total"],
+                          ["paypal_total", "PayPal total"],
+                          ["check_total", "Checks total"],
+                        ].map(([k,label]) => (
+                          <label key={k} className="block">
+                            <span className={`text-[10px] font-black uppercase tracking-widest ${k === "cash_counted" ? "text-shGreen" : "text-gray-500"}`}>{label}</span>
+                            <input type="number" min="0" step="0.01" value={closeout[k]} onChange={(e)=>{ setCloseout({...closeout, [k]: e.target.value}); setCloseoutReview(false); }}
+                                   className={`mt-1 w-full bg-bgPanel border rounded p-2 text-white text-sm ${k === "cash_counted" && closeout.cash_counted === "" ? "border-shOrange" : "border-bgHover"}`}/>
+                          </label>
+                        ))}
+                      </div>
+                      {cashOverShort != null && (
+                        <div className={`rounded-lg border p-3 ${Math.abs(cashOverShort) < 0.005 ? "bg-shGreen/10 border-shGreen/30" : "bg-shOrange/10 border-shOrange/40"}`}>
+                          <p className="text-[10px] font-black uppercase tracking-widest text-gray-400">Live drawer difference</p>
+                          <p className={`text-lg font-black ${Math.abs(cashOverShort) < 0.005 ? "text-shGreen" : "text-shOrange"}`}>{cashOverShort >= 0 ? "+" : "-"}${Math.abs(cashOverShort).toFixed(2)} {cashOverShort >= 0 ? "over" : "short"}</p>
+                        </div>
+                      )}
+                      <label className="block">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Notes</span>
+                        <textarea value={closeout.notes} onChange={(e)=>{ setCloseout({...closeout, notes: e.target.value}); setCloseoutReview(false); }}
+                                  placeholder="Anything weird today? unpaid promise, cash drawer note, supply issue…"
+                                  className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm min-h-[70px]"/>
+                      </label>
+
+                      {!closeoutReview ? (
+                        <button onClick={reviewCloseout} disabled={closeout.cash_counted === ""}
+                                className="w-full bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
+                                data-testid="eod-review-closeout">
+                          <i className="fas fa-magnifying-glass mr-1"/>Review Closeout
+                        </button>
+                      ) : (
+                        <div className="bg-bgPanel border-2 border-shGreen/50 rounded-xl p-4 space-y-3" data-testid="eod-closeout-confirmation">
+                          <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-shield-check text-shGreen mr-2"/>Confirm the rollover</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <EodStat label="Expected drawer" value={`$${expectedCash.toFixed(2)}`}/>
+                            <EodStat label="Actual counted" value={`$${Number(closeout.cash_counted).toFixed(2)}`} color="text-shGreen"/>
+                            <EodStat label="Over / short" value={`${cashOverShort >= 0 ? "+" : "-"}$${Math.abs(cashOverShort || 0).toFixed(2)}`} color={Math.abs(cashOverShort || 0) < 0.005 ? "text-shGreen" : "text-shOrange"}/>
+                          </div>
+                          <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3 text-center">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Amount opening tomorrow</p>
+                            <p className="text-2xl text-white font-black mt-1">${Number(closeout.cash_counted).toFixed(2)}</p>
+                          </div>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <button onClick={()=>setCloseoutReview(false)} className="sm:w-1/3 bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">Go Back</button>
+                            <button onClick={saveCloseout} disabled={closing}
+                                    className="flex-1 bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
+                                    data-testid="eod-save-closeout">
+                              <i className="fas fa-lock mr-1"/>{closing ? "Closing…" : `Confirm & Carry $${Number(closeout.cash_counted).toFixed(2)} Forward`}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">There are still safety or money items to resolve. Boarding stayovers are not blockers unless due for checkout.</p>}
                     </div>
-                    <label className="block">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">Notes</span>
-                      <textarea value={closeout.notes} onChange={(e)=>setCloseout({...closeout, notes: e.target.value})}
-                                placeholder="Anything weird today? unpaid promise, cash drawer note, supply issue…"
-                                className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm min-h-[70px]"/>
-                    </label>
-                    <button onClick={saveCloseout} disabled={closing}
-                            className="w-full bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50"
-                            data-testid="eod-save-closeout">
-                      <i className="fas fa-lock mr-1"/>{closing ? "Saving…" : "Save End-of-Day Closeout"}
-                    </button>
-                    {!data.all_clear && <p className="text-[11px] text-shOrange font-black uppercase tracking-widest">You can save notes now, but there are still safety or money items to resolve. Boarding stayovers are not blockers unless due for checkout.</p>}
-                  </div>
+                  )}
                 </>
               )}
             </div>

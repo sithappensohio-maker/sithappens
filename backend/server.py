@@ -220,6 +220,19 @@ def business_today() -> date:
     return datetime.now(BUSINESS_TZ).date()
 
 
+def _business_date_from_timestamp(value: Optional[str], fallback: Optional[str] = None) -> str:
+    """Convert a stored UTC/ISO timestamp to its America/New_York business date."""
+    if value:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(BUSINESS_TZ).date().isoformat()
+        except Exception:
+            pass
+    return fallback or business_today().isoformat()
+
+
 def now_local() -> datetime:
     """Naive local datetime (no tzinfo) — handy for hour/minute comparisons in
     the auto-backup loop where we want wall-clock semantics."""
@@ -4638,6 +4651,7 @@ async def apply_tab_payment(
     Income / P&L picks it up. The row is tagged `source_kind="tab_payment"`
     for clean audit + so it can be excluded from sales-tax math (tax was
     already booked at the original sale)."""
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -5510,6 +5524,8 @@ async def check_out(
         update["balance_due"] = 0.0
     merged_money = {**booking, **update}
     update["cash_revenue"] = _cash_revenue(merged_money)
+    if float(update.get("cash_revenue") or 0) > 0:
+        await _require_register_day_open(business_today().isoformat())
 
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
@@ -15987,6 +16003,8 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
         "paid_at": now_iso() if body.payment_status == "paid" else None,
     }
     doc["cash_revenue"] = _cash_revenue(doc)
+    if float(doc.get("cash_revenue") or 0) > 0:
+        await _require_register_day_open(_business_date_from_timestamp(doc.get("paid_at")))
     await db.bookings.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -16023,6 +16041,9 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     elif merged.get("payment_status") == "paid_partial":
         update["balance_due"] = _booking_balance_due(merged)
     update["cash_revenue"] = _cash_revenue({**booking, **update})
+    if float(update.get("cash_revenue") or 0) > 0 or float(booking.get("cash_revenue") or 0) > 0:
+        money_day = _business_date_from_timestamp((update.get("paid_at") or booking.get("paid_at")))
+        await _require_register_day_open(money_day)
     await db.bookings.update_one({"id": transaction_id}, {"$set": update})
     return {**booking, **update}
 
@@ -16032,6 +16053,8 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if float(booking.get("cash_revenue") or 0) > 0:
+        await _require_register_day_open(_business_date_from_timestamp(booking.get("paid_at")))
     # If it was created via log_service (no real check-in flow), hard-delete.
     # Otherwise, just strip the income fields and leave the booking intact.
     if booking.get("service_id") and not booking.get("checked_in_at"):
@@ -17753,6 +17776,54 @@ class CashDrawerOpenIn(BaseModel):
     date: Optional[str] = None
     opening_cash: float = Field(ge=0)
     notes: Optional[str] = ""
+    opening_override_reason: Optional[str] = Field(default="", max_length=500)
+
+
+class ReopenRegisterDayIn(BaseModel):
+    date: Optional[str] = None
+    reason: str = Field(min_length=3, max_length=500)
+
+
+async def _active_register_closeout(date_value: str) -> Optional[Dict[str, Any]]:
+    """Return the newest closeout that has not been explicitly reopened."""
+    return await db.daily_closeouts.find_one(
+        {
+            "date": date_value,
+            "$or": [
+                {"reopened_at": {"$exists": False}},
+                {"reopened_at": None},
+            ],
+        },
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+
+
+async def _require_register_day_open(date_value: str) -> None:
+    closeout = await _active_register_closeout(date_value)
+    if closeout:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The register for {date_value} is closed. Reopen the day with a reason "
+                "before recording another sale, payment, refund, expense, or till adjustment."
+            ),
+        )
+
+
+async def _previous_closeout_rollover(date_value: str) -> Optional[Dict[str, Any]]:
+    return await db.daily_closeouts.find_one(
+        {
+            "date": {"$lt": date_value},
+            "cash_counted": {"$ne": None},
+            "$or": [
+                {"reopened_at": {"$exists": False}},
+                {"reopened_at": None},
+            ],
+        },
+        {"_id": 0},
+        sort=[("date", -1), ("created_at", -1)],
+    )
 
 
 class TillAdjustmentIn(BaseModel):
@@ -17975,20 +18046,25 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     # Drawer session: use explicit opening cash when available; otherwise carry
     # forward the most recent closeout cash count as a helpful default.
     session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
+    previous_closeout = await _previous_closeout_rollover(d)
+    suggested_opening_cash = None
+    suggested_opening_date = None
+    if previous_closeout and previous_closeout.get("cash_counted") is not None:
+        suggested_opening_cash = round(float(previous_closeout.get("cash_counted") or 0), 2)
+        suggested_opening_date = previous_closeout.get("date")
+
     opening_cash = 0.0
     opening_source = "not_set"
     if session and session.get("opening_cash") is not None:
         opening_cash = round(float(session.get("opening_cash") or 0), 2)
         opening_source = "drawer_session"
-    else:
-        prev = await db.daily_closeouts.find_one({"date": {"$lt": d}, "cash_counted": {"$ne": None}}, {"_id": 0}, sort=[("date", -1), ("created_at", -1)])
-        if prev and prev.get("cash_counted") is not None:
-            opening_cash = round(float(prev.get("cash_counted") or 0), 2)
-            opening_source = "previous_closeout"
+    elif suggested_opening_cash is not None:
+        opening_cash = suggested_opening_cash
+        opening_source = "previous_closeout"
 
     cash_in = round(float(incoming_by_method.get("cash") or 0), 2)
     expected_cash = round(opening_cash + cash_in - drawer_payouts + till_additions - till_removals, 2)
-    closeout = await db.daily_closeouts.find_one({"date": d}, {"_id": 0}, sort=[("created_at", -1)])
+    closeout = await _active_register_closeout(d)
 
     totals = {
         "incoming_total": round(sum(float(v or 0) for v in incoming_by_method.values()), 2),
@@ -18021,7 +18097,14 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "drawer_session": session,
         "till_adjustments": till_rows,
         "opening_cash_source": opening_source,
+        "opening_rollover": {
+            "suggested_cash": suggested_opening_cash,
+            "from_date": suggested_opening_date,
+            "is_override": bool(session and suggested_opening_cash is not None and abs(opening_cash - suggested_opening_cash) > 0.005),
+            "override_reason": (session or {}).get("opening_override_reason") or "",
+        },
         "latest_closeout": closeout,
+        "register_closed": bool(closeout),
         "notes": {
             "cash": "Expected drawer cash = opening cash + cash payments - cash-drawer expenses + till additions - till removals.",
             "till_adjustments": "Till adjustments change physical cash only. They are not treated as sales, refunds, or business expenses.",
@@ -18120,11 +18203,19 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
             expected_methods = day.get("incoming_by_method") or {}
             deltas = _register_method_delta(expected_methods, closeout)
             closeout_rows.append({
+                "id": closeout.get("id"),
                 "date": d,
                 "created_at": closeout.get("created_at"),
                 "created_by_name": closeout.get("created_by_name") or "",
                 "notes": closeout.get("notes") or "",
                 "cash_counted": closeout.get("cash_counted"),
+                "rollover_cash": closeout.get("rollover_cash", closeout.get("cash_counted")),
+                "expected_cash": closeout.get("expected_cash"),
+                "cash_over_short": closeout.get("cash_over_short"),
+                "status": closeout.get("status") or "closed",
+                "reopened_at": closeout.get("reopened_at"),
+                "reopened_reason": closeout.get("reopened_reason") or "",
+                "reopened_by_name": closeout.get("reopened_by_name") or "",
                 "clover_batch": closeout.get("clover_batch"),
                 "venmo_total": closeout.get("venmo_total"),
                 "paypal_total": closeout.get("paypal_total"),
@@ -18142,6 +18233,39 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
                 "date": d, "severity": "warn", "type": "missing_closeout",
                 "message": "Register activity exists but no saved closeout was found.",
             })
+
+    # Preserve reopened closeouts in history. They are intentionally excluded
+    # from the active day state, but their count, reason, and operator remain an
+    # immutable audit trail alongside the replacement closeout.
+    seen_closeout_ids = {row.get("id") for row in closeout_rows if row.get("id")}
+    historical_closeouts = await db.daily_closeouts.find(
+        {"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}
+    ).sort([("date", -1), ("created_at", -1)]).to_list(5000)
+    for c in historical_closeouts:
+        if c.get("id") in seen_closeout_ids:
+            continue
+        snap = c.get("register_snapshot") or {}
+        deltas = _register_method_delta(snap.get("incoming_by_method") or {}, c)
+        closeout_rows.append({
+            "id": c.get("id"),
+            "date": c.get("date"),
+            "created_at": c.get("created_at"),
+            "created_by_name": c.get("created_by_name") or "",
+            "notes": c.get("notes") or "",
+            "cash_counted": c.get("cash_counted"),
+            "rollover_cash": c.get("rollover_cash", c.get("cash_counted")),
+            "expected_cash": c.get("expected_cash"),
+            "cash_over_short": c.get("cash_over_short"),
+            "status": c.get("status") or ("reopened" if c.get("reopened_at") else "closed"),
+            "reopened_at": c.get("reopened_at"),
+            "reopened_reason": c.get("reopened_reason") or "",
+            "reopened_by_name": c.get("reopened_by_name") or "",
+            "clover_batch": c.get("clover_batch"),
+            "venmo_total": c.get("venmo_total"),
+            "paypal_total": c.get("paypal_total"),
+            "check_total": c.get("check_total"),
+            "deltas": deltas,
+        })
 
     # Range-level sanity checks from raw records.
     retail = await db.retail_sales.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).to_list(50000)
@@ -18179,7 +18303,7 @@ async def _register_range_summary(start_date: Optional[str] = None, end_date: Op
         "expense_rows": _method_rows(expenses_by_method),
         "incoming_sources": incoming_sources,
         "totals": totals,
-        "closeouts": sorted(closeout_rows, key=lambda x: x.get("date") or "", reverse=True),
+        "closeouts": sorted(closeout_rows, key=lambda x: ((x.get("date") or ""), (x.get("created_at") or "")), reverse=True),
         "alerts": alerts[:100],
         "activity": recent_activity,
         "explain": {
@@ -18258,10 +18382,10 @@ async def admin_register_export_csv(
         return _csv_response(rows, f"sit-happens-register-methods-{stamp}.csv")
 
     if safe_kind == "closeouts":
-        rows = [["Date", "Created At", "Closed By", "Cash Counted", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Notes"]]
+        rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
         closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
         for c in closeouts:
-            rows.append([c.get("date"), c.get("created_at"), c.get("created_by_name"), c.get("cash_counted"), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("notes")])
+            rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
         return _csv_response(rows, f"sit-happens-closeouts-{stamp}.csv")
 
     if safe_kind == "expenses":
@@ -18338,10 +18462,10 @@ async def admin_register_tax_packet_zip(
     files[f"register-activity-{stamp}.csv"] = csv_bytes(activity_rows)
     files[f"payment-methods-{stamp}.csv"] = csv_bytes(methods_rows)
 
-    closeout_rows = [["Date", "Created At", "Closed By", "Cash Counted", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Notes"]]
+    closeout_rows = [["Date", "Created At", "Status", "Closed By", "Expected Cash", "Cash Counted", "Over / Short", "Rollover Cash", "Clover Batch", "Venmo Total", "PayPal Total", "Check Total", "Reopened At", "Reopened By", "Reopen Reason", "Notes"]]
     closeouts = await db.daily_closeouts.find({"date": {"$gte": sd, "$lte": ed}}, {"_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(5000)
     for c in closeouts:
-        closeout_rows.append([c.get("date"), c.get("created_at"), c.get("created_by_name"), c.get("cash_counted"), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("notes")])
+        closeout_rows.append([c.get("date"), c.get("created_at"), c.get("status") or ("reopened" if c.get("reopened_at") else "closed"), c.get("created_by_name"), c.get("expected_cash"), c.get("cash_counted"), c.get("cash_over_short"), c.get("rollover_cash", c.get("cash_counted")), c.get("clover_batch"), c.get("venmo_total"), c.get("paypal_total"), c.get("check_total"), c.get("reopened_at"), c.get("reopened_by_name"), c.get("reopened_reason"), c.get("notes")])
     files[f"closeouts-{stamp}.csv"] = csv_bytes(closeout_rows)
 
     expense_rows = [["Date", "Vendor", "Category", "Description", "Quantity", "Unit Price", "Payment Method", "Amount", "Tax Deductible", "From Cash Drawer", "Recurring", "Receipt Attached", "Notes"]]
@@ -18386,10 +18510,34 @@ async def admin_register_day(date: Optional[str] = None, _: dict = Depends(requi
 @api.post("/admin/register/open-drawer")
 async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin)):
     d = body.date or business_today().isoformat()
+    await _require_register_day_open(d)
+    opening_cash = round(float(body.opening_cash), 2)
+    existing = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
+    previous = await _previous_closeout_rollover(d)
+    suggested = round(float(previous.get("cash_counted") or 0), 2) if previous and previous.get("cash_counted") is not None else None
+    baseline = None
+    if existing and existing.get("opening_cash") is not None:
+        baseline = round(float(existing.get("opening_cash") or 0), 2)
+    elif suggested is not None:
+        baseline = suggested
+    is_override = baseline is not None and abs(opening_cash - baseline) > 0.005
+    override_reason = (body.opening_override_reason or "").strip()
+    if is_override and len(override_reason) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Opening cash differs from the expected rollover of ${baseline:.2f}. "
+                "Enter a reason such as bank deposit, owner removal, recount, or correction."
+            ),
+        )
     doc = {
         "date": d,
-        "opening_cash": round(float(body.opening_cash), 2),
+        "opening_cash": opening_cash,
         "notes": (body.notes or "").strip()[:1000],
+        "suggested_opening_cash": suggested,
+        "suggested_opening_from_date": previous.get("date") if previous else None,
+        "opening_override_reason": override_reason if is_override else "",
+        "opening_was_overridden": bool(is_override),
         "opened_at": now_iso(),
         "opened_by": user.get("id"),
         "opened_by_name": user.get("name") or user.get("email") or "admin",
@@ -18399,6 +18547,37 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     return {"ok": True, "drawer_session": fresh, "register": await _register_day_summary(d)}
 
 
+@api.post("/admin/register/reopen-day")
+async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depends(require_admin)):
+    d = body.date or business_today().isoformat()
+    reason = body.reason.strip()
+    closeout = await _active_register_closeout(d)
+    if not closeout:
+        raise HTTPException(status_code=404, detail=f"No closed register was found for {d}")
+    reopened_at = now_iso()
+    await db.daily_closeouts.update_one(
+        {"id": closeout.get("id")},
+        {"$set": {
+            "status": "reopened",
+            "reopened_at": reopened_at,
+            "reopened_reason": reason,
+            "reopened_by": user.get("id"),
+            "reopened_by_name": user.get("name") or user.get("email") or "admin",
+        }},
+    )
+    await db.cash_drawer_sessions.update_one(
+        {"date": d},
+        {"$set": {
+            "reopened_at": reopened_at,
+            "reopened_reason": reason,
+            "reopened_by": user.get("id"),
+            "reopened_by_name": user.get("name") or user.get("email") or "admin",
+        }},
+        upsert=False,
+    )
+    return {"ok": True, "date": d, "register": await _register_day_summary(d)}
+
+
 @api.post("/admin/register/till-adjustment")
 async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = Depends(require_admin)):
     """Record physical cash added to or removed from the till without
@@ -18406,6 +18585,7 @@ async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = De
     audit trail for owner draws, change funds, bank deposits, and corrections.
     """
     d = body.date or business_today().isoformat()
+    await _require_register_day_open(d)
     reason = body.reason.strip()
     if not reason:
         raise HTTPException(status_code=400, detail="A reason is required for every till adjustment")
@@ -18450,6 +18630,7 @@ class RegisterCashPayoutIn(BaseModel):
 @api.post("/admin/register/refund")
 async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(require_admin)):
     d = body.date or business_today().isoformat()
+    await _require_register_day_open(d)
     client_name = ""
     if body.client_id:
         c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
@@ -18478,6 +18659,7 @@ async def admin_register_refund(body: RegisterRefundIn, user: dict = Depends(req
 @api.post("/admin/register/cash-payout")
 async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = Depends(require_admin)):
     d = body.date or business_today().isoformat()
+    await _require_register_day_open(d)
     doc = {
         "id": str(uuid.uuid4()),
         "date": d,
@@ -18499,7 +18681,9 @@ async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = De
 
 class EndOfDayCloseoutIn(BaseModel):
     notes: Optional[str] = ""
-    cash_counted: Optional[float] = None
+    cash_counted: float = Field(ge=0)
+    rollover_confirmed: bool = False
+    confirmed_rollover_cash: Optional[float] = Field(default=None, ge=0)
     card_batch: Optional[float] = None  # legacy field; maps to clover_batch
     venmo_paypal: Optional[float] = None  # legacy combined field
     clover_batch: Optional[float] = None
@@ -18510,9 +18694,24 @@ class EndOfDayCloseoutIn(BaseModel):
 
 @api.post("/admin/end-of-day/closeout")
 async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depends(require_admin)):
-    """Persist an end-of-day closeout snapshot. It does not change bookings;
-    it creates an audit trail that says what the owner reviewed before closing."""
+    """Persist an end-of-day closeout with an explicit next-day rollover.
+
+    Cash counted is mandatory. The operator must confirm the exact amount that
+    will be suggested as the next opening balance so a blank field can never
+    silently turn into a zero-dollar morning drawer.
+    """
     snapshot = await admin_end_of_day(_=user)  # type: ignore[arg-type]
+    d = snapshot.get("date")
+    if await _active_register_closeout(d):
+        raise HTTPException(status_code=409, detail="This register is already closed. Reopen the day before saving a replacement closeout.")
+    counted = round(float(body.cash_counted), 2)
+    if not body.rollover_confirmed or body.confirmed_rollover_cash is None:
+        raise HTTPException(status_code=400, detail="Confirm the exact cash amount that will carry forward to the next day.")
+    confirmed = round(float(body.confirmed_rollover_cash), 2)
+    if abs(confirmed - counted) > 0.005:
+        raise HTTPException(status_code=400, detail="Confirmed rollover cash must exactly match the actual cash counted.")
+    register_snapshot = await _register_day_summary(d)
+    expected_cash = round(float((register_snapshot.get("totals") or {}).get("expected_cash") or 0), 2)
     doc = {
         "id": str(uuid.uuid4()),
         "date": snapshot.get("date"),
@@ -18521,7 +18720,12 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
         "created_by_name": user.get("name") or user.get("email") or "admin",
         "snapshot": snapshot,
         "notes": (body.notes or "").strip()[:1000],
-        "cash_counted": round(float(body.cash_counted), 2) if body.cash_counted is not None else None,
+        "cash_counted": counted,
+        "rollover_cash": counted,
+        "rollover_confirmed": True,
+        "expected_cash": expected_cash,
+        "cash_over_short": round(counted - expected_cash, 2),
+        "status": "closed",
         # Keep legacy fields for old UI/backups, but save the explicit methods too.
         "card_batch": round(float(body.card_batch), 2) if body.card_batch is not None else None,
         "venmo_paypal": round(float(body.venmo_paypal), 2) if body.venmo_paypal is not None else None,
@@ -18529,10 +18733,21 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
         "venmo_total": round(float(body.venmo_total), 2) if body.venmo_total is not None else None,
         "paypal_total": round(float(body.paypal_total), 2) if body.paypal_total is not None else None,
         "check_total": round(float(body.check_total), 2) if body.check_total is not None else None,
-        "register_snapshot": await _register_day_summary(snapshot.get("date")),
+        "register_snapshot": register_snapshot,
         "all_clear": bool(snapshot.get("all_clear")),
     }
     await db.daily_closeouts.insert_one(doc.copy())
+    await db.cash_drawer_sessions.update_one(
+        {"date": d},
+        {"$set": {
+            "closed_at": doc["created_at"],
+            "closed_by": doc["created_by"],
+            "closed_by_name": doc["created_by_name"],
+            "closing_cash_counted": counted,
+            "closeout_id": doc["id"],
+        }},
+        upsert=True,
+    )
     doc.pop("_id", None)
     return doc
 
@@ -20951,6 +21166,7 @@ async def create_expense(body: ExpenseIn, user: dict = Depends(require_admin)):
     """Log an out-of-pocket business expense (food, supplies, utilities, etc.).
     These flow into the Income screen's monthly/range view so you can see NET
     instead of just gross income."""
+    await _require_register_day_open(body.date)
     receipt_image, receipt_filename = _clean_receipt_payload(body.receipt_image, body.receipt_filename)
     doc = {
         "id": str(uuid.uuid4()),
@@ -20984,6 +21200,9 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
     existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Expense not found")
+    await _require_register_day_open(existing.get("date") or body.date)
+    if body.date != existing.get("date"):
+        await _require_register_day_open(body.date)
     patch = {
         "date": body.date,
         "description": body.description.strip(),
@@ -21021,6 +21240,10 @@ async def update_expense(expense_id: str, body: ExpenseIn, _: dict = Depends(req
 
 @api.delete("/expenses/{expense_id}")
 async def delete_expense(expense_id: str, _: dict = Depends(require_admin)):
+    existing = await db.expenses.find_one({"id": expense_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    await _require_register_day_open(existing.get("date") or business_today().isoformat())
     res = await db.expenses.delete_one({"id": expense_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Expense not found")
@@ -21086,6 +21309,7 @@ async def list_retail_sales(
 async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_admin)):
     """Log a retail sale (treats, leash, food bag, etc.) from your external POS.
     Flows into the Income screen + P&L PDF alongside service revenue."""
+    await _require_register_day_open(body.date)
     client_name = ""
     if body.client_id:
         c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
@@ -21167,6 +21391,9 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
     existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Retail sale not found")
+    await _require_register_day_open(existing.get("date") or body.date)
+    if body.date != existing.get("date"):
+        await _require_register_day_open(body.date)
     client_name = existing.get("client_name") or ""
     if body.client_id and body.client_id != existing.get("client_id"):
         c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
@@ -21192,6 +21419,10 @@ async def update_retail_sale(sale_id: str, body: RetailSaleIn, _: dict = Depends
 
 @api.delete("/retail-sales/{sale_id}")
 async def delete_retail_sale(sale_id: str, _: dict = Depends(require_admin)):
+    existing = await db.retail_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Retail sale not found")
+    await _require_register_day_open(existing.get("date") or business_today().isoformat())
     res = await db.retail_sales.delete_one({"id": sale_id})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Retail sale not found")
@@ -21706,6 +21937,7 @@ async def sell_training_program(
     Pricing: defaults to program.price, overrideable via `override_price`
     (admin discount). Does NOT trigger Stripe — same as sell-pack, this is
     the manual-payment path."""
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -22303,6 +22535,7 @@ async def sell_credit_pack(client_id: str, body: SellCreditPackIn, user: dict = 
     FIFO credit_lot tagged with the per-credit value. Does NOT generate a
     revenue event (income is recognized when each credit is redeemed at
     check-out)."""
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -22403,6 +22636,7 @@ async def sell_credit_packs_bulk(client_id: str, body: SellCreditPacksBulkIn, us
     Each {pack_id, quantity} pair mints `quantity` separate FIFO lots so
     accounting + redemption logic stays unchanged. Returns the list of new
     lots plus a per-pool totals summary (qty + price)."""
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -23536,6 +23770,7 @@ class MarkPaidIn(BaseModel):
 async def mark_installment_paid(
     plan_id: str, inst_id: str, body: MarkPaidIn, current: dict = Depends(require_admin),
 ):
+    await _require_register_day_open(business_today().isoformat())
     p = await db.payment_plans.find_one({"id": plan_id}, {"_id": 0})
     if not p:
         raise HTTPException(404, "Plan not found")

@@ -1877,6 +1877,8 @@ export function RegisterTab() {
   });
   const [openingCash, setOpeningCash] = useState("");
   const [notes, setNotes] = useState("");
+  const [openingOverrideReason, setOpeningOverrideReason] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
   const [clients, setClients] = useState([]);
   const [packs, setPacks] = useState([]);
   const [sale, setSale] = useState({ description: "", quantity: "1", unit_price: "", amount: "", category: "Misc Sale", payment_method: "clover", client_id: "", notes: "", apply_tax: false });
@@ -1886,6 +1888,7 @@ export function RegisterTab() {
   const [payout, setPayout] = useState({ amount: "", description: "", category: "Supplies", vendor: "", notes: "", tax_deductible: true });
   const [tillAdjustment, setTillAdjustment] = useState({ direction: "remove", amount: "", adjustment_type: "owner_draw", reason: "", notes: "" });
   const [closeout, setCloseout] = useState({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
+  const [closeoutReview, setCloseoutReview] = useState(false);
   const [reportStart, setReportStart] = useState(`${new Date().getFullYear()}-01-01`);
   const [reportEnd, setReportEnd] = useState(todayISO());
   const [reportData, setReportData] = useState(null);
@@ -1947,6 +1950,12 @@ export function RegisterTab() {
   const packQty = Math.max(1, Number(packSale.quantity || 1));
   const packOrderTotal = selectedPack ? Number(selectedPack.price || 0) * packQty : 0;
   const money = (n) => `$${Number(n || 0).toFixed(2)}`;
+  const moneyOrMissing = (n) => n === null || n === undefined ? "Not entered" : money(n);
+  const suggestedOpening = data?.opening_rollover?.suggested_cash;
+  const openingOverride = suggestedOpening != null && openingCash !== "" && Math.abs(Number(openingCash) - Number(suggestedOpening)) > 0.005;
+  const closeoutExpectedCash = Number(data?.totals?.expected_cash || 0);
+  const closeoutCountedCash = closeout.cash_counted === "" ? null : Number(closeout.cash_counted);
+  const closeoutOverShort = closeoutCountedCash == null || !Number.isFinite(closeoutCountedCash) ? null : closeoutCountedCash - closeoutExpectedCash;
   const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
   const submit = async (fn) => {
     setErr(""); setMsg("");
@@ -1955,8 +1964,14 @@ export function RegisterTab() {
   };
 
   const openDrawer = () => submit(async () => {
-    const r = await api.post("/admin/register/open-drawer", { date, opening_cash: Number(openingCash || 0), notes });
-    setData(r.data.register); setNotes(""); showDone("Opening drawer saved.");
+    const r = await api.post("/admin/register/open-drawer", { date, opening_cash: Number(openingCash || 0), notes, opening_override_reason: openingOverrideReason });
+    setData(r.data.register); setNotes(""); setOpeningOverrideReason(""); showDone("Opening drawer saved.");
+  });
+
+  const reopenDay = () => submit(async () => {
+    if (reopenReason.trim().length < 3) throw new Error("Enter a reason for reopening the register.");
+    const r = await api.post("/admin/register/reopen-day", { date, reason: reopenReason.trim() });
+    setData(r.data.register); setReopenReason(""); showDone("Register reopened. Save a fresh closeout after corrections.");
   });
   const submitSale = () => submit(async () => {
     const qty = Math.max(1, Number(sale.quantity || 1));
@@ -2063,9 +2078,20 @@ export function RegisterTab() {
     } catch (ex) { setErr(ex.message || "Receipt upload failed"); }
     finally { setExpenseUploadBusy(false); e.target.value = ""; }
   };
+  const reviewCloseout = () => {
+    if (closeout.cash_counted === "" || !Number.isFinite(Number(closeout.cash_counted)) || Number(closeout.cash_counted) < 0) {
+      setErr("Actual cash counted is required. Enter 0.00 if the drawer is intentionally empty.");
+      return;
+    }
+    setErr("");
+    setCloseoutReview(true);
+  };
   const submitCloseout = () => submit(async () => {
+    const counted = Number(closeout.cash_counted);
     await api.post("/admin/end-of-day/closeout", {
-      cash_counted: closeout.cash_counted === "" ? null : Number(closeout.cash_counted),
+      cash_counted: counted,
+      rollover_confirmed: true,
+      confirmed_rollover_cash: counted,
       clover_batch: closeout.clover_batch === "" ? null : Number(closeout.clover_batch),
       venmo_total: closeout.venmo_total === "" ? null : Number(closeout.venmo_total),
       paypal_total: closeout.paypal_total === "" ? null : Number(closeout.paypal_total),
@@ -2073,7 +2099,8 @@ export function RegisterTab() {
       notes: closeout.notes,
     });
     setCloseout({ cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "", notes: "" });
-    showDone("Closeout saved.");
+    setCloseoutReview(false);
+    showDone(`Closeout saved. ${money(counted)} will carry forward.`);
   });
 
   const loadReports = async () => {
@@ -2166,6 +2193,23 @@ export function RegisterTab() {
         ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
+      {data?.register_closed && (
+        <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-4 space-y-3" data-testid="register-closed-banner">
+          <div>
+            <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-lock text-shGreen mr-2"/>Register closed for {date}</p>
+            <p className="text-[12px] text-gray-400 mt-1">Counted {moneyOrMissing(data.latest_closeout?.cash_counted)}. New sales, payments, refunds, expenses, and till adjustments are locked until this day is reopened.</p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input value={reopenReason} onChange={e=>setReopenReason(e.target.value)} placeholder="Reason for reopening · required"
+                   className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-white text-sm"/>
+            <button onClick={reopenDay} disabled={reopenReason.trim().length < 3}
+                    className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+              <i className="fas fa-lock-open mr-1"/>Reopen Day
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <AuditTile label="Net incoming" value={totals.net_incoming_total ?? totals.incoming_total} color="text-shGreen"/>
         <AuditTile label="Cash drawer" value={totals.expected_cash} color="text-white"/>
@@ -2180,11 +2224,25 @@ export function RegisterTab() {
             <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
               <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-door-open text-shGreen mr-2"/>Cash drawer</h4>
               <p className="text-[12px] text-gray-500 mb-3">Opening source: <span className="text-gray-300 font-bold">{data?.opening_cash_source || "—"}</span></p>
+              {suggestedOpening != null && (
+                <div className="mb-3 bg-bgBase/70 border border-shGreen/30 rounded-lg p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Previous closeout · {data?.opening_rollover?.from_date}</p>
+                  <p className="text-xl text-white font-black">{money(suggestedOpening)}</p>
+                  <p className="text-[11px] text-gray-500">Suggested opening from the last confirmed cash count.</p>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                <FormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={setOpeningCash}/>
+                <FormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={v=>{setOpeningCash(v); setOpeningOverrideReason("");}}/>
                 <FormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
-                <button onClick={openDrawer} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
+                <button onClick={openDrawer} disabled={data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
               </div>
+              {openingOverride && (
+                <div className="mt-3 bg-shOrange/10 border border-shOrange/40 rounded-lg p-3">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shOrange">Reason for changing opening cash · required</p>
+                  <input value={openingOverrideReason} onChange={e=>setOpeningOverrideReason(e.target.value)} placeholder="Bank deposit, owner removal, recount, correction…"
+                         className="mt-1 w-full bg-bgBase border border-shOrange/50 rounded px-3 py-2 text-white text-sm"/>
+                </div>
+              )}
               <div className="mt-4 space-y-1 text-[13px]">
                 <Row label="Opening cash" value={totals.opening_cash || 0}/>
                 <Row label="Cash payments/refunds" value={totals.cash_in || 0}/>
@@ -2409,9 +2467,14 @@ export function RegisterTab() {
         {expenseReceiptPreview && <div className="fixed inset-0 bg-black/90 z-[90] flex items-center justify-center p-4" onClick={()=>setExpenseReceiptPreview(null)}><img src={expenseReceiptPreview} alt="receipt preview" className="max-h-[calc(var(--app-height)_-_2rem)] max-w-[92vw] rounded shadow-2xl" onClick={e=>e.stopPropagation()}/><button onClick={()=>setExpenseReceiptPreview(null)} className="absolute top-4 right-6 text-white/70 hover:text-white text-3xl"><i className="fas fa-times"/></button></div>}
       </div>}
 
-      {active === "closeout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
-        <h4 className="text-white font-black uppercase italic"><i className="fas fa-clipboard-check text-shGreen mr-2"/>Close Day</h4>
-        <p className="text-[12px] text-gray-500">Expected totals are from the app. Enter the real-world drawer count and outside app totals from Clover, Venmo, PayPal, and checks.</p>
+      {active === "closeout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h4 className="text-white font-black uppercase italic"><i className="fas fa-clipboard-check text-shGreen mr-2"/>Close Day</h4>
+            <p className="text-[12px] text-gray-500">Count the physical drawer, review the difference, and confirm the exact amount that opens the next business day.</p>
+          </div>
+          {!data?.register_closed && <button onClick={()=>{setCloseout({...closeout, cash_counted: closeoutExpectedCash.toFixed(2)}); setCloseoutReview(false);}} className="bg-bgBase border border-shGreen/40 text-shGreen px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest">Use expected {money(closeoutExpectedCash)}</button>}
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
           <AuditTile label="Expected cash" value={totals.expected_cash}/>
           <AuditTile label="Expected Clover" value={incoming.clover}/>
@@ -2419,15 +2482,36 @@ export function RegisterTab() {
           <AuditTile label="Expected PayPal" value={incoming.paypal}/>
           <AuditTile label="Expected checks" value={incoming.check}/>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Actual cash counted" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>setCloseout({...closeout, cash_counted:v})}/>
-          <FormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>setCloseout({...closeout, clover_batch:v})}/>
-          <FormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>setCloseout({...closeout, venmo_total:v})}/>
-          <FormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>setCloseout({...closeout, paypal_total:v})}/>
-          <FormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>setCloseout({...closeout, check_total:v})}/>
-          <FormInput label="Closeout notes" value={closeout.notes} onChange={v=>setCloseout({...closeout, notes:v})}/>
-        </div>
-        <button onClick={submitCloseout} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-save mr-1"/>Save closeout</button>
+        {data?.register_closed ? (
+          <div className="bg-shGreen/10 border border-shGreen/40 rounded-xl p-4">
+            <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-circle-check text-shGreen mr-2"/>Closeout saved</p>
+            <p className="text-[13px] text-gray-400 mt-1">Actual cash counted: <span className="text-white font-black">{moneyOrMissing(data.latest_closeout?.cash_counted)}</span>. Reopen the day above before changing anything.</p>
+          </div>
+        ) : (<>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <FormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
+            <FormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>{setCloseout({...closeout, clover_batch:v});setCloseoutReview(false);}}/>
+            <FormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>{setCloseout({...closeout, venmo_total:v});setCloseoutReview(false);}}/>
+            <FormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>{setCloseout({...closeout, paypal_total:v});setCloseoutReview(false);}}/>
+            <FormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>{setCloseout({...closeout, check_total:v});setCloseoutReview(false);}}/>
+            <FormInput label="Closeout notes" value={closeout.notes} onChange={v=>{setCloseout({...closeout, notes:v});setCloseoutReview(false);}}/>
+          </div>
+          {closeoutOverShort != null && <div className={`border rounded-lg p-3 ${Math.abs(closeoutOverShort) < 0.005 ? "bg-shGreen/10 border-shGreen/30" : "bg-shOrange/10 border-shOrange/40"}`}><p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Live over / short</p><p className={`text-xl font-black ${Math.abs(closeoutOverShort) < 0.005 ? "text-shGreen" : "text-shOrange"}`}>{closeoutOverShort >= 0 ? "+" : "-"}{money(Math.abs(closeoutOverShort))}</p></div>}
+          {!closeoutReview ? (
+            <button onClick={reviewCloseout} disabled={closeout.cash_counted === ""} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-magnifying-glass mr-1"/>Review closeout</button>
+          ) : (
+            <div className="bg-bgBase border-2 border-shGreen/50 rounded-xl p-4 space-y-3">
+              <p className="text-white font-black uppercase tracking-widest"><i className="fas fa-shield-check text-shGreen mr-2"/>Final confirmation</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <AuditTile label="Expected drawer" value={closeoutExpectedCash}/>
+                <AuditTile label="Actual counted" value={closeoutCountedCash}/>
+                <AuditTile label="Over / short" value={closeoutOverShort}/>
+              </div>
+              <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3 text-center"><p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Opening next business day</p><p className="text-2xl text-white font-black">{money(closeoutCountedCash)}</p></div>
+              <div className="flex flex-col sm:flex-row gap-2"><button onClick={()=>setCloseoutReview(false)} className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">Go back</button><button onClick={submitCloseout} className="flex-1 bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Confirm & carry {money(closeoutCountedCash)} forward</button></div>
+            </div>
+          )}
+        </>)}
       </div>}
 
 
@@ -2479,9 +2563,12 @@ export function RegisterTab() {
                 {(reportData.closeouts || []).map((c,idx) => {
                   const deltas = c.deltas || {};
                   return <div key={`${c.date}-${idx}`} className="border border-bgHover rounded p-3 text-sm">
-                    <div className="flex justify-between gap-2"><p className="text-white font-black">{c.date}</p><p className="text-gray-500">{c.created_by_name || "—"}</p></div>
-                    <p className="text-[12px] text-gray-400 mt-1">Cash {money(c.cash_counted)} · Clover {money(c.clover_batch)} · Venmo {money(c.venmo_total)} · PayPal {money(c.paypal_total)} · Checks {money(c.check_total)}</p>
+                    <div className="flex justify-between gap-2"><p className="text-white font-black">{c.date}</p><p className={`text-[10px] font-black uppercase tracking-widest ${c.status === "reopened" ? "text-shOrange" : "text-shGreen"}`}>{c.status || "closed"}</p></div>
+                    <p className="text-[11px] text-gray-500 mt-1">Closed by {c.created_by_name || "—"}</p>
+                    <p className="text-[12px] text-gray-400 mt-1">Cash {moneyOrMissing(c.cash_counted)} · Clover {moneyOrMissing(c.clover_batch)} · Venmo {moneyOrMissing(c.venmo_total)} · PayPal {moneyOrMissing(c.paypal_total)} · Checks {moneyOrMissing(c.check_total)}</p>
+                    {c.expected_cash != null && <p className="text-[11px] text-gray-500 mt-1">Expected {money(c.expected_cash)} · Over/short {money(c.cash_over_short || 0)} · Rollover {moneyOrMissing(c.rollover_cash)}</p>}
                     {Object.keys(deltas).length > 0 && <p className="text-[11px] text-gray-500 mt-1">Diffs: {Object.entries(deltas).map(([m,row]) => `${m} ${money(row.delta)}`).join(" · ")}</p>}
+                    {c.status === "reopened" && <p className="text-[12px] text-shOrange mt-1"><i className="fas fa-lock-open mr-1"/>Reopened by {c.reopened_by_name || "—"}: {c.reopened_reason || "No reason recorded"}</p>}
                     {c.notes && <p className="text-[12px] text-gray-500 italic mt-1">{c.notes}</p>}
                   </div>;
                 })}
