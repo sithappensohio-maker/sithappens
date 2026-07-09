@@ -18,7 +18,7 @@ const SERVICE_TYPES = [
   { key: "other", label: "Other", color: "#64748b", icon: "fa-tag" },
 ];
 
-const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, capacity_per_slot: 1, active: true, is_addon: false, addon_for: [], package_program_id: "" };
+const emptyService = { name: "", description: "", base_price: 0, service_type: "other", color: "#64748b", icon: "fa-tag", duration_minutes: 60, active: true, is_addon: false, addon_for: [], package_program_id: "" };
 
 // Sprint 110an — add-ons can be eligible for multiple base service types
 // (e.g. nail trim makes sense as a daycare + grooming + boarding add-on).
@@ -78,7 +78,7 @@ export default function ServicesSettings() {
     <div className="space-y-6" data-testid="services-settings">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services &amp; Programs Catalog</h4>
+          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services & Programs Catalog</h4>
           <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
         </div>
         <div className="flex gap-2">
@@ -181,24 +181,14 @@ export default function ServicesSettings() {
                   </select>
                 </div>
                 {["training","grooming","photography"].includes(form.service_type) && (
-                  <>
-                    <div>
-                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
-                      <input type="number" min="15" step="15" value={form.duration_minutes ?? 60}
-                             onChange={(e)=>setForm({...form, duration_minutes: parseInt(e.target.value) || 60})}
-                             data-testid="service-duration-input"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-                      <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule.</p>
-                    </div>
-                    <div>
-                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dogs per time slot</label>
-                      <input type="number" min="1" max="100" step="1" value={form.capacity_per_slot ?? 1}
-                             onChange={(e)=>setForm({...form, capacity_per_slot: Math.max(1, parseInt(e.target.value) || 1)})}
-                             data-testid="service-slot-capacity-input"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-                      <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Use 1 for private appointments. Raise this for group classes.</p>
-                    </div>
-                  </>
+                  <div>
+                    <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
+                    <input type="number" min="15" step="15" value={form.duration_minutes ?? 60}
+                           onChange={(e)=>setForm({...form, duration_minutes: parseInt(e.target.value) || 60})}
+                           data-testid="service-duration-input"
+                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                    <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule when booked. Other time-slotted services can't book overlapping times.</p>
+                  </div>
                 )}
                 <div>
                   <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
@@ -330,7 +320,7 @@ export default function ServicesSettings() {
         <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: "linear-gradient(90deg, #a855f71f, transparent 60%)" }}>
           <i className="fas fa-list-check" style={{ color: "#a855f7" }}/>
           <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">Training Programs</h5>
-          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals &amp; sessions</span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals & sessions</span>
         </div>
         <div className="p-4">
           <ProgramsPanel />

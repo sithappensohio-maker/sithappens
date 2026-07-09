@@ -81,6 +81,7 @@ logger = logging.getLogger("sithappens")
 # Checkout operation id is attached to ledger rows created during one checkout.
 # It lets the compensating rollback remove only rows from the failed operation.
 _checkout_operation_id_ctx = contextvars.ContextVar("checkout_operation_id", default=None)
+_capacity_lock_ctx = contextvars.ContextVar("capacity_lock_context", default=None)
 
 
 # -------- Register / payment method normalization --------
@@ -2441,6 +2442,228 @@ async def _resolve_base_service_for_booking(body: BookingIn, user: dict) -> Opti
     return selected
 
 
+
+CAPACITY_LOCK_TTL_SECONDS = 180
+
+
+def _capacity_waitlist_allowed(settings: dict) -> bool:
+    fv = settings.get("feature_visibility") or {}
+    bfc = settings.get("booking_flow_controls") or {}
+    return fv.get("waitlist", True) is not False and bfc.get("waitlist_on_capacity", True) is not False
+
+
+def _capacity_error(settings: dict, body: BookingIn, message: str, *, resource: str, target_date: Optional[str] = None) -> HTTPException:
+    copy = ((settings.get("booking_flow_controls") or {}).get("capacity_reached_copy") or message)
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "capacity_full",
+            "message": message,
+            "display_message": copy,
+            "resource": resource,
+            "date": target_date or body.date,
+            "service_type": body.service_type,
+            "service_id": body.service_id,
+            "waitlist_allowed": _capacity_waitlist_allowed(settings),
+        },
+    )
+
+
+def _capacity_resource_keys(body: BookingIn) -> List[str]:
+    keys: List[str] = []
+    if body.service_type == "daycare":
+        keys.append(f"daycare:{body.date}")
+    elif body.service_type == "boarding":
+        for d in _presence_dates(body.date, body.end_date):
+            keys.append(f"boarding:{d}")
+            if (body.kennel or "").strip():
+                keys.append(f"kennel:{(body.kennel or '').strip().lower()}:{d}")
+    elif body.service_type in ("training", "grooming", "photography"):
+        keys.append(f"timepool:{body.date}")
+    return sorted(set(keys))
+
+
+async def _release_capacity_locks(owner: str, keys: Optional[List[str]] = None) -> None:
+    q: Dict[str, Any] = {"owner": owner}
+    if keys:
+        q["_id"] = {"$in": keys}
+    await db.capacity_locks.delete_many(q)
+
+
+async def _acquire_capacity_locks(keys: List[str], *, owner: Optional[str] = None) -> str:
+    """Acquire sorted Mongo-backed leases shared by every API worker.
+
+    Capacity is still calculated from bookings; these short leases only make
+    the final count-and-insert sequence serial so two simultaneous requests
+    cannot both see the last opening.
+    """
+    if not keys:
+        return owner or str(uuid.uuid4())
+    owner = owner or str(uuid.uuid4())
+    for attempt in range(10):
+        acquired: List[str] = []
+        failed = False
+        for key in sorted(set(keys)):
+            now = datetime.now(timezone.utc)
+            expires = now + timedelta(seconds=CAPACITY_LOCK_TTL_SECONDS)
+            query = {
+                "_id": key,
+                "$or": [
+                    {"owner": owner},
+                    {"expires_at": {"$exists": False}},
+                    {"expires_at": {"$lte": now}},
+                ],
+            }
+            try:
+                row = await db.capacity_locks.find_one_and_update(
+                    query,
+                    {"$set": {"owner": owner, "acquired_at": now, "expires_at": expires}},
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+            except DuplicateKeyError:
+                row = None
+            if not row or row.get("owner") != owner:
+                failed = True
+                break
+            acquired.append(key)
+        if not failed and len(acquired) == len(set(keys)):
+            return owner
+        await _release_capacity_locks(owner, acquired)
+        await asyncio.sleep(0.025 * (attempt + 1))
+    raise HTTPException(status_code=409, detail={
+        "code": "capacity_busy",
+        "message": "That opening is being booked by someone else. Please try again.",
+    })
+
+
+async def _active_capacity_bookings(service_type: str, *, exclude_booking_id: Optional[str] = None) -> List[dict]:
+    q: Dict[str, Any] = {
+        "service_type": service_type,
+        "status": {"$in": ["pending", "approved", "completed"]},
+    }
+    if exclude_booking_id:
+        q["id"] = {"$ne": exclude_booking_id}
+    rows = await db.bookings.find(q, {"_id": 0}).to_list(10000)
+    return [b for b in rows if not b.get("checked_out_at")]
+
+
+async def _assert_capacity_available(
+    body: BookingIn,
+    settings: dict,
+    selected_service: Optional[dict],
+    *,
+    exclude_booking_id: Optional[str] = None,
+) -> None:
+    """Recount capacity while the matching Mongo lease is held."""
+    if body.service_type == "daycare":
+        cap = max(0, int(settings.get("daycare_capacity", DAYCARE_CAPACITY) or 0))
+        count = await _booking_days_count_filtered(body.date, "daycare", exclude_booking_id=exclude_booking_id)
+        if cap <= 0 or count >= cap:
+            raise _capacity_error(settings, body, "Daycare is fully booked for that date.", resource="daycare", target_date=body.date)
+        return
+
+    if body.service_type == "boarding":
+        cap = max(0, int(settings.get("boarding_capacity", 10) or 0))
+        for stay_day in _presence_dates(body.date, body.end_date):
+            count = await _booking_days_count_filtered(stay_day, "boarding", exclude_booking_id=exclude_booking_id)
+            if cap <= 0 or count >= cap:
+                raise _capacity_error(settings, body, f"Boarding is fully booked for {stay_day}.", resource="boarding", target_date=stay_day)
+
+        kennel = (body.kennel or "").strip()
+        if kennel:
+            max_per = int((((settings.get("day_to_day") or {}).get("guardrails") or {}).get("max_dogs_per_kennel", 1)) or 1)
+            max_per = max(1, max_per)
+            existing = await _active_capacity_bookings("boarding", exclude_booking_id=exclude_booking_id)
+            for stay_day in _presence_dates(body.date, body.end_date):
+                used = sum(
+                    1 for b in existing
+                    if (b.get("kennel") or "").strip().lower() == kennel.lower()
+                    and stay_day in _presence_dates(b.get("date"), b.get("end_date"))
+                )
+                if used >= max_per:
+                    raise _capacity_error(settings, body, f"{kennel} is already full for {stay_day}.", resource="kennel", target_date=stay_day)
+        return
+
+    if body.service_type not in ("training", "grooming", "photography") or not (body.time or "").strip():
+        return
+
+    duration = int((selected_service or {}).get("duration_minutes") or 0) or await _get_default_duration(body.service_type)
+    start = _hhmm_to_min(body.time or "")
+    if start is None or duration <= 0:
+        return
+    exact_service_id = (selected_service or {}).get("id") or body.service_id
+    slot_capacity = max(1, int((selected_service or {}).get("capacity_per_slot") or 1))
+    existing = await db.bookings.find(
+        {
+            "date": body.date,
+            "status": {"$in": ["pending", "approved", "completed"]},
+            "service_type": {"$in": ["training", "grooming", "photography"]},
+            "time": {"$ne": ""},
+            **({"id": {"$ne": exclude_booking_id}} if exclude_booking_id else {}),
+        },
+        {"_id": 0, "id": 1, "time": 1, "service_type": 1, "service_id": 1, "duration_minutes": 1, "dog_name": 1, "checked_out_at": 1},
+    ).to_list(2000)
+    same_service_overlaps = 0
+    for b in existing:
+        if b.get("checked_out_at"):
+            continue
+        bstart = _hhmm_to_min(b.get("time") or "")
+        if bstart is None:
+            continue
+        bdur = int(b.get("duration_minutes") or 0) or await _get_default_duration(b.get("service_type"))
+        if not _slot_overlaps(start, duration, bstart, bdur):
+            continue
+        if exact_service_id and b.get("service_id") == exact_service_id:
+            same_service_overlaps += 1
+            continue
+        raise _capacity_error(
+            settings,
+            body,
+            f"That time conflicts with an existing {b.get('service_type')} appointment at {b.get('time')}.",
+            resource="time_slot",
+            target_date=body.date,
+        )
+    if same_service_overlaps >= slot_capacity:
+        label = (selected_service or {}).get("name") or body.service_type.title()
+        raise _capacity_error(settings, body, f"{label} is full at {body.time}.", resource="class_or_slot", target_date=body.date)
+
+
+
+async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -> dict:
+    """Apply a reschedule/assignment only after race-safe capacity validation."""
+    merged = dict(booking)
+    merged.update(update)
+    body = BookingIn(
+        dog_id=merged.get("dog_id"),
+        date=merged.get("date"),
+        end_date=merged.get("end_date"),
+        service_type=merged.get("service_type") or "other",
+        service_id=merged.get("service_id"),
+        grooming_type=merged.get("grooming_type"),
+        notes=merged.get("notes") or "",
+        kennel=merged.get("kennel") or "",
+        time=merged.get("time") or "",
+        dropoff_time=merged.get("dropoff_time") or "",
+        pickup_time=merged.get("pickup_time") or "",
+    )
+    selected = None
+    if body.service_id:
+        selected = await db.services.find_one({"id": body.service_id}, {"_id": 0})
+    settings = await get_settings()
+    keys = _capacity_resource_keys(body)
+    owner = await _acquire_capacity_locks(keys) if keys else None
+    try:
+        if booking.get("status") in ("pending", "approved", "completed") and not booking.get("checked_out_at"):
+            await _assert_capacity_available(body, settings, selected, exclude_booking_id=booking.get("id"))
+        await db.bookings.update_one({"id": booking["id"]}, {"$set": update})
+    finally:
+        if owner:
+            await _release_capacity_locks(owner, keys)
+    merged.update(update)
+    return merged
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -2608,58 +2831,23 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
             except Exception:
                 pass
 
-    # Capacity check
-    if not (is_admin and body.override_capacity):
-        if body.service_type == "daycare":
-            if await _booking_days_count_filtered(body.date, "daycare") >= daycare_cap:
-                raise HTTPException(status_code=400, detail="Daycare is fully booked for that date")
-        elif body.service_type == "boarding":
-            # Boarding capacity is a per-presence-date rule, not just the drop-off day.
-            # A stay from July 1→4 occupies a kennel on every inclusive presence date.
-            for stay_day in _presence_dates(body.date, body.end_date):
-                if await _booking_days_count_filtered(stay_day, "boarding") >= boarding_cap:
-                    raise HTTPException(status_code=400, detail=f"Boarding is fully booked for {stay_day}")
-
-    # Time-slot conflict check for time-based services. Shared pool: a Training
-    # at 2pm blocks a Grooming at 2pm, etc. Admins can override.
+    # Duration is snapshotted now; the race-safe capacity/time-slot recount is
+    # performed immediately before insert while a shared Mongo lease is held.
     duration_minutes_used = 0
     if body.service_type in TIME_SLOTTED_SERVICES and (body.time or "").strip():
         duration_minutes_used = int((selected_service or {}).get("duration_minutes") or 0) or await _get_default_duration(body.service_type)
-        if not (is_admin and body.override_capacity) and duration_minutes_used > 0:
-            new_start = _hhmm_to_min(body.time)
-            if new_start is not None:
-                # The direct booking endpoint must enforce the same closing
-                # boundary as the slot picker; otherwise an old/custom client
-                # could post a 90-minute service five minutes before closing.
-                try:
-                    target_day = date.fromisoformat(body.date)
-                    hours_row = _service_hours_for_date(settings, body.service_type, target_day)
-                    close_min = _hhmm_to_min(hours_row.get("close") or "")
-                    if close_min is not None and new_start + duration_minutes_used > close_min:
-                        raise HTTPException(status_code=400, detail="That appointment would run past closing time.")
-                except HTTPException:
-                    raise
-                except Exception:
-                    pass
-                existing_slots = await db.bookings.find(
-                    {
-                        "date": body.date,
-                        "status": {"$in": ["pending", "approved", "completed"]},
-                        "service_type": {"$in": list(TIME_SLOTTED_SERVICES)},
-                        "time": {"$ne": ""},
-                    },
-                    {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "dog_name": 1},
-                ).to_list(500)
-                for b in existing_slots:
-                    bstart = _hhmm_to_min(b.get("time") or "")
-                    if bstart is None:
-                        continue
-                    bdur = int(b.get("duration_minutes") or 0) or await _get_default_duration(b.get("service_type"))
-                    if _slot_overlaps(new_start, duration_minutes_used, bstart, bdur):
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"That time conflicts with an existing {b.get('service_type')} appointment at {b.get('time')}.",
-                        )
+        new_start = _hhmm_to_min(body.time)
+        if new_start is not None and duration_minutes_used > 0:
+            try:
+                target_day = date.fromisoformat(body.date)
+                hours_row = _service_hours_for_date(settings, body.service_type, target_day)
+                close_min = _hhmm_to_min(hours_row.get("close") or "")
+                if close_min is not None and new_start + duration_minutes_used > close_min:
+                    raise HTTPException(status_code=400, detail="That appointment would run past closing time.")
+            except HTTPException:
+                raise
+            except Exception:
+                pass
 
     # Credit units and money are separate. `cost` remains the old daycare-credit
     # field for backward compatibility; dollars go into `estimated_price`.
@@ -2777,7 +2965,23 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         if svc_row:
             doc["service_id"] = svc_row["id"]
             doc["service_name"] = svc_row.get("name")
-    await db.bookings.insert_one(doc)
+    capacity_keys = _capacity_resource_keys(body)
+    capacity_ctx = _capacity_lock_ctx.get()
+    owns_capacity_lock = False
+    capacity_owner = None
+    if not (is_admin and body.override_capacity) and capacity_keys:
+        if capacity_ctx and set(capacity_keys).issubset(set(capacity_ctx.get("keys") or [])):
+            capacity_owner = capacity_ctx.get("owner")
+        else:
+            capacity_owner = await _acquire_capacity_locks(capacity_keys)
+            owns_capacity_lock = True
+    try:
+        if not (is_admin and body.override_capacity):
+            await _assert_capacity_available(body, settings, selected_service)
+        await db.bookings.insert_one(doc)
+    finally:
+        if owns_capacity_lock and capacity_owner:
+            await _release_capacity_locks(capacity_owner, capacity_keys)
     doc.pop("_id", None)
     # Sprint 110aw — Board-and-Train: if the chosen service is wired to a
     # training program, auto-enroll the dog. Idempotent — skips if the dog
@@ -2960,10 +3164,11 @@ async def admin_reject_vaccine_cert(dog_id: str, vaccine: str, _: dict = Depends
 
 
 
-async def _booking_days_count_filtered(target_date: str, service_type: str) -> int:
-    bookings = await db.bookings.find(
-        {"status": {"$in": ["approved", "pending", "completed"]}, "service_type": service_type}, {"_id": 0}
-    ).to_list(2000)
+async def _booking_days_count_filtered(target_date: str, service_type: str, *, exclude_booking_id: Optional[str] = None) -> int:
+    query: Dict[str, Any] = {"status": {"$in": ["approved", "pending", "completed"]}, "service_type": service_type}
+    if exclude_booking_id:
+        query["id"] = {"$ne": exclude_booking_id}
+    bookings = await db.bookings.find(query, {"_id": 0}).to_list(10000)
     count = 0
     for b in bookings:
         # Once a booking is checked out, its slot frees up for the day.
@@ -3070,6 +3275,23 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
     created: List[dict] = []
     client_doc_for_summary: Optional[dict] = None
 
+    # Lock every shared capacity resource for the whole group transaction.
+    # Without this, another request could take the last spot between dog 1 and
+    # dog 2, forcing a needless rollback even though the group started first.
+    group_capacity_keys: List[str] = []
+    if not (user.get("role") == "admin" and body.override_capacity):
+        for d in body.dogs:
+            probe = BookingIn(
+                dog_id=d.dog_id, date=body.date, end_date=body.end_date,
+                service_type=body.service_type, service_id=body.service_id,
+                kennel=d.kennel or "", time=d.time or body.time or "",
+                dropoff_time=body.dropoff_time or "", pickup_time=body.pickup_time or "",
+            )
+            group_capacity_keys.extend(_capacity_resource_keys(probe))
+    group_capacity_keys = sorted(set(group_capacity_keys))
+    group_capacity_owner = await _acquire_capacity_locks(group_capacity_keys) if group_capacity_keys else None
+    capacity_token = _capacity_lock_ctx.set({"owner": group_capacity_owner, "keys": group_capacity_keys}) if group_capacity_owner else None
+
     # Suppress per-booking admin email; we send ONE summary at the end.
     token = _suppress_admin_booking_email.set(True)
     try:
@@ -3128,6 +3350,10 @@ async def create_booking_group(body: BookingGroupIn, user: dict = Depends(get_cu
                 )
     finally:
         _suppress_admin_booking_email.reset(token)
+        if capacity_token is not None:
+            _capacity_lock_ctx.reset(capacity_token)
+        if group_capacity_owner:
+            await _release_capacity_locks(group_capacity_owner, group_capacity_keys)
 
     # Apply the final per-row pricing/credit snapshot for daycare/boarding group
     # bookings. Each dog gets its own booking row, but the household price rule is
@@ -3239,9 +3465,7 @@ async def reschedule_booking(booking_id: str, body: RescheduleIn, _: dict = Depe
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {"date": body.date, "end_date": body.end_date}
-    await db.bookings.update_one({"id": booking_id}, {"$set": update})
-    booking.update(update)
-    return booking
+    return await _update_booking_with_capacity(booking, update)
 
 
 
@@ -3770,15 +3994,17 @@ async def list_time_slots(
     (per-weekday open/close), so Saturday-only or evenings-only schedules work
     out of the box. Days marked `closed` return no slots.
     """
+    selected = None
+    if service_id:
+        selected = await db.services.find_one(
+            {"id": service_id, "active": True, "service_type": service_type},
+            {"_id": 0, "id": 1, "name": 1, "duration_minutes": 1, "capacity_per_slot": 1},
+        )
     if not duration or duration <= 0:
-        if service_id:
-            selected = await db.services.find_one(
-                {"id": service_id, "active": True, "service_type": service_type},
-                {"_id": 0, "duration_minutes": 1},
-            )
-            duration = int((selected or {}).get("duration_minutes") or 0)
+        duration = int((selected or {}).get("duration_minutes") or 0)
         if not duration or duration <= 0:
             duration = await _get_default_duration(service_type)
+    slot_capacity = max(1, int((selected or {}).get("capacity_per_slot") or 1))
 
     # Resolve the day's open/close from settings (with safe fallback to 08–18
     # in case the settings schema is missing for some reason).
@@ -3821,7 +4047,7 @@ async def list_time_slots(
             "service_type": {"$in": list(TIME_SLOTTED_SERVICES)},
             "time": {"$ne": ""},
         },
-        {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "service_id": 1, "dog_id": 1, "id": 1},
+        {"_id": 0, "time": 1, "service_type": 1, "duration_minutes": 1, "service_id": 1, "dog_id": 1, "id": 1, "checked_out_at": 1},
     ).to_list(500)
     # Hydrate each existing booking with its service's duration if not stored on the booking.
     svc_cache: Dict[str, int] = {}
@@ -3845,19 +4071,32 @@ async def list_time_slots(
         hh, mm = divmod(total, 60)
         label = f"{hh:02d}:{mm:02d}"
         blocked_by = None
+        same_service_used = 0
         for b in existing:
+            if b.get("checked_out_at"):
+                continue
             bstart = _hhmm_to_min(b.get("time") or "")
             if bstart is None:
                 continue
             bdur = await _booking_dur(b)
-            if _slot_overlaps(total, duration, bstart, bdur):
-                blocked_by = b.get("service_type") or "other"
-                break
-        candidates.append({"time": label, "available": blocked_by is None, "blocked_by": blocked_by})
+            if not _slot_overlaps(total, duration, bstart, bdur):
+                continue
+            if service_id and b.get("service_id") == service_id:
+                same_service_used += 1
+                continue
+            blocked_by = b.get("service_type") or "other"
+            break
+        seats_left = max(slot_capacity - same_service_used, 0) if blocked_by is None else 0
+        available = blocked_by is None and seats_left > 0
+        candidates.append({
+            "time": label, "available": available, "blocked_by": blocked_by,
+            "capacity": slot_capacity, "booked": same_service_used, "seats_left": seats_left,
+        })
     return {
         "date": date_str,
         "service_type": service_type,
         "duration_minutes": duration,
+        "capacity_per_slot": slot_capacity,
         "closed": False,
         "slots": candidates,
     }
@@ -7930,6 +8169,9 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if update:
+        capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time"}
+        if capacity_fields.intersection(update):
+            return await _update_booking_with_capacity(booking, update)
         await db.bookings.update_one({"id": booking_id}, {"$set": update})
         booking.update(update)
     return booking
@@ -16760,6 +17002,9 @@ async def startup():
         (db.reschedule_requests, [("status", 1), ("created_at", -1)], {}),
         (db.reschedule_requests, "client_id", {}),
         (db.reschedule_requests, "booking_id", {}),
+        (db.capacity_locks, "expires_at", {"expireAfterSeconds": 0}),
+        (db.waitlist, [("status", 1), ("requested_date", 1), ("service_type", 1)], {}),
+        (db.waitlist, "dedupe_key", {"unique": True, "partialFilterExpression": {"status": {"$in": ["waiting", "offered", "converting"]}}}),
         # Sprint 110cn — new staff-portal collections.
         (db.punch_corrections, [("status", 1), ("created_at", -1)], {}),
         (db.punch_corrections, "user_id", {}),
@@ -16853,6 +17098,10 @@ class ServiceIn(BaseModel):
     # conflicts on time-based services (training / grooming / photography).
     # Daycare and boarding ignore this since they're date-based, not time-based.
     duration_minutes: Optional[int] = 60
+    # Maximum simultaneous bookings for this exact timed service. Keep at 1
+    # for private appointments; raise it for group classes. Other overlapping
+    # timed services still block the slot because they share the staff pool.
+    capacity_per_slot: Optional[int] = 1
     active: bool = True
     # Sprint 110an — opt-in add-on flow. When `is_addon=True`, the service
     # is hidden from the main booking list and instead surfaces as an
@@ -23217,7 +23466,27 @@ async def sell_training_program(
                 "program_sale_session_total": qty,
                 "is_prepaid_program_session": True,
             }
-            await db.bookings.insert_one(booking)
+            probe = BookingIn(
+                dog_id=dog["id"], date=iso_date, service_type="training",
+                time=body.schedule_time or "", service_id=booking.get("service_id"),
+            )
+            keys = _capacity_resource_keys(probe)
+            owner = await _acquire_capacity_locks(keys) if keys else None
+            try:
+                try:
+                    await _assert_capacity_available(probe, await get_settings(), None)
+                except HTTPException as exc:
+                    if isinstance(exc.detail, dict) and exc.detail.get("code") in ("capacity_full", "capacity_busy"):
+                        schedule_warnings.append({
+                            "date": iso_date, "reason": "capacity_full",
+                            "note": (exc.detail.get("message") or "Time slot unavailable"),
+                        })
+                        continue
+                    raise
+                await db.bookings.insert_one(booking)
+            finally:
+                if owner:
+                    await _release_capacity_locks(owner, keys)
             booking.pop("_id", None)
             scheduled_bookings.append(booking)
 
@@ -23269,12 +23538,16 @@ async def reschedule_prepaid_session(booking_id: str, _: dict = Depends(require_
         )
         if conflict:
             continue
-        await db.bookings.update_one({"id": booking_id}, {"$set": {
-            "date": iso,
-            "rescheduled_from": bk["date"],
-            "rescheduled_at": now_iso(),
-        }})
-        updated = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        try:
+            updated = await _update_booking_with_capacity(bk, {
+                "date": iso,
+                "rescheduled_from": bk["date"],
+                "rescheduled_at": now_iso(),
+            })
+        except HTTPException as exc:
+            if isinstance(exc.detail, dict) and exc.detail.get("code") in ("capacity_full", "capacity_busy"):
+                continue
+            raise
         return {"ok": True, "booking": updated, "from": bk["date"], "to": iso}
     raise HTTPException(409, "No open slot found in the next 12 weeks on that weekday")
 
@@ -23423,16 +23696,13 @@ async def approve_reschedule_request(
     if not bk:
         raise HTTPException(404, "Original booking is gone")
     original_date = bk.get("date")
-    await db.bookings.update_one(
-        {"id": req["booking_id"]},
-        {"$set": {
-            "date": chosen["date"],
-            "time": chosen["time"],
-            "rescheduled_from": original_date,
-            "rescheduled_at": now_iso(),
-            "rescheduled_via_request": req_id,
-        }},
-    )
+    await _update_booking_with_capacity(bk, {
+        "date": chosen["date"],
+        "time": chosen["time"],
+        "rescheduled_from": original_date,
+        "rescheduled_at": now_iso(),
+        "rescheduled_via_request": req_id,
+    })
     await db.reschedule_requests.update_one(
         {"id": req_id},
         {"$set": {
@@ -24065,6 +24335,7 @@ class MultiDateBookingIn(BaseModel):
     # Sprint 110an — every booking in the batch gets the same add-ons attached
     # (e.g. "Mon/Wed/Fri daycare with a nail trim each day").
     addon_service_ids: List[str] = []
+    waitlist_on_capacity: bool = False
 
 
 @api.post("/bookings/multi-dates")
@@ -24105,7 +24376,25 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
                 booking = await create_booking(inn, user)
                 created.append(booking)
             except HTTPException as e:
-                skipped.append({"date": d, "reason": e.detail})
+                detail = e.detail
+                if (
+                    body.waitlist_on_capacity
+                    and isinstance(detail, dict)
+                    and detail.get("code") == "capacity_full"
+                    and detail.get("waitlist_allowed")
+                ):
+                    wait = await add_to_waitlist(
+                        WaitlistIn(
+                            dog_id=body.dog_id, service_type=body.service_type,
+                            service_id=body.service_id, requested_date=d,
+                            time=body.time or "", addon_service_ids=body.addon_service_ids or [],
+                            notes=body.notes or "",
+                        ),
+                        user,
+                    )
+                    skipped.append({"date": d, "reason": detail, "waitlisted": True, "waitlist_id": wait.get("id")})
+                else:
+                    skipped.append({"date": d, "reason": detail})
             except Exception as e:
                 skipped.append({"date": d, "reason": str(e)[:200]})
     finally:
@@ -26090,9 +26379,9 @@ async def care_board_today(user: dict = Depends(require_employee_or_admin)):
 # so the frontend can offer "Add to waitlist" when full — no need to attempt
 # the booking POST first.
 #
-# Converting a waitlist entry to a booking uses the existing booking API with
-# `override_capacity=true` (admin-only), so all the existing
-# vaccine/waiver/conflict checks still run.
+# Converting a waitlist entry to a booking uses the existing booking API
+# without a capacity override, so conversion only succeeds when a real
+# opening still exists and all vaccine/waiver/conflict checks pass.
 # ────────────────────────────────────────────────────────────────────────────
 
 WAITLIST_STATUSES = ("waiting", "offered", "booked", "declined", "expired", "removed")
@@ -26102,8 +26391,13 @@ WAITLIST_PRIORITIES = ("low", "normal", "high")
 class WaitlistIn(BaseModel):
     dog_id: str
     service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"] = "daycare"
+    service_id: Optional[str] = None
     requested_date: str                                     # YYYY-MM-DD (start)
     requested_end_date: Optional[str] = None                # YYYY-MM-DD (boarding range)
+    time: Optional[str] = ""
+    dropoff_time: Optional[str] = ""
+    pickup_time: Optional[str] = ""
+    addon_service_ids: List[str] = []
     priority: Literal["low", "normal", "high"] = "normal"
     notes: Optional[str] = ""
 
@@ -26181,22 +26475,74 @@ async def add_to_waitlist(body: WaitlistIn, user: dict = Depends(get_current_use
     client = await db.clients.find_one({"id": dog.get("owner_id")}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    probe = BookingIn(
+        dog_id=body.dog_id, date=body.requested_date, end_date=body.requested_end_date,
+        service_type=body.service_type, service_id=body.service_id,
+        time=body.time or "", dropoff_time=body.dropoff_time or "", pickup_time=body.pickup_time or "",
+    )
+    selected_service = await _resolve_base_service_for_booking(probe, user)
+    body.service_id = (selected_service or {}).get("id") or probe.service_id
+    if user.get("role") != "admin":
+        settings = await get_settings()
+        if not _capacity_waitlist_allowed(settings):
+            raise HTTPException(status_code=400, detail="The waitlist is currently disabled.")
+        keys = _capacity_resource_keys(probe)
+        owner = await _acquire_capacity_locks(keys) if keys else None
+        try:
+            try:
+                await _assert_capacity_available(probe, settings, selected_service)
+            except HTTPException as exc:
+                if not (isinstance(exc.detail, dict) and exc.detail.get("code") == "capacity_full"):
+                    raise
+            else:
+                raise HTTPException(status_code=400, detail="That opening is still available — please book it instead of joining the waitlist.")
+        finally:
+            if owner:
+                await _release_capacity_locks(owner, keys)
+    duplicate_query = {
+        "dog_id": dog["id"],
+        "service_type": body.service_type,
+        "service_id": body.service_id,
+        "requested_date": body.requested_date,
+        "requested_end_date": (body.requested_end_date or body.requested_date),
+        "time": body.time or "",
+        "status": {"$in": ["waiting", "offered", "converting"]},
+    }
+    existing_wait = await db.waitlist.find_one(duplicate_query, {"_id": 0})
+    if existing_wait:
+        return existing_wait
+    dedupe_key = "|".join([
+        dog["id"], body.service_type, body.service_id or "", body.requested_date,
+        body.requested_end_date or body.requested_date, body.time or "",
+    ])
     doc = {
+        "dedupe_key": dedupe_key,
         "id": str(uuid.uuid4()),
         "dog_id": dog["id"],
         "dog_name": dog["name"],
         "client_id": client["id"],
         "client_name": client["name"],
         "service_type": body.service_type,
+        "service_id": body.service_id,
         "requested_date": body.requested_date,
         "requested_end_date": (body.requested_end_date or body.requested_date),
+        "time": body.time or "",
+        "dropoff_time": body.dropoff_time or "",
+        "pickup_time": body.pickup_time or "",
+        "addon_service_ids": list(body.addon_service_ids or []),
         "priority": body.priority,
         "notes": (body.notes or "").strip(),
         "status": "waiting",
         "created_at": now_iso(),
         "created_by": user.get("id"),
     }
-    await db.waitlist.insert_one(doc)
+    try:
+        await db.waitlist.insert_one(doc)
+    except DuplicateKeyError:
+        existing_wait = await db.waitlist.find_one({"dedupe_key": dedupe_key, "status": {"$in": ["waiting", "offered", "converting"]}}, {"_id": 0})
+        if existing_wait:
+            return existing_wait
+        raise
     doc.pop("_id", None)
     return doc
 
@@ -26251,40 +26597,49 @@ async def delete_waitlist_entry(entry_id: str, _: dict = Depends(require_admin))
 
 @api.post("/waitlist/{entry_id}/convert-to-booking")
 async def convert_waitlist_to_booking(entry_id: str, user: dict = Depends(require_admin)):
-    """Create a real booking from a waitlist entry. Uses
-    `override_capacity=true` so the existing vaccine/waiver/conflict pipeline
-    still runs, but the daily capacity gate is bypassed (since the operator
-    has explicitly decided to make room)."""
-    entry = await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
-    if not entry:
-        raise HTTPException(status_code=404, detail="Waitlist entry not found")
-    if entry.get("status") in ("booked", "expired", "removed"):
-        raise HTTPException(status_code=400, detail=f"Entry is {entry.get('status')} — cannot convert")
-    # Build a minimal BookingIn payload. We hand it to create_booking() so all
-    # the existing guardrails (vaccines, waivers, time slots) still apply.
-    body = BookingIn(
-        dog_id=entry["dog_id"],
-        date=entry["requested_date"],
-        end_date=entry.get("requested_end_date") or entry["requested_date"],
-        service_type=entry["service_type"],
-        notes=(entry.get("notes") or "") + " · converted from waitlist",
-        override_capacity=True,           # admin-decided override
-        override_vaccines=False,
+    """Atomically claim one waitlist entry and convert it only if a real spot exists."""
+    claimed = await db.waitlist.find_one_and_update(
+        {"id": entry_id, "status": {"$in": ["waiting", "offered"]}},
+        {"$set": {"status": "converting", "converting_at": now_iso(), "converting_by": user.get("id")}},
+        return_document=ReturnDocument.AFTER,
     )
-    booking = await create_booking(body=body, user=user)   # may raise on vaccine/waiver
-    # Flip the waitlist entry to "booked" and stamp the booking id
-    booking_id = booking["id"] if isinstance(booking, dict) else getattr(booking, "id", None)
-    await db.waitlist.update_one(
-        {"id": entry_id},
-        {"$set": {
-            "status": "booked",
-            "booked_at": now_iso(),
-            "booked_by": user.get("id"),
-            "booking_id": booking_id,
-            "updated_at": now_iso(),
-        }},
-    )
-    return {"booking": booking, "waitlist_entry_id": entry_id}
+    if not claimed:
+        existing = await db.waitlist.find_one({"id": entry_id}, {"_id": 0})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Waitlist entry not found")
+        raise HTTPException(status_code=409, detail=f"Entry is {existing.get('status')} — it may already be converting or booked")
+    original_status = "offered" if claimed.get("offered_at") else "waiting"
+    try:
+        body = BookingIn(
+            dog_id=claimed["dog_id"],
+            date=claimed["requested_date"],
+            end_date=claimed.get("requested_end_date") or claimed["requested_date"],
+            service_type=claimed["service_type"],
+            service_id=claimed.get("service_id"),
+            time=claimed.get("time") or "",
+            dropoff_time=claimed.get("dropoff_time") or "",
+            pickup_time=claimed.get("pickup_time") or "",
+            addon_service_ids=list(claimed.get("addon_service_ids") or []),
+            notes=(claimed.get("notes") or "") + " · converted from waitlist",
+            override_capacity=False,
+            override_vaccines=False,
+        )
+        booking = await create_booking(body=body, user=user)
+        booking_id = booking["id"] if isinstance(booking, dict) else getattr(booking, "id", None)
+        await db.waitlist.update_one(
+            {"id": entry_id, "status": "converting", "converting_by": user.get("id")},
+            {"$set": {
+                "status": "booked", "booked_at": now_iso(), "booked_by": user.get("id"),
+                "booking_id": booking_id, "updated_at": now_iso(),
+            }, "$unset": {"converting_at": "", "converting_by": ""}},
+        )
+        return {"booking": booking, "waitlist_entry_id": entry_id}
+    except Exception:
+        await db.waitlist.update_one(
+            {"id": entry_id, "status": "converting", "converting_by": user.get("id")},
+            {"$set": {"status": original_status, "updated_at": now_iso()}, "$unset": {"converting_at": "", "converting_by": ""}},
+        )
+        raise
 
 
 # ────────────────────────────────────────────────────────────────────────────

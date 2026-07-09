@@ -252,23 +252,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // summary so step 4 can render payment options without re-fetching.
   const [acknowledgement, setAcknowledgement] = useState(null);
 
-  const submitWaitlist = async (dogIds) => {
-    const uniqueDogIds = [...new Set((dogIds || []).filter(Boolean))];
-    const rows = await Promise.all(uniqueDogIds.map(id => api.post("/waitlist", {
-      dog_id: id,
-      service_type: serviceType,
-      service_id: serviceId || undefined,
-      requested_date: date,
-      requested_end_date: serviceType === "boarding" ? endDate : date,
-      time: TIME_SLOTTED.has(serviceType) ? time : "",
-      dropoff_time: serviceType === "boarding" ? dropoffTime : "",
-      pickup_time: serviceType === "boarding" ? pickupTime : "",
-      addon_service_ids: selectedAddonIds,
-      notes,
-    })));
-    return rows.map(r => r.data);
-  };
-
   const book = async () => {
     setErr(""); setSubmitting(true);
     try {
@@ -280,17 +263,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           service_id: serviceId || undefined,
           notes,
           addon_service_ids: selectedAddonIds,
-          waitlist_on_capacity: waitlistEnabled,
         });
         const c = data.created?.length || 0;
         const s = data.skipped?.length || 0;
-        const w = (data.skipped || []).filter(x => x.waitlisted).length;
-        if (c === 0 && w === 0) {
-          const reasonText = (data.skipped || []).slice(0,3).map(x => {
-            const r = typeof x.reason === "object" ? (x.reason.display_message || x.reason.message || "Unavailable") : x.reason;
-            return `${x.date} (${r})`;
-          }).join("; ");
-          setErr(`No bookings created — all ${s} day(s) were skipped: ${reasonText}${s>3?"…":""}`);
+        if (c === 0) {
+          setErr(`No bookings created — all ${s} day(s) were skipped: ${(data.skipped || []).slice(0,3).map(x=>`${x.date} (${x.reason})`).join("; ")}${s>3?"…":""}`);
           setSubmitting(false);
           return;
         }
@@ -298,8 +275,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         onBooked && onBooked({ summary: `${c} booking${c===1?"":"s"} submitted${s?`, ${s} skipped`:""}`, skipped: data.skipped, keepOpen: true });
         setAcknowledgement({
           kind: "multi",
-          count: c, skipped: s, waitlist_count: w,
-          waitlisted: w > 0 && c === 0,
+          count: c, skipped: s,
+          waitlisted: !!willWaitlist,
         });
         setStep(4);
         setSubmitting(false);
@@ -320,15 +297,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       }
       if (TIME_SLOTTED.has(serviceType)) body.time = time;
       if (serviceType === "grooming") body.grooming_type = groomingType;
-
-      // Availability is advisory; save real waitlist rows when already full.
-      if (willWaitlist) {
-        const waitRows = await submitWaitlist([dogId, ...extraDogs.map(e => e.dog_id)]);
-        onBooked && onBooked({ keepOpen: true });
-        setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
-        setStep(4);
-        return;
-      }
 
       // Sprint 110di-38 — Multi-dog branch. When the user has added one or
       // more extra dogs to the same booking, ship the group endpoint so all
@@ -379,21 +347,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
       });
       setStep(4);
     } catch (e) {
-      const detail = e.response?.data?.detail;
-      const capacity = e.response?.data?.capacity;
-      if (capacity?.code === "capacity_full" && capacity?.waitlist_allowed && waitlistEnabled) {
-        try {
-          const waitRows = await submitWaitlist([dogId, ...extraDogs.map(x => x.dog_id)]);
-          onBooked && onBooked({ keepOpen: true });
-          setAcknowledgement({ kind: "waitlist", count: waitRows.length, waitlisted: true, waitlist_rows: waitRows });
-          setStep(4);
-          return;
-        } catch (waitErr) {
-          setErr(formatErr(waitErr.response?.data?.detail) || "The opening was taken and the waitlist request could not be saved.");
-          return;
-        }
-      }
-      setErr(formatErr(detail) || "Booking failed");
+      setErr(formatErr(e.response?.data?.detail) || "Booking failed");
     } finally { setSubmitting(false); }
   };
 
@@ -646,9 +600,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                                     "bg-bgBase/40 border-bgHover/30 text-gray-600 line-through cursor-not-allowed"
                                   }`}>
                             {s.time}
-                            {s.available && Number(s.capacity || 1) > 1 && (
-                              <span className="block text-[10px] opacity-70 mt-0.5">{s.seats_left} spot{s.seats_left===1?"":"s"} left</span>
-                            )}
                           </button>
                         );
                       })}
@@ -942,7 +893,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </h2>
               <p className="text-[13px] text-gray-400 mt-1">
                 {acknowledgement.kind === "multi"
-                  ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.waitlist_count?`, ${acknowledgement.waitlist_count} added to waitlist`:""}${acknowledgement.skipped && acknowledgement.skipped !== acknowledgement.waitlist_count?`, ${acknowledgement.skipped - (acknowledgement.waitlist_count || 0)} skipped`:""}.`
+                  ? `${acknowledgement.count} booking${acknowledgement.count===1?"":"s"} sent for review${acknowledgement.skipped?`, ${acknowledgement.skipped} skipped`:""}.`
                   : acknowledgement.kind === "group"
                     ? `${acknowledgement.count} dog${acknowledgement.count===1?"":"s"} booked together · we'll review and confirm shortly.`
                     : (acknowledgement.waitlisted

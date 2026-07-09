@@ -67,7 +67,14 @@ api.interceptors.response.use(
         return loc ? `${loc}: ${e.msg || "invalid"}` : (e.msg || JSON.stringify(e));
       }).join("; ");
     } else if (d && typeof d === "object") {
-      err.response.data.detail = d.msg || JSON.stringify(d);
+      // Preserve machine-readable capacity metadata for the booking wizard,
+      // while still exposing a plain string to legacy JSX error renderers.
+      if (d.code === "capacity_full" || d.code === "capacity_busy") {
+        err.response.data.capacity = d;
+        err.response.data.detail = d.display_message || d.message || "That opening is no longer available.";
+      } else {
+        err.response.data.detail = d.msg || JSON.stringify(d);
+      }
     }
     return Promise.reject(err);
   }
