@@ -15,7 +15,7 @@ from collections import deque
 from difflib import SequenceMatcher
 import bcrypt
 import jwt
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta, date, time
 from zoneinfo import ZoneInfo
 from typing import List, Optional, Literal, Dict, Any, Tuple
 
@@ -520,6 +520,9 @@ class RecurringBookingIn(BaseModel):
     service_type: Literal["daycare", "training"] = "daycare"
     weekdays: List[int]  # 0=Mon ... 6=Sun
     notes: Optional[str] = ""
+    service_id: Optional[str] = None
+    time: Optional[str] = ""
+    dropoff_time: Optional[str] = ""
 
 class RescheduleIn(BaseModel):
     date: str
@@ -2312,6 +2315,132 @@ async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
 
 
+def _parse_hhmm_strict(value: Optional[str], *, field_label: str) -> Optional[time]:
+    """Parse an HH:MM wall-clock value without silently accepting junk."""
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%H:%M").time()
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_label}. Please use a valid time.")
+
+
+def _service_hours_for_date(settings: dict, service_type: str, target_date: date) -> dict:
+    """Return the effective service-hours row for one local business date.
+
+    Boarding is intentionally 24/7. Other services inherit the business-hours
+    row when their own service-hours grid is missing.
+    """
+    if service_type == "boarding":
+        return {"mode": "24_7", "closed": False}
+    day_key = DEFAULT_DAYS[target_date.weekday()]
+    service_cfg = (settings.get("service_hours") or {}).get(service_type) or {}
+    if isinstance(service_cfg, dict) and service_cfg.get("mode") == "24_7":
+        return {"mode": "24_7", "closed": False}
+    row = service_cfg.get(day_key) if isinstance(service_cfg, dict) else None
+    if not isinstance(row, dict):
+        row = ((settings.get("business_hours") or {}).get(day_key) or {})
+    return dict(row or {})
+
+
+def _booking_start_local(body: BookingIn, settings: dict) -> datetime:
+    """Resolve the actual booking start in America/New_York.
+
+    Time-slotted services use `time`; daycare/boarding use `dropoff_time`.
+    When an untimed service has no explicit drop-off, its configured opening
+    time is used instead of midnight so minimum-notice rules are fair.
+    """
+    try:
+        target_date = date.fromisoformat(str(body.date)[:10])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid booking date.")
+
+    hours_row = _service_hours_for_date(settings, body.service_type, target_date)
+    if hours_row.get("closed"):
+        raise HTTPException(status_code=400, detail=f"{body.service_type.title()} is closed on that day.")
+
+    if body.service_type in TIME_SLOTTED_SERVICES:
+        explicit = _parse_hhmm_strict(body.time, field_label="appointment time")
+        if explicit is None:
+            raise HTTPException(status_code=400, detail=f"Please select a time for this {body.service_type} service.")
+    else:
+        explicit = _parse_hhmm_strict(body.dropoff_time, field_label="drop-off time")
+
+    open_time = None
+    close_time = None
+    if hours_row.get("mode") != "24_7":
+        open_time = _parse_hhmm_strict(hours_row.get("open") or "07:00", field_label="service opening time")
+        close_time = _parse_hhmm_strict(hours_row.get("close") or "19:00", field_label="service closing time")
+
+    if explicit is None and open_time is None:
+        # Boarding is bookable 24/7, but an omitted drop-off time should not
+        # collapse notice math back to midnight. Use the facility's configured
+        # opening time as the fair default for an untimed request.
+        day_key = DEFAULT_DAYS[target_date.weekday()]
+        business_row = ((settings.get("business_hours") or {}).get(day_key) or {})
+        open_time = _parse_hhmm_strict(business_row.get("open") or "07:00", field_label="business opening time")
+    chosen = explicit or open_time or datetime.min.time()
+    local_dt = datetime.combine(target_date, chosen, tzinfo=BUSINESS_TZ)
+
+    # Direct/old clients must not bypass service hours by posting a time outside
+    # the same window used by the slot picker. Boarding remains 24/7.
+    if explicit is not None and open_time is not None and close_time is not None:
+        if explicit < open_time or explicit > close_time:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Selected time is outside {body.service_type} hours ({open_time.strftime('%-I:%M %p')}–{close_time.strftime('%-I:%M %p')}).",
+            )
+    return local_dt
+
+
+async def _resolve_base_service_for_booking(body: BookingIn, user: dict) -> Optional[dict]:
+    """Resolve a valid active base service and prevent category-rule bypasses.
+
+    Clients must land on an exact catalog service. Legacy/category-only calls
+    are safely mapped only when there is one unambiguous active default/base
+    service. Admins may still create a broad historical/manual booking.
+    """
+    if body.service_id:
+        selected = await db.services.find_one({"id": body.service_id}, {"_id": 0})
+        if not selected or selected.get("active") is False:
+            raise HTTPException(status_code=400, detail="That service is no longer available.")
+        if selected.get("is_addon") is True:
+            raise HTTPException(status_code=400, detail="Add-ons must be attached to a base service booking.")
+        if selected.get("service_type") != body.service_type:
+            raise HTTPException(status_code=400, detail="Selected service does not match the booking category.")
+        return selected
+
+    candidates = await db.services.find(
+        {
+            "active": True,
+            "service_type": body.service_type,
+            "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}],
+        },
+        {"_id": 0},
+    ).sort([("is_default", -1), ("name", 1)]).to_list(50)
+
+    # Admins retain a deliberate manual fallback for historical cleanup.
+    if user.get("role") == "admin":
+        if len(candidates) == 1:
+            body.service_id = candidates[0].get("id")
+            return candidates[0]
+        defaults = [svc for svc in candidates if svc.get("is_default")]
+        if len(defaults) == 1:
+            body.service_id = defaults[0].get("id")
+            return defaults[0]
+        return None
+
+    if not candidates:
+        raise HTTPException(status_code=400, detail=f"No active {body.service_type} service is available for online booking.")
+    defaults = [svc for svc in candidates if svc.get("is_default")]
+    selected = candidates[0] if len(candidates) == 1 else (defaults[0] if len(defaults) == 1 else None)
+    if selected is None:
+        raise HTTPException(status_code=400, detail="Please choose the exact service you want to book.")
+    body.service_id = selected.get("id")
+    return selected
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -2327,19 +2456,10 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     rules = settings.get("booking_rules", {})
     required = settings.get("required_vaccines", ["rabies"])
 
-    # Resolve an explicitly selected catalog service up front. Client booking
-    # rules can now target the exact offered service, not just its broad
-    # category. Add-ons can never be booked as the base service.
-    selected_service = None
-    if body.service_id:
-        selected_service = await db.services.find_one({"id": body.service_id}, {"_id": 0})
-        if not selected_service or selected_service.get("active") is False:
-            raise HTTPException(status_code=400, detail="That service is no longer available.")
-        if selected_service.get("is_addon") is True:
-            raise HTTPException(status_code=400, detail="Add-ons must be attached to a base service booking.")
-        if selected_service.get("service_type") != body.service_type:
-            raise HTTPException(status_code=400, detail="Selected service does not match the booking category.")
-
+    # Resolve the exact active catalog service before applying rules. This
+    # closes the old category-only API path that could otherwise bypass an
+    # exact service's online-booking, notice, approval, and duration controls.
+    selected_service = await _resolve_base_service_for_booking(body, user)
     svc_rules = _booking_flow_rules_for(settings, body.service_type, body.service_id)
     if user.get("role") != "admin" and svc_rules.get("client_booking_enabled") is False:
         label = (selected_service or {}).get("name") or body.service_type.title()
@@ -2368,34 +2488,33 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
                 detail="Boarding requires at least one overnight stay — pickup must be on a later date than drop-off. (Same-day drop-off is fine, but pickup the same day would be zero nights.)",
             )
 
-    # Sprint 110di-19 — Per-service Booking Flow Controls. Each service can
-    # opt into stricter rules than the global `booking_rules` defaults
-    # (require_approval / instant_book / same_day / min_lead_hours /
-    # max_advance_days). Admins still bypass these checks so they can fix
-    # historical data and rescue clients.
+    # Per-service booking controls are evaluated against the real local start
+    # time, never midnight/UTC. This makes a 4 PM appointment tomorrow count as
+    # the actual hours available from now in America/New_York.
+    booking_start_local = None
     if user.get("role") != "admin" and body.date:
-        from datetime import datetime as _dt, date as _date, timedelta as _td
-        try:
-            req_date = _dt.fromisoformat(str(body.date)[:10]).date() if not isinstance(body.date, _date) else body.date
-        except Exception:
-            req_date = None
-        if req_date:
-            now = _dt.now()
-            today = now.date()
-            if svc_rules.get("same_day") is False and req_date == today:
-                raise HTTPException(status_code=400, detail=f"Same-day {body.service_type} bookings are not allowed. Please pick a future date.")
-            min_lead = svc_rules.get("min_lead_hours")
-            if isinstance(min_lead, (int, float)) and min_lead > 0:
-                # Treat the booking moment as 00:01 of the requested day for
-                # comparison — same-day is already handled above.
-                booking_dt = _dt.combine(req_date, _dt.min.time())
-                hours_lead = (booking_dt - now).total_seconds() / 3600.0
-                if hours_lead < float(min_lead):
-                    raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings require at least {int(min_lead)}h advance notice.")
-            max_adv = svc_rules.get("max_advance_days")
-            if isinstance(max_adv, (int, float)) and max_adv > 0:
-                if (req_date - today).days > int(max_adv):
-                    raise HTTPException(status_code=400, detail=f"{body.service_type.title()} bookings can only be made up to {int(max_adv)} days in advance.")
+        booking_start_local = _booking_start_local(body, settings)
+        now_business = datetime.now(BUSINESS_TZ)
+        req_date = booking_start_local.date()
+        today = now_business.date()
+        if req_date < today:
+            raise HTTPException(status_code=400, detail="Please choose a future booking date.")
+        has_explicit_start = bool((body.time or "").strip() or (body.dropoff_time or "").strip())
+        if has_explicit_start and booking_start_local <= now_business:
+            raise HTTPException(status_code=400, detail="Please choose a future booking time.")
+        if svc_rules.get("same_day") is False and req_date == today:
+            raise HTTPException(status_code=400, detail=f"Same-day {body.service_type} bookings are not allowed. Please pick a future date.")
+        min_lead = svc_rules.get("min_lead_hours")
+        if isinstance(min_lead, (int, float)) and min_lead > 0:
+            hours_lead = (booking_start_local - now_business).total_seconds() / 3600.0
+            if hours_lead < float(min_lead):
+                label = (selected_service or {}).get("name") or body.service_type.title()
+                raise HTTPException(status_code=400, detail=f"{label} requires at least {int(min_lead)}h advance notice.")
+        max_adv = svc_rules.get("max_advance_days")
+        if isinstance(max_adv, (int, float)) and max_adv > 0:
+            if (req_date - today).days > int(max_adv):
+                label = (selected_service or {}).get("name") or body.service_type.title()
+                raise HTTPException(status_code=400, detail=f"{label} can only be booked up to {int(max_adv)} days in advance.")
 
     # Sprint 110aw — Meet-n-Greet gate. Prospect / rejected clients cannot
     # book regular services; admin can override by passing the booking through
@@ -2452,33 +2571,29 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # Admins bypass these via override_capacity for emergency fixes.
     if user.get("role") != "admin" or not (body.override_capacity or False):
         guard = ((settings.get("day_to_day") or {}).get("guardrails") or {})
-        try:
-            book_dt = datetime.combine(date.fromisoformat(body.date),
-                                        datetime.strptime(body.time or "00:00", "%H:%M").time())
-        except Exception:
-            book_dt = datetime.combine(date.fromisoformat(body.date), datetime.min.time())
-        now_local = datetime.now()
-        hours_until = (book_dt - now_local).total_seconds() / 3600.0
+        # Reuse the same Eastern-aware, actual-time calculation as the exact
+        # service rules. No second midnight/UTC interpretation is allowed.
+        effective_start_local = booking_start_local or _booking_start_local(body, settings)
+        now_business = datetime.now(BUSINESS_TZ)
+        hours_until = (effective_start_local - now_business).total_seconds() / 3600.0
 
         if not svc_rules.get("_exact_same_day"):
-            if not guard.get("same_day_booking_allowed", True) and body.date == business_today().isoformat():
+            if not guard.get("same_day_booking_allowed", True) and effective_start_local.date() == now_business.date():
                 raise HTTPException(status_code=400, detail="Same-day bookings are currently disabled.")
         if not svc_rules.get("_exact_min_lead"):
             min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
             if min_adv_h > 0 and hours_until < min_adv_h:
                 raise HTTPException(status_code=400, detail=f"Bookings require at least {int(min_adv_h)}h advance notice.")
         wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
-        if wknd_lead > 0:
-            try:
-                wd = date.fromisoformat(body.date).weekday()  # 0=Mon..6=Sun
-                if wd in (5, 6) and hours_until < wknd_lead:
-                    raise HTTPException(status_code=400, detail=f"Weekend bookings require {int(wknd_lead)}h advance notice.")
-            except Exception:
-                pass
+        if wknd_lead > 0 and effective_start_local.weekday() in (5, 6):
+            if hours_until < wknd_lead:
+                raise HTTPException(status_code=400, detail=f"Weekend bookings require {int(wknd_lead)}h advance notice.")
         max_pcd = int(guard.get("max_bookings_per_client_per_day", 0) or 0)
         if max_pcd > 0:
             same_day = await db.bookings.count_documents({
-                "client_id": user.get("id") if user.get("role") != "admin" else (await db.dogs.find_one({"id": body.dog_id}, {"_id": 0, "owner_id": 1}) or {}).get("owner_id"),
+                # Bookings store the linked client-record id, not the portal
+                # login user's id. Using the login id made this limit a no-op.
+                "client_id": client.get("id"),
                 "date": body.date,
                 "status": {"$nin": ["cancelled", "rejected"]},
             })
@@ -2513,6 +2628,19 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         if not (is_admin and body.override_capacity) and duration_minutes_used > 0:
             new_start = _hhmm_to_min(body.time)
             if new_start is not None:
+                # The direct booking endpoint must enforce the same closing
+                # boundary as the slot picker; otherwise an old/custom client
+                # could post a 90-minute service five minutes before closing.
+                try:
+                    target_day = date.fromisoformat(body.date)
+                    hours_row = _service_hours_for_date(settings, body.service_type, target_day)
+                    close_min = _hhmm_to_min(hours_row.get("close") or "")
+                    if close_min is not None and new_start + duration_minutes_used > close_min:
+                        raise HTTPException(status_code=400, detail="That appointment would run past closing time.")
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
                 existing_slots = await db.bookings.find(
                     {
                         "date": body.date,
@@ -2877,7 +3005,15 @@ async def create_recurring(body: RecurringBookingIn, user: dict = Depends(get_cu
             if cur.weekday() in weekdays:
                 try:
                     bk = await create_booking(
-                        BookingIn(dog_id=body.dog_id, date=cur.isoformat(), service_type=body.service_type, notes=body.notes or ""),
+                        BookingIn(
+                            dog_id=body.dog_id,
+                            date=cur.isoformat(),
+                            service_type=body.service_type,
+                            notes=body.notes or "",
+                            service_id=body.service_id,
+                            time=body.time or "",
+                            dropoff_time=body.dropoff_time or "",
+                        ),
                         user,
                     )
                     created.append(bk)
@@ -3119,6 +3255,9 @@ class RecurringTemplateIn(BaseModel):
     dog_id: str
     label: Optional[str] = ""  # admin-facing nickname, e.g. "Daisy · M/W/F"
     service_type: Literal["daycare", "training"] = "daycare"
+    service_id: Optional[str] = None
+    time: Optional[str] = ""          # required for recurring training
+    dropoff_time: Optional[str] = ""  # optional daycare arrival time
     weekdays: List[int] = Field(min_length=1, max_length=7)  # 0=Mon..6=Sun
     notes: Optional[str] = ""
     default_horizon_weeks: int = Field(default=12, ge=1, le=52)
@@ -3171,7 +3310,25 @@ async def create_recurring_template(body: RecurringTemplateIn, user: dict = Depe
     # matching the existing portal training-booking restriction.
     if user.get("role") != "admin" and body.service_type == "training":
         raise HTTPException(status_code=403, detail="Training schedules are set up by the team — please request a free evaluation.")
+    if body.service_type == "training" and not (body.time or "").strip():
+        raise HTTPException(status_code=400, detail="Recurring training schedules require an appointment time.")
+    _parse_hhmm_strict(body.time if body.service_type == "training" else body.dropoff_time, field_label="recurring schedule time")
+    # Recurring templates must also bind to one exact catalog service so
+    # extending them cannot fall back to broad category rules later.
+    probe = BookingIn(
+        dog_id=body.dog_id,
+        date=(body.start_date or business_today().isoformat()),
+        service_type=body.service_type,
+        service_id=body.service_id,
+        time=body.time or "",
+        dropoff_time=body.dropoff_time or "",
+    )
+    selected_service = await _resolve_base_service_for_booking(probe, user)
+    if not selected_service:
+        raise HTTPException(status_code=400, detail="Please choose the exact service for this recurring schedule.")
     doc = body.model_dump()
+    doc["service_id"] = selected_service.get("id")
+    doc["service_name"] = selected_service.get("name")
     doc["id"] = str(uuid.uuid4())
     doc["weekdays"] = sorted(set(int(w) for w in doc["weekdays"] if 0 <= int(w) <= 6))
     if not doc.get("label"):
@@ -3201,10 +3358,26 @@ async def update_recurring_template(template_id: str, body: RecurringTemplateIn,
     existing = await _load_owned_template(template_id, user)
     if user.get("role") != "admin" and body.service_type == "training":
         raise HTTPException(status_code=403, detail="Training schedules are set up by the team.")
+    if body.service_type == "training" and not (body.time or "").strip():
+        raise HTTPException(status_code=400, detail="Recurring training schedules require an appointment time.")
+    _parse_hhmm_strict(body.time if body.service_type == "training" else body.dropoff_time, field_label="recurring schedule time")
     # Client can't move a template onto a dog they don't own
     if body.dog_id != existing["dog_id"]:
         await _assert_dog_owned_by_client(body.dog_id, user)
+    probe = BookingIn(
+        dog_id=body.dog_id,
+        date=(body.start_date or business_today().isoformat()),
+        service_type=body.service_type,
+        service_id=body.service_id,
+        time=body.time or "",
+        dropoff_time=body.dropoff_time or "",
+    )
+    selected_service = await _resolve_base_service_for_booking(probe, user)
+    if not selected_service:
+        raise HTTPException(status_code=400, detail="Please choose the exact service for this recurring schedule.")
     update = body.model_dump()
+    update["service_id"] = selected_service.get("id")
+    update["service_name"] = selected_service.get("name")
     update["weekdays"] = sorted(set(int(w) for w in update["weekdays"] if 0 <= int(w) <= 6))
     await db.recurring_templates.update_one({"id": template_id}, {"$set": update})
     existing.update(update)
@@ -3254,6 +3427,9 @@ async def extend_recurring_template(
             start_date=start_candidate.isoformat(),
             end_date=end.isoformat(),
             service_type=t["service_type"],
+            service_id=t.get("service_id"),
+            time=t.get("time") or "",
+            dropoff_time=t.get("dropoff_time") or "",
             weekdays=t["weekdays"],
             notes=t.get("notes") or "",
         ),

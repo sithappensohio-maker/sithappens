@@ -11,12 +11,13 @@ import PageHero from "../components/PageHero";
  * extends start the day AFTER the previously booked window.
  */
 const WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const emptyForm = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
+const emptyForm = { dog_id: "", service_type: "daycare", service_id: "", time: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
 
 export default function RecurringTemplates() {
   const confirm = useConfirm();
   const [rows, setRows] = useState([]);
   const [dogs, setDogs] = useState([]);
+  const [services, setServices] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -25,20 +26,28 @@ export default function RecurringTemplates() {
   const [toast, setToast] = useState(null); // {ok, msg}
 
   const load = async () => {
-    const [{ data: tpls }, { data: ds }] = await Promise.all([
+    const [{ data: tpls }, { data: ds }, { data: svcs }] = await Promise.all([
       api.get("/recurring-templates"),
       api.get("/dogs"),
+      api.get("/services"),
     ]);
     setRows(tpls);
     setDogs(ds);
+    setServices((svcs || []).filter(s => s.active !== false && !s.is_addon && ["daycare", "training"].includes(s.service_type)));
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm({ ...emptyForm, dog_id: dogs[0]?.id || "" }); setErr(""); setOpen(true); };
+  const openNew = () => {
+    const first = services.find(s => s.service_type === "daycare") || services[0];
+    setEditing(null);
+    setForm({ ...emptyForm, dog_id: dogs[0]?.id || "", service_id: first?.id || "", service_type: first?.service_type || "daycare" });
+    setErr(""); setOpen(true);
+  };
   const openEdit = (r) => {
     setEditing(r);
     setForm({
-      dog_id: r.dog_id, service_type: r.service_type, weekdays: r.weekdays || [],
+      dog_id: r.dog_id, service_type: r.service_type, service_id: r.service_id || "",
+      time: r.time || "", dropoff_time: r.dropoff_time || "", weekdays: r.weekdays || [],
       notes: r.notes || "", default_horizon_weeks: r.default_horizon_weeks || 12,
       active: r.active !== false, label: r.label || "", start_date: r.start_date || "",
     });
@@ -48,6 +57,8 @@ export default function RecurringTemplates() {
   const save = async () => {
     setErr("");
     if (!form.dog_id) { setErr("Pick a dog."); return; }
+    if (!form.service_id) { setErr("Pick the exact service."); return; }
+    if (form.service_type === "training" && !form.time) { setErr("Pick the training appointment time."); return; }
     if (!form.weekdays.length) { setErr("Pick at least one weekday."); return; }
     try {
       if (editing) await api.put(`/recurring-templates/${editing.id}`, form);
@@ -128,7 +139,7 @@ export default function RecurringTemplates() {
                     <span key={i} className={`text-[12px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? (r.service_type === "training" ? "bg-purple-500/25 text-purple-300" : "bg-shBlue/25 text-shBlue") : "bg-bgHover text-gray-600"}`}>{d}</span>
                   ))}
                 </div>
-                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">{r.service_type} · {r.default_horizon_weeks}w default</p>
+                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">{r.service_name || r.service_type} · {r.default_horizon_weeks}w default</p>
               </div>
               <div className="col-span-6 md:col-span-3 text-[14px] text-gray-400 font-black uppercase tracking-widest">
                 {r.last_booked_through ? (
@@ -168,13 +179,32 @@ export default function RecurringTemplates() {
                 </select>
               </div>
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-                <select value={form.service_type} onChange={(e)=>setForm({...form, service_type: e.target.value})}
+                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Exact service</label>
+                <select value={form.service_id} onChange={(e)=>{
+                          const svc = services.find(s => s.id === e.target.value);
+                          setForm({...form, service_id: e.target.value, service_type: svc?.service_type || "daycare", time: svc?.service_type === "training" ? form.time : ""});
+                        }}
+                        data-testid="template-service-select"
                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-                  <option value="daycare">Daycare</option>
-                  <option value="training">Training</option>
+                  <option value="">— pick a service —</option>
+                  {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
+              {form.service_type === "training" ? (
+                <div>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Appointment time</label>
+                  <input type="time" value={form.time} onChange={(e)=>setForm({...form, time: e.target.value})}
+                         data-testid="template-time" style={{colorScheme:"dark"}}
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Usual drop-off time (optional)</label>
+                  <input type="time" value={form.dropoff_time} onChange={(e)=>setForm({...form, dropoff_time: e.target.value})}
+                         data-testid="template-dropoff-time" style={{colorScheme:"dark"}}
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                </div>
+              )}
               <div>
                 <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
                 <div className="flex gap-1 mt-1.5">

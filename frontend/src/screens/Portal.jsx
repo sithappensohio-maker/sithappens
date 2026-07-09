@@ -44,7 +44,7 @@ import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
 
 const _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-const _emptyRecurring = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
+const _emptyRecurring = { dog_id: "", service_type: "daycare", service_id: "", dropoff_time: "", weekdays: [0, 2, 4], notes: "", default_horizon_weeks: 12, active: true, label: "", start_date: "" };
 
 /**
  * Client-facing "My Recurring Schedules" — same model as the admin Recurring
@@ -55,6 +55,7 @@ const _emptyRecurring = { dog_id: "", service_type: "daycare", weekdays: [0, 2, 
  */
 function MyRecurringModal({ dogs, onClose }) {
   const [rows, setRows] = useState([]);
+  const [services, setServices] = useState([]);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(_emptyRecurring);
   const [busy, setBusy] = useState(null);
@@ -63,16 +64,28 @@ function MyRecurringModal({ dogs, onClose }) {
   const [step, setStep] = useState("list"); // "list" | "form"
 
   const load = async () => {
-    try { const { data } = await api.get("/recurring-templates"); setRows(data); } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Load failed"); }
+    try {
+      const [{ data: templates }, { data: svcs }] = await Promise.all([
+        api.get("/recurring-templates"),
+        api.get("/services"),
+      ]);
+      setRows(templates);
+      setServices((svcs || []).filter(s => s.active !== false && !s.is_addon && s.service_type === "daycare"));
+    } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Load failed"); }
   };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => { setEditing(null); setForm({ ..._emptyRecurring, dog_id: dogs[0]?.id || "" }); setStep("form"); setErr(""); };
+  const openNew = () => {
+    const first = services[0];
+    setEditing(null);
+    setForm({ ..._emptyRecurring, dog_id: dogs[0]?.id || "", service_id: first?.id || "" });
+    setStep("form"); setErr("");
+  };
   const openEdit = (r) => {
     setEditing(r);
     setForm({
-      dog_id: r.dog_id, service_type: r.service_type,
-      weekdays: r.weekdays || [], notes: r.notes || "",
+      dog_id: r.dog_id, service_type: r.service_type, service_id: r.service_id || "",
+      dropoff_time: r.dropoff_time || "", weekdays: r.weekdays || [], notes: r.notes || "",
       default_horizon_weeks: r.default_horizon_weeks || 12,
       active: r.active !== false, label: r.label || "",
       start_date: r.start_date || "",
@@ -83,6 +96,7 @@ function MyRecurringModal({ dogs, onClose }) {
   const save = async () => {
     setErr("");
     if (!form.dog_id) { setErr("Pick a dog."); return; }
+    if (!form.service_id) { setErr("Pick the daycare service."); return; }
     if (!form.weekdays.length) { setErr("Pick at least one weekday."); return; }
     try {
       if (editing) await api.put(`/recurring-templates/${editing.id}`, form);
@@ -148,7 +162,8 @@ function MyRecurringModal({ dogs, onClose }) {
                               <span key={i} className={`text-[12px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${r.weekdays?.includes(i) ? "bg-shBlue/25 text-shBlue" : "bg-bgHover text-gray-600"}`}>{d}</span>
                             ))}
                           </div>
-                          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1.5">
+                          <p className="text-[12px] text-shBlue font-black uppercase tracking-widest mt-1.5">{r.service_name || "Daycare"}</p>
+                          <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-1">
                             {r.last_booked_through ? <>Booked through <span className="text-white">{r.last_booked_through}</span></> : "Never extended"}
                           </p>
                         </div>
@@ -182,6 +197,21 @@ function MyRecurringModal({ dogs, onClose }) {
                   <option value="">— pick a dog —</option>
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Daycare service</label>
+                <select value={form.service_id} onChange={(e)=>setForm({...form, service_id: e.target.value, service_type: "daycare"})}
+                        data-testid="my-recurring-service-select"
+                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  <option value="">— pick a service —</option>
+                  {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Usual drop-off time (optional)</label>
+                <input type="time" value={form.dropoff_time} onChange={(e)=>setForm({...form, dropoff_time: e.target.value})}
+                       data-testid="my-recurring-dropoff-time" style={{colorScheme:"dark"}}
+                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
               </div>
               <div>
                 <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Weekdays</label>
