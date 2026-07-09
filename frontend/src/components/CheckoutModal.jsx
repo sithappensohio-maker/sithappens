@@ -112,8 +112,13 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const [extraNights, setExtraNights] = useState(0);
   const [extraUseCredits, setExtraUseCredits] = useState(true);
   const [extraRate, setExtraRate] = useState("");
-  const boardingRate = (services || []).find(s => s.service_type === "boarding" && s.is_default && s.active)?.base_price || 0;
-  const extraRateEffective = extraRate !== "" ? Number(extraRate) || 0 : Number(boardingRate || 0);
+  const exactService = (services || []).find(s => s.id === booking.service_id && s.active);
+  const defaultService = (services || []).find(s => s.service_type === booking.service_type && s.is_default && s.active);
+  const savedUnitRate = Number(booking.pricing_snapshot?.unit_price || booking.unit_price || 0);
+  const serviceUnitRate = savedUnitRate > 0
+    ? savedUnitRate
+    : Number(exactService?.base_price || defaultService?.base_price || 0);
+  const extraRateEffective = extraRate !== "" ? Number(extraRate) || 0 : serviceUnitRate;
   const isBoarding = booking.service_type === "boarding";
   // Sprint 110an — only show services that are flagged as add-ons AND
   // eligible for this booking's service type. Falls back to the legacy
@@ -151,6 +156,18 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
     return () => { alive = false; };
   }, [booking.id]);
 
+  const [moneyModifierPreview, setMoneyModifierPreview] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await api.get(`/bookings/${booking.id}/money-modifier-preview`);
+        if (alive) setMoneyModifierPreview(data);
+      } catch { /* non-fatal — no configured surcharge or preview unavailable */ }
+    })();
+    return () => { alive = false; };
+  }, [booking.id]);
+
   const addOne = (svc) => setCart(c => ({ ...c, [svc.id]: { service: svc, qty: (c[svc.id]?.qty || 0) + 1 } }));
   const removeOne = (svc) => setCart(c => {
     const next = { ...c };
@@ -173,6 +190,13 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // (matches the relabelled "Additional cash charge" field). For non-credit
   // checkouts, it's the standard base-price override.
   const extraCashOnCredits = useCredits && basePrice !== "" ? Number(basePrice) : 0;
+  const baseCreditShortfallUnits = useCredits && !hadCredit
+    ? Math.max(0, Number(creditUnitsNeeded || 0) - Number(creditsToUseNow || 0))
+    : 0;
+  const baseCreditShortfallCash = Math.round(baseCreditShortfallUnits * serviceUnitRate * 100) / 100;
+  const baseCashDueOnCredits = useCredits
+    ? baseCreditShortfallCash + Math.max(0, extraCashOnCredits)
+    : 0;
 
   let basePreview = 0;
   if (basePrice !== "" && !useCredits) {
@@ -192,27 +216,51 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           ? bookingBaseEstimate
           : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0)));
   }
-  const extraNightsCharge = isBoarding && extraNights > 0 && !extraUseCredits
-    ? Math.round(extraNights * extraRateEffective * 100) / 100
+  const isAdditionalDogRow = booking.pricing_snapshot?.group_dog_index > 0 || !!booking.multi_dog_discount?.pre_applied;
+  const extraCreditUnitsPerNight = isAdditionalDogRow ? 0.5 : 1;
+  const extraCreditUnitsNeeded = isBoarding ? Number(extraNights || 0) * extraCreditUnitsPerNight : 0;
+  const creditsReservedForBase = useCredits && !hadCredit ? Number(creditsToUseNow || 0) : 0;
+  const creditsAvailableForExtra = Math.max(0, Number(available || 0) - creditsReservedForBase);
+  const extraCreditsPreview = extraUseCredits
+    ? Math.min(extraCreditUnitsNeeded, creditsAvailableForExtra)
     : 0;
+  const extraBilledUnits = Math.max(0, extraCreditUnitsNeeded - extraCreditsPreview);
+  const extraNightsCharge = isBoarding && extraNights > 0
+    ? Math.round(extraBilledUnits * extraRateEffective * 100) / 100
+    : 0;
+  const modifierBase = (!useCredits && basePrice !== "")
+    ? basePreview
+    : Number(moneyModifierPreview?.base_before || basePreview || 0);
+  const modifierMultiplier = Number(moneyModifierPreview?.seasonal_multiplier || 1);
+  const modifierLateFee = Number(moneyModifierPreview?.late_pickup_fee || 0);
+  let modifiedBase = (modifierBase * modifierMultiplier) + modifierLateFee;
+  if (moneyModifierPreview?.round_to_dollar) modifiedBase = Math.round(modifiedBase);
+  const moneyModifierTotal = Math.round((modifiedBase - modifierBase) * 100) / 100;
+
   // Multi-dog discount preview: recompute against the CURRENT basePreview (so
   // if the operator overrides the base price, the discount updates live).
   let multiDogDiscount = 0;
-  if (discountPreview?.eligible && discountPreview.discount && basePreview > 0 && !useCredits && !booking.multi_dog_discount?.pre_applied) {
+  const discountableBase = Math.max(0, basePreview + moneyModifierTotal + extraNightsCharge);
+  if (discountPreview?.eligible && discountPreview.discount && discountableBase > 0 && !useCredits && !booking.multi_dog_discount?.pre_applied) {
     const d = discountPreview.discount;
     if (d.mode === "percent") {
-      multiDogDiscount = Math.round(basePreview * (Math.max(0, Math.min(100, d.value)) / 100) * 100) / 100;
+      multiDogDiscount = Math.round(discountableBase * (Math.max(0, Math.min(100, d.value)) / 100) * 100) / 100;
     } else {
-      multiDogDiscount = Math.min(basePreview, Math.round(d.value * 100) / 100);
+      multiDogDiscount = Math.min(discountableBase, Math.round(d.value * 100) / 100);
     }
   }
-  // What hits today's P&L. Pre-attached add-ons are locked onto the booking
-  // and must be included alongside any new checkout add-ons. Previously they
-  // were displayed but omitted from this total, which underquoted checkout.
-  const chargedToday = Math.max(
+  // What is due before tax. Pre-attached add-ons are locked onto the booking
+  // and must be included alongside any new checkout add-ons.
+  const preTaxChargedToday = Math.max(
     0,
-    (useCredits ? extraCashOnCredits : basePreview) + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
+    (useCredits ? baseCashDueOnCredits : basePreview) + moneyModifierTotal + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
   );
+  const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
+  const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
+    ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
+    : 0;
+  const salesTaxAmount = Math.round(preTaxChargedToday * (salesTaxRate / 100) * 100) / 100;
+  const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount) * 100) / 100;
 
   const submit = async () => {
     setBusy(true); setErr("");
@@ -229,13 +277,12 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         body.extra_nights_use_credits = extraUseCredits;
         if (extraRate !== "") body.extra_nights_rate = Number(extraRate);
       }
-      // Sprint 110eg — When checking out with credits, the `basePrice`
-      // input now represents the ADDITIONAL cash charge on top of credits
-      // (label says so). Convert it back to the booking's notional total
-      // (credit value + extra) so backend semantics stay unchanged:
-      // `_cash_revenue` = actual_price − credit_value = the extra slice.
-      const extraOnCredits = useCredits && basePrice !== "" ? Number(basePrice) : 0;
-      const notionalBaseForCredits = creditAmt + extraOnCredits;
+      // Credit checkout keeps the service value and any explicit overage
+      // separate. This avoids replacing the entire base price with the extra
+      // cash amount during mixed credit/cash checkout.
+      if (useCredits && basePrice !== "") {
+        body.additional_cash_charge = Math.max(0, Number(basePrice) || 0);
+      }
 
       if (!useCredits) {
         body.payment_method = payMethod;
@@ -248,14 +295,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
         if (payMode === "partial" && amountPaid !== "") {
           body.amount_paid = Number(amountPaid);
         }
-      } else if (!hadCredit) {
-        if (basePrice !== "") body.base_price = notionalBaseForCredits;
-      } else if (extraNightsCharge > 0) {
+      } else if (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0) {
         body.payment_method = payMethod;
         body.payment_status = "paid";
-        if (basePrice !== "") body.base_price = notionalBaseForCredits;
-      } else {
-        if (basePrice !== "") body.base_price = notionalBaseForCredits;
       }
       // Mixed credits + cash (add-ons, overages, tips, uncovered nights).
       // Send both the tender and exact cash portion so the backend can put
@@ -409,15 +451,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                   <div>
                     <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Per-night rate <span className="text-gray-600">(blank = settings default)</span></label>
                     <input type="number" step="0.01" value={extraRate} onChange={(e)=>setExtraRate(e.target.value)} data-testid="extra-nights-rate"
-                           placeholder={boardingRate ? `$${Number(boardingRate).toFixed(2)}` : "$0.00"}
+                           placeholder={extraRateEffective > 0 ? `$${extraRateEffective.toFixed(2)}` : "$0.00"}
                            className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
                   </div>
                 )}
                 <div className="text-[14px] bg-bgPanel rounded p-2 text-gray-300">
                   <i className="fas fa-circle-info text-shBlue mr-1"/>
                   {extraUseCredits
-                    ? `Will draw up to ${extraNights} credit${extraNights===1?"":"s"} from boarding pack; any uncovered nights will be billed at $${extraRateEffective.toFixed(2)}/night.`
-                    : `Charging ${extraNights} × $${extraRateEffective.toFixed(2)} = $${(extraNights * extraRateEffective).toFixed(2)} for the extension.`}
+                    ? `Needs ${fmtCredits(extraCreditUnitsNeeded)} boarding credit unit${extraCreditUnitsNeeded===1?"":"s"}. ${fmtCredits(extraCreditsPreview)} will be used and ${fmtCredits(extraBilledUnits)} uncovered unit${extraBilledUnits===1?"":"s"} will be billed at $${extraRateEffective.toFixed(2)} = $${extraNightsCharge.toFixed(2)}.`
+                    : `Charging ${fmtCredits(extraBilledUnits)} unit${extraBilledUnits===1?"":"s"} × $${extraRateEffective.toFixed(2)} = $${extraNightsCharge.toFixed(2)} for the extension${isAdditionalDogRow ? " (second-dog rate included)" : ""}.`}
                 </div>
               </div>
             )}
@@ -484,8 +526,8 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
           <div>
             <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
-              {useCredits ? "Additional cash charge (optional)" : "Base price"}
-              <span className="text-gray-600"> {useCredits ? "(blank = $0 — credits cover everything)" : "(blank = use service default)"}</span>
+              {useCredits ? "Additional cash adjustment (optional)" : "Base price"}
+              <span className="text-gray-600"> {useCredits ? "(blank = use calculated credit shortfall)" : "(blank = use service default)"}</span>
             </label>
             <input type="number" step="0.01" value={basePrice} onChange={(e)=>setBasePrice(e.target.value)} data-testid="checkout-base-price"
                    placeholder={useCredits ? "$0.00" : (basePreview ? `$${basePreview.toFixed(2)}` : "$0.00")}
@@ -493,7 +535,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             {useCredits && (
               <p className="text-[13px] text-gray-500 mt-1.5 normal-case">
                 <i className="fas fa-circle-info text-shGreen mr-1"/>
-                Credits cover the visit — <strong className="text-white">no money hits today's P&amp;L</strong>. The pack sale already counted that revenue. Only enter an amount above if you're charging extra today (paid add-on, overage, tip).
+                {baseCreditShortfallCash > 0
+                  ? <><strong className="text-shOrange">${baseCreditShortfallCash.toFixed(2)} remains after available credits</strong> and is included in Charged today. Leave this field blank unless you intentionally want to override that cash amount.</>
+                  : <>Credits cover the base visit. Only add an amount here for an intentional overage, tip, or other adjustment.</>}
               </p>
             )}
           </div>
@@ -625,6 +669,26 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             )}
             {existingAddonTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-amber-400 font-black">Booked add-ons · ${existingAddonTotal.toFixed(2)}</p>}
             {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">New add-ons · ${addOnTotal.toFixed(2)}</p>}
+            {useCredits && basePrice === "" && baseCreditShortfallCash > 0 && (
+              <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-credit-shortfall-cash">
+                Credit shortfall · ${baseCreditShortfallCash.toFixed(2)}
+              </p>
+            )}
+            {extraNightsCharge > 0 && (
+              <p className="text-[12px] uppercase tracking-widest text-shBlue font-black" data-testid="checkout-extra-night-charge">
+                Extra stay · ${extraNightsCharge.toFixed(2)}
+              </p>
+            )}
+            {Math.abs(moneyModifierTotal) > 0.001 && (
+              <p className="text-[12px] uppercase tracking-widest text-purple-300 font-black" data-testid="checkout-money-modifiers">
+                {moneyModifierPreview?.seasonal_label || (modifierLateFee > 0 ? "Late pickup / pricing rule" : "Pricing rule")} · {moneyModifierTotal >= 0 ? "+" : "−"}${Math.abs(moneyModifierTotal).toFixed(2)}
+              </p>
+            )}
+            {salesTaxAmount > 0 && (
+              <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-sales-tax">
+                {salesTaxCfg.label || "Sales Tax"} ({salesTaxRate.toFixed(2)}%) · ${salesTaxAmount.toFixed(2)}
+              </p>
+            )}
             {multiDogDiscount > 0 && (
               <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-multi-dog-discount">
                 <i className="fas fa-dog mr-1"/>

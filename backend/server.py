@@ -24,6 +24,7 @@ from fastapi.responses import Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import ReturnDocument
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from email_service import (
@@ -75,6 +76,10 @@ security = HTTPBearer(auto_error=False)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("sithappens")
+
+# Checkout operation id is attached to ledger rows created during one checkout.
+# It lets the compensating rollback remove only rows from the failed operation.
+_checkout_operation_id_ctx = contextvars.ContextVar("checkout_operation_id", default=None)
 
 
 # -------- Register / payment method normalization --------
@@ -581,6 +586,7 @@ class BookingOut(BaseModel):
     # promoted to actual_price at check-out.
     credit_value: Optional[float] = None
     credit_lot_ids: Optional[List[str]] = None
+    credit_lot_redemptions: Optional[List[Dict[str, Any]]] = None
     credit_service_type: Optional[str] = None  # 'daycare' or 'training' — which pool was charged
     # Sprint 29 — add-ons logged at check-out (bath, nail trim, etc.). Each
     # row contributes to `actual_price` and the weekly income tally.
@@ -615,6 +621,9 @@ class BookingOut(BaseModel):
     # fields carry the breakdown so year-end filing / reports stay honest.
     tax_amount: Optional[float] = None
     tax_rate_pct: Optional[float] = None
+    taxable_cash_amount: Optional[float] = None
+    additional_cash_charge: Optional[float] = None
+    money_modifier_breakdown: Optional[Dict[str, Any]] = None
     # Sprint 110aw — Board-and-Train. If the chosen service had a
     # `package_program_id`, this is the id of the auto-created program
     # enrollment for the dog. Helps the UI surface "Training included" badges.
@@ -668,6 +677,7 @@ class CheckoutIn(BaseModel):
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
     payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
+    additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
     # computed total, the booking is marked `paid_partial` and the
@@ -681,7 +691,7 @@ class CheckoutIn(BaseModel):
     # additional boarding credits, and bills the difference at checkout.
     extra_nights: int = Field(default=0, ge=0, le=60)
     extra_nights_use_credits: bool = True  # if client has boarding credits, draw from them first
-    extra_nights_rate: Optional[float] = None  # per-night rate override; if not provided + credits exhausted, uses booking_rules.boarding_rate
+    extra_nights_rate: Optional[float] = None  # optional manual override; otherwise uses the booking's saved/current client service rate
     # ── Geolocation (silent capture) ──
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -1821,6 +1831,84 @@ def _billable_boarding_units(
     if nights <= 0:
         return float(nights)
     return round(float(nights) + _boarding_pickup_day_units(pickup_time, cutoff_time), 2)
+
+
+def _money_modifier_breakdown(
+    booking: Dict[str, Any],
+    base_amount: float,
+    settings: Dict[str, Any],
+    checkout_ts: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Return one transparent seasonal/late-pickup pricing breakdown.
+
+    This helper is shared by checkout and the checkout preview endpoint so the
+    operator sees the same number the backend will save.
+    """
+    base = round(max(0.0, float(base_amount or 0)), 2)
+    amount = base
+    money = ((settings.get("day_to_day") or {}).get("money") or {})
+    seasonal = ((settings.get("day_to_day") or {}).get("seasonal") or {})
+    multiplier = 1.0
+    seasonal_label = None
+    bdate = booking.get("date") or ""
+    try:
+        for h in (seasonal.get("holiday_surcharges") or []):
+            if h.get("date") == bdate:
+                multiplier = float(h.get("multiplier", 1) or 1)
+                seasonal_label = h.get("label") or "Holiday surcharge"
+                break
+        else:
+            for row in (seasonal.get("peak_season_ranges") or []):
+                if (row.get("start") or "") <= bdate <= (row.get("end") or "9999"):
+                    multiplier = float(row.get("multiplier", 1) or 1)
+                    seasonal_label = row.get("label") or "Peak-season surcharge"
+                    break
+    except Exception:
+        multiplier = 1.0
+        seasonal_label = None
+    amount = round(amount * multiplier, 2)
+    seasonal_amount = round(amount - base, 2)
+
+    late_fee = 0.0
+    try:
+        ps = booking.get("pricing_snapshot") or {}
+        extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
+            (booking.get("multi_dog_discount") or {}).get("pre_applied")
+        )
+        per_15 = float(money.get("late_pickup_fee_per_15min", 0) or 0)
+        if per_15 > 0 and not extra_group_dog:
+            grace = int(money.get("late_pickup_grace_min", 10) or 0)
+            pickup_time = (booking.get("pickup_time") or "").strip()
+            pickup_date = booking.get("end_date") if booking.get("service_type") == "boarding" else booking.get("date")
+            if pickup_time and pickup_date:
+                declared = datetime.fromisoformat(f"{pickup_date}T{pickup_time}:00").replace(tzinfo=BUSINESS_TZ)
+                checkout_raw = checkout_ts or now_iso()
+                checked = datetime.fromisoformat(checkout_raw.replace("Z", "+00:00"))
+                if checked.tzinfo is None:
+                    checked = checked.replace(tzinfo=timezone.utc)
+                minutes_late = max(0.0, (checked.astimezone(BUSINESS_TZ) - declared).total_seconds() / 60.0 - grace)
+                if minutes_late > 0:
+                    blocks = int(minutes_late // 15) + (1 if minutes_late % 15 else 0)
+                    late_fee = round(blocks * per_15, 2)
+                    amount = round(amount + late_fee, 2)
+    except Exception:
+        late_fee = 0.0
+
+    before_rounding = amount
+    if money.get("round_to_dollar"):
+        amount = float(round(amount))
+    rounding_adjustment = round(amount - before_rounding, 2)
+    return {
+        "base_before": base,
+        "seasonal_multiplier": multiplier,
+        "seasonal_label": seasonal_label,
+        "seasonal_amount": seasonal_amount,
+        "late_pickup_fee": late_fee,
+        "round_to_dollar": bool(money.get("round_to_dollar")),
+        "rounding_adjustment": rounding_adjustment,
+        "total_after": round(amount, 2),
+        "modifier_total": round(amount - base, 2),
+    }
 
 
 def _credit_units_required(service_type: str, start: str, end: Optional[str], dog_count: int = 1, pickup_time: Optional[str] = None, pickup_cutoff_time: Optional[str] = DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF) -> float:
@@ -3225,65 +3313,119 @@ async def _consume_credit_lots(
     service_type: str = "daycare",
     prefer_program_id: Optional[str] = None,
 ) -> tuple:
-    """FIFO consumption: oldest lot first, filtered by `service_type` so daycare
-    credits and training credits stay in their own pools.
+    """Atomically consume credit lots FIFO.
 
-    Sprint 110bx — when `prefer_program_id` is set (typically the dog's active
-    training program), lots tagged with that `program_id` are exhausted FIRST
-    (oldest-first within that program), then we fall back to other lots in the
-    same service pool. Lets "Buddy's Puppy Preschool session" pull from his
-    Puppy Preschool lot before generic training credits.
+    Returns ``(total_value, redemptions, qty_consumed)`` where redemptions is a
+    list of ``{"lot_id", "qty", "value_each"}`` rows.  The detailed rows are
+    stored on the booking so a cancellation or failed checkout can restore the
+    exact lots that were used instead of dumping the whole refund into one lot.
 
-    Returns (total_value, [lot_ids_touched]). If lots don't cover qty, the
-    remainder is valued at $0 — preserves balance integrity without inventing
-    revenue."""
-    remaining = round(float(qty or 0), 2)
+    Each lot update includes ``qty_remaining >= take`` in the filter.  That
+    prevents two simultaneous checkouts from both spending the same remaining
+    quantity from one lot.
+    """
+    requested = round(max(0.0, float(qty or 0)), 2)
+    remaining = requested
     total_value = 0.0
-    touched: List[str] = []
+    redemptions: List[Dict[str, Any]] = []
 
-    async def _drain(filter_extra: dict):
+    async def _drain(filter_extra: dict) -> None:
         nonlocal remaining, total_value
-        if remaining <= 0:
-            return
-        cursor = db.credit_lots.find(
-            {"client_id": client_id, "qty_remaining": {"$gt": 0},
-             "service_type": service_type, **filter_extra},
-            {"_id": 0},
-        ).sort("purchased_at", 1)
-        async for lot in cursor:
-            if remaining <= 0:
-                break
-            take = min(remaining, float(lot.get("qty_remaining") or 0))
-            if take <= 0:
-                continue
-            value = float(lot.get("value_each") or 0) * float(take)
-            await db.credit_lots.update_one(
-                {"id": lot["id"]},
-                {"$inc": {"qty_remaining": -take}, "$set": {"last_redeemed_at": now_iso()}},
+        attempts = 0
+        while remaining > 0.0001 and attempts < 500:
+            attempts += 1
+            lot = await db.credit_lots.find_one(
+                {
+                    "client_id": client_id,
+                    "qty_remaining": {"$gt": 0},
+                    "service_type": service_type,
+                    **filter_extra,
+                },
+                {"_id": 0},
+                sort=[("purchased_at", 1), ("id", 1)],
             )
-            total_value += value
-            touched.append(lot["id"])
-            remaining = round(remaining - float(take), 2)
+            if not lot:
+                break
+            available = round(max(0.0, float(lot.get("qty_remaining") or 0)), 2)
+            take = round(min(remaining, available), 2)
+            if take <= 0:
+                break
+            before = await db.credit_lots.find_one_and_update(
+                {"id": lot["id"], "qty_remaining": {"$gte": take}},
+                {
+                    "$inc": {"qty_remaining": -take},
+                    "$set": {"last_redeemed_at": now_iso()},
+                },
+                projection={"_id": 0},
+                return_document=ReturnDocument.BEFORE,
+            )
+            if not before:
+                # Another checkout changed the lot between our read and write.
+                # Re-read the oldest available lot and try again.
+                continue
+            value_each = float(before.get("value_each") or 0)
+            total_value += value_each * take
+            redemptions.append({
+                "lot_id": lot["id"],
+                "qty": take,
+                "value_each": value_each,
+            })
+            remaining = round(remaining - take, 2)
 
     if prefer_program_id:
         await _drain({"program_id": prefer_program_id})
-    await _drain({})  # Fall back to any remaining lot in this service pool
-    return round(total_value, 2), touched
+    await _drain({})
+    consumed = round(requested - remaining, 2)
+    return round(total_value, 2), redemptions, consumed
 
 
-async def _restore_credit_lots(lot_ids: List[str], qty: float) -> None:
-    """Restore lot quantities (used when cancelling/rejecting an approved
-    booking). Distributes the restore proportionally — simplest: just bump
-    the first lot in the list by qty."""
-    if not lot_ids or qty <= 0:
-        return
-    remaining = round(float(qty or 0), 2)
-    # Restore in reverse order so the most-recently-consumed lot is restored first.
-    for lot_id in reversed(lot_ids):
-        if remaining <= 0:
+async def _restore_credit_lots(redemptions_or_ids: List[Any], qty: Optional[float] = None) -> float:
+    """Restore credits to the exact lots that supplied them.
+
+    New bookings store detailed redemption rows.  Legacy bookings may only have
+    a list of lot ids; those use the previous reverse-order fallback.  Returns
+    the quantity actually restored.
+    """
+    if not redemptions_or_ids:
+        return 0.0
+
+    restored = 0.0
+    detailed = all(isinstance(row, dict) and row.get("lot_id") for row in redemptions_or_ids)
+    if detailed:
+        limit = None if qty is None else round(max(0.0, float(qty or 0)), 2)
+        remaining = limit
+        for row in reversed(redemptions_or_ids):
+            row_qty = round(max(0.0, float(row.get("qty") or 0)), 2)
+            if remaining is not None:
+                if remaining <= 0.0001:
+                    break
+                row_qty = round(min(row_qty, remaining), 2)
+            if row_qty <= 0:
+                continue
+            result = await db.credit_lots.update_one(
+                {"id": row["lot_id"]},
+                {"$inc": {"qty_remaining": row_qty}},
+            )
+            if result.matched_count:
+                restored = round(restored + row_qty, 2)
+                if remaining is not None:
+                    remaining = round(remaining - row_qty, 2)
+        return restored
+
+    # Legacy fallback: only lot ids were saved, so the exact split is unknown.
+    remaining = round(max(0.0, float(qty or 0)), 2)
+    for lot_id in reversed(redemptions_or_ids):
+        if remaining <= 0.0001:
             break
-        await db.credit_lots.update_one({"id": lot_id}, {"$inc": {"qty_remaining": remaining}})
-        remaining = 0  # restore the full quantity into the first available lot
+        result = await db.credit_lots.update_one(
+            {"id": lot_id},
+            {"$inc": {"qty_remaining": remaining}},
+        )
+        if result.matched_count:
+            restored = round(restored + remaining, 2)
+            remaining = 0.0
+    return restored
+
 
 @api.post("/bookings/{booking_id}/reject", response_model=BookingOut)
 async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
@@ -3372,7 +3514,7 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
                 credit_pool = booking.get("credit_service_type") or booking.get("service_type") or "daycare"
                 balance_field = _credit_balance_field(credit_pool) or "credits"
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
-                await _restore_credit_lots(booking.get("credit_lot_ids") or [], refund)
+                await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
     await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
@@ -4224,6 +4366,11 @@ async def attach_booking_addons(
     # Clients can only modify their own bookings
     if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
+    if booking.get("checked_out_at") or booking.get("status") in {"completed", "cancelled", "rejected"}:
+        raise HTTPException(
+            status_code=400,
+            detail="This booking is closed. Add-ons can no longer be changed.",
+        )
     new_addons = await resolve_addon_snapshots(
         booking.get("client_id"),
         body.addon_service_ids,
@@ -4485,6 +4632,50 @@ async def discount_preview(booking_id: str, _: dict = Depends(require_employee_o
     }
 
 
+@api.get("/bookings/{booking_id}/money-modifier-preview")
+async def money_modifier_preview(
+    booking_id: str,
+    _: dict = Depends(require_employee_or_admin),
+):
+    """Preview holiday/peak, late-pickup, and rounding rules for checkout."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    settings = await get_settings()
+    base_amount = max(
+        0.0,
+        round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
+    )
+    if booking.get("service_type") == "boarding" and booking.get("end_date"):
+        ps = booking.get("pricing_snapshot") or {}
+        unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
+        if unit_rate > 0:
+            cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
+            units = _billable_boarding_units(
+                booking.get("date"), booking.get("end_date"),
+                booking.get("pickup_time") or cutoff_time,
+                legacy_minimum=1,
+                cutoff_time=cutoff_time,
+            )
+            extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
+                (booking.get("multi_dog_discount") or {}).get("pre_applied")
+            )
+            base_amount = round(unit_rate * units * (0.5 if extra_group_dog else 1.0), 2)
+    if base_amount <= 0:
+        base_preview = await discount_preview(booking_id, {})
+        base_amount = float(base_preview.get("preview_base_price") or 0)
+    result = _money_modifier_breakdown(booking, base_amount, settings, now_iso())
+    tax_cfg = (settings.get("sales_tax") or {})
+    applies = bool((tax_cfg.get("applies_to") or {}).get(booking.get("service_type") or ""))
+    result["sales_tax"] = {
+        "enabled": bool(tax_cfg.get("enabled")),
+        "rate_pct": float(tax_cfg.get("rate_pct") or 0),
+        "label": tax_cfg.get("label") or "Sales Tax",
+        "applies": applies,
+    }
+    return result
+
+
 # ───────────────────────────────────────────────────────────────────────────
 # Sprint 110di-51 — Partial Payments / Per-Client Tab / Accounts Receivable.
 #
@@ -4643,6 +4834,7 @@ async def _write_ledger_row(
         "booking_id": booking_id,
         "created_by": created_by,
         "created_at": ts or now_iso(),
+        "operation_id": _checkout_operation_id_ctx.get(),
     }
     await db.payment_ledger.insert_one(row.copy())
     return row
@@ -5111,11 +5303,226 @@ async def checkout_partial(
     return await check_out(booking_id, body, user)
 
 
+CHECKOUT_CLIENT_MONEY_FIELDS = (
+    "credits",
+    "training_credits",
+    "boarding_credits",
+    "account_balance",
+    "low_credit_emailed_at",
+)
+
+
+async def _checkout_financial_snapshot(client_id: Optional[str]) -> Dict[str, Any]:
+    """Capture only the mutable money fields touched by checkout.
+
+    Mongo is deployed as a single local node, so multi-document transactions
+    are not available by default.  This snapshot powers a compensating rollback
+    if any later booking/ledger/register step fails.
+    """
+    if not client_id:
+        return {"client": None, "lots": []}
+    client = await db.clients.find_one(
+        {"id": client_id},
+        {"_id": 0, **{field: 1 for field in CHECKOUT_CLIENT_MONEY_FIELDS}},
+    )
+    lots = await db.credit_lots.find(
+        {"client_id": client_id},
+        {"_id": 0, "id": 1, "qty_remaining": 1, "last_redeemed_at": 1},
+    ).to_list(length=10000)
+    return {"client": client, "lots": lots}
+
+
+async def _rollback_checkout_finances(
+    *,
+    booking_id: str,
+    original_booking: Dict[str, Any],
+    snapshot: Dict[str, Any],
+    operation_id: str,
+) -> None:
+    """Best-effort compensating rollback for a failed checkout operation."""
+    try:
+        await db.bookings.replace_one({"id": booking_id}, original_booking, upsert=False)
+    except Exception as exc:
+        logger.critical("checkout rollback could not restore booking %s: %s", booking_id, exc)
+
+    client_id = original_booking.get("client_id")
+    client_before = snapshot.get("client")
+    if client_id and client_before is not None:
+        set_fields = {field: client_before[field] for field in CHECKOUT_CLIENT_MONEY_FIELDS if field in client_before}
+        unset_fields = {field: "" for field in CHECKOUT_CLIENT_MONEY_FIELDS if field not in client_before}
+        update_doc: Dict[str, Any] = {}
+        if set_fields:
+            update_doc["$set"] = set_fields
+        if unset_fields:
+            update_doc["$unset"] = unset_fields
+        if update_doc:
+            try:
+                await db.clients.update_one({"id": client_id}, update_doc)
+            except Exception as exc:
+                logger.critical("checkout rollback could not restore client money %s: %s", client_id, exc)
+
+    for lot in snapshot.get("lots") or []:
+        lot_set = {"qty_remaining": float(lot.get("qty_remaining") or 0)}
+        lot_update: Dict[str, Any] = {"$set": lot_set}
+        if "last_redeemed_at" in lot:
+            lot_set["last_redeemed_at"] = lot.get("last_redeemed_at")
+        else:
+            lot_update["$unset"] = {"last_redeemed_at": ""}
+        try:
+            await db.credit_lots.update_one({"id": lot.get("id")}, lot_update)
+        except Exception as exc:
+            logger.critical("checkout rollback could not restore credit lot %s: %s", lot.get("id"), exc)
+
+    try:
+        await db.payment_ledger.delete_many({"operation_id": operation_id})
+    except Exception as exc:
+        logger.critical("checkout rollback could not remove ledger rows for %s: %s", operation_id, exc)
+
+
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
 async def check_out(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
     user: dict = Depends(require_employee_or_admin),
+):
+    """Run checkout once, with a lock and compensating rollback.
+
+    This prevents double-click/double-request charges and restores the booking,
+    credit balances, credit lots, client tab, and ledger rows if any critical
+    money step fails before checkout completes.
+    """
+    body = body or CheckoutIn()
+    operation_id = str(uuid.uuid4())
+    lock_ts = now_iso()
+    stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    original_booking = await db.bookings.find_one_and_update(
+        {
+            "$and": [
+                {"id": booking_id},
+                {"status": {"$ne": "completed"}},
+                {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}]},
+                {"$or": [
+                    {"checkout_in_progress": {"$exists": False}},
+                    {"checkout_in_progress": False},
+                    {"checkout_started_at": {"$lt": stale_lock_before}},
+                ]},
+            ]
+        },
+        {"$set": {
+            "checkout_in_progress": True,
+            "checkout_operation_id": operation_id,
+            "checkout_started_at": lock_ts,
+        }},
+        projection={"_id": 0},
+        return_document=ReturnDocument.BEFORE,
+    )
+    if not original_booking:
+        current = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+        if not current:
+            raise HTTPException(status_code=404, detail="Booking not found")
+        if current.get("checked_out_at") or current.get("status") == "completed":
+            raise HTTPException(status_code=409, detail="This booking has already been checked out.")
+        raise HTTPException(status_code=409, detail="Checkout is already in progress. Wait a moment and refresh.")
+
+    # Operational lock fields are never part of the business record snapshot.
+    # This also cleans up a stale lock if the previous process crashed.
+    original_booking.pop("checkout_in_progress", None)
+    original_booking.pop("checkout_operation_id", None)
+    original_booking.pop("checkout_started_at", None)
+
+    # Serialize money changes per client. Without this, a failed checkout could
+    # restore a client snapshot over a second successful checkout for another
+    # dog in the same household.
+    client_id = original_booking.get("client_id")
+    client_lock_acquired = False
+    if client_id:
+        locked_client = await db.clients.find_one_and_update(
+            {
+                "id": client_id,
+                "$or": [
+                    {"financial_checkout_in_progress": {"$exists": False}},
+                    {"financial_checkout_in_progress": False},
+                    {"financial_checkout_started_at": {"$lt": stale_lock_before}},
+                ],
+            },
+            {"$set": {
+                "financial_checkout_in_progress": True,
+                "financial_checkout_operation_id": operation_id,
+                "financial_checkout_started_at": lock_ts,
+            }},
+            projection={"_id": 0, "id": 1},
+            return_document=ReturnDocument.BEFORE,
+        )
+        if not locked_client:
+            await db.bookings.replace_one({"id": booking_id}, original_booking, upsert=False)
+            current_client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
+            if not current_client:
+                raise HTTPException(status_code=409, detail="The client record linked to this booking no longer exists.")
+            raise HTTPException(status_code=409, detail="Another checkout for this client is already in progress. Wait a moment and refresh.")
+        client_lock_acquired = True
+
+    snapshot: Dict[str, Any] = {"client": None, "lots": []}
+    token = _checkout_operation_id_ctx.set(operation_id)
+    try:
+        snapshot = await _checkout_financial_snapshot(original_booking.get("client_id"))
+        # Catch the most common failure before any credit mutation.  Credits-only
+        # checkouts remain allowed without opening the cash drawer.
+        might_collect_money = (
+            body.use_credits is False
+            or body.amount_paid is not None
+            or (body.payment_method not in (None, "credits"))
+            or bool(body.add_ons)
+            or int(body.extra_nights or 0) > 0
+        )
+        if might_collect_money:
+            await _require_register_day_open(business_today().isoformat())
+
+        result = await _check_out_locked(booking_id, body, user)
+        result.pop("checkout_in_progress", None)
+        result.pop("checkout_operation_id", None)
+        result.pop("checkout_started_at", None)
+        await db.bookings.update_one(
+            {"id": booking_id, "checkout_operation_id": operation_id},
+            {"$unset": {
+                "checkout_in_progress": "",
+                "checkout_operation_id": "",
+                "checkout_started_at": "",
+            }},
+        )
+        return result
+    except Exception:
+        await _rollback_checkout_finances(
+            booking_id=booking_id,
+            original_booking=original_booking,
+            snapshot=snapshot,
+            operation_id=operation_id,
+        )
+        raise
+    finally:
+        _checkout_operation_id_ctx.reset(token)
+        if client_lock_acquired and client_id:
+            await db.clients.update_one(
+                {"id": client_id, "financial_checkout_operation_id": operation_id},
+                {"$unset": {
+                    "financial_checkout_in_progress": "",
+                    "financial_checkout_operation_id": "",
+                    "financial_checkout_started_at": "",
+                }},
+            )
+        await db.bookings.update_one(
+            {"id": booking_id, "checkout_operation_id": operation_id},
+            {"$unset": {
+                "checkout_in_progress": "",
+                "checkout_operation_id": "",
+                "checkout_started_at": "",
+            }},
+        )
+
+
+async def _check_out_locked(
+    booking_id: str,
+    body: Optional[CheckoutIn] = None,
+    user: dict = None,
 ):
     """Check the dog out, optionally adding services or switching the payment.
     All body fields are optional — calling with no body keeps the prior behaviour."""
@@ -5203,50 +5610,7 @@ async def check_out(
         return default_for_zero
 
     def _apply_money_modifiers(amt: float) -> float:
-        """Sprint 110dm — apply post-resolve money modifiers in this order:
-           1. Holiday surcharge multiplier (if booking date hits a holiday/peak)
-           2. Late pickup fee per 15-min block past declared pickup or close
-           3. Round to whole dollar if enabled."""
-        if amt <= 0:
-            return amt
-        money = ((settings.get("day_to_day") or {}).get("money") or {})
-        seasonal = ((settings.get("day_to_day") or {}).get("seasonal") or {})
-
-        # Holiday multiplier (matches booking.date)
-        try:
-            bdate = booking.get("date") or ""
-            for h in (seasonal.get("holiday_surcharges") or []):
-                if h.get("date") == bdate:
-                    amt = amt * float(h.get("multiplier", 1) or 1)
-                    break
-            else:
-                # Peak season range
-                for p in (seasonal.get("peak_season_ranges") or []):
-                    if (p.get("start") or "") <= bdate <= (p.get("end") or "9999"):
-                        amt = amt * float(p.get("multiplier", 1) or 1)
-                        break
-        except Exception:
-            pass
-
-        # Late pickup fee — only when there's a declared pickup_time and we're past it
-        try:
-            per_15 = float(money.get("late_pickup_fee_per_15min", 0) or 0)
-            if per_15 > 0:
-                grace = int(money.get("late_pickup_grace_min", 10) or 0)
-                pickup_time = (booking.get("pickup_time") or "").strip()
-                if pickup_time:
-                    declared_dt = datetime.fromisoformat(f"{booking.get('date')}T{pickup_time}:00+00:00")
-                    co_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                    minutes_late = max(0.0, (co_dt - declared_dt).total_seconds() / 60.0 - grace)
-                    if minutes_late > 0:
-                        blocks = int(minutes_late // 15) + (1 if (minutes_late % 15) > 0 else 0)
-                        amt += blocks * per_15
-        except Exception:
-            pass
-
-        if money.get("round_to_dollar"):
-            amt = round(amt)
-        return round(amt, 2)
+        return float(_money_modifier_breakdown(booking, amt, settings, ts)["total_after"])
 
     # ── Case A: client chose to KEEP using the credits that were already deducted.
     if had_credit and use_credits:
@@ -5271,12 +5635,13 @@ async def check_out(
         lot_ids = booking.get("credit_lot_ids") or []
         svc_type = booking.get("credit_service_type") or "daycare"
         if deducted > 0:
-            await _restore_credit_lots(lot_ids, deducted)
+            await _restore_credit_lots(booking.get("credit_lot_redemptions") or lot_ids, deducted)
             balance_field = _credit_balance_field(svc_type) or "credits"
             await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: deducted}})
         # Clear credit fields on the booking so the income tally treats it as a paid service.
         update["credit_value"] = 0.0
         update["credit_lot_ids"] = []
+        update["credit_lot_redemptions"] = []
         update["credit_service_type"] = None
         update["credits_deducted"] = 0
         # Fall through to base-price logic below.
@@ -5305,16 +5670,25 @@ async def check_out(
                     )
                     if enrol:
                         prefer_pid = enrol.get("program_id")
-            credit_value, lot_ids = await _consume_credit_lots(
+            credit_value, credit_redemptions, credits_consumed = await _consume_credit_lots(
                 booking["client_id"], credits_to_use, svc_type,
                 prefer_program_id=prefer_pid,
             )
-            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: -credits_to_use}})
+            if credits_consumed <= 0:
+                use_credits = False
+                credits_to_use = 0.0
+            else:
+                credits_to_use = credits_consumed
+                await db.clients.update_one(
+                    {"id": booking["client_id"]},
+                    {"$inc": {balance_field: -credits_consumed}},
+                )
             new_balance = round(available - credits_to_use, 2)
             await _maybe_send_low_credit_email(booking["client_id"], svc_type, new_balance)
 
             update["credit_value"] = round(float(credit_value), 2)
-            update["credit_lot_ids"] = lot_ids
+            update["credit_lot_ids"] = [row["lot_id"] for row in credit_redemptions]
+            update["credit_lot_redemptions"] = credit_redemptions
             update["credit_service_type"] = svc_type
             update["credits_deducted"] = credits_to_use
 
@@ -5442,17 +5816,50 @@ async def check_out(
                         # boarding/daycare auto-bill from actual check-in/out hours
                         # and the configurable half-day rules.
                         base_price = await _resolve_service_value(0.0)
-                        # Sprint 110dm — layer holiday/peak surcharges + late pickup
-                        base_price = _apply_money_modifiers(base_price)
                         update["actual_price"] = round(base_price, 2)
             else:
                 # Last-resort fallback for old rows that have a service_id but no
                 # estimated_price snapshot.
                 base_price = await _resolve_service_value(0.0)
                 if base_price > 0:
-                    update["actual_price"] = round(_apply_money_modifiers(base_price), 2)
+                    update["actual_price"] = round(base_price, 2)
     elif booking.get("actual_price"):
         base_price = float(booking["actual_price"])
+
+    # Apply seasonal / late-pickup modifiers once. Credits cover the normal
+    # service units; configured surcharges remain an explicit cash amount.
+    # Therefore the modifier is calculated from the promised service base and
+    # then added to the current checkout value, rather than multiplying the
+    # dollar value of whatever credit lot happened to be consumed.
+    if (update.get("actual_price") or 0) > 0 and not booking.get("money_modifiers_applied_at"):
+        modifier_base = float(base_price or 0)
+        if modifier_base <= 0:
+            modifier_base = max(
+                0.0,
+                round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
+            )
+        if booking.get("service_type") == "boarding" and booking.get("end_date"):
+            ps = booking.get("pricing_snapshot") or {}
+            unit_rate = float(ps.get("unit_price") or booking.get("unit_price") or 0)
+            if unit_rate > 0:
+                cutoff_time = ps.get("pickup_cutoff_time") or _boarding_full_day_cutoff_from_rules(settings.get("booking_rules") or {})
+                units = _billable_boarding_units(
+                    booking.get("date"), booking.get("end_date"),
+                    booking.get("pickup_time") or cutoff_time,
+                    legacy_minimum=1,
+                    cutoff_time=cutoff_time,
+                )
+                is_extra_group_dog = ps.get("group_dog_index") not in (None, 0) or bool(
+                    (booking.get("multi_dog_discount") or {}).get("pre_applied")
+                )
+                modifier_base = round(unit_rate * units * (0.5 if is_extra_group_dog else 1.0), 2)
+        if modifier_base <= 0:
+            modifier_base = float(update.get("actual_price") or 0)
+        modifier_breakdown = _money_modifier_breakdown(booking, modifier_base, settings, ts)
+        modifier_total = float(modifier_breakdown.get("modifier_total") or 0)
+        update["actual_price"] = round(float(update.get("actual_price") or 0) + modifier_total, 2)
+        update["money_modifiers_applied_at"] = ts
+        update["money_modifier_breakdown"] = modifier_breakdown
 
     # ── Boarding stay extension: dog stayed past their original end_date.
     # Update booking.end_date, optionally consume extra boarding credits, and
@@ -5482,40 +5889,74 @@ async def check_out(
             available = float(client_doc.get("boarding_credits") or 0)
             extra_credits_used = round(min(extra_credit_need, available), 2)
             if extra_credits_used > 0:
-                extra_credit_value, extra_lot_ids = await _consume_credit_lots(
+                extra_credit_value, extra_redemptions, extra_consumed = await _consume_credit_lots(
                     booking["client_id"], extra_credits_used, "boarding"
                 )
-                await db.clients.update_one(
-                    {"id": booking["client_id"]}, {"$inc": {"boarding_credits": -extra_credits_used}}
-                )
+                extra_credits_used = extra_consumed
+                if extra_credits_used > 0:
+                    await db.clients.update_one(
+                        {"id": booking["client_id"]},
+                        {"$inc": {"boarding_credits": -extra_credits_used}},
+                    )
                 # Sprint 110g — low-credit email when extra-night burns drop pool.
                 await _maybe_send_low_credit_email(
                     booking["client_id"], "boarding", round(available - extra_credits_used, 2)
                 )
                 # Stack onto whatever credit_value already existed on the booking.
-                prev_credit_value = float(booking.get("credit_value") or 0)
+                prev_credit_value = float(update.get("credit_value") or booking.get("credit_value") or 0)
                 update["credit_value"] = round(prev_credit_value + float(extra_credit_value), 2)
-                update["credits_deducted"] = round(float(booking.get("credits_deducted") or 0) + extra_credits_used, 2)
-                # Track lots for refund-on-cancel safety.
-                update["credit_lot_ids"] = list(booking.get("credit_lot_ids") or []) + list(extra_lot_ids or [])
+                prior_credits_deducted = float(update.get("credits_deducted") or booking.get("credits_deducted") or 0)
+                update["credits_deducted"] = round(prior_credits_deducted + extra_credits_used, 2)
+                # Track exact lot usage for refund-on-cancel and failed-checkout rollback.
+                prior_redemptions = list(update.get("credit_lot_redemptions") or booking.get("credit_lot_redemptions") or [])
+                prior_lot_ids = list(update.get("credit_lot_ids") or booking.get("credit_lot_ids") or [])
+                update["credit_lot_redemptions"] = prior_redemptions + list(extra_redemptions or [])
+                update["credit_lot_ids"] = prior_lot_ids + [
+                    row["lot_id"] for row in (extra_redemptions or [])
+                ]
         # Whatever credit-units weren't covered get billed at the per-night rate.
         # If this row is an additional dog, the shortfall can be 0.5 unit/night.
         extra_nights_billed = round(max(0.0, extra_credit_need - float(extra_credits_used or 0)), 2)
+        per_night = 0.0
+        rate_source = "none"
         if extra_nights_billed > 0:
-            settings = await get_settings()
-            rules = (settings.get("booking_rules") or {})
-            per_night = body.extra_nights_rate if body.extra_nights_rate is not None else float(rules.get("boarding_rate") or 0)
-            extra_charge_total = round(extra_nights_billed * float(per_night), 2)
-            if extra_charge_total > 0:
-                # Add this charge to actual_price (will be combined with base + add-ons below).
-                prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
-                update["actual_price"] = round(prev_price + extra_charge_total, 2)
+            if body.extra_nights_rate is not None:
+                per_night = float(body.extra_nights_rate)
+                rate_source = "manual_override"
+            else:
+                # Use the reservation's saved unit rate first. This preserves
+                # grandfathered and price-at-booking promises. The billed unit
+                # count is already 0.5/night for an additional dog.
+                per_night = float((booking.get("pricing_snapshot") or {}).get("unit_price") or booking.get("unit_price") or 0)
+                rate_source = "booking_snapshot"
+                if per_night <= 0:
+                    quote = await _quote_base_service_price(
+                        client_id=booking.get("client_id"),
+                        service_type="boarding",
+                        start_date=booking.get("date"),
+                        end_date=booking.get("end_date"),
+                        pickup_time=booking.get("pickup_time"),
+                        service_id=booking.get("service_id"),
+                        legacy_boarding_minimum=1,
+                    )
+                    per_night = float(quote.get("unit_price") or 0)
+                    rate_source = "current_client_service_rate"
+            if per_night <= 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Could not determine the boarding rate for the extra night. Set a service price or enter a manual rate before checkout.",
+                )
+            extra_charge_total = round(extra_nights_billed * per_night, 2)
+            # Add this charge to actual_price (will be combined with base + add-ons below).
+            prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
+            update["actual_price"] = round(prev_price + extra_charge_total, 2)
         # Audit trail on the booking so income reporting can reflect the extension.
         update["extra_nights"] = {
             "count": extra_nights,
             "credits_used": extra_credits_used,
             "billed_nights": extra_nights_billed,
-            "per_night_rate": float(body.extra_nights_rate) if body.extra_nights_rate is not None else None,
+            "per_night_rate": round(float(per_night), 2),
+            "rate_source": rate_source,
             "charge": extra_charge_total,
             "added_at": ts,
         }
@@ -5599,16 +6040,22 @@ async def check_out(
         except Exception as exc:
             logger.warning("multi-dog discount calc failed for %s: %s", booking_id, exc)
 
+    # Explicit extra cash adjustment (tip, overage, misc. charge) is separate
+    # from the base service and is intentionally added AFTER the multi-dog
+    # discount so a tip or overage is never discounted as a second-dog service.
+    additional_cash_charge = round(max(0.0, float(body.additional_cash_charge or 0)), 2)
+    if additional_cash_charge > 0:
+        prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
+        update["actual_price"] = round(prev_price + additional_cash_charge, 2)
+        update["additional_cash_charge"] = additional_cash_charge
+
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
-    # Sprint 110aw — Sales tax. Tax is calculated on the PRE-TAX total
-    # (base + add-ons + extra-night charges, minus discounts already applied
-    # via update["actual_price"]) only when the service type is in the
-    # configured `applies_to` list and the booking is being PAID in cash/card
-    # (not via credits redemption — credits already include tax in the lot).
-    # We add tax to `actual_price` so existing P&L code keeps working; the
-    # tax slice is also captured in `tax_amount` for accurate filing.
-    if not is_paid_today and (update.get("actual_price") or 0) > 0:
+    # Sales tax is calculated on the portion being paid in money today.
+    # Prepaid credits are not taxed again, but cash add-ons, uncovered credit
+    # units, late fees, and other mixed-credit charges still receive tax when
+    # this service category is configured as taxable.
+    if (update.get("actual_price") or 0) > 0:
         try:
             settings_tx = await get_settings()
             tx_cfg = (settings_tx or {}).get("sales_tax") or {}
@@ -5618,11 +6065,16 @@ async def check_out(
                 if applies.get(svc):
                     rate_pct = float(tx_cfg.get("rate_pct") or 0)
                     if rate_pct > 0:
-                        pre_tax = float(update["actual_price"])
-                        tax_amount = round(pre_tax * (rate_pct / 100.0), 2)
-                        update["tax_amount"] = tax_amount
-                        update["tax_rate_pct"] = rate_pct
-                        update["actual_price"] = round(pre_tax + tax_amount, 2)
+                        pre_tax_total = float(update["actual_price"])
+                        taxable_amount = pre_tax_total
+                        if is_paid_today:
+                            taxable_amount = max(0.0, pre_tax_total - float(update.get("credit_value") or booking.get("credit_value") or 0))
+                        tax_amount = round(taxable_amount * (rate_pct / 100.0), 2)
+                        if tax_amount > 0:
+                            update["tax_amount"] = tax_amount
+                            update["tax_rate_pct"] = rate_pct
+                            update["taxable_cash_amount"] = round(taxable_amount, 2)
+                            update["actual_price"] = round(pre_tax_total + tax_amount, 2)
         except Exception as exc:
             logger.warning("sales tax calc failed for %s: %s", booking_id, exc)
     if not is_paid_today and (update.get("actual_price") or 0) > 0:
@@ -5713,7 +6165,11 @@ async def check_out(
                 ts=ts,
             )
         except Exception as exc:
-            logger.warning("partial-pay ledger write failed for %s: %s", booking_id, exc)
+            logger.error("partial-pay ledger write failed for %s: %s", booking_id, exc)
+            raise HTTPException(
+                status_code=500,
+                detail="Checkout could not safely update the client balance. No checkout changes were kept.",
+            ) from exc
 
     # 🎁 Referral reward: when the referred client COMPLETES their first-ever
     # appointment (any service), credit the referrer one free daycare day.
