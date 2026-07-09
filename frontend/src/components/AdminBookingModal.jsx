@@ -157,6 +157,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         setDogs(dRes.data);
         setKennels(sRes.data.kennels || []);
         setClosedDates(Array.isArray(sRes.data?.closed_dates) ? sRes.data.closed_dates : []);
+        if (!existing) {
+          const cutoff = sRes.data?.booking_rules?.boarding_full_day_pickup_cutoff;
+          if (/^\d{2}:\d{2}$/.test(cutoff || "")) setPickupTime(cutoff);
+        }
         setMultiDogDiscountSettings({
           multi_dog_discount_enabled: sRes.data?.multi_dog_discount_enabled,
           multi_dog_discount_mode: sRes.data?.multi_dog_discount_mode || "percent",

@@ -167,9 +167,9 @@ export default function BookingPriceEstimate({
       units = isMultiDate ? Math.max(1, multiDates.length) : 1;
       unitLabel = units === 1 ? "day" : "days";
     } else if (serviceType === "boarding") {
-      // Sit Happens boarding rule: calendar nights plus pickup-day care.
-      // Pickup BEFORE 5:00 PM is a half day; pickup AT/AFTER 5:00 PM is
-      // a full day. This is intentionally clock-based, not hours-since-check-in.
+      // Boarding rule: calendar nights plus pickup-day care. Pickup before
+      // the admin-configured cutoff is a half day; pickup at/after it is a
+      // full day. This is intentionally clock-based, not hours-since-check-in.
       const nights = nightsBetween(date, endDate);
       if (nights < 1) {
         unitsValid = false;
@@ -178,7 +178,11 @@ export default function BookingPriceEstimate({
         const pickupMinutes = /^\d{2}:\d{2}/.test(pickupTime || "")
           ? Number((pickupTime || "").slice(0, 2)) * 60 + Number((pickupTime || "").slice(3, 5))
           : null;
-        const pickupUnits = pickupMinutes === null ? 0 : (pickupMinutes < 17 * 60 ? 0.5 : 1);
+        const cutoffRaw = String(rules?.boarding_full_day_pickup_cutoff || "17:00");
+        const cutoffMinutes = /^\d{2}:\d{2}/.test(cutoffRaw)
+          ? Number(cutoffRaw.slice(0, 2)) * 60 + Number(cutoffRaw.slice(3, 5))
+          : 17 * 60;
+        const pickupUnits = pickupMinutes === null ? 0 : (pickupMinutes < cutoffMinutes ? 0.5 : 1);
         units = nights + pickupUnits;
         halfDay = pickupUnits === 0.5;
       }

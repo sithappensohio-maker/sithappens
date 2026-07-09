@@ -55,8 +55,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [date, setDate] = useState(todayISO());
   const [endDate, setEndDate] = useState("");
   const [time, setTime] = useState("");
-  // Boarding drop-off / pickup TIMES. The estimate uses the Sit Happens
-  // pickup rule: before 5 PM is a half day; 5 PM or later is a full day.
+  // Boarding drop-off / pickup TIMES. The estimate uses the configured
+  // cutoff: before it is a half day; at/after it is a full day.
   // Sensible defaults match typical kennel hours so a
   // client who skips the picker still gets a reasonable estimate.
   const [dropoffTime, setDropoffTime] = useState("09:00");
@@ -103,7 +103,11 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Load closed-dates list once so we can flag picks the business is closed.
   useEffect(() => {
     api.get("/settings/public")
-       .then(r => setClosedDates(Array.isArray(r.data?.closed_dates) ? r.data.closed_dates : []))
+       .then(r => {
+         setClosedDates(Array.isArray(r.data?.closed_dates) ? r.data.closed_dates : []);
+         const cutoff = r.data?.booking_rules?.boarding_full_day_pickup_cutoff;
+         if (/^\d{2}:\d{2}$/.test(cutoff || "")) setPickupTime(cutoff);
+       })
        .catch(() => setClosedDates([]));
   }, []);
 

@@ -1,7 +1,8 @@
 """Stay pricing regression coverage.
 
-Boarding uses calendar nights plus pickup-day care: before 5 PM is a half day,
-and 5 PM or later is a full day. Daycare continues to use elapsed-hour rules.
+Boarding uses calendar nights plus pickup-day care: before the configured
+cutoff is a half day, and at/after the cutoff is a full day. Daycare continues
+to use elapsed-hour rules.
 Manual checkout overrides always win.
 """
 import os
@@ -55,6 +56,7 @@ def _set_rules(headers, **overrides):
     rules = {
         "stay_pricing_enabled": True,
         "half_day_pct": 50,
+        "boarding_full_day_pickup_cutoff": "17:00",
         "daycare_half_day_max_hours": 5,
         "boarding_half_day_max_hours": 12,
         "daycare_cost": 1, "boarding_cost_per_night": 1, "training_cost": 1,
@@ -169,6 +171,23 @@ def test_boarding_two_nights_at_or_after_five(admin_headers):
     bk = _get_booking(admin_headers, bid)
     assert bk.get("actual_price") == 150.0, f"got {bk.get('actual_price')}"
 
+
+
+
+def test_boarding_cutoff_can_be_changed(admin_headers):
+    """With a 6 PM cutoff, 5:30 PM is still a half pickup day."""
+    _set_rules(admin_headers, boarding_full_day_pickup_cutoff="18:00")
+    _seed_default_service(admin_headers, "boarding", 50.0)
+    client = _make_client(admin_headers)
+    dog = _make_dog(admin_headers, client["id"])
+    bid = _make_booking_then_checkin(
+        admin_headers, client["id"], dog["id"], "boarding",
+        hours_ago=30, end_days=2, pickup_time="17:30",
+    )
+    _checkout(admin_headers, bid)
+    bk = _get_booking(admin_headers, bid)
+    assert bk.get("actual_price") == 125.0, f"got {bk.get('actual_price')}"
+    assert (bk.get("pricing_snapshot") or {}).get("pickup_cutoff_time") == "18:00"
 
 def test_boarding_pickup_rule_ignores_elapsed_hours(admin_headers):
     """Scheduled 4 PM pickup remains half-day even if checkout is clicked later."""
