@@ -1,0 +1,6 @@
+{
+  "tests/test_booking_flow_dashboard_widgets.py::test_branding_exposes_booking_flow_controls_and_dashboard_widgets": true,
+  "tests/test_booking_flow_dashboard_widgets.py::test_settings_persists_bfc_and_dw_round_trip": true,
+  "tests/test_booking_flow_dashboard_widgets.py::test_booking_guard_rejects_when_same_day_disabled_per_service": true,
+  "tests/test_booking_flow_dashboard_widgets.py::test_default_state_preserves_existing_behavior": true
+}

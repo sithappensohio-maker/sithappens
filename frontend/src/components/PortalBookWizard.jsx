@@ -39,6 +39,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Sprint 110di-17 — Feature Visibility. Service options the admin has
   // disabled are filtered out of the picker entirely so clients can't even
   // attempt to book them.
+  const { branding } = useTheme();
   const featDaycare      = useFeature("daycare");
   const featBoarding     = useFeature("boarding");
   const featTraining     = useFeature("training");
@@ -49,6 +50,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   const [step, setStep] = useState(1);
   const [dogId, setDogId] = useState(seed?.dog_id || dogs?.[0]?.id || "");
   const [serviceType, setServiceType] = useState(seed?.service_type || "");
+  const [serviceId, setServiceId] = useState(seed?.service_id || "");
+  const [catalogServices, setCatalogServices] = useState([]);
   // Sprint 110an — add-ons eligible for the chosen base service.
   const [eligibleAddons, setEligibleAddons] = useState([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState([]);
@@ -100,6 +103,34 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   // Date guard rails
   const minDate = todayISO();
 
+  // Load the actual active service catalog. Booking rules are keyed to these
+  // exact rows, so two services in the same category can behave differently.
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/services")
+      .then(({ data }) => {
+        if (cancelled) return;
+        const rows = (Array.isArray(data) ? data : []).filter(s => s.active !== false && !s.is_addon);
+        setCatalogServices(rows);
+        if (serviceId) {
+          const selected = rows.find(s => s.id === serviceId);
+          if (selected) setServiceType(selected.service_type);
+        } else if (serviceType) {
+          const selected = rows.find(s => s.service_type === serviceType && s.is_default)
+            || rows.find(s => s.service_type === serviceType);
+          if (selected) setServiceId(selected.id);
+        }
+      })
+      .catch(() => { if (!cancelled) setCatalogServices([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const exactRuleMap = branding?.booking_flow_controls?.per_catalog_service || {};
+  const bookableCatalogServices = catalogServices.filter(s => {
+    if (FEATURE_BY_SERVICE[s.service_type] === false) return false;
+    return exactRuleMap?.[s.id]?.client_booking_enabled !== false;
+  });
+
   // Load closed-dates list once so we can flag picks the business is closed.
   useEffect(() => {
     api.get("/settings/public")
@@ -124,12 +155,12 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     if (!TIME_SLOTTED.has(serviceType) || !date) { setSlots(null); return; }
     let cancelled = false;
     setSlotLoading(true);
-    api.get("/bookings/time-slots", { params: { date_str: date, service_type: serviceType } })
+    api.get("/bookings/time-slots", { params: { date_str: date, service_type: serviceType, service_id: serviceId || undefined } })
        .then(r => { if (!cancelled) setSlots(r.data); })
        .catch(() => { if (!cancelled) setSlots(null); })
        .finally(() => { if (!cancelled) setSlotLoading(false); });
     return () => { cancelled = true; };
-  }, [step, serviceType, date]);
+  }, [step, serviceType, serviceId, date]);
 
   // Sprint 110an — load add-ons whenever a service type is picked.
   useEffect(() => {
@@ -158,7 +189,14 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   }, [step, serviceType, date, dogId]);
 
   const selectedDog = useMemo(() => dogs.find(d => d.id === dogId) || null, [dogs, dogId]);
-  const svcMeta = SERVICE_OPTIONS.find(s => s.key === serviceType);
+  const selectedCatalogService = useMemo(() => catalogServices.find(s => s.id === serviceId) || null, [catalogServices, serviceId]);
+  const fallbackMeta = SERVICE_OPTIONS.find(s => s.key === serviceType);
+  const svcMeta = selectedCatalogService ? {
+    label: selectedCatalogService.name,
+    icon: selectedCatalogService.icon || fallbackMeta?.icon || "fa-paw",
+    color: fallbackMeta?.color || "bg-shBlue/15 text-shBlue border-shBlue/40",
+    desc: selectedCatalogService.description || fallbackMeta?.desc || "",
+  } : fallbackMeta;
 
   // Reset multi-date when service is not daycare (only daycare supports multi-date in portal).
   useEffect(() => {
@@ -170,7 +208,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
 
   // Sprint 110di-26 — gate the estimate on Booking Flow Controls toggle.
   // Default ON; admin can disable via Settings → Booking Flow Controls.
-  const { branding } = useTheme();
   const showEstimate = branding?.booking_flow_controls?.show_price_estimate !== false;
   const featWaitlist = useFeature("waitlist");
   const waitlistEnabled =
@@ -223,6 +260,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           dog_id: dogId,
           dates: multiDates,
           service_type: "daycare",
+          service_id: serviceId || undefined,
           notes,
           addon_service_ids: selectedAddonIds,
         });
@@ -248,6 +286,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         dog_id: dogId,
         date,
         service_type: serviceType,
+        service_id: serviceId || undefined,
         notes,
         addon_service_ids: selectedAddonIds,
       };
@@ -275,6 +314,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
           ],
           date,
           service_type: serviceType,
+          service_id: serviceId || undefined,
           notes,
         };
         if (serviceType === "boarding") {
@@ -349,13 +389,38 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             <div>
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-                {VISIBLE_SERVICES.map(s => (
-                  <button key={s.key} onClick={()=>setServiceType(s.key)} data-testid={`wiz-svc-${s.key}`}
-                          className={`text-left p-4 rounded-lg border transition min-w-0 ${serviceType===s.key ? s.color + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
-                    <p className="font-black uppercase tracking-widest text-[15px] break-words"><i className={`fas ${s.icon} mr-2`}/>{s.label}</p>
-                    <p className="text-[13px] mt-1 opacity-80 normal-case break-words">{s.desc}</p>
-                  </button>
-                ))}
+                {(catalogServices.length > 0 ? bookableCatalogServices : VISIBLE_SERVICES).map(s => {
+                  const isCatalog = !!s.id;
+                  const type = isCatalog ? s.service_type : s.key;
+                  const fallback = SERVICE_OPTIONS.find(o => o.key === type);
+                  const selected = isCatalog ? serviceId === s.id : (!serviceId && serviceType === type);
+                  const label = isCatalog ? s.name : s.label;
+                  const desc = isCatalog ? (s.description || fallback?.desc || "") : s.desc;
+                  const icon = isCatalog ? (s.icon || fallback?.icon || "fa-paw") : s.icon;
+                  const colorClass = fallback?.color || "bg-shBlue/15 text-shBlue border-shBlue/40";
+                  return (
+                    <button key={isCatalog ? s.id : s.key}
+                            onClick={() => {
+                              setServiceId(isCatalog ? s.id : "");
+                              setServiceType(type);
+                              if (isCatalog && type === "grooming") {
+                                const marker = `${s.slug || ""} ${s.name || ""}`.toLowerCase();
+                                setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
+                              }
+                            }}
+                            data-testid={`wiz-svc-${isCatalog ? s.id : s.key}`}
+                            className={`text-left p-4 rounded-lg border transition min-w-0 ${selected ? colorClass + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
+                      <p className="font-black uppercase tracking-widest text-[15px] break-words"><i className={`fas ${icon} mr-2`}/>{label}</p>
+                      {desc && <p className="text-[13px] mt-1 opacity-80 normal-case break-words">{desc}</p>}
+                      {isCatalog && <p className="text-[12px] mt-2 text-shGreen font-black">${Number(s.base_price || 0).toFixed(2)}</p>}
+                    </button>
+                  );
+                })}
+                {catalogServices.length > 0 && bookableCatalogServices.length === 0 && (
+                  <div className="sm:col-span-2 bg-shOrange/10 border border-shOrange/30 rounded-lg p-4 text-shOrange text-[13px] font-black uppercase tracking-widest text-center">
+                    No services are currently open for client booking.
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-3">
@@ -495,7 +560,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             )}
 
             {/* Grooming type */}
-            {serviceType === "grooming" && (
+            {serviceType === "grooming" && !serviceId && (
               <div>
                 <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Grooming type</label>
                 <div className="grid grid-cols-2 gap-2 mt-1">
@@ -757,6 +822,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             {showEstimate && (
               <BookingPriceEstimate
                 serviceType={serviceType}
+                serviceId={serviceId}
                 dogCount={1 + extraDogs.length}
                 date={date}
                 endDate={endDate}

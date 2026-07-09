@@ -84,7 +84,7 @@ export default function Settings() {
           desc: "Show or hide portal sections, edit client-facing labels, post an announcement banner, and customize empty-state copy. The portal now chooses the most important client action automatically.",
           badges: ["Live", "Client-facing"] },
         { id: "booking_flow_controls", label: "Booking Flow Controls", icon: "fa-calendar-check",
-          desc: "Per-service overrides on top of the global Booking Rules: require approval, instant book, same-day allowed, minimum lead time, maximum advance days. Empty values fall back to the global defaults.",
+          desc: "Rules for every active bookable service, with category defaults underneath: online booking, approval, instant confirmation, same-day access, lead time, and advance-booking window.",
           badges: ["Live", "Per-service"] },
         { id: "dashboard_widgets", label: "Dashboard Widget Controls", icon: "fa-grip",
           desc: "Hide individual admin dashboard widgets without touching the underlying data. Use this to slim the dashboard down to what your team actually scans.",
@@ -1080,11 +1080,12 @@ function ClientPortalControlsPanel() {
 // of the existing global booking_rules/day_to_day.guardrails.
 // ────────────────────────────────────────────────────────────────────────
 const BFC_SERVICES = [
-  { id: "daycare",     label: "Daycare",     master: "daycare",     color: "shGreen"     },
-  { id: "boarding",    label: "Boarding",    master: "boarding",    color: "shOrange"    },
-  { id: "training",    label: "Training",    master: "training",    color: "purple-400"  },
-  { id: "grooming",    label: "Grooming",    master: "grooming",    color: "shBlue"      },
-  { id: "photography", label: "Photography", master: "photography", color: "shBlue"      },
+  { id: "daycare",     label: "Daycare",     master: "daycare",     color: "#8cc63f" },
+  { id: "boarding",    label: "Boarding",    master: "boarding",    color: "#f97316" },
+  { id: "training",    label: "Training",    master: "training",    color: "#a855f7" },
+  { id: "grooming",    label: "Grooming",    master: "grooming",    color: "#06b6d4" },
+  { id: "photography", label: "Photography", master: "photography", color: "#00a9e0" },
+  { id: "other",       label: "Other",       master: null,           color: "#94a3b8" },
 ];
 
 // Sprint 110di-29 — Payment Options panel. Five canonical methods
@@ -1201,20 +1202,54 @@ function BookingFlowControlsPanel() {
   const { reloadBranding } = useTheme();
   const [bfc, setBfc] = useState(null);
   const [fv, setFv] = useState({});
+  const [catalogServices, setCatalogServices] = useState([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    api.get("/settings").then(({ data }) => {
-      setBfc(data.booking_flow_controls);
-      setFv(data.feature_visibility || {});
+    Promise.all([
+      api.get("/settings"),
+      api.get("/services", { params: { include_inactive: true } }).catch(() => ({ data: [] })),
+    ]).then(([settingsRes, servicesRes]) => {
+      setBfc(settingsRes.data.booking_flow_controls || { per_service: {}, per_catalog_service: {} });
+      setFv(settingsRes.data.feature_visibility || {});
+      setCatalogServices(Array.isArray(servicesRes.data) ? servicesRes.data : []);
     });
   }, []);
   if (!bfc) return <div className="text-gray-400">Loading...</div>;
 
   const setSvc = (svc, key, val) => {
     setBfc(p => ({ ...p, per_service: { ...p.per_service, [svc]: { ...(p.per_service?.[svc] || {}), [key]: val } } }));
+    setDirty(true);
+  };
+  const setCatalogSvc = (serviceId, key, val) => {
+    setBfc(p => ({
+      ...p,
+      per_catalog_service: {
+        ...(p.per_catalog_service || {}),
+        [serviceId]: { ...((p.per_catalog_service || {})[serviceId] || {}), [key]: val },
+      },
+    }));
+    setDirty(true);
+  };
+  const unsetCatalogSvcKey = (serviceId, key) => {
+    setBfc(p => {
+      const all = { ...(p.per_catalog_service || {}) };
+      const row = { ...(all[serviceId] || {}) };
+      delete row[key];
+      if (Object.keys(row).length === 0) delete all[serviceId];
+      else all[serviceId] = row;
+      return { ...p, per_catalog_service: all };
+    });
+    setDirty(true);
+  };
+  const resetCatalogSvc = (serviceId) => {
+    setBfc(p => {
+      const next = { ...(p.per_catalog_service || {}) };
+      delete next[serviceId];
+      return { ...p, per_catalog_service: next };
+    });
     setDirty(true);
   };
   const setTop = (key, val) => { setBfc(p => ({ ...p, [key]: val })); setDirty(true); };
@@ -1240,7 +1275,7 @@ function BookingFlowControlsPanel() {
             Per-Service <span className="text-shGreen">Rules.</span>
           </h2>
           <p className="text-[13px] text-gray-300 mt-2 max-w-2xl leading-snug">
-            Per-service overrides on top of the global Booking Rules. Empty lead/advance fields fall back to the global setting. Admin role bypasses these guards.
+            Set rules for each exact service clients can choose. Category defaults remain as a fallback for older bookings and any service without its own override. Admin-created bookings can still bypass client guardrails.
           </p>
         </div>
         <button onClick={save} disabled={!dirty || saving} data-testid="bfc-save"
@@ -1250,14 +1285,113 @@ function BookingFlowControlsPanel() {
         {msg && <span className="text-[12px] text-shGreen w-full" data-testid="bfc-msg">{msg}</span>}
       </div>
 
+      <div className="bg-bgPanel border-2 border-shGreen/35 rounded-2xl p-4 space-y-4" data-testid="catalog-service-booking-rules">
+        <div>
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+            <i className="fas fa-paw mr-1.5"/>Rules for every offered service
+          </p>
+          <p className="text-[12px] text-gray-400 mt-1">
+            Active base services appear here automatically. Add-ons such as baths and nail trims are excluded because they attach to another booking.
+          </p>
+        </div>
+
+        {catalogServices.filter(s => s.active !== false && !s.is_addon).length === 0 && (
+          <div className="bg-bgBase border border-bgHover rounded-xl p-4 text-[13px] text-gray-400">
+            No active base services found. Add or activate services under Settings → Services & Programs.
+          </div>
+        )}
+
+        {catalogServices
+          .filter(s => s.active !== false && !s.is_addon)
+          .sort((a, b) => String(a.service_type || "").localeCompare(String(b.service_type || "")) || String(a.name || "").localeCompare(String(b.name || "")))
+          .map(service => {
+            const exact = (bfc.per_catalog_service || {})[service.id] || {};
+            const inherited = bfc.per_service?.[service.service_type] || {};
+            const hasOverride = Object.keys(exact).length > 0;
+            const effective = { ...inherited, ...exact };
+            const masterOff = service.service_type !== "other" && fv?.[service.service_type] === false;
+            return (
+              <div key={service.id} className={`bg-bgBase border rounded-xl p-4 space-y-3 ${hasOverride ? "border-shGreen/45" : "border-bgHover"} ${masterOff ? "opacity-60" : ""}`}
+                   data-testid={`bfc-catalog-${service.id}`}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg grid place-items-center shrink-0" style={{ backgroundColor: `${service.color || "#94a3b8"}22`, color: service.color || "#94a3b8" }}>
+                      <i className={`fas ${service.icon || "fa-tag"}`}/>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[15px] text-white font-black uppercase italic tracking-tight truncate">{service.name}</p>
+                      <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest">
+                        {service.service_type} · ${Number(service.base_price || 0).toFixed(2)} · {hasOverride ? "custom rules" : "using category defaults"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {masterOff && <span className="text-[10px] text-shOrange uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Feature OFF</span>}
+                    {hasOverride && (
+                      <button type="button" onClick={() => resetCatalogSvc(service.id)}
+                              className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white border border-bgHover rounded px-2 py-1">
+                        Use defaults
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <label className="flex items-start gap-2 bg-bgPanel border border-bgHover rounded-lg p-3 cursor-pointer">
+                    <input type="checkbox" checked={effective.client_booking_enabled !== false}
+                           onChange={e => setCatalogSvc(service.id, "client_booking_enabled", e.target.checked)}
+                           disabled={masterOff} className="mt-1"/>
+                    <span><span className="text-[12px] font-black uppercase tracking-widest text-white block">Client booking enabled</span><span className="text-[10px] text-gray-400">Show this exact service in the client booking picker.</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 bg-bgPanel border border-bgHover rounded-lg p-3 cursor-pointer">
+                    <input type="checkbox" checked={effective.require_approval === true}
+                           onChange={e => { setCatalogSvc(service.id, "require_approval", e.target.checked); if (e.target.checked) setCatalogSvc(service.id, "instant_book", false); }}
+                           disabled={masterOff} className="mt-1"/>
+                    <span><span className="text-[12px] font-black uppercase tracking-widest text-white block">Require approval</span><span className="text-[10px] text-gray-400">Client request stays pending until staff approves it.</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 bg-bgPanel border border-bgHover rounded-lg p-3 cursor-pointer">
+                    <input type="checkbox" checked={effective.instant_book === true}
+                           onChange={e => { setCatalogSvc(service.id, "instant_book", e.target.checked); if (e.target.checked) setCatalogSvc(service.id, "require_approval", false); }}
+                           disabled={masterOff} className="mt-1"/>
+                    <span><span className="text-[12px] font-black uppercase tracking-widest text-white block">Instant confirmation</span><span className="text-[10px] text-gray-400">Automatically approve valid client bookings.</span></span>
+                  </label>
+                  <label className="flex items-start gap-2 bg-bgPanel border border-bgHover rounded-lg p-3 cursor-pointer">
+                    <input type="checkbox" checked={effective.same_day === true}
+                           onChange={e => setCatalogSvc(service.id, "same_day", e.target.checked)}
+                           disabled={masterOff} className="mt-1"/>
+                    <span><span className="text-[12px] font-black uppercase tracking-widest text-white block">Same-day allowed</span><span className="text-[10px] text-gray-400">Allow clients to request this service for today.</span></span>
+                  </label>
+                  <div className="bg-bgPanel border border-bgHover rounded-lg p-3">
+                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Minimum lead time (hours)</p>
+                    <input type="number" min={0} value={exact.min_lead_hours ?? ""} placeholder={inherited.min_lead_hours != null ? `Default: ${inherited.min_lead_hours}` : "Use global default"}
+                           onChange={e => e.target.value === "" ? unsetCatalogSvcKey(service.id, "min_lead_hours") : setCatalogSvc(service.id, "min_lead_hours", Number(e.target.value))}
+                           disabled={masterOff} className="w-full mt-1 bg-bgBase border border-bgHover rounded px-2 py-1.5 text-[13px] text-white"/>
+                  </div>
+                  <div className="bg-bgPanel border border-bgHover rounded-lg p-3">
+                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">Maximum advance (days)</p>
+                    <input type="number" min={0} value={exact.max_advance_days ?? ""} placeholder={inherited.max_advance_days != null ? `Default: ${inherited.max_advance_days}` : "Use global default"}
+                           onChange={e => e.target.value === "" ? unsetCatalogSvcKey(service.id, "max_advance_days") : setCatalogSvc(service.id, "max_advance_days", Number(e.target.value))}
+                           disabled={masterOff} className="w-full mt-1 bg-bgBase border border-bgHover rounded px-2 py-1.5 text-[13px] text-white"/>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+      </div>
+
+      <div className="pt-2">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-400">Category fallback rules</p>
+        <p className="text-[11px] text-gray-500 mt-1">Used by older bookings and any service left on “Use defaults.”</p>
+      </div>
+
       {BFC_SERVICES.map(svc => {
         const cur = bfc.per_service?.[svc.id] || {};
-        const masterOff = fv && fv[svc.master] === false;
+        const masterOff = !!svc.master && fv && fv[svc.master] === false;
         return (
           <div key={svc.id} data-testid={`bfc-svc-${svc.id}`}
                className={`bg-bgPanel border border-bgHover rounded-2xl p-4 ${masterOff ? "opacity-60" : ""}`}>
             <div className="flex items-center justify-between gap-2 mb-3">
-              <p className={`text-[15px] font-black uppercase italic tracking-tight text-${svc.color}`}>{svc.label}</p>
+              <p className="text-[15px] font-black uppercase italic tracking-tight" style={{ color: svc.color }}>{svc.label}</p>
               {masterOff && <span className="text-[10px] text-shOrange uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Feature OFF</span>}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

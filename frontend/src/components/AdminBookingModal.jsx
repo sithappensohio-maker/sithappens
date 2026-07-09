@@ -68,6 +68,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   // Normal booking creation stays client-first.
   const isQuickCheckin = defaultCheckIn && !existing;
   const [serviceType, setServiceType] = useState(existing?.service_type || "daycare");
+  const [serviceId, setServiceId] = useState(existing?.service_id || "");
+  const [catalogServices, setCatalogServices] = useState([]);
   const [date, setDate] = useState(existing?.date || defaultDate || todayISO());
   const [endDate, setEndDate] = useState(existing?.end_date || "");
   // Multi-date mode: book several non-consecutive days at once (daycare /
@@ -150,11 +152,21 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
   useEffect(() => {
     (async () => {
       try {
-        const [cRes, dRes, sRes] = await Promise.all([
-          api.get("/clients"), api.get("/dogs"), api.get("/settings"),
+        const [cRes, dRes, sRes, svcRes] = await Promise.all([
+          api.get("/clients"), api.get("/dogs"), api.get("/settings"), api.get("/services"),
         ]);
         setClients(cRes.data);
         setDogs(dRes.data);
+        const activeBaseServices = (Array.isArray(svcRes.data) ? svcRes.data : []).filter(s => s.active !== false && !s.is_addon);
+        setCatalogServices(activeBaseServices);
+        if (existing?.service_id) {
+          const chosen = activeBaseServices.find(s => s.id === existing.service_id);
+          if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
+        } else if (!serviceId) {
+          const chosen = activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare") && s.is_default)
+            || activeBaseServices.find(s => s.service_type === (existing?.service_type || "daycare"));
+          if (chosen) { setServiceId(chosen.id); setServiceType(chosen.service_type); }
+        }
         setKennels(sRes.data.kennels || []);
         setClosedDates(Array.isArray(sRes.data?.closed_dates) ? sRes.data.closed_dates : []);
         if (!existing) {
@@ -313,6 +325,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
         datesToQuote.map(d =>
           api.post("/pricing/quote", {
             service_type: serviceType,
+            service_id: serviceId || undefined,
             date: d,
             end_date: serviceType === "boarding" ? endDate : null,
             dog_id: row.dog_id,
@@ -346,6 +359,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
     isEdit,
     dogId,
     serviceType,
+    serviceId,
     date,
     endDate,
     dropoffTime,
@@ -433,6 +447,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           dog_id: dogId,
           dates: multiDates,
           service_type: serviceType,
+          service_id: serviceId || undefined,
           grooming_type: serviceType === "grooming" ? groomingType : null,
           time: ["training", "grooming", "photography"].includes(serviceType) ? (appointmentTime || "") : "",
           notes,
@@ -473,6 +488,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           date,
           end_date: serviceType === "boarding" ? (endDate || date) : null,
           service_type: serviceType,
+          service_id: serviceId || undefined,
           grooming_type: serviceType === "grooming" ? groomingType : null,
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
@@ -501,6 +517,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             date,
             end_date: serviceType === "boarding" ? (endDate || date) : null,
             service_type: serviceType,
+            service_id: serviceId || undefined,
             grooming_type: serviceType === "grooming" ? groomingType : null,
             dropoff_time: dropoffTime || "",
             pickup_time: pickupTime || "",
@@ -603,16 +620,32 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-1">
-              {["daycare","boarding","training","grooming","photography"].map(t => (
-                <button key={t} onClick={()=>setServiceType(t)} data-testid={`ab-service-${t}`}
-                        className={`py-2 rounded text-[14px] font-black uppercase tracking-widest border ${serviceType===t?"bg-shBlue text-white border-shBlue":"bg-bgBase border-bgHover text-gray-400"}`}>{t}</button>
-              ))}
-            </div>
+            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Exact Service</label>
+            <select value={serviceId} onChange={(e) => {
+                      const id = e.target.value;
+                      const svc = catalogServices.find(s => s.id === id);
+                      setServiceId(id);
+                      if (svc) {
+                        setServiceType(svc.service_type);
+                        if (svc.service_type === "grooming") {
+                          const marker = `${svc.slug || ""} ${svc.name || ""}`.toLowerCase();
+                          setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
+                        }
+                      }
+                    }}
+                    disabled={isEdit}
+                    data-testid="ab-service-id"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              {!serviceId && <option value="">Choose a service</option>}
+              {catalogServices
+                .slice()
+                .sort((a,b) => String(a.service_type).localeCompare(String(b.service_type)) || String(a.name).localeCompare(String(b.name)))
+                .map(s => <option key={s.id} value={s.id}>{s.name} · {s.service_type} · ${Number(s.base_price || 0).toFixed(2)}</option>)}
+            </select>
+            <p className="text-[11px] text-gray-500 mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
           </div>
 
-          {serviceType === "grooming" && !isEdit && (
+          {serviceType === "grooming" && !serviceId && !isEdit && (
             <div data-testid="ab-grooming-types">
               <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">

@@ -46,6 +46,7 @@ function nightsBetween(start, end) {
 
 export default function BookingPriceEstimate({
   serviceType,
+  serviceId = "",
   dogCount = 1,
   date,
   endDate,
@@ -121,6 +122,7 @@ export default function BookingPriceEstimate({
     if (!canUseBackendQuote) { setServerQuote(null); return () => { cancelled = true; }; }
     api.post("/pricing/quote", {
       service_type: serviceType,
+      service_id: serviceId || undefined,
       date,
       end_date: endDate || null,
       dog_id: primaryDogId || undefined,
@@ -132,18 +134,22 @@ export default function BookingPriceEstimate({
       .then(({ data }) => { if (!cancelled) setServerQuote(data || null); })
       .catch(() => { if (!cancelled) setServerQuote(null); });
     return () => { cancelled = true; };
-  }, [serviceType, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
+  }, [serviceType, serviceId, date, endDate, dropoffTime, pickupTime, primaryDogId, isMultiDate, addonsPerDog, dogCount, JSON.stringify((addons || []).map(a => a?.id).filter(Boolean))]);
 
   // Use the configured default service matching this service_type. If there is
   // no explicit default, fall back to the first active service. We intentionally
   // do NOT pick the cheapest option because that made estimates too low.
   const headlineService = useMemo(() => {
+    if (serviceId) {
+      const exact = services.find(s => s.id === serviceId && !s.is_addon && s.active !== false);
+      if (exact) return exact;
+    }
     const candidates = services.filter(
       (s) => s.service_type === serviceType && !s.is_addon && s.active !== false
     );
     if (candidates.length === 0) return null;
     return candidates.find((s) => !!s.is_default) || candidates[0];
-  }, [services, serviceType]);
+  }, [services, serviceType, serviceId]);
 
   const legacyCalc = useMemo(() => {
     if (!headlineService) return null;

@@ -825,7 +825,7 @@ export default function Portal() {
   const [visitCounts, setVisitCounts] = useState({});
   const [referralCode, setReferralCode] = useState(null);
   const [dogFilter, setDogFilter] = useState("");  // empty = show all dogs' bookings
-  const [rebookSeed, setRebookSeed] = useState(null);  // {dog_id, service_type} preselected when "Book Again" tapped
+  const [rebookSeed, setRebookSeed] = useState(null);  // {dog_id, service_type, service_id} preselected when "Book Again" tapped
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
   const [vaccineQuick, setVaccineQuick] = useState(null); // { initialDogId }
@@ -2031,7 +2031,7 @@ export default function Portal() {
                       )}
                       {["completed","cancelled","rejected"].includes(b.status) && (
                         <button onClick={()=>{
-                                  setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type });
+                                  setRebookSeed({ dog_id: b.dog_id, service_type: b.service_type, service_id: b.service_id || "" });
                                   openBookingIfReady();
                                   document.getElementById("portal-book-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
                                 }}

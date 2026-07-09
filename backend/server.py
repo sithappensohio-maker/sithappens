@@ -445,7 +445,7 @@ class TrainingLogIn(BaseModel):
 class BookingIn(BaseModel):
     dog_id: str
     date: str  # YYYY-MM-DD
-    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"] = "daycare"
     grooming_type: Optional[Literal["bath", "nail_trim"]] = None  # only relevant when service_type=grooming
     end_date: Optional[str] = None  # for boarding
     time: Optional[str] = ""  # HH:MM appointment time — used for training/grooming/photography
@@ -495,7 +495,7 @@ class BookingGroupDog(BaseModel):
 class BookingGroupIn(BaseModel):
     dogs: List[BookingGroupDog]
     date: str
-    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"] = "daycare"
     end_date: Optional[str] = None
     grooming_type: Optional[Literal["bath", "nail_trim"]] = None
     notes: Optional[str] = ""
@@ -2039,7 +2039,7 @@ async def _quote_base_service_price(
 
 
 class PricingQuoteIn(BaseModel):
-    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"]
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"]
     date: str
     end_date: Optional[str] = None
     dropoff_time: Optional[str] = None
@@ -2237,6 +2237,24 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     settings = await get_settings()
     rules = settings.get("booking_rules", {})
     required = settings.get("required_vaccines", ["rabies"])
+
+    # Resolve an explicitly selected catalog service up front. Client booking
+    # rules can now target the exact offered service, not just its broad
+    # category. Add-ons can never be booked as the base service.
+    selected_service = None
+    if body.service_id:
+        selected_service = await db.services.find_one({"id": body.service_id}, {"_id": 0})
+        if not selected_service or selected_service.get("active") is False:
+            raise HTTPException(status_code=400, detail="That service is no longer available.")
+        if selected_service.get("is_addon") is True:
+            raise HTTPException(status_code=400, detail="Add-ons must be attached to a base service booking.")
+        if selected_service.get("service_type") != body.service_type:
+            raise HTTPException(status_code=400, detail="Selected service does not match the booking category.")
+
+    svc_rules = _booking_flow_rules_for(settings, body.service_type, body.service_id)
+    if user.get("role") != "admin" and svc_rules.get("client_booking_enabled") is False:
+        label = (selected_service or {}).get("name") or body.service_type.title()
+        raise HTTPException(status_code=400, detail=f"{label} is not currently available for online booking.")
     daycare_cap = int(settings.get("daycare_capacity", DAYCARE_CAPACITY))
     boarding_cap = int(settings.get("boarding_capacity", 10))
 
@@ -2266,8 +2284,6 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # (require_approval / instant_book / same_day / min_lead_hours /
     # max_advance_days). Admins still bypass these checks so they can fix
     # historical data and rescue clients.
-    bfc = (settings.get("booking_flow_controls") or {}).get("per_service") or {}
-    svc_rules = bfc.get(body.service_type) or {}
     if user.get("role") != "admin" and body.date:
         from datetime import datetime as _dt, date as _date, timedelta as _td
         try:
@@ -2335,7 +2351,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
 
     # Advance-booking limit (clients only) — exempt daycare so regulars can
     # set up long-running recurring schedules without bumping the global cap.
-    if user.get("role") != "admin" and body.service_type != "daycare":
+    if user.get("role") != "admin" and body.service_type != "daycare" and svc_rules.get("max_advance_days") is None:
         max_adv = int(rules.get("max_advance_days", 60))
         if max_adv > 0:
             limit_date = (business_today() + timedelta(days=max_adv)).isoformat()
@@ -2355,11 +2371,13 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         now_local = datetime.now()
         hours_until = (book_dt - now_local).total_seconds() / 3600.0
 
-        if not guard.get("same_day_booking_allowed", True) and body.date == business_today().isoformat():
-            raise HTTPException(status_code=400, detail="Same-day bookings are currently disabled.")
-        min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
-        if min_adv_h > 0 and hours_until < min_adv_h:
-            raise HTTPException(status_code=400, detail=f"Bookings require at least {int(min_adv_h)}h advance notice.")
+        if not svc_rules.get("_exact_same_day"):
+            if not guard.get("same_day_booking_allowed", True) and body.date == business_today().isoformat():
+                raise HTTPException(status_code=400, detail="Same-day bookings are currently disabled.")
+        if not svc_rules.get("_exact_min_lead"):
+            min_adv_h = float(guard.get("min_advance_booking_hours", 0) or 0)
+            if min_adv_h > 0 and hours_until < min_adv_h:
+                raise HTTPException(status_code=400, detail=f"Bookings require at least {int(min_adv_h)}h advance notice.")
         wknd_lead = float(guard.get("weekend_lead_time_hours", 0) or 0)
         if wknd_lead > 0:
             try:
@@ -2402,7 +2420,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     # at 2pm blocks a Grooming at 2pm, etc. Admins can override.
     duration_minutes_used = 0
     if body.service_type in TIME_SLOTTED_SERVICES and (body.time or "").strip():
-        duration_minutes_used = await _get_default_duration(body.service_type)
+        duration_minutes_used = int((selected_service or {}).get("duration_minutes") or 0) or await _get_default_duration(body.service_type)
         if not (is_admin and body.override_capacity) and duration_minutes_used > 0:
             new_start = _hhmm_to_min(body.time)
             if new_start is not None:
@@ -2452,7 +2470,14 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     estimated_price = float(quote.get("estimated_price") or 0)
 
     auto_approve = bool(rules.get("auto_approve", False))
-    status_val = "approved" if (is_admin or auto_approve) else "pending"
+    if is_admin:
+        status_val = "approved"
+    elif svc_rules.get("require_approval") is True:
+        status_val = "pending"
+    elif svc_rules.get("instant_book") is True:
+        status_val = "approved"
+    else:
+        status_val = "approved" if auto_approve else "pending"
 
     doc = {
         "id": str(uuid.uuid4()),
@@ -3415,6 +3440,7 @@ async def list_time_slots(
     date_str: str,
     service_type: Literal["training", "grooming", "photography"],
     duration: Optional[int] = None,
+    service_id: Optional[str] = None,
     user: dict = Depends(get_current_user),
 ):
     """Return the candidate slots for a given date and time-slotted service.
@@ -3426,7 +3452,14 @@ async def list_time_slots(
     out of the box. Days marked `closed` return no slots.
     """
     if not duration or duration <= 0:
-        duration = await _get_default_duration(service_type)
+        if service_id:
+            selected = await db.services.find_one(
+                {"id": service_id, "active": True, "service_type": service_type},
+                {"_id": 0, "duration_minutes": 1},
+            )
+            duration = int((selected or {}).get("duration_minutes") or 0)
+        if not duration or duration <= 0:
+            duration = await _get_default_duration(service_type)
 
     # Resolve the day's open/close from settings (with safe fallback to 08–18
     # in case the settings schema is missing for some reason).
@@ -6261,10 +6294,14 @@ def _default_payment_options() -> list:
 
 
 def _default_booking_flow_controls() -> dict:
-    """Per-service overrides for require_approval/instant/same_day/lead_time/
-    max_advance. Empty per_service maps mean: fall back to the global
-    booking_rules + day_to_day.guardrails. Admin sets the override only when
-    they want a service to behave differently from the global default."""
+    """Booking rules at two levels.
+
+    ``per_service`` keeps the historical category defaults (daycare, boarding,
+    training, etc.). ``per_catalog_service`` stores optional overrides keyed by
+    the actual service catalog row id. This lets two services in the same
+    category — for example a Private Lesson and a Service Dog Evaluation — use
+    different booking rules without creating a second booking system.
+    """
     return {
         "per_service": {
             "daycare":     {"require_approval": False, "instant_book": True,  "same_day": True,  "min_lead_hours": None, "max_advance_days": None},
@@ -6272,7 +6309,12 @@ def _default_booking_flow_controls() -> dict:
             "training":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
             "grooming":    {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
             "photography": {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
+            "other":       {"require_approval": True,  "instant_book": False, "same_day": False, "min_lead_hours": None, "max_advance_days": None},
         },
+        # Exact service-row overrides. Missing keys inherit from the category.
+        # client_booking_enabled=False removes that individual service from the
+        # client picker and rejects direct client POSTs server-side.
+        "per_catalog_service": {},
         # When a service is at capacity, do we auto-offer the waitlist?
         # Falls through to feature_visibility.waitlist as a master switch.
         "waitlist_on_capacity":   True,
@@ -6285,6 +6327,49 @@ def _default_booking_flow_controls() -> dict:
         # credits or require payment — it's informational only.
         "show_price_estimate":    True,
     }
+
+
+def _merge_booking_flow_controls(saved) -> dict:
+    """Deep-merge saved booking controls with safe defaults.
+
+    A shallow ``{**defaults, **saved}`` loses nested category defaults whenever
+    an older install has only a partial map. This helper also preserves custom
+    service-id rows while filling any missing rule keys at read time.
+    """
+    base = _default_booking_flow_controls()
+    if not isinstance(saved, dict):
+        return base
+    out = {**base, **saved}
+    saved_categories = saved.get("per_service") if isinstance(saved.get("per_service"), dict) else {}
+    out["per_service"] = {
+        key: {**defaults, **(saved_categories.get(key) or {})}
+        for key, defaults in base["per_service"].items()
+    }
+    # Preserve any non-standard categories from restored/older data.
+    for key, row in saved_categories.items():
+        if key not in out["per_service"] and isinstance(row, dict):
+            out["per_service"][key] = dict(row)
+    exact = saved.get("per_catalog_service")
+    out["per_catalog_service"] = dict(exact) if isinstance(exact, dict) else {}
+    return out
+
+
+def _booking_flow_rules_for(settings: dict, service_type: str, service_id: Optional[str] = None) -> dict:
+    """Resolve effective rules for one booking. Exact service rules override
+    category defaults; omitted exact keys inherit from the category row.
+    """
+    controls = _merge_booking_flow_controls((settings or {}).get("booking_flow_controls"))
+    category = dict((controls.get("per_service") or {}).get(service_type) or {})
+    if service_id:
+        exact = (controls.get("per_catalog_service") or {}).get(service_id)
+        if isinstance(exact, dict):
+            # None means "inherit" for numeric override fields. Booleans must
+            # keep False, so filter only null values rather than falsy values.
+            category.update({k: v for k, v in exact.items() if v is not None})
+            category["_exact_same_day"] = "same_day" in exact and exact.get("same_day") is not None
+            category["_exact_min_lead"] = "min_lead_hours" in exact and exact.get("min_lead_hours") is not None
+            category["_exact_max_advance"] = "max_advance_days" in exact and exact.get("max_advance_days") is not None
+    return category
 
 
 def _default_dashboard_widgets() -> dict:
@@ -6508,7 +6593,7 @@ async def get_settings() -> dict:
         cur = s["booking_flow_controls"]
         for k, v in bfc_default.items():
             if k == "per_service" and isinstance(cur.get("per_service"), dict):
-                # merge each service-specific override individually
+                # merge each category-specific default individually
                 for svc, defaults in v.items():
                     if svc not in cur["per_service"]:
                         cur["per_service"][svc] = defaults
@@ -6518,6 +6603,10 @@ async def get_settings() -> dict:
                             if ks not in cur["per_service"][svc]:
                                 cur["per_service"][svc][ks] = vd
                                 changed = True
+            elif k == "per_catalog_service":
+                if not isinstance(cur.get(k), dict):
+                    cur[k] = {}
+                    changed = True
             elif k not in cur:
                 cur[k] = v
                 changed = True
@@ -6658,7 +6747,7 @@ async def fetch_branding():
         # without an extra round-trip.
         "client_portal_controls":  _merge_cpc(s.get("client_portal_controls")),
         # Sprint 110di-19 — Booking Flow Controls + Dashboard Widget Controls.
-        "booking_flow_controls":   {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
+        "booking_flow_controls":   _merge_booking_flow_controls(s.get("booking_flow_controls")),
         "dashboard_widgets":       {**_default_dashboard_widgets(),     **(s.get("dashboard_widgets") or {})},
         # Sprint 110di-29 — Payment Options. Exposed unauthed so the
         # portal and post-booking acknowledgement can show the enabled
@@ -6750,7 +6839,7 @@ async def fetch_public_settings():
         "client_portal_controls": _merge_cpc(s.get("client_portal_controls")),
         # Sprint 110di-19 — Booking Flow Controls (per-service overrides) +
         # Dashboard Widget Controls (visibility-only).
-        "booking_flow_controls":  {**_default_booking_flow_controls(), **(s.get("booking_flow_controls") or {})},
+        "booking_flow_controls":  _merge_booking_flow_controls(s.get("booking_flow_controls")),
         "dashboard_widgets":      {**_default_dashboard_widgets(), **(s.get("dashboard_widgets") or {})},
         # Sprint 110di-29 — Payment Options
         "payment_options":        _merge_payment_options(s.get("payment_options")),
@@ -6769,6 +6858,27 @@ async def save_settings(body: SettingsIn, _: dict = Depends(require_admin)):
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not update:
         return await get_settings()
+
+    # Booking controls are edited by several generations of the UI. Older
+    # clients often PUT only one category row; replacing the whole nested blob
+    # would silently erase the newer exact-service rules. Merge category rows
+    # and top-level switches, while treating an explicitly supplied
+    # per_catalog_service map as the complete intended map (needed for the
+    # "Use defaults" button to delete an override).
+    if isinstance(update.get("booking_flow_controls"), dict):
+        current = _merge_booking_flow_controls((await get_settings()).get("booking_flow_controls"))
+        incoming = update["booking_flow_controls"]
+        merged = {**current, **{k: v for k, v in incoming.items() if k not in ("per_service", "per_catalog_service")}}
+        if isinstance(incoming.get("per_service"), dict):
+            merged_categories = {k: dict(v) for k, v in (current.get("per_service") or {}).items()}
+            for svc, row in incoming["per_service"].items():
+                if isinstance(row, dict):
+                    merged_categories[svc] = {**(merged_categories.get(svc) or {}), **row}
+            merged["per_service"] = merged_categories
+        if "per_catalog_service" in incoming:
+            merged["per_catalog_service"] = dict(incoming.get("per_catalog_service") or {})
+        update["booking_flow_controls"] = merged
+
     await db.settings.update_one({"id": "global"}, {"$set": update}, upsert=True)
     return await get_settings()
 
@@ -23152,7 +23262,8 @@ async def list_client_receipts(client_id: str, _: dict = Depends(require_admin))
 class MultiDateBookingIn(BaseModel):
     dog_id: str
     dates: List[str] = Field(min_length=1, max_length=60)  # YYYY-MM-DD strings
-    service_type: Literal["daycare", "training", "grooming", "photography"] = "daycare"
+    service_type: Literal["daycare", "training", "grooming", "photography", "other"] = "daycare"
+    service_id: Optional[str] = None
     notes: Optional[str] = ""
     grooming_type: Optional[Literal["bath", "nail_trim"]] = None
     time: Optional[str] = ""  # HH:MM — used by time-slotted services (training/grooming/photography)
@@ -23196,6 +23307,7 @@ async def create_multi_date_bookings(body: MultiDateBookingIn, user: dict = Depe
                     override_capacity=bool(body.override_capacity) if user.get("role") == "admin" else False,
                     override_vaccines=bool(body.override_vaccines) if user.get("role") == "admin" else False,
                     addon_service_ids=body.addon_service_ids or [],
+                    service_id=body.service_id,
                 )
                 booking = await create_booking(inn, user)
                 created.append(booking)
@@ -25196,7 +25308,7 @@ WAITLIST_PRIORITIES = ("low", "normal", "high")
 
 class WaitlistIn(BaseModel):
     dog_id: str
-    service_type: Literal["daycare", "boarding", "training", "grooming", "photography"] = "daycare"
+    service_type: Literal["daycare", "boarding", "training", "grooming", "photography", "other"] = "daycare"
     requested_date: str                                     # YYYY-MM-DD (start)
     requested_end_date: Optional[str] = None                # YYYY-MM-DD (boarding range)
     priority: Literal["low", "normal", "high"] = "normal"
