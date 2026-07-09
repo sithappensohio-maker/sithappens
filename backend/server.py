@@ -25,6 +25,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field, EmailStr, ConfigDict
 
 from email_service import (
@@ -12555,11 +12556,77 @@ BACKUP_COLLECTIONS = [
 #   • `email_settings`         — singleton {_id: "singleton", brand_*, ...}
 #   • `payment_plan_settings`  — singleton {_id: "singleton", agreement_html, ...}
 STRING_ID_COLLECTIONS = {"app_settings", "email_settings", "payment_plan_settings"}
-# Bumped to v7 to include the newer business-critical workflow collections
+# Bumped to v8 for uncapped exports plus verified persistent snapshots; v7 added the newer business-critical workflow collections
 # (payment_ledger, waitlist, intake, messages, announcements, etc.). Restore
 # accepts older v1–v5 backups too (missing collections are left untouched rather
 # than wiped).
-BACKUP_VERSION = 7
+BACKUP_VERSION = 8
+
+# Persistent in-container backup root. docker-compose bind-mounts ./backups here,
+# so files survive backend container rebuilds. Operators may use subfolders,
+# but cannot point the app back at an ephemeral container path.
+BACKUP_ROOT = os.path.realpath(os.environ.get("BACKUP_ROOT", "/app/backups"))
+_BACKUP_PROCESS_ID = f"{os.uname().nodename}:{os.getpid()}:{uuid.uuid4()}"
+_BACKUP_LEASE_ID = "auto_backup_lease"
+
+
+def _safe_backup_dir(path: Optional[str] = None) -> str:
+    requested = os.path.realpath(path or BACKUP_ROOT)
+    try:
+        common = os.path.commonpath([BACKUP_ROOT, requested])
+    except ValueError:
+        common = ""
+    if common != BACKUP_ROOT:
+        raise ValueError(f"Backup folder must be {BACKUP_ROOT} or a subfolder inside it")
+    return requested
+
+
+async def _export_collection_docs(collection_name: str) -> List[Dict[str, Any]]:
+    """Export every document without Motor's old 50,000-document cap."""
+    projection = None if collection_name in STRING_ID_COLLECTIONS else {"_id": 0}
+    cursor = db[collection_name].find({}, projection)
+    docs: List[Dict[str, Any]] = []
+    async for raw in cursor:
+        doc = dict(raw)
+        if collection_name in STRING_ID_COLLECTIONS:
+            doc_id = doc.get("_id")
+            if collection_name == "app_settings" and doc_id == _BACKUP_LEASE_ID:
+                continue
+            if not isinstance(doc_id, str):
+                doc.pop("_id", None)
+        docs.append(doc)
+    return docs
+
+
+async def _acquire_backup_lease(trigger: str, ttl_minutes: int = 240) -> bool:
+    """Mongo-backed mutex shared by every uvicorn worker."""
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(minutes=max(15, ttl_minutes))
+    query = {
+        "_id": _BACKUP_LEASE_ID,
+        "$or": [
+            {"owner": _BACKUP_PROCESS_ID},
+            {"expires_at": {"$exists": False}},
+            {"expires_at": {"$lte": now}},
+        ],
+    }
+    update = {"$set": {
+        "owner": _BACKUP_PROCESS_ID,
+        "trigger": trigger,
+        "acquired_at": now,
+        "expires_at": expires,
+    }}
+    try:
+        row = await db.app_settings.find_one_and_update(
+            query, update, upsert=True, return_document=ReturnDocument.AFTER
+        )
+        return bool(row and row.get("owner") == _BACKUP_PROCESS_ID)
+    except DuplicateKeyError:
+        return False
+
+
+async def _release_backup_lease() -> None:
+    await db.app_settings.delete_one({"_id": _BACKUP_LEASE_ID, "owner": _BACKUP_PROCESS_ID})
 
 @api.post("/admin/compress-photos")
 async def admin_compress_photos(_: dict = Depends(require_admin)):
@@ -12590,28 +12657,7 @@ async def backup_export(user: dict = Depends(require_admin)):
     perms = _perms_for(user)
     if not perms.get("data_export"):
         raise HTTPException(status_code=403, detail="Missing permission: data_export")
-    payload = {
-        "version": BACKUP_VERSION,
-        "exported_at": now_iso(),
-        "collections": {},
-    }
-    for c in BACKUP_COLLECTIONS:
-        if c in STRING_ID_COLLECTIONS:
-            # Preserve string-typed _id so restore can roundtrip the named key.
-            docs = await db[c].find({}).to_list(50000)
-            cleaned: List[Dict[str, Any]] = []
-            for d in docs:
-                _id = d.get("_id")
-                if isinstance(_id, str):
-                    d["_id"] = _id  # keep as-is
-                else:
-                    d.pop("_id", None)  # drop ObjectId — collection isn't actually keyed by it
-                cleaned.append(d)
-            payload["collections"][c] = cleaned
-        else:
-            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
-            payload["collections"][c] = docs
-    return payload
+    return await _build_backup_payload()
 
 
 # ─────────────── Sprint 110di-23 · Config-only Export/Import ───────────────
@@ -12645,58 +12691,58 @@ async def _build_config_payload() -> Dict[str, Any]:
         "collections": {},
     }
     for c in CONFIG_COLLECTIONS:
-        if c in STRING_ID_COLLECTIONS:
-            docs = await db[c].find({}).to_list(50000)
-            cleaned: List[Dict[str, Any]] = []
-            for d in docs:
-                _id = d.get("_id")
-                if isinstance(_id, str):
-                    d["_id"] = _id
-                else:
-                    d.pop("_id", None)
-                cleaned.append(d)
-            payload["collections"][c] = cleaned
-        else:
-            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
-            payload["collections"][c] = docs
+        payload["collections"][c] = await _export_collection_docs(c)
     return payload
 
 
 async def _write_pre_restore_snapshot(kind: str) -> Dict[str, Any]:
-    """Write a safety snapshot of the CURRENT state to disk BEFORE a restore
-    wipes anything. Returns metadata the API can pass back to the UI so the
-    operator can see exactly what file holds their pre-restore state.
-
-    `kind` is either 'config' (snapshots just the configurability collections,
-    matching restore-config scope) or 'full' (snapshots every backup collection).
-    Files land in /app/backups/ alongside the auto-backup output so they're
-    easy to find. Failures are non-fatal — we'd rather the restore proceed
-    than block the user — but we log them and return error metadata.
-    """
-    snapshot_dir = "/app/backups"
+    """Atomically write and parse-verify the current state before a restore."""
+    snapshot_dir = _safe_backup_dir()
+    temp_path: Optional[str] = None
     try:
-        import json
         os.makedirs(snapshot_dir, exist_ok=True)
         if kind == "config":
             payload = await _build_config_payload()
         else:
             payload = await _build_backup_payload()
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
         filename = f"pre-restore-{kind}-{ts}.json"
         full_path = os.path.join(snapshot_dir, filename)
-        with open(full_path, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh, separators=(",", ":"))
+        temp_path = full_path + f".{os.getpid()}.tmp"
+        body = _json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+        import hashlib
+        checksum = hashlib.sha256(body).hexdigest()
+        with open(temp_path, "wb") as fh:
+            fh.write(body)
+            fh.flush()
+            os.fsync(fh.fileno())
+        with open(temp_path, "rb") as fh:
+            readback = fh.read()
+        if hashlib.sha256(readback).hexdigest() != checksum:
+            raise RuntimeError("Pre-restore snapshot checksum verification failed")
+        verified = _json.loads(readback.decode("utf-8"))
+        if not isinstance(verified.get("collections"), dict):
+            raise RuntimeError("Pre-restore snapshot is missing its collections map")
+        os.replace(temp_path, full_path)
+        temp_path = None
         size = os.path.getsize(full_path)
         return {
             "ok": True,
+            "verified": True,
             "path": full_path,
             "filename": filename,
             "size_bytes": size,
+            "sha256": checksum,
             "created_at": now_iso(),
         }
     except Exception as exc:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
         logger.warning("pre-restore snapshot (%s) failed: %s", kind, exc)
-        return {"ok": False, "error": str(exc), "created_at": now_iso()}
+        return {"ok": False, "verified": False, "error": str(exc), "created_at": now_iso()}
 
 
 @api.get("/backup/export-config")
@@ -12749,6 +12795,11 @@ async def backup_restore_config(body: ConfigRestoreIn, _: dict = Depends(require
     # write the snapshot is logged but doesn't abort the restore — better to
     # let the operator restore than block on a disk error.
     pre_snapshot = await _write_pre_restore_snapshot("config")
+    if not pre_snapshot.get("ok"):
+        raise HTTPException(
+            status_code=507,
+            detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
+        )
     summary = {}
     for c, docs in (body.collections or {}).items():
         if c not in CONFIG_COLLECTIONS:
@@ -12908,17 +12959,36 @@ async def _get_auto_backup_config() -> Dict[str, Any]:
             "enabled": False,
             "hour": 3,             # 3 AM local
             "minute": 0,
-            "path": "/app/backups",
+            "path": BACKUP_ROOT,
             "retain_days": 30,
             "last_run": None,      # filled in by the runner
             "last_ok": None,
+            "last_verified": None,
             "last_error": None,
             "last_size_bytes": None,
+            "last_sha256": None,
             "last_file": None,
         }
         await db.app_settings.update_one(
             {"_id": "auto_backup"}, {"$set": row}, upsert=True
         )
+    # Migrate legacy/unsafe paths back to the persistent bind mount.
+    try:
+        safe_path = _safe_backup_dir(row.get("path"))
+    except ValueError:
+        safe_path = BACKUP_ROOT
+        await db.app_settings.update_one(
+            {"_id": "auto_backup"},
+            {"$set": {
+                "path": safe_path,
+                "last_error": f"Unsafe legacy backup path reset to {safe_path}",
+            }},
+            upsert=True,
+        )
+        row["path"] = safe_path
+        row["last_error"] = f"Unsafe legacy backup path reset to {safe_path}"
+    else:
+        row["path"] = safe_path
     return row
 
 
@@ -12936,48 +13006,100 @@ async def _build_backup_payload() -> Dict[str, Any]:
         "collections": {},
     }
     for c in BACKUP_COLLECTIONS:
-        if c in STRING_ID_COLLECTIONS:
-            docs = await db[c].find({}).to_list(50000)
-            cleaned: List[Dict[str, Any]] = []
-            for d in docs:
-                _id = d.get("_id")
-                if isinstance(_id, str):
-                    d["_id"] = _id
-                else:
-                    d.pop("_id", None)
-                cleaned.append(d)
-            payload["collections"][c] = cleaned
-        else:
-            docs = await db[c].find({}, {"_id": 0}).to_list(50000)
-            payload["collections"][c] = docs
+        payload["collections"][c] = await _export_collection_docs(c)
+    payload["collection_counts"] = {
+        name: len(items) for name, items in payload["collections"].items()
+    }
+    payload["total_docs"] = sum(payload["collection_counts"].values())
     return payload
 
 
 async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
-    """Write a gzipped snapshot to disk and prune older files past retention."""
+    """Write, atomically publish, parse-verify, and prune one backup."""
     cfg = await _get_auto_backup_config()
     started = now_iso()
+    acquired = await _acquire_backup_lease(trigger)
+    if not acquired:
+        return {
+            "id": str(uuid.uuid4()),
+            "trigger": trigger,
+            "started_at": started,
+            "finished_at": now_iso(),
+            "ok": False,
+            "status": "skipped",
+            "path": None,
+            "size_bytes": 0,
+            "collections": 0,
+            "total_docs": 0,
+            "pruned": [],
+            "error": "Another backup is already running",
+        }
+    temp_path: Optional[str] = None
     try:
-        target_dir = cfg.get("path") or "/app/backups"
+        # The Mongo lease serializes workers. This second check prevents a
+        # second worker from starting another scheduled backup immediately
+        # after a very fast first run releases the lease. Failed runs remain
+        # retryable on the same day.
+        if trigger == "scheduled":
+            day_start, day_end = _business_day_utc_bounds(business_today().isoformat())
+            existing = await db.auto_backup_runs.find_one({
+                "trigger": "scheduled",
+                "ok": True,
+                "started_at": {"$gte": day_start, "$lt": day_end},
+            })
+            if existing:
+                return {
+                    "id": str(uuid.uuid4()),
+                    "trigger": trigger,
+                    "started_at": started,
+                    "finished_at": now_iso(),
+                    "ok": False,
+                    "status": "skipped",
+                    "path": existing.get("path"),
+                    "size_bytes": 0,
+                    "collections": 0,
+                    "total_docs": 0,
+                    "pruned": [],
+                    "error": "A verified scheduled backup already completed today",
+                }
+        target_dir = _safe_backup_dir(cfg.get("path"))
         os.makedirs(target_dir, exist_ok=True)
         payload = await _build_backup_payload()
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_%f")
         fname = f"sit-happens-{ts}.json.gz"
         full_path = os.path.join(target_dir, fname)
-        body = _json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        with gzip.open(full_path, "wb", compresslevel=6) as fh:
+        temp_path = full_path + f".{os.getpid()}.tmp"
+        body = _json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+        import hashlib
+        body_sha256 = hashlib.sha256(body).hexdigest()
+        with gzip.open(temp_path, "wb", compresslevel=6) as fh:
             fh.write(body)
+        with gzip.open(temp_path, "rb") as fh:
+            verified_body = fh.read()
+        readback_sha256 = hashlib.sha256(verified_body).hexdigest()
+        if readback_sha256 != body_sha256:
+            raise RuntimeError("Backup checksum verification failed after disk write")
+        verified = _json.loads(verified_body.decode("utf-8"))
+        verified_collections = verified.get("collections") or {}
+        missing_critical = [c for c in _CRITICAL_BACKUP_COLLECTIONS if c not in verified_collections]
+        verified_counts = {k: len(v or []) for k, v in verified_collections.items() if isinstance(v, list)}
+        expected_counts = payload.get("collection_counts") or {}
+        mismatched_counts = {
+            k: {"expected": expected_counts.get(k), "actual": verified_counts.get(k)}
+            for k in expected_counts
+            if verified_counts.get(k) != expected_counts.get(k)
+        }
+        if missing_critical or mismatched_counts:
+            raise RuntimeError(
+                f"Backup verification failed; missing={missing_critical}, count_mismatches={mismatched_counts}"
+            )
+        os.replace(temp_path, full_path)
+        temp_path = None
         size = os.path.getsize(full_path)
-        # Prune older files past retention. Sprint 110ck — also dedupe within
-        # retention: keep ALL files from the last 7 days (so you have hourly
-        # safety nets after a fresh backup) but only ONE file per calendar day
-        # for files older than that. Prevents the backup folder from ballooning
-        # to GBs when the operator triggers many manual backups in a row.
         retain = max(1, int(cfg.get("retain_days") or 30))
         cutoff = datetime.now(timezone.utc) - timedelta(days=retain)
         recent_window = datetime.now(timezone.utc) - timedelta(days=7)
         pruned: List[str] = []
-        # Walk files newest-first so we keep the LATEST snapshot per day.
         all_files = sorted(
             (f for f in os.listdir(target_dir)
              if f.startswith("sit-happens-") and f.endswith(".json.gz")),
@@ -12987,11 +13109,14 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
         for old in all_files:
             try:
                 stamp = old.split("sit-happens-", 1)[1].split(".json.gz", 1)[0]
-                file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S").replace(tzinfo=timezone.utc)
+                # Accept both legacy filenames and new microsecond filenames.
+                try:
+                    file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S_%f").replace(tzinfo=timezone.utc)
+                except ValueError:
+                    file_dt = datetime.strptime(stamp, "%Y-%m-%d_%H%M%S").replace(tzinfo=timezone.utc)
             except Exception:
                 continue
             day_key = file_dt.date().isoformat()
-            # Past retention → always delete.
             if file_dt < cutoff:
                 try:
                     os.remove(os.path.join(target_dir, old))
@@ -12999,11 +13124,9 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
                 except Exception:
                     pass
                 continue
-            # Within the last 7 days → keep all.
             if file_dt >= recent_window:
                 seen_days.add(day_key)
                 continue
-            # Older than 7 days but within retain — dedupe to 1/day (newest wins).
             if day_key in seen_days:
                 try:
                     os.remove(os.path.join(target_dir, old))
@@ -13012,31 +13135,41 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
                     pass
             else:
                 seen_days.add(day_key)
-        # Record run history
         run_row = {
             "id": str(uuid.uuid4()),
             "trigger": trigger,
             "started_at": started,
             "finished_at": now_iso(),
             "ok": True,
+            "status": "ok",
+            "verified": True,
             "path": full_path,
             "size_bytes": size,
+            "sha256": body_sha256,
             "collections": len(payload["collections"]),
-            "total_docs": sum(len(v) for v in payload["collections"].values()),
+            "collection_counts": expected_counts,
+            "total_docs": payload.get("total_docs", 0),
             "pruned": pruned,
             "error": None,
         }
-        await db.auto_backup_runs.insert_one(run_row)
+        await db.auto_backup_runs.insert_one(dict(run_row))
         await _save_auto_backup_config({
+            "path": target_dir,
             "last_run": run_row["finished_at"],
             "last_ok": True,
+            "last_verified": True,
             "last_error": None,
             "last_size_bytes": size,
+            "last_sha256": body_sha256,
             "last_file": full_path,
         })
-        run_row.pop("_id", None)
         return run_row
     except Exception as e:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
         err = f"{type(e).__name__}: {e}"
         run_row = {
             "id": str(uuid.uuid4()),
@@ -13044,6 +13177,8 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             "started_at": started,
             "finished_at": now_iso(),
             "ok": False,
+            "status": "failed",
+            "verified": False,
             "path": None,
             "size_bytes": 0,
             "collections": 0,
@@ -13051,15 +13186,17 @@ async def _run_auto_backup_once(trigger: str = "scheduled") -> Dict[str, Any]:
             "pruned": [],
             "error": err,
         }
-        await db.auto_backup_runs.insert_one(run_row)
+        await db.auto_backup_runs.insert_one(dict(run_row))
         await _save_auto_backup_config({
             "last_run": run_row["finished_at"],
             "last_ok": False,
+            "last_verified": False,
             "last_error": err,
         })
-        run_row.pop("_id", None)
         logger.warning("auto-backup run failed: %s", err)
         return run_row
+    finally:
+        await _release_backup_lease()
 
 
 def _seconds_until_next_run(hour: int, minute: int) -> float:
@@ -13104,7 +13241,7 @@ class AutoBackupConfigIn(BaseModel):
     enabled: Optional[bool] = None
     hour: Optional[int] = Field(default=None, ge=0, le=23)
     minute: Optional[int] = Field(default=None, ge=0, le=59)
-    path: Optional[str] = None
+    path: Optional[str] = Field(default=None, max_length=500)
     retain_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
@@ -13113,9 +13250,12 @@ async def get_auto_backup_config(_: dict = Depends(require_admin)):
     cfg = await _get_auto_backup_config()
     # Augment with current path state so the UI can warn about ephemeral mounts
     mounts = _read_mounts()
-    path_row = _disk_row(cfg.get("path") or "/app/backups", "Backup target", mounts) if os.path.exists(cfg.get("path") or "") else None
+    safe_path = _safe_backup_dir(cfg.get("path"))
+    path_row = _disk_row(safe_path, "Backup target", mounts) if os.path.exists(safe_path) else None
     cfg["path_exists"] = path_row is not None
     cfg["path_info"] = path_row
+    cfg["backup_root"] = BACKUP_ROOT
+    cfg["persistent_mount_required"] = True
     return cfg
 
 
@@ -13123,12 +13263,18 @@ async def get_auto_backup_config(_: dict = Depends(require_admin)):
 async def put_auto_backup_config(body: AutoBackupConfigIn, _: dict = Depends(require_admin)):
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "path" in patch:
-        # Ensure the target dir exists (create if needed); silently ignore failures
         try:
+            patch["path"] = _safe_backup_dir(patch["path"])
             os.makedirs(patch["path"], exist_ok=True)
-        except Exception:
-            pass
+            probe = os.path.join(patch["path"], f".write-test-{os.getpid()}")
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("ok")
+            os.remove(probe)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Backup folder is not safe/writable: {exc}")
     cfg = await _save_auto_backup_config(patch)
+    cfg["backup_root"] = BACKUP_ROOT
+    cfg["persistent_mount_required"] = True
     return cfg
 
 
@@ -13202,7 +13348,7 @@ async def admin_backup_safety_report(_: dict = Depends(require_admin)):
     """
     cfg = await _get_auto_backup_config()
     runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(10)
-    successful = [r for r in runs if r.get("ok") or r.get("status") == "ok"]
+    successful = [r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("verified", True)]
     latest_ok = successful[0] if successful else None
     latest_file = (latest_ok or {}).get("path") or cfg.get("last_file")
     file_info = _backup_file_info(latest_file)
@@ -13216,7 +13362,7 @@ async def admin_backup_safety_report(_: dict = Depends(require_admin)):
             counts[c] = -1
 
     disk = await admin_disk_usage(_={})
-    backup_target = cfg.get("path") or "/app/backups"
+    backup_target = _safe_backup_dir(cfg.get("path"))
     target_row = None
     for row in disk.get("mountpoints", []):
         if row.get("path") == backup_target or backup_target.startswith(str(row.get("path", "")).rstrip("/") + "/"):
@@ -13309,18 +13455,21 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
     """
     cfg = await _get_auto_backup_config()
     runs = await db.auto_backup_runs.find({}, {"_id": 0}).sort("started_at", -1).to_list(25)
-    latest = next((r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("path")), None)
+    latest = next((r for r in runs if (r.get("ok") or r.get("status") == "ok") and r.get("verified", True) and r.get("path")), None)
     path = (latest or {}).get("path") or cfg.get("last_file")
     info = _backup_file_info(path)
     if not path or not info.get("exists"):
         raise HTTPException(status_code=404, detail="No readable latest in-app backup file found")
     try:
+        import hashlib
         if str(path).endswith(".gz"):
-            with gzip.open(path, "rt", encoding="utf-8") as fh:
-                payload = _json.load(fh)
+            with gzip.open(path, "rb") as fh:
+                raw_payload = fh.read()
         else:
-            with open(path, "r", encoding="utf-8") as fh:
-                payload = _json.load(fh)
+            with open(path, "rb") as fh:
+                raw_payload = fh.read()
+        calculated_sha256 = hashlib.sha256(raw_payload).hexdigest()
+        payload = _json.loads(raw_payload.decode("utf-8"))
     except Exception as e:
         return {
             "ok": False,
@@ -13335,6 +13484,9 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
     counts = {k: len(v or []) for k, v in collections.items() if isinstance(v, list)}
     total_docs = sum(counts.values())
     warnings: List[Dict[str, Any]] = []
+    expected_sha256 = (latest or {}).get("sha256") or cfg.get("last_sha256")
+    if expected_sha256 and calculated_sha256 != expected_sha256:
+        warnings.append({"severity": "danger", "title": "Checksum mismatch", "detail": "The backup file no longer matches the checksum recorded when it was created."})
     if missing_critical:
         warnings.append({"severity": "danger", "title": "Missing critical collections", "detail": ", ".join(missing_critical)})
     if missing_known:
@@ -13349,6 +13501,8 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
         "ok": ok,
         "path": path,
         "size_bytes": info.get("size_bytes"),
+        "sha256": calculated_sha256,
+        "expected_sha256": expected_sha256,
         "version": payload.get("version"),
         "exported_at": payload.get("exported_at"),
         "collections": len(collections),
@@ -13364,6 +13518,8 @@ async def admin_backup_safety_validate_latest(_: dict = Depends(require_admin)):
         "ok": ok,
         "path": path,
         "file": info,
+        "sha256": calculated_sha256,
+        "expected_sha256": expected_sha256,
         "version": payload.get("version"),
         "exported_at": payload.get("exported_at"),
         "collections": len(collections),
@@ -15708,6 +15864,11 @@ async def backup_restore(body: BackupRestoreIn, _: dict = Depends(require_admin)
     # anything so a bad restore can always be rolled back from /app/backups.
     # Logged + returned to the UI; non-fatal on disk errors.
     pre_snapshot = await _write_pre_restore_snapshot("full")
+    if not pre_snapshot.get("ok"):
+        raise HTTPException(
+            status_code=507,
+            detail=f"Restore stopped because the safety snapshot could not be verified: {pre_snapshot.get('error')}",
+        )
     # Older versions are accepted — they simply contain fewer collections.
     # Collections not in the payload are left alone (never wiped), so restoring
     # a v1 snapshot won't blow away homework_templates, trophies, etc.

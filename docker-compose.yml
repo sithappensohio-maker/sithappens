@@ -46,6 +46,10 @@ services:
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
       ADMIN_NAME: "${ADMIN_NAME:-Admin}"
       CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+      BACKUP_ROOT: "/app/backups"
+    volumes:
+      # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
+      - ./backups:/app/backups
 
   frontend:
     build:

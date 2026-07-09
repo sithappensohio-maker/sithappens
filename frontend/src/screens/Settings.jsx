@@ -4444,7 +4444,7 @@ function AutoBackupPanel() {
         enabled: !!draft.enabled,
         hour: Number(draft.hour ?? 3),
         minute: Number(draft.minute ?? 0),
-        path: draft.path || "/app/backups",
+        path: draft.path || cfg.backup_root || "/app/backups",
         retain_days: Math.max(1, Number(draft.retain_days ?? 30)),
       };
       const { data } = await api.put("/admin/auto-backup/config", patch);
@@ -4475,7 +4475,7 @@ function AutoBackupPanel() {
         </span>
       </div>
       <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
-        Writes a gzipped JSON snapshot of <strong className="text-white">every business collection</strong> at the scheduled hour, prunes anything older than the retain window, and logs every run. Point the path at a host-mounted folder so backups survive container rebuilds.
+        Writes and verifies a gzipped JSON snapshot of <strong className="text-white">every business collection</strong> at the scheduled hour. Backups are stored on the host-mounted persistent backup folder, so they survive container rebuilds.
       </p>
 
       {err && <p className="text-red-400 text-[14px] mb-2" data-testid="auto-backup-error">{err}</p>}
@@ -4508,12 +4508,15 @@ function AutoBackupPanel() {
         </div>
 
         <label className="block">
-          <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Backup folder (in-container path)</span>
-          <input type="text" value={draft.path || ""}
+          <span className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Persistent backup folder</span>
+          <input type="text" value={draft.path || cfg.backup_root || "/app/backups"}
                  onChange={(e) => setDraft({ ...draft, path: e.target.value })}
-                 placeholder="/app/backups"
+                 placeholder={cfg.backup_root || "/app/backups"}
                  data-testid="auto-backup-path"
                  className="mt-1 block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+          <p className="text-[12px] mt-1 text-gray-500">
+            Must be <span className="font-mono text-gray-300">{cfg.backup_root || "/app/backups"}</span> or a subfolder inside it. This maps to the host's <span className="font-mono text-gray-300">./backups</span> folder.
+          </p>
           {cfg.path_info && (
             <p className={`text-[12px] mt-1 ${targetVerdict === "danger" ? "text-red-400" : targetVerdict === "warn" ? "text-shOrange" : "text-shGreen"}`}>
               <i className="fas fa-hard-drive mr-1"/>
@@ -4548,9 +4551,11 @@ function AutoBackupPanel() {
           <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">Last run</p>
           <p>
             {new Date(cfg.last_run).toLocaleString()} · {cfg.last_ok ? <span className="text-shGreen font-black">OK</span> : <span className="text-red-400 font-black">FAILED</span>}
+            {cfg.last_verified && <span className="text-shBlue font-black"> · VERIFIED</span>}
             {cfg.last_size_bytes ? ` · ${fmtBytes(cfg.last_size_bytes)}` : ""}
           </p>
           {cfg.last_file && <p className="text-[12px] text-gray-500 font-mono mt-1 truncate">{cfg.last_file}</p>}
+          {cfg.last_sha256 && <p className="text-[11px] text-gray-600 font-mono mt-1 truncate">SHA-256: {cfg.last_sha256}</p>}
           {cfg.last_error && <p className="text-[12px] text-red-400 mt-1">{cfg.last_error}</p>}
         </div>
       )}
@@ -4565,8 +4570,8 @@ function AutoBackupPanel() {
               <div key={r.id} className="bg-bgBase/60 border border-bgHover/40 rounded px-3 py-2 text-[12px] flex items-center justify-between gap-3">
                 <span className="font-mono text-gray-300 truncate">{new Date(r.started_at).toLocaleString()}</span>
                 <span className="text-gray-400 font-black uppercase tracking-widest">{r.trigger}</span>
-                <span className={r.ok ? "text-shGreen font-black" : "text-red-400 font-black"}>
-                  {r.ok ? fmtBytes(r.size_bytes) : "FAIL"}
+                <span className={r.ok ? "text-shGreen font-black" : r.status === "skipped" ? "text-shOrange font-black" : "text-red-400 font-black"}>
+                  {r.ok ? `${fmtBytes(r.size_bytes)}${r.verified ? " · VERIFIED" : ""}` : r.status === "skipped" ? "SKIPPED" : "FAIL"}
                 </span>
               </div>
             ))}
