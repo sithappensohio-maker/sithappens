@@ -15,6 +15,41 @@ function fmtTime(iso) {
   catch { return iso; }
 }
 
+// Register form controls must live at module scope. Defining component types
+// inside RegisterTab creates a new component identity on every state update,
+// which makes React remount the input and drop focus after each keystroke.
+function RegisterFormInput({ label, value, onChange, type = "text", step, placeholder, children }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
+      {children || (
+        <input
+          type={type}
+          step={step}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder || ""}
+          className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+        />
+      )}
+    </label>
+  );
+}
+
+function RegisterSelect({ label, value, onChange, children }) {
+  return (
+    <RegisterFormInput label={label} value={value} onChange={onChange}>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+      >
+        {children}
+      </select>
+    </RegisterFormInput>
+  );
+}
+
 export default function Staff() {
   const confirm = useConfirm();
   const [employees, setEmployees] = useState([]);
@@ -2148,29 +2183,16 @@ export function RegisterTab() {
   const sources = data?.incoming_sources || {};
   const activity = data?.activity || [];
 
-  const FormInput = ({ label, value, onChange, type="text", step, placeholder, children }) => (
-    <label className="block">
-      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</span>
-      {children || <input type={type} step={step} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder || ""} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>}
-    </label>
-  );
-  const Select = ({ label, value, onChange, children }) => (
-    <FormInput label={label} value={value} onChange={onChange}>{
-      <select value={value} onChange={e=>onChange(e.target.value)} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-        {children}
-      </select>
-    }</FormInput>
-  );
   const methodSelect = (value, setter) => (
-    <Select label="Payment method" value={value} onChange={setter}>
+    <RegisterSelect label="Payment method" value={value} onChange={setter}>
       {methodOptions.map(([v,l]) => <option key={v} value={v}>{l}</option>)}
-    </Select>
+    </RegisterSelect>
   );
   const clientSelect = (value, setter, allowBlank=true) => (
-    <Select label="Client" value={value} onChange={setter}>
+    <RegisterSelect label="Client" value={value} onChange={setter}>
       {allowBlank && <option value="">No client / walk-in</option>}
       {clients.map(c => <option key={c.id} value={c.id}>{c.name}{Number(c.account_balance || 0) ? ` · balance ${money(c.account_balance)}` : ""}</option>)}
-    </Select>
+    </RegisterSelect>
   );
 
   return (
@@ -2232,8 +2254,8 @@ export function RegisterTab() {
                 </div>
               )}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
-                <FormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={v=>{setOpeningCash(v); setOpeningOverrideReason("");}}/>
-                <FormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
+                <RegisterFormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={v=>{setOpeningCash(v); setOpeningOverrideReason("");}}/>
+                <RegisterFormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
                 <button onClick={openDrawer} disabled={data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
               </div>
               {openingOverride && (
@@ -2301,14 +2323,14 @@ export function RegisterTab() {
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-cart-plus text-shGreen mr-2"/>New Sale</h4>
         <p className="text-[12px] text-gray-500">Use this for merch, misc services, deposits, or any sale that did not start from a booking.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Description" value={sale.description} onChange={v=>setSale({...sale, description:v})} placeholder="Leash, merch, deposit, misc service"/>
-          <FormInput label="Quantity" type="number" step="1" value={sale.quantity} onChange={v=>setSale({...sale, quantity:v})} placeholder="1"/>
-          <FormInput label="Price each" type="number" step="0.01" value={sale.unit_price} onChange={v=>setSale({...sale, unit_price:v})} placeholder="Use for items like 2 leashes"/>
-          <FormInput label="Amount collected" type="number" step="0.01" value={sale.amount} onChange={v=>setSale({...sale, amount:v})} placeholder={saleUnit > 0 ? `auto = ${money(saleLineTotal)}` : "total sale amount"}/>
+          <RegisterFormInput label="Description" value={sale.description} onChange={v=>setSale({...sale, description:v})} placeholder="Leash, merch, deposit, misc service"/>
+          <RegisterFormInput label="Quantity" type="number" step="1" value={sale.quantity} onChange={v=>setSale({...sale, quantity:v})} placeholder="1"/>
+          <RegisterFormInput label="Price each" type="number" step="0.01" value={sale.unit_price} onChange={v=>setSale({...sale, unit_price:v})} placeholder="Use for items like 2 leashes"/>
+          <RegisterFormInput label="Amount collected" type="number" step="0.01" value={sale.amount} onChange={v=>setSale({...sale, amount:v})} placeholder={saleUnit > 0 ? `auto = ${money(saleLineTotal)}` : "total sale amount"}/>
           {methodSelect(sale.payment_method, v=>setSale({...sale, payment_method:v}))}
-          <FormInput label="Category" value={sale.category} onChange={v=>setSale({...sale, category:v})}/>
+          <RegisterFormInput label="Category" value={sale.category} onChange={v=>setSale({...sale, category:v})}/>
           {clientSelect(sale.client_id, v=>setSale({...sale, client_id:v}), true)}
-          <FormInput label="Notes" value={sale.notes} onChange={v=>setSale({...sale, notes:v})}/>
+          <RegisterFormInput label="Notes" value={sale.notes} onChange={v=>setSale({...sale, notes:v})}/>
         </div>
         <div className="bg-bgBase/70 border border-bgHover rounded p-3 text-[13px] text-gray-300">
           <span className="font-black text-white">Sale total:</span> {saleUnit > 0 ? `${saleQty} × ${money(saleUnit)} = ${money(saleLineTotal)}` : money(saleLineTotal)}
@@ -2322,13 +2344,13 @@ export function RegisterTab() {
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-ticket text-shBlue mr-2"/>Sell Credit Pack</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientSelect(packSale.client_id, v=>setPackSale({...packSale, client_id:v}), false)}
-          <Select label="Credit pack / single-day credit" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
+          <RegisterSelect label="Credit pack / single-day credit" value={packSale.pack_id} onChange={v=>setPackSale({...packSale, pack_id:v})}>
             <option value="">Choose pack…</option>{packs.map(p => <option key={p.id} value={p.id}>{p.name} · {p.qty} {p.service_type} · {money(p.price)}</option>)}
-          </Select>
-          <FormInput label="Quantity to sell" type="number" step="1" value={packSale.quantity} onChange={v=>setPackSale({...packSale, quantity:v})} placeholder="1"/>
+          </RegisterSelect>
+          <RegisterFormInput label="Quantity to sell" type="number" step="1" value={packSale.quantity} onChange={v=>setPackSale({...packSale, quantity:v})} placeholder="1"/>
           {methodSelect(packSale.payment_method, v=>setPackSale({...packSale, payment_method:v}))}
-          <FormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(packOrderTotal)}` : "blank = full price"}/>
-          <FormInput label="Note" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})}/>
+          <RegisterFormInput label="Amount paid today" type="number" step="0.01" value={packSale.amount_paid} onChange={v=>setPackSale({...packSale, amount_paid:v})} placeholder={selectedPack ? `blank = ${money(packOrderTotal)}` : "blank = full price"}/>
+          <RegisterFormInput label="Note" value={packSale.note} onChange={v=>setPackSale({...packSale, note:v})}/>
         </div>
         {selectedPack && <div className="bg-bgBase/70 border border-bgHover rounded p-3 text-[13px] text-gray-300 space-y-1">
           <div><span className="font-black text-white">Credits added:</span> {packQty * Number(selectedPack.qty || 0)} {selectedPack.service_type || "service"} credits</div>
@@ -2343,9 +2365,9 @@ export function RegisterTab() {
         <p className="text-[12px] text-gray-500">Use this for a client paying an account balance/tab outside a booking checkout.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {clientSelect(payment.client_id, v=>setPayment({...payment, client_id:v}), false)}
-          <FormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
+          <RegisterFormInput label="Amount paid" type="number" step="0.01" value={payment.amount} onChange={v=>setPayment({...payment, amount:v})}/>
           {methodSelect(payment.method, v=>setPayment({...payment, method:v}))}
-          <FormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
+          <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
         </div>
         {selectedClient(payment.client_id) && <p className="text-[12px] text-gray-400">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-white">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
         <button disabled={!payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record payment</button>
@@ -2355,11 +2377,11 @@ export function RegisterTab() {
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-rotate-left text-red-300 mr-2"/>Issue Refund</h4>
         <p className="text-[12px] text-gray-500">This records money leaving the business and reduces Register/tax income for the day. It does not delete the original booking/sale.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Refund amount" type="number" step="0.01" value={refund.amount} onChange={v=>setRefund({...refund, amount:v})}/>
+          <RegisterFormInput label="Refund amount" type="number" step="0.01" value={refund.amount} onChange={v=>setRefund({...refund, amount:v})}/>
           {methodSelect(refund.payment_method, v=>setRefund({...refund, payment_method:v}))}
           {clientSelect(refund.client_id, v=>setRefund({...refund, client_id:v}), true)}
-          <FormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
-          <FormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
+          <RegisterFormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
+          <RegisterFormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
         </div>
         <button disabled={!Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record refund</button>
       </div>}
@@ -2370,20 +2392,20 @@ export function RegisterTab() {
           <p className="text-[12px] text-gray-500 mt-1">Use this when cash physically enters or leaves the drawer outside of a sale, refund, or business expense. Owner draws belong here. Every adjustment requires a reason and changes drawer reconciliation only.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <Select label="Cash movement" value={tillAdjustment.direction} onChange={v=>setTillAdjustment({...tillAdjustment, direction:v})}>
+          <RegisterSelect label="Cash movement" value={tillAdjustment.direction} onChange={v=>setTillAdjustment({...tillAdjustment, direction:v})}>
             <option value="add">Add cash to till</option>
             <option value="remove">Remove cash from till</option>
-          </Select>
-          <Select label="Adjustment type" value={tillAdjustment.adjustment_type} onChange={v=>setTillAdjustment({...tillAdjustment, adjustment_type:v, direction: v === "owner_draw" || v === "bank_deposit" ? "remove" : tillAdjustment.direction})}>
+          </RegisterSelect>
+          <RegisterSelect label="Adjustment type" value={tillAdjustment.adjustment_type} onChange={v=>setTillAdjustment({...tillAdjustment, adjustment_type:v, direction: v === "owner_draw" || v === "bank_deposit" ? "remove" : tillAdjustment.direction})}>
             <option value="owner_draw">Owner draw</option>
             <option value="change_fund">Add/remove change fund</option>
             <option value="bank_deposit">Bank deposit</option>
             <option value="cash_correction">Cash count correction</option>
             <option value="other">Other adjustment</option>
-          </Select>
-          <FormInput label="Amount" type="number" step="0.01" value={tillAdjustment.amount} onChange={v=>setTillAdjustment({...tillAdjustment, amount:v})} placeholder="0.00"/>
-          <FormInput label="Reason (required)" value={tillAdjustment.reason} onChange={v=>setTillAdjustment({...tillAdjustment, reason:v})} placeholder="Owner draw, added change, bank deposit, correction..."/>
-          <FormInput label="Notes" value={tillAdjustment.notes} onChange={v=>setTillAdjustment({...tillAdjustment, notes:v})} placeholder="optional details"/>
+          </RegisterSelect>
+          <RegisterFormInput label="Amount" type="number" step="0.01" value={tillAdjustment.amount} onChange={v=>setTillAdjustment({...tillAdjustment, amount:v})} placeholder="0.00"/>
+          <RegisterFormInput label="Reason (required)" value={tillAdjustment.reason} onChange={v=>setTillAdjustment({...tillAdjustment, reason:v})} placeholder="Owner draw, added change, bank deposit, correction..."/>
+          <RegisterFormInput label="Notes" value={tillAdjustment.notes} onChange={v=>setTillAdjustment({...tillAdjustment, notes:v})} placeholder="optional details"/>
         </div>
         <div className={`rounded-xl border p-3 text-[13px] ${tillAdjustment.direction === "add" ? "bg-shGreen/10 border-shGreen/40 text-shGreen" : "bg-shOrange/10 border-shOrange/40 text-shOrange"}`}>
           <i className={`fas ${tillAdjustment.direction === "add" ? "fa-plus" : "fa-minus"} mr-2`}/>
@@ -2396,11 +2418,11 @@ export function RegisterTab() {
         <h4 className="text-white font-black uppercase italic"><i className="fas fa-money-bill-transfer text-shOrange mr-2"/>Cash Business Expense</h4>
         <p className="text-[12px] text-gray-500">Use this only when cash from the drawer paid a real business expense. For owner draws, bank deposits, change funds, or corrections, use Till Adjustment instead.</p>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Amount" type="number" step="0.01" value={payout.amount} onChange={v=>setPayout({...payout, amount:v})}/>
-          <FormInput label="Description" value={payout.description} onChange={v=>setPayout({...payout, description:v})} placeholder="Poop bags, cleaner, etc."/>
-          <FormInput label="Category" value={payout.category} onChange={v=>setPayout({...payout, category:v})}/>
-          <FormInput label="Vendor" value={payout.vendor} onChange={v=>setPayout({...payout, vendor:v})}/>
-          <FormInput label="Notes" value={payout.notes} onChange={v=>setPayout({...payout, notes:v})}/>
+          <RegisterFormInput label="Amount" type="number" step="0.01" value={payout.amount} onChange={v=>setPayout({...payout, amount:v})}/>
+          <RegisterFormInput label="Description" value={payout.description} onChange={v=>setPayout({...payout, description:v})} placeholder="Poop bags, cleaner, etc."/>
+          <RegisterFormInput label="Category" value={payout.category} onChange={v=>setPayout({...payout, category:v})}/>
+          <RegisterFormInput label="Vendor" value={payout.vendor} onChange={v=>setPayout({...payout, vendor:v})}/>
+          <RegisterFormInput label="Notes" value={payout.notes} onChange={v=>setPayout({...payout, notes:v})}/>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!payout.tax_deductible} onChange={e=>setPayout({...payout, tax_deductible:e.target.checked})}/> Mark as tax deductible</label>
         <button disabled={!Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log cash payout</button>
@@ -2415,24 +2437,24 @@ export function RegisterTab() {
           <button onClick={loadExpenses} className="bg-bgBase border border-bgHover text-gray-300 px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Refresh</button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          <FormInput label="Description" value={expense.description} onChange={v=>setExpense({...expense, description:v})} placeholder="Kibble, cleaner, software, etc."/>
-          <FormInput label="Vendor / store" value={expense.vendor} onChange={v=>setExpense({...expense, vendor:v})} placeholder="Chewy, Tractor Supply, Clover, etc."/>
-          <FormInput label="Category" value={expense.category} onChange={v=>setExpense({...expense, category:v})}>
+          <RegisterFormInput label="Description" value={expense.description} onChange={v=>setExpense({...expense, description:v})} placeholder="Kibble, cleaner, software, etc."/>
+          <RegisterFormInput label="Vendor / store" value={expense.vendor} onChange={v=>setExpense({...expense, vendor:v})} placeholder="Chewy, Tractor Supply, Clover, etc."/>
+          <RegisterFormInput label="Category" value={expense.category} onChange={v=>setExpense({...expense, category:v})}>
             <input list="register-expense-categories" value={expense.category} onChange={e=>setExpense({...expense, category:e.target.value})} className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-          </FormInput>
+          </RegisterFormInput>
           <datalist id="register-expense-categories">{expenseCategories.map(c => <option key={c} value={c}/>)}</datalist>
-          <FormInput label="Quantity" type="number" step="0.01" value={expense.quantity} onChange={v=>setExpense({...expense, quantity:v})}/>
-          <FormInput label="Price each" type="number" step="0.01" value={expense.unit_price} onChange={v=>setExpense({...expense, unit_price:v, amount:""})} placeholder="optional"/>
-          <FormInput label="Total amount" type="number" step="0.01" value={expense.unit_price ? expenseLineTotal.toFixed(2) : expense.amount} onChange={v=>setExpense({...expense, amount:v})} placeholder="or enter total"/>
+          <RegisterFormInput label="Quantity" type="number" step="0.01" value={expense.quantity} onChange={v=>setExpense({...expense, quantity:v})}/>
+          <RegisterFormInput label="Price each" type="number" step="0.01" value={expense.unit_price} onChange={v=>setExpense({...expense, unit_price:v, amount:""})} placeholder="optional"/>
+          <RegisterFormInput label="Total amount" type="number" step="0.01" value={expense.unit_price ? expenseLineTotal.toFixed(2) : expense.amount} onChange={v=>setExpense({...expense, amount:v})} placeholder="or enter total"/>
           {methodSelect(expense.from_cash_drawer ? "cash" : expense.payment_method, v=>setExpense({...expense, payment_method:v, from_cash_drawer: v === "cash" ? expense.from_cash_drawer : false}))}
-          <FormInput label="Notes" value={expense.notes} onChange={v=>setExpense({...expense, notes:v})}/>
+          <RegisterFormInput label="Notes" value={expense.notes} onChange={v=>setExpense({...expense, notes:v})}/>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.tax_deductible} onChange={e=>setExpense({...expense, tax_deductible:e.target.checked})}/> Tax deductible</label>
           <label className="flex items-center gap-2 bg-bgBase border border-shOrange/40 rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.from_cash_drawer} onChange={e=>setExpense({...expense, from_cash_drawer:e.target.checked, payment_method:e.target.checked ? "cash" : expense.payment_method})}/> Paid out of cash drawer</label>
           <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300"><input type="checkbox" checked={!!expense.recurring} onChange={e=>setExpense({...expense, recurring:e.target.checked})}/> Recurring</label>
         </div>
-        {expense.recurring && <div className="max-w-xs"> <Select label="Recurring interval" value={expense.recurring_interval} onChange={v=>setExpense({...expense, recurring_interval:v})}><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></Select></div>}
+        {expense.recurring && <div className="max-w-xs"> <RegisterSelect label="Recurring interval" value={expense.recurring_interval} onChange={v=>setExpense({...expense, recurring_interval:v})}><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></RegisterSelect></div>}
         <div className="bg-bgBase/50 border border-bgHover rounded-xl p-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
@@ -2489,12 +2511,12 @@ export function RegisterTab() {
           </div>
         ) : (<>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            <FormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
-            <FormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>{setCloseout({...closeout, clover_batch:v});setCloseoutReview(false);}}/>
-            <FormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>{setCloseout({...closeout, venmo_total:v});setCloseoutReview(false);}}/>
-            <FormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>{setCloseout({...closeout, paypal_total:v});setCloseoutReview(false);}}/>
-            <FormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>{setCloseout({...closeout, check_total:v});setCloseoutReview(false);}}/>
-            <FormInput label="Closeout notes" value={closeout.notes} onChange={v=>{setCloseout({...closeout, notes:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Actual cash counted · required" type="number" step="0.01" value={closeout.cash_counted} onChange={v=>{setCloseout({...closeout, cash_counted:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Clover batch total" type="number" step="0.01" value={closeout.clover_batch} onChange={v=>{setCloseout({...closeout, clover_batch:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Venmo verified total" type="number" step="0.01" value={closeout.venmo_total} onChange={v=>{setCloseout({...closeout, venmo_total:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="PayPal verified total" type="number" step="0.01" value={closeout.paypal_total} onChange={v=>{setCloseout({...closeout, paypal_total:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Checks in drawer" type="number" step="0.01" value={closeout.check_total} onChange={v=>{setCloseout({...closeout, check_total:v});setCloseoutReview(false);}}/>
+            <RegisterFormInput label="Closeout notes" value={closeout.notes} onChange={v=>{setCloseout({...closeout, notes:v});setCloseoutReview(false);}}/>
           </div>
           {closeoutOverShort != null && <div className={`border rounded-lg p-3 ${Math.abs(closeoutOverShort) < 0.005 ? "bg-shGreen/10 border-shGreen/30" : "bg-shOrange/10 border-shOrange/40"}`}><p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Live over / short</p><p className={`text-xl font-black ${Math.abs(closeoutOverShort) < 0.005 ? "text-shGreen" : "text-shOrange"}`}>{closeoutOverShort >= 0 ? "+" : "-"}{money(Math.abs(closeoutOverShort))}</p></div>}
           {!closeoutReview ? (
@@ -2524,8 +2546,8 @@ export function RegisterTab() {
           <button onClick={loadReports} className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-rotate mr-1"/>Run report</button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-          <FormInput label="Start date" type="date" value={reportStart} onChange={setReportStart}/>
-          <FormInput label="End date" type="date" value={reportEnd} onChange={setReportEnd}/>
+          <RegisterFormInput label="Start date" type="date" value={reportStart} onChange={setReportStart}/>
+          <RegisterFormInput label="End date" type="date" value={reportEnd} onChange={setReportEnd}/>
           <div className="flex flex-wrap gap-2">
             {[ ["activity","Activity"], ["payment-methods","Methods"], ["closeouts","Closeouts"], ["expenses","Expenses"], ["till-adjustments","Till adjustments"], ["tax-summary","Tax summary"] ].map(([k,l]) => (
               <button key={k} onClick={()=>downloadRegisterCsv(k)} className="bg-bgBase border border-bgHover text-gray-300 hover:text-white px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest"><i className="fas fa-download mr-1"/>{l}</button>
