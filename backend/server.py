@@ -24035,6 +24035,253 @@ async def list_credit_adjustments(client_id: str, _: dict = Depends(require_admi
     return items
 
 
+# -------- Read-only credit reconciliation --------
+# This report intentionally performs no writes.  It compares the balances shown
+# on each client record with the remaining purchased-credit lots plus the net
+# manual adjustments recorded in `credit_adjustments`.  A variance is a review
+# flag, not an automatic correction: older imports can legitimately pre-date
+# lot-level tracking.
+_CREDIT_RECON_POOLS = {
+    "daycare": "credits",
+    "training": "training_credits",
+    "boarding": "boarding_credits",
+}
+
+
+def _credit_recon_num(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _credit_recon_client_row(
+    client: Dict[str, Any],
+    lot_totals: Dict[str, Dict[str, Any]],
+    adjustment_totals: Dict[str, Any],
+) -> Dict[str, Any]:
+    pools: Dict[str, Any] = {}
+    issues: List[str] = []
+    has_variance = False
+    has_structural_issue = False
+
+    for pool, field in _CREDIT_RECON_POOLS.items():
+        lot = lot_totals.get(pool) or {}
+        displayed = _credit_recon_num(client.get(field))
+        lot_remaining = _credit_recon_num(lot.get("remaining"))
+        manual_net = _credit_recon_num(adjustment_totals.get(pool))
+        tracked_total = round(lot_remaining + manual_net, 2)
+        variance = round(displayed - tracked_total, 2)
+        negative_lots = int(lot.get("negative_count") or 0)
+        overfilled_lots = int(lot.get("overfilled_count") or 0)
+        lot_count = int(lot.get("lot_count") or 0)
+        adjustment_count = int(adjustment_totals.get("count") or 0)
+        pool_issues: List[str] = []
+
+        if abs(variance) > 0.009:
+            has_variance = True
+            pool_issues.append(
+                f"Displayed balance differs from tracked lots + adjustments by {variance:+g}."
+            )
+        if displayed < -0.009:
+            has_structural_issue = True
+            pool_issues.append("Displayed balance is negative.")
+        if negative_lots:
+            has_structural_issue = True
+            pool_issues.append(f"{negative_lots} credit lot(s) have a negative remaining quantity.")
+        if overfilled_lots:
+            has_structural_issue = True
+            pool_issues.append(f"{overfilled_lots} credit lot(s) exceed their original quantity.")
+
+        if pool_issues:
+            issues.extend([f"{pool.title()}: {msg}" for msg in pool_issues])
+
+        pools[pool] = {
+            "displayed": displayed,
+            "lot_remaining": lot_remaining,
+            "manual_adjustment_net": manual_net,
+            "tracked_total": tracked_total,
+            "variance": variance,
+            "lot_count": lot_count,
+            "adjustment_count": adjustment_count,
+            "negative_lot_count": negative_lots,
+            "overfilled_lot_count": overfilled_lots,
+            "status": "issue" if pool_issues else "match",
+        }
+
+    unknown_lots = lot_totals.get("__unknown__") or {}
+    if int(unknown_lots.get("lot_count") or 0):
+        has_structural_issue = True
+        issues.append(
+            f"{int(unknown_lots.get('lot_count') or 0)} credit lot(s) have a missing or unknown service type."
+        )
+
+    overall_status = "structural" if has_structural_issue else ("review" if has_variance else "match")
+    return {
+        "id": client.get("id") or "",
+        "name": client.get("name") or "Unnamed client",
+        "email": client.get("email") or "",
+        "phone": client.get("phone") or "",
+        "archived": bool(client.get("deleted") or client.get("archived")),
+        "client_status": client.get("client_status") or "active",
+        "overall_status": overall_status,
+        "issues": issues,
+        "issue_count": len(issues),
+        "pools": pools,
+        "unknown_lots": {
+            "lot_count": int(unknown_lots.get("lot_count") or 0),
+            "remaining": _credit_recon_num(unknown_lots.get("remaining")),
+        },
+    }
+
+
+async def _credit_reconciliation_report(include_archived: bool = False) -> Dict[str, Any]:
+    client_query: Dict[str, Any] = {}
+    if not include_archived:
+        client_query = {"deleted": {"$ne": True}, "archived": {"$ne": True}}
+    clients = await db.clients.find(
+        client_query,
+        {
+            "_id": 0, "id": 1, "name": 1, "email": 1, "phone": 1,
+            "deleted": 1, "archived": 1, "client_status": 1,
+            "credits": 1, "training_credits": 1, "boarding_credits": 1,
+        },
+    ).sort("name", 1).to_list(50000)
+    selected_client_ids = {c.get("id") for c in clients if c.get("id")}
+    # Orphan detection must consider archived clients too.  Otherwise hiding
+    # archived clients from the report would falsely label their valid lots as
+    # orphaned records.
+    all_client_ids = {
+        row.get("id")
+        for row in await db.clients.find({}, {"_id": 0, "id": 1}).to_list(50000)
+        if row.get("id")
+    }
+
+    lot_rows = await db.credit_lots.aggregate([
+        {"$group": {
+            "_id": {"client_id": "$client_id", "service_type": "$service_type"},
+            "remaining": {"$sum": {"$ifNull": ["$qty_remaining", 0]}},
+            "lot_count": {"$sum": 1},
+            "negative_count": {"$sum": {"$cond": [{"$lt": [{"$ifNull": ["$qty_remaining", 0]}, 0]}, 1, 0]}},
+            "overfilled_count": {"$sum": {"$cond": [{"$gt": [{"$ifNull": ["$qty_remaining", 0]}, {"$ifNull": ["$qty_total", 0]}]}, 1, 0]}},
+        }},
+    ]).to_list(100000)
+
+    lots_by_client: Dict[str, Dict[str, Any]] = {}
+    orphan_lots: List[Dict[str, Any]] = []
+    for row in lot_rows:
+        key = row.get("_id") or {}
+        cid = key.get("client_id") or ""
+        raw_pool = (key.get("service_type") or "").strip().lower()
+        pool = raw_pool if raw_pool in _CREDIT_RECON_POOLS else "__unknown__"
+        clean = {k: v for k, v in row.items() if k != "_id"}
+        if cid not in all_client_ids:
+            orphan_lots.append({"client_id": cid, "service_type": raw_pool or "unknown", **clean})
+            continue
+        if cid in selected_client_ids:
+            lots_by_client.setdefault(cid, {})[pool] = clean
+
+    adjustment_rows = await db.credit_adjustments.aggregate([
+        {"$group": {
+            "_id": "$client_id",
+            "daycare": {"$sum": {"$ifNull": ["$changes.daycare.delta", 0]}},
+            "training": {"$sum": {"$ifNull": ["$changes.training.delta", 0]}},
+            "boarding": {"$sum": {"$ifNull": ["$changes.boarding.delta", 0]}},
+            "count": {"$sum": 1},
+            "last_adjusted_at": {"$max": "$adjusted_at"},
+        }},
+    ]).to_list(100000)
+    adjustments_by_client: Dict[str, Dict[str, Any]] = {}
+    orphan_adjustments: List[Dict[str, Any]] = []
+    for row in adjustment_rows:
+        cid = row.get("_id") or ""
+        clean = {k: v for k, v in row.items() if k != "_id"}
+        if cid not in all_client_ids:
+            orphan_adjustments.append({"client_id": cid, **clean})
+        elif cid in selected_client_ids:
+            adjustments_by_client[cid] = clean
+
+    rows = [
+        _credit_recon_client_row(
+            client,
+            lots_by_client.get(client.get("id") or "", {}),
+            adjustments_by_client.get(client.get("id") or "", {}),
+        )
+        for client in clients
+    ]
+    rows.sort(key=lambda r: (0 if r["overall_status"] == "structural" else 1 if r["overall_status"] == "review" else 2, r["name"].lower()))
+
+    matched = sum(1 for r in rows if r["overall_status"] == "match")
+    review = sum(1 for r in rows if r["overall_status"] == "review")
+    structural = sum(1 for r in rows if r["overall_status"] == "structural")
+    return {
+        "generated_at": now_iso(),
+        "read_only": True,
+        "summary": {
+            "client_count": len(rows),
+            "matched_count": matched,
+            "review_count": review,
+            "structural_issue_count": structural,
+            "orphan_lot_group_count": len(orphan_lots),
+            "orphan_adjustment_group_count": len(orphan_adjustments),
+        },
+        "clients": rows,
+        "orphan_lots": orphan_lots[:200],
+        "orphan_adjustments": orphan_adjustments[:200],
+        "notes": [
+            "This report is read-only and never changes credit balances.",
+            "A variance can be an older imported/legacy balance that predates credit-lot tracking; review it before making any adjustment.",
+            "Tracked total equals remaining credit lots plus the net manual credit-adjustment history.",
+        ],
+    }
+
+
+@api.get("/admin/credits/reconciliation")
+async def credit_reconciliation_report(
+    include_archived: bool = Query(False),
+    _: dict = Depends(require_admin),
+):
+    return await _credit_reconciliation_report(include_archived=include_archived)
+
+
+@api.get("/admin/credits/reconciliation/{client_id}")
+async def credit_reconciliation_detail(client_id: str, _: dict = Depends(require_admin)):
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+    lots = await db.credit_lots.find(
+        {"client_id": client_id}, {"_id": 0}
+    ).sort("purchased_at", -1).to_list(2000)
+    adjustments = await db.credit_adjustments.find(
+        {"client_id": client_id}, {"_id": 0}
+    ).sort("adjusted_at", -1).to_list(1000)
+    booking_projection = {
+        "_id": 0, "id": 1, "date": 1, "end_date": 1, "service_type": 1,
+        "service_name": 1, "dog_name": 1, "status": 1, "credits_deducted": 1,
+        "credit_value_deducted": 1, "credit_lot_redemptions": 1,
+        "checked_out_at": 1, "created_at": 1,
+    }
+    q = {"client_id": client_id, "credits_deducted": {"$gt": 0}}
+    active = await db.bookings.find(q, booking_projection).sort("date", -1).to_list(500)
+    archived = await db.bookings_archive.find(q, booking_projection).sort("date", -1).to_list(500)
+    credit_bookings = sorted(
+        active + archived,
+        key=lambda row: str(row.get("checked_out_at") or row.get("date") or row.get("created_at") or ""),
+        reverse=True,
+    )[:500]
+    return {
+        "read_only": True,
+        "client": {
+            "id": client.get("id"), "name": client.get("name"),
+            "email": client.get("email"), "phone": client.get("phone"),
+            "credits": _credit_recon_num(client.get("credits")),
+            "training_credits": _credit_recon_num(client.get("training_credits")),
+            "boarding_credits": _credit_recon_num(client.get("boarding_credits")),
+        },
+        "lots": lots,
+        "adjustments": adjustments,
+        "credit_bookings": credit_bookings,
+    }
 
 
 @api.post("/credit-packs/seed-standard")

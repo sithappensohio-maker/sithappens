@@ -22,6 +22,7 @@ import Rewards from "./screens/Rewards";
 import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
 import Register from "./screens/Register";
+import CreditReconciliation from "./screens/CreditReconciliation";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import IntakeForms from "./screens/IntakeForms";
@@ -138,6 +139,7 @@ function AdminShell() {
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
     { id: "income", label: "Income", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "register", label: "Register", icon: "fa-cash-register", perm: "finance_reports" },
+    { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
     { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
@@ -316,6 +318,7 @@ function AdminShell() {
           {tab === "trophies" && featureOn("rewards") && <Trophies />}
           {tab === "income" && <Income />}
           {tab === "register" && <Register />}
+          {tab === "credit_reconciliation" && <CreditReconciliation />}
           {tab === "staff" && featureOn("staff_portal") && <Staff />}
           {tab === "incidents" && <Incidents />}
           {tab === "intake" && <IntakeForms />}
