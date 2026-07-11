@@ -12,6 +12,7 @@ import hashlib
 import logging
 import contextvars
 import traceback
+import time as perf_time
 from collections import deque
 from difflib import SequenceMatcher
 import bcrypt
@@ -351,6 +352,50 @@ _suppress_admin_booking_email: contextvars.ContextVar[bool] = contextvars.Contex
 )
 
 
+# Short-lived authenticated-user cache. The admin dashboard opens many API
+# requests in parallel; without this, every request rereads the exact same user
+# row from Mongo. The cache is intentionally tiny and short-lived so password
+# changes/deactivation still take effect quickly, while simultaneous requests
+# share one database lookup per backend worker.
+_AUTH_USER_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_AUTH_USER_INFLIGHT: Dict[str, asyncio.Task] = {}
+_AUTH_USER_CACHE_TTL_SECONDS = max(1.0, float(os.environ.get("AUTH_USER_CACHE_TTL_SECONDS", "5")))
+_AUTH_USER_CACHE_MAX = 512
+
+
+async def _load_auth_user(user_id: str) -> Optional[dict]:
+    now = asyncio.get_running_loop().time()
+    hit = _AUTH_USER_CACHE.get(user_id)
+    if hit and hit[0] > now:
+        return dict(hit[1])
+    task = _AUTH_USER_INFLIGHT.get(user_id)
+    if task is None:
+        task = asyncio.create_task(
+            db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+        )
+        _AUTH_USER_INFLIGHT[user_id] = task
+    try:
+        user = await task
+    finally:
+        if _AUTH_USER_INFLIGHT.get(user_id) is task:
+            _AUTH_USER_INFLIGHT.pop(user_id, None)
+    if user:
+        if len(_AUTH_USER_CACHE) >= _AUTH_USER_CACHE_MAX:
+            # Simple bounded eviction; cache entries are disposable.
+            _AUTH_USER_CACHE.pop(next(iter(_AUTH_USER_CACHE)), None)
+        _AUTH_USER_CACHE[user_id] = (now + _AUTH_USER_CACHE_TTL_SECONDS, dict(user))
+        return dict(user)
+    _AUTH_USER_CACHE.pop(user_id, None)
+    return None
+
+
+def _invalidate_auth_user_cache(user_id: Optional[str] = None) -> None:
+    if user_id:
+        _AUTH_USER_CACHE.pop(user_id, None)
+    else:
+        _AUTH_USER_CACHE.clear()
+
+
 async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
     token = None
     if creds and creds.scheme.lower() == "bearer":
@@ -365,7 +410,7 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        user = await _load_auth_user(payload["sub"])
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         # Safety: deactivated staff/client accounts must not keep working from
@@ -1062,6 +1107,7 @@ async def register(body: RegisterIn, request: Request):
         await notify_admin_new_client(user, {**client_doc, "_merged": merged})
     except Exception:
         pass
+    _invalidate_auth_user_cache(user.get("id"))
     token = create_access_token(user["id"], user["email"], user["role"], _token_version(user))
     return {"token": token, "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]}}
 
@@ -1109,18 +1155,32 @@ async def list_clients(_: dict = Depends(require_admin), include_deleted: bool =
     # normal admin lists hide them so the UI behaves like “delete” without data loss.
     q = {} if include_deleted else {"deleted_at": {"$exists": False}}
     items = await db.clients.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
-    # Pull all active dogs once (without photos) and group by owner — avoids N+1.
+    # One dog query serves both the client-card summaries and setup badges.
+    # The previous implementation loaded dogs twice, then performed one user
+    # lookup per client. That became noticeably slow as the customer list grew.
     dog_q = {} if include_deleted else {"deleted_at": {"$exists": False}}
-    dogs = await db.dogs.find(dog_q, {"_id": 0, "id": 1, "name": 1, "breed": 1, "owner_id": 1}).to_list(2000)
+    dogs_full = await db.dogs.find(
+        dog_q,
+        {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1,
+         "birthday": 1, "age_y": 1, "age_m": 1, "vaccines": 1, "vaccine_certs": 1},
+    ).to_list(5000)
     dogs_by_owner: Dict[str, List[Dict[str, Any]]] = {}
-    for d in dogs:
+    for d in dogs_full:
         dogs_by_owner.setdefault(d.get("owner_id", ""), []).append(
             {"id": d.get("id"), "name": d.get("name", ""), "breed": d.get("breed", "")}
         )
-    # attach portal email + dogs + last-login info
+
+    client_ids = [c.get("id") for c in items if c.get("id")]
+    portal_users = await db.users.find(
+        {"client_id": {"$in": client_ids}},
+        {"_id": 0, "client_id": 1, "email": 1, "last_login_at": 1, "login_count": 1},
+    ).to_list(max(1000, len(client_ids) + 10)) if client_ids else []
+    user_by_client = {u.get("client_id"): u for u in portal_users if u.get("client_id")}
+
+    # Attach portal email + dogs + last-login info without N+1 queries.
     for c in items:
-        u = await db.users.find_one({"client_id": c["id"]}, {"_id": 0, "email": 1, "last_login_at": 1, "login_count": 1})
-        c["portal_email"] = u["email"] if u else None
+        u = user_by_client.get(c.get("id"))
+        c["portal_email"] = u.get("email") if u else None
         c["last_login_at"] = u.get("last_login_at") if u else None
         c["login_count"] = int(u.get("login_count") or 0) if u else 0
         c["dogs"] = sorted(dogs_by_owner.get(c["id"], []), key=lambda x: (x.get("name") or "").lower())
@@ -1132,8 +1192,7 @@ async def list_clients(_: dict = Depends(require_admin), include_deleted: bool =
         settings = await get_settings()
         required_vax = settings.get("required_vaccines", ["rabies"]) or []
         current_waiver_version = int(settings.get("waiver_version") or 1)
-        # Batch loads
-        dogs_full = await db.dogs.find(dog_q, {"_id": 0, "id": 1, "owner_id": 1, "name": 1, "breed": 1, "birthday": 1, "age_y": 1, "age_m": 1, "vaccines": 1, "vaccine_certs": 1}).to_list(5000)
+        # Reuse the dog batch already loaded above.
         dogs_full_by_owner: Dict[str, List[Dict[str, Any]]] = {}
         pending_vac_dog_ids = set()
         for d in dogs_full:
@@ -1307,6 +1366,7 @@ async def delete_client(client_id: str, user: dict = Depends(require_admin)):
         {"client_id": client_id},
         {"$set": {"active": False, "deactivated_at": stamp, "deactivated_by": user.get("id")}, "$inc": {"token_version": 1}},
     )
+    _invalidate_auth_user_cache()
     return {"ok": True, "soft_deleted": True}
 
 @api.post("/clients/{client_id}/portal-account", response_model=UserOut)
@@ -1326,6 +1386,7 @@ async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict =
                 "$inc": {"token_version": 1},
             },
         )
+        _invalidate_auth_user_cache(existing["id"])
         u = await db.users.find_one({"id": existing["id"]}, {"_id": 0, "password_hash": 0})
         return u
     user = {
@@ -1786,6 +1847,7 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
             {"id": existing_user["id"]},
             {"$set": {"password_hash": new_hash, "must_change_password": False}, "$inc": {"token_version": 1}},
         )
+        _invalidate_auth_user_cache(existing_user["id"])
         await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
         new_ver = _token_version(existing_user) + 1
         access = create_access_token(existing_user["id"], existing_user["email"], existing_user.get("role", "admin"), new_ver)
@@ -1812,6 +1874,7 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
             {"id": existing_user["id"]},
             {"$set": {"password_hash": new_hash, "must_change_password": False}, "$inc": {"token_version": 1}},
         )
+        _invalidate_auth_user_cache(existing_user["id"])
         user_id = existing_user["id"]
         user_email = existing_user["email"]
         user_name = existing_user.get("name") or client.get("name", "")
@@ -8355,6 +8418,7 @@ async def change_password(body: ChangePwIn, request: Request, user: dict = Depen
             "$inc": {"token_version": 1},
         },
     )
+    _invalidate_auth_user_cache(user["id"])
     token = create_access_token(full["id"], full["email"], full.get("role", "client"), new_ver)
     return {"ok": True, "token": token, "must_change_password": False}
 
@@ -17609,7 +17673,10 @@ async def startup():
         (db.bookings, "dog_id", {}),
         (db.bookings, "client_id", {}),
         (db.bookings, "status", {}),
+        (db.users, "client_id", {}),
+        (db.clients, [("deleted_at", 1), ("name", 1)], {}),
         (db.dogs, "owner_id", {}),
+        (db.dogs, [("deleted_at", 1), ("owner_id", 1)], {}),
         (db.homework, "dog_id", {}),
         (db.homework, "client_id", {}),
         (db.homework, [("status", 1), ("created_at", -1)], {}),
@@ -19025,6 +19092,7 @@ async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depe
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
+    _invalidate_auth_user_cache(user_id)
     return {"ok": True}
 
 
@@ -19037,6 +19105,7 @@ async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
+    _invalidate_auth_user_cache(user_id)
     return {"ok": True}
 
 
@@ -27874,6 +27943,28 @@ def _audit_record_id_from_path(path: str) -> Optional[str]:
     return None
 
 
+_BACKGROUND_DB_TASKS: set = set()
+
+
+def _spawn_background_db_write(coro) -> None:
+    """Run best-effort audit persistence after the response is ready.
+
+    Audit rows remain enabled, but normal form saves no longer wait for a
+    separate Mongo round trip before the browser receives success.
+    """
+    task = asyncio.create_task(coro)
+    _BACKGROUND_DB_TASKS.add(task)
+
+    def _finished(done: asyncio.Task) -> None:
+        _BACKGROUND_DB_TASKS.discard(done)
+        try:
+            done.result()
+        except Exception:
+            logger.exception("background audit write failed")
+
+    task.add_done_callback(_finished)
+
+
 @app.middleware("http")
 async def audit_log_middleware(request, call_next):
     """Persist a row for every authenticated admin/employee write to /api/*.
@@ -27909,7 +28000,7 @@ async def audit_log_middleware(request, call_next):
             return response
         # Capture body only for non-GET (already known) — re-reading requires stash
         body = getattr(request.state, "_audit_body", None)
-        await db.audit_log.insert_one({
+        _spawn_background_db_write(db.audit_log.insert_one({
             "id": str(uuid.uuid4()),
             "ts": now_iso(),
             "user_id": user_info["id"],
@@ -27923,7 +28014,7 @@ async def audit_log_middleware(request, call_next):
             "record_id": _audit_record_id_from_path(path),
             "status": response.status_code,
             "payload": _redact_payload(body) if body else None,
-        })
+        }))
     except Exception:
         # Audit MUST NOT break user requests.
         logger.exception("audit middleware failure on %s %s", method, path)
@@ -30261,6 +30352,26 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
 @api.get("/admin/duplicates/report")
 async def admin_duplicates_report(include_archived: bool = False, _: dict = Depends(require_admin)):
     return await _duplicate_finder_report(include_archived=include_archived)
+
+
+@app.middleware("http")
+async def performance_timing_middleware(request: Request, call_next):
+    """Expose backend timing and log genuinely slow API routes.
+
+    This does not touch stored data. It gives the live server enough
+    visibility to identify any remaining slow endpoint after deployment.
+    """
+    started = perf_time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (perf_time.perf_counter() - started) * 1000.0
+    response.headers.setdefault("Server-Timing", f'app;dur={elapsed_ms:.1f}')
+    response.headers.setdefault("X-Response-Time-Ms", f"{elapsed_ms:.1f}")
+    if request.url.path.startswith("/api/") and elapsed_ms >= 1000.0:
+        logger.warning(
+            "SLOW API %.1fms %s %s status=%s",
+            elapsed_ms, request.method, request.url.path, response.status_code,
+        )
+    return response
 
 
 @app.middleware("http")

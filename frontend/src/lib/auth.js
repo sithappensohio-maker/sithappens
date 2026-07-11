@@ -13,13 +13,15 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem("sh_token");
     if (!token) { setUser(false); setPermissions(null); return; }
     try {
-      const { data } = await api.get("/auth/me");
-      setUser(data);
-      // Sprint 110ex — Phase 7: fetch fine-grained permission booleans alongside /me
-      try {
-        const { data: p } = await api.get("/me/permissions");
-        setPermissions(p.permissions || null);
-      } catch { setPermissions(null); }
+      // These endpoints are independent. Starting them together removes one
+      // full network round trip from every app launch and lets the backend's
+      // authenticated-user single-flight cache serve both with one DB read.
+      const [meRes, permRes] = await Promise.all([
+        api.get("/auth/me"),
+        api.get("/me/permissions").catch(() => null),
+      ]);
+      setUser(meRes.data);
+      setPermissions(permRes?.data?.permissions || null);
     } catch {
       localStorage.removeItem("sh_token");
       setUser(false);

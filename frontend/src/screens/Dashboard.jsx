@@ -78,10 +78,16 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         api.get("/services").catch(()=>({data:[]})),
         api.get("/admin/vaccine-cert-uploads").catch(()=>({data:[]})),
         api.get("/admin/homework/pending-reviews").catch(()=>({data:[]})),
-        api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}})),
+        (_br?.feature_visibility?.rewards !== false)
+          ? api.get("/trophies/leaderboard").catch(()=>({data:{top_dogs:[],top_clients:[]}}))
+          : Promise.resolve({data:{top_dogs:[],top_clients:[]}}),
         api.get("/admin/quote-requests?status=open").catch(()=>({data:[]})),
-        api.get("/admin/today-pnl").catch(()=>({data:null})),
-        api.get("/admin/register/day").catch(()=>({data:null})),
+        widgetOn("pnl")
+          ? api.get("/admin/today-pnl").catch(()=>({data:null}))
+          : Promise.resolve({data:null}),
+        widgetOn("register")
+          ? api.get("/admin/register/day").catch(()=>({data:null}))
+          : Promise.resolve({data:null}),
       ]);
       setStats(s.data);
       if (Array.isArray(st.data?.mood_tags) && st.data.mood_tags.length) setMoodTags(st.data.mood_tags);
@@ -131,7 +137,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   useEffect(() => { load(); }, []);
   // Sprint 110ao — Live refresh every 30 s. Auto-pauses while a modal is
   // open (CheckoutModal / ReportCardModal acquire the edit lock).
-  useLiveRefresh(load, { intervalMs: 30_000 });
+  // A full dashboard refresh is intentionally limited to once per minute.
+  // It fans out to several independent summaries; the previous 30-second
+  // refresh plus a second P&L timer doubled that work on small self-hosted PCs.
+  useLiveRefresh(load, { intervalMs: 60_000 });
 
   const captureGeo = () => new Promise((resolve) => {
     if (!navigator.geolocation) return resolve({});
@@ -179,17 +188,6 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
   };
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
-
-  // Auto-refresh today's P&L every 30s so check-ins / clock-ins reflect live
-  useEffect(() => {
-    const t = setInterval(async () => {
-      try {
-        const r = await api.get("/admin/today-pnl");
-        setTodayPnl(r.data);
-      } catch { /* silent */ }
-    }, 30000);
-    return () => clearInterval(t);
-  }, []);
 
   const refreshPnl = async () => {
     try {
