@@ -8,6 +8,7 @@ import Lightbox from "../components/Lightbox";
 import { todayISO, localISOFromDate, parseLocalISO } from "../lib/date";
 import AccountsReceivableTab from "./AccountsReceivable";
 import TakePaymentModal from "../components/TakePaymentModal";
+import FinancialCorrectionModal from "../components/FinancialCorrectionModal";
 
 function fmt(n) { return `$${(Number(n) || 0).toFixed(2)}`; }
 function cashAmount(r) { return Number(r?.cash_revenue ?? r?.amount_paid ?? (r?.payment_status === "paid" ? r?.actual_price : 0)) || 0; }
@@ -47,6 +48,7 @@ export default function Income() {
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState(null);
   const [editErr, setEditErr] = useState(""); // ephemeral toast-style error for inline edits
+  const [correctionRow, setCorrectionRow] = useState(null);
   // Sprint 110eg-3 — Monthly P&L auto-email status (cron fires on the 1st)
   const [plAutoStatus, setPlAutoStatus] = useState(null);
 
@@ -642,8 +644,22 @@ export default function Income() {
                       {r.service_name || r.service_type || "—"} · <span className="capitalize">{r.payment_method || "—"}</span>
                     </p>
                   </div>
-                  {ps && <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${ps.color}`}>{ps.label}</span>}
-                  <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(cashAmount(r))}</span>
+                  <div className="shrink-0 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      {ps && <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${ps.color}`}>{ps.label}</span>}
+                      <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(cashAmount(r))}</span>
+                    </div>
+                    {Number(r.financial_refund_total || 0) > 0 && (
+                      <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                        refunded {fmt(r.financial_refund_total)}
+                      </p>
+                    )}
+                    {r.financial_locked && (
+                      <button onClick={()=>setCorrectionRow(r)} className="text-shOrange hover:text-white mt-1" title="Adjust locked financial record">
+                        <i className="fas fa-shield-halved mr-1"/><span className="text-[11px] uppercase tracking-widest font-black">Adjust</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             }}
@@ -679,8 +695,9 @@ export default function Income() {
                       <p className="text-[13px] text-gray-500">{r.client_name}</p>
                     </td>
                     <td className="px-3 py-2">
-                      <select value={r.service_id || ""} onChange={(e)=>{ if (e.target.value) inlineUpdate(r, { service_id: e.target.value }); }}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 max-w-[150px]">
+                      <select value={r.service_id || ""} disabled={!!r.financial_locked} onChange={(e)=>{ if (e.target.value) inlineUpdate(r, { service_id: e.target.value }); }}
+                              title={r.financial_locked ? "Locked after checkout" : "Change service"}
+                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 max-w-[150px] disabled:opacity-60 disabled:cursor-not-allowed">
                         <option value="" disabled>— select service —</option>
                         {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
@@ -689,37 +706,42 @@ export default function Income() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <input type="number" step="0.01" defaultValue={r.actual_price || 0}
+                      <input type="number" step="0.01" defaultValue={r.actual_price || 0} disabled={!!r.financial_locked}
+                             title={r.financial_locked ? "Locked after checkout — use Adjust" : "Edit price"}
                              onBlur={(e)=>{
                                const v = parseFloat(e.target.value) || 0;
                                if (v !== (r.actual_price || 0)) inlineUpdate(r, { actual_price: v });
                              }}
                              data-testid={`txn-price-${r.id}`}
-                             className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[15px]" />
+                             className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[15px] disabled:opacity-60 disabled:cursor-not-allowed" />
                       <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
-                        cash {fmt(cashAmount(r))}{balanceAmount(r) > 0 ? ` · due ${fmt(balanceAmount(r))}` : ""}
+                        cash {fmt(cashAmount(r))}{balanceAmount(r) > 0 ? ` · due ${fmt(balanceAmount(r))}` : ""}{Number(r.financial_refund_total || 0) > 0 ? ` · refunded ${fmt(r.financial_refund_total)}` : ""}
                       </p>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shGreen/15 text-shGreen":r.status==="approved"?"bg-shBlue/15 text-shBlue":"bg-shOrange/15 text-shOrange"}`}>{r.status}</span>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <select value={r.payment_status || ""} onChange={(e)=>inlineUpdate(r, { payment_status: e.target.value })}
+                      <select value={r.payment_status || ""} disabled={!!r.financial_locked} onChange={(e)=>inlineUpdate(r, { payment_status: e.target.value })}
                               data-testid={`txn-payment-${r.id}`}
-                              className={`text-[13px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-bgBase text-gray-400"} border border-bgHover`}>
+                              className={`text-[13px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-bgBase text-gray-400"} border border-bgHover disabled:opacity-60 disabled:cursor-not-allowed`}>
                         <option value="">— set —</option>
                         {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <select value={r.payment_method || ""} onChange={(e)=>inlineUpdate(r, { payment_method: e.target.value })}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300">
+                      <select value={r.payment_method || ""} disabled={!!r.financial_locked} onChange={(e)=>inlineUpdate(r, { payment_method: e.target.value })}
+                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 disabled:opacity-60 disabled:cursor-not-allowed">
                         <option value="">—</option>
                         {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-gray-400 text-[14px]"/> : (
+                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-gray-400 text-[14px]"/> : r.financial_locked ? (
+                        <button onClick={()=>setCorrectionRow(r)} className="text-shOrange hover:text-white px-2" title="Adjust locked financial record">
+                          <i className="fas fa-shield-halved mr-1"/><span className="text-[11px] uppercase tracking-widest font-black">Adjust</span>
+                        </button>
+                      ) : (
                         <button onClick={()=>removeTxn(r)} className="text-gray-500 hover:text-red-400 px-2" title="Remove transaction">
                           <i className="fas fa-trash text-[14px]"/>
                         </button>
@@ -749,6 +771,13 @@ export default function Income() {
       {takePaymentOpen && (
         <TakePaymentModal onClose={()=>setTakePaymentOpen(false)}
                           onSuccess={()=>{ setTakePaymentOpen(false); refreshAfterRetailChange(); }} />
+      )}
+      {correctionRow && (
+        <FinancialCorrectionModal
+          booking={correctionRow}
+          onClose={()=>setCorrectionRow(null)}
+          onSaved={()=>{ setCorrectionRow(null); load(); refreshAfterRetailChange(); }}
+        />
       )}
       </>
       )}

@@ -587,6 +587,18 @@ class BookingOut(BaseModel):
     amount_paid: Optional[float] = None
     balance_due: Optional[float] = None
     cash_revenue: Optional[float] = None
+    # Financial records become immutable after checkout. Corrections are
+    # append-only adjustments/refunds rather than silent field edits.
+    financial_locked: Optional[bool] = False
+    financial_locked_at: Optional[str] = None
+    financial_locked_by: Optional[str] = None
+    financial_revision: Optional[int] = 0
+    financial_adjustment_total: Optional[float] = 0
+    financial_refund_total: Optional[float] = 0
+    financial_refund_status: Optional[str] = None
+    financial_last_refund_at: Optional[str] = None
+    financial_reopened_at: Optional[str] = None
+    financial_reopened_reason: Optional[str] = None
     # Sprint 17 — credit lot tracking. credit_value is accrued at approval,
     # promoted to actual_price at check-out.
     credit_value: Optional[float] = None
@@ -721,6 +733,163 @@ class BookingAddonsIn(BaseModel):
     or admin tacks one on before check-out). Each id is validated against
     `is_addon` + `addon_for` server-side."""
     addon_service_ids: List[str] = Field(min_length=1, max_length=20)
+
+
+class BookingFinancialAdjustmentIn(BaseModel):
+    kind: Literal["charge", "discount", "writeoff"]
+    amount: float = Field(gt=0, le=100000)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class BookingRefundIn(BaseModel):
+    amount: float = Field(gt=0, le=100000)
+    payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class BookingReopenCheckoutIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
+FINANCIAL_MONEY_FIELDS = {
+    "service_id", "service_name", "service_type", "status", "date", "end_date",
+    "dog_id", "client_id", "add_ons", "actual_price", "payment_status",
+    "payment_method", "amount_paid", "balance_due", "cash_revenue",
+    "tax_amount", "tax_rate_pct", "taxable_cash_amount", "credit_value",
+    "credits_deducted", "credit_lot_ids", "credit_lot_redemptions",
+    "multi_dog_discount", "extra_nights", "additional_cash_charge",
+    "cancellation_charged", "cancellation_fee", "cancellation_fee_pct",
+}
+
+
+def _booking_is_financially_locked(booking: Optional[dict]) -> bool:
+    if not booking:
+        return False
+    if booking.get("financial_locked") is True:
+        return True
+    # Legacy completed rows predate the explicit lock flag. Treat any checkout
+    # or completed money-bearing row as locked so old records are protected too.
+    return bool(
+        booking.get("checked_out_at")
+        or booking.get("payment_status") in {"paid", "paid_partial", "refunded", "comped"}
+        or float(booking.get("amount_paid") or 0) > 0
+        or float(booking.get("cash_revenue") or 0) > 0
+        or float(booking.get("credits_deducted") or 0) > 0
+        or float(booking.get("credit_value") or 0) > 0
+        or (booking.get("cancellation_charged") and float(booking.get("cancellation_fee") or 0) > 0)
+        or (booking.get("status") == "completed" and booking.get("actual_price") is not None)
+    )
+
+
+def _assert_booking_financial_edit_allowed(booking: dict, fields) -> None:
+    touched = set(fields or []) & FINANCIAL_MONEY_FIELDS
+    if touched and _booking_is_financially_locked(booking):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This booking's financial record is locked after checkout. "
+                "Use a documented adjustment, refund, or safe reopen action instead."
+            ),
+        )
+
+
+async def _load_booking_for_financial_correction(booking_id: str):
+    """Return (booking, collection, archived). Financial reports include both
+    hot and archived bookings, so a legitimate old refund must update the same
+    record the reports read instead of failing with a misleading 404."""
+    booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if booking:
+        return booking, db.bookings, False
+    booking = await db.bookings_archive.find_one({"id": booking_id}, {"_id": 0})
+    if booking:
+        return booking, db.bookings_archive, True
+    return None, None, False
+
+
+async def _acquire_booking_financial_correction_guard(booking_id: str) -> tuple:
+    """Serialize corrections per booking and per client, and interlock them
+    with the checkout lock used by the money-integrity pass."""
+    keys = [f"financial-booking:{booking_id}"]
+    pre, _collection, _archived = await _load_booking_for_financial_correction(booking_id)
+    client_id = (pre or {}).get("client_id")
+    if client_id:
+        keys.append(f"financial-client:{client_id}")
+    try:
+        owner = await _acquire_capacity_locks(keys)
+    except HTTPException as exc:
+        raise HTTPException(status_code=409, detail="Another financial action is already being saved. Wait a moment and refresh.") from exc
+
+    operation_id = str(uuid.uuid4())
+    if not client_id:
+        return owner, keys, None, operation_id
+    now = datetime.now(timezone.utc)
+    stale_before = (now - timedelta(minutes=15)).isoformat()
+    client = await db.clients.find_one_and_update(
+        {
+            "id": client_id,
+            "$and": [
+                {"$or": [
+                    {"financial_checkout_in_progress": {"$exists": False}},
+                    {"financial_checkout_in_progress": False},
+                    {"financial_checkout_started_at": {"$lt": stale_before}},
+                ]},
+                {"$or": [
+                    {"financial_correction_in_progress": {"$exists": False}},
+                    {"financial_correction_in_progress": False},
+                    {"financial_correction_started_at": {"$lt": stale_before}},
+                ]},
+            ],
+        },
+        {"$set": {
+            "financial_correction_in_progress": True,
+            "financial_correction_operation_id": operation_id,
+            "financial_correction_started_at": now.isoformat(),
+        }},
+        projection={"_id": 0, "id": 1},
+        return_document=ReturnDocument.BEFORE,
+    )
+    if not client:
+        await _release_capacity_locks(owner, keys)
+        raise HTTPException(status_code=409, detail="Another checkout or financial correction is already in progress for this client.")
+    return owner, keys, client_id, operation_id
+
+
+async def _release_booking_financial_correction_guard(owner: str, keys: List[str], client_id: Optional[str], operation_id: str) -> None:
+    try:
+        if client_id:
+            await db.clients.update_one(
+                {"id": client_id, "financial_correction_operation_id": operation_id},
+                {"$unset": {
+                    "financial_correction_in_progress": "",
+                    "financial_correction_operation_id": "",
+                    "financial_correction_started_at": "",
+                }},
+            )
+    finally:
+        await _release_capacity_locks(owner, keys)
+
+
+async def _record_booking_financial_event(
+    booking: dict, *, kind: str, amount: float, reason: str, user: dict,
+    before: dict, after: dict, payment_method: str = "",
+) -> dict:
+    row = {
+        "id": str(uuid.uuid4()),
+        "booking_id": booking.get("id"),
+        "client_id": booking.get("client_id"),
+        "dog_id": booking.get("dog_id"),
+        "kind": kind,
+        "amount": round(float(amount), 2),
+        "reason": reason.strip(),
+        "payment_method": _normalize_payment_method(payment_method, store=True) if payment_method else "",
+        "before": before,
+        "after": after,
+        "created_at": now_iso(),
+        "created_by": user.get("id"),
+        "created_by_name": user.get("name") or user.get("email") or "admin",
+    }
+    await db.booking_financial_events.insert_one(row.copy())
+    return row
 
 
 # -------- Auth --------
@@ -2632,6 +2801,7 @@ async def _assert_capacity_available(
 
 async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -> dict:
     """Apply a reschedule/assignment only after race-safe capacity validation."""
+    _assert_booking_financial_edit_allowed(booking, update.keys())
     merged = dict(booking)
     merged.update(update)
     body = BookingIn(
@@ -3680,6 +3850,7 @@ async def approve_booking(booking_id: str, _: dict = Depends(require_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    _assert_booking_financial_edit_allowed(booking, {"status"})
     if booking["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Booking is {booking['status']}")
     # Credits are deducted at CHECKOUT, not approval. Approval just confirms
@@ -3833,12 +4004,24 @@ async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    _assert_booking_financial_edit_allowed(booking, {"status"})
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "rejected"}})
     booking["status"] = "rejected"
     return booking
 
 @api.delete("/bookings/{booking_id}")
 async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = Depends(get_current_user)):
+    # Serialize every cancellation with checkout/refund/adjustment activity.
+    # Otherwise a cancellation and checkout could both pass their first read
+    # and then update money/credits in conflicting directions.
+    owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
+    try:
+        return await _cancel_booking_impl(booking_id, forfeit, user)
+    finally:
+        await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
+
+
+async def _cancel_booking_impl(booking_id: str, forfeit: bool, user: dict):
     """Cancel a booking.
 
     Default behavior (`forfeit=False`): credits previously deducted are refunded
@@ -3856,6 +4039,11 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
     # Admins + employees can cancel any booking; clients only their own.
     if user.get("role") == "client" and booking["client_id"] != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not allowed")
+    if _booking_is_financially_locked(booking):
+        raise HTTPException(
+            status_code=409,
+            detail="This booking has already been financially closed. Use a refund or adjustment instead of cancelling it.",
+        )
     # Clients cannot trigger a charge — only staff can do that.
     if forfeit and user.get("role") == "client":
         raise HTTPException(status_code=403, detail="Only staff can issue a cancellation charge")
@@ -3916,7 +4104,66 @@ async def cancel_booking(booking_id: str, forfeit: bool = False, user: dict = De
                 balance_field = _credit_balance_field(credit_pool) or "credits"
                 await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {balance_field: refund}})
                 await _restore_credit_lots(booking.get("credit_lot_redemptions") or booking.get("credit_lot_ids") or [], refund)
-    await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
+    # A non-zero cancellation charge becomes a locked, unpaid invoice rather
+    # than a mutable note. It also lands on the client's tab and append-only
+    # ledger so the booking, AR balance, and audit history cannot drift apart.
+    if forfeit and float(update_payload.get("cancellation_fee") or 0) > 0:
+        fee = round(float(update_payload["cancellation_fee"]), 2)
+        update_payload.update({
+            "actual_price": fee,
+            "payment_status": "unpaid",
+            "amount_paid": 0.0,
+            "balance_due": fee,
+            "cash_revenue": 0.0,
+            "financial_locked": True,
+            "financial_locked_at": now_iso(),
+            "financial_locked_by": user.get("id"),
+            "financial_revision": int(booking.get("financial_revision") or 0) + 1,
+        })
+        ledger_id = None
+        event_id = None
+        balance_applied = False
+        try:
+            if booking.get("client_id"):
+                await _adjust_client_balance(booking["client_id"], fee)
+                balance_applied = True
+                ledger = await _write_ledger_row(
+                    client_id=booking["client_id"], type_="charge", amount=fee,
+                    notes=f"Cancellation charge · {update_payload.get('cancellation_fee_pct', 0):g}% policy",
+                    booking_id=booking_id, created_by=user.get("id") or "admin",
+                )
+                ledger_id = ledger.get("id")
+            result = await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
+            if result.matched_count != 1:
+                raise RuntimeError("Booking disappeared while recording cancellation charge")
+            event = await _record_booking_financial_event(
+                booking, kind="cancellation_charge", amount=fee,
+                reason=f"Cancellation policy charge ({update_payload.get('cancellation_fee_pct', 0):g}%)",
+                user=user,
+                before={
+                    "actual_price": booking.get("actual_price"),
+                    "amount_paid": booking.get("amount_paid"),
+                    "balance_due": booking.get("balance_due"),
+                    "payment_status": booking.get("payment_status"),
+                },
+                after={
+                    "actual_price": fee, "amount_paid": 0.0,
+                    "balance_due": fee, "payment_status": "unpaid",
+                },
+            )
+            event_id = event.get("id")
+        except Exception as exc:
+            await db.bookings.replace_one({"id": booking_id}, booking, upsert=False)
+            if balance_applied and booking.get("client_id"):
+                await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -fee}})
+            if ledger_id:
+                await db.payment_ledger.delete_one({"id": ledger_id})
+            if event_id:
+                await db.booking_financial_events.delete_one({"id": event_id})
+            logger.exception("Charged cancellation rolled back for booking %s", booking_id)
+            raise HTTPException(status_code=500, detail="The cancellation charge could not be saved safely. No financial changes were kept.") from exc
+    else:
+        await db.bookings.update_one({"id": booking_id}, {"$set": update_payload})
     return {"ok": True, "forfeit": forfeit, "cancellation_fee": update_payload.get("cancellation_fee", 0)}
 
 @api.get("/bookings/availability")
@@ -4133,6 +4380,7 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
     # Admins + employees can fetch any booking; clients only their own.
     if user.get("role") == "client" and b.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
+    b["financial_locked"] = _booking_is_financially_locked(b)
     return b
 
 
@@ -4743,6 +4991,8 @@ async def check_in(
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
+    if _booking_is_financially_locked(booking):
+        raise HTTPException(status_code=409, detail="This booking is already financially closed and cannot be checked in again.")
     body = body or CheckInIn()
     ts = now_iso()
     update = {
@@ -4812,8 +5062,8 @@ async def remove_booking_addon(
         raise HTTPException(status_code=404, detail="Booking not found")
     if user.get("role") != "admin" and booking.get("client_id") != user.get("client_id"):
         raise HTTPException(status_code=403, detail="Not your booking")
-    if booking.get("checked_out_at"):
-        raise HTTPException(status_code=400, detail="Booking already checked out — add-ons are locked in.")
+    if _booking_is_financially_locked(booking):
+        raise HTTPException(status_code=409, detail="Booking already financially closed — add-ons are locked in.")
     addons = list(booking.get("add_ons") or [])
     if addon_index < 0 or addon_index >= len(addons):
         raise HTTPException(status_code=404, detail="Add-on not found at that index")
@@ -5855,10 +6105,17 @@ async def check_out(
         locked_client = await db.clients.find_one_and_update(
             {
                 "id": client_id,
-                "$or": [
-                    {"financial_checkout_in_progress": {"$exists": False}},
-                    {"financial_checkout_in_progress": False},
-                    {"financial_checkout_started_at": {"$lt": stale_lock_before}},
+                "$and": [
+                    {"$or": [
+                        {"financial_checkout_in_progress": {"$exists": False}},
+                        {"financial_checkout_in_progress": False},
+                        {"financial_checkout_started_at": {"$lt": stale_lock_before}},
+                    ]},
+                    {"$or": [
+                        {"financial_correction_in_progress": {"$exists": False}},
+                        {"financial_correction_in_progress": False},
+                        {"financial_correction_started_at": {"$lt": stale_lock_before}},
+                    ]},
                 ],
             },
             {"$set": {
@@ -5874,7 +6131,7 @@ async def check_out(
             current_client = await db.clients.find_one({"id": client_id}, {"_id": 0, "id": 1})
             if not current_client:
                 raise HTTPException(status_code=409, detail="The client record linked to this booking no longer exists.")
-            raise HTTPException(status_code=409, detail="Another checkout for this client is already in progress. Wait a moment and refresh.")
+            raise HTTPException(status_code=409, detail="Another checkout or financial correction for this client is already in progress. Wait a moment and refresh.")
         client_lock_acquired = True
 
     snapshot: Dict[str, Any] = {"client": None, "lots": []}
@@ -5956,6 +6213,10 @@ async def _check_out_locked(
         "checked_out_lat": body.lat,
         "checked_out_lng": body.lng,
         "checked_out_accuracy_m": body.accuracy_m,
+        "financial_locked": True,
+        "financial_locked_at": ts,
+        "financial_locked_by": user.get("id"),
+        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
     }
 
     had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
@@ -8149,6 +8410,253 @@ async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# -------- Financially locked booking corrections (Admin) --------
+
+@api.post("/bookings/{booking_id}/financial-adjustment", response_model=BookingOut)
+async def booking_financial_adjustment(
+    booking_id: str, body: BookingFinancialAdjustmentIn, user: dict = Depends(require_admin),
+):
+    owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
+    try:
+        return await _booking_financial_adjustment_locked(booking_id, body, user)
+    finally:
+        await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
+
+
+async def _booking_financial_adjustment_locked(
+    booking_id: str, body: BookingFinancialAdjustmentIn, user: dict,
+):
+    booking, booking_collection, _archived = await _load_booking_for_financial_correction(booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not _booking_is_financially_locked(booking):
+        raise HTTPException(status_code=409, detail="This booking is not financially locked; edit it before checkout instead.")
+
+    amount = round(float(body.amount), 2)
+    current_total = round(float(booking.get("actual_price") or 0), 2)
+    current_paid = round(float(booking.get("amount_paid") or 0), 2)
+    current_due = round(float(booking.get("balance_due") or _booking_balance_due(booking)), 2)
+    before = {"actual_price": current_total, "amount_paid": current_paid, "balance_due": current_due, "payment_status": booking.get("payment_status")}
+
+    if body.kind == "charge":
+        new_total = round(current_total + amount, 2)
+        new_due = round(current_due + amount, 2)
+        new_status = "paid_partial" if current_paid > 0 else "unpaid"
+        balance_delta = amount
+        ledger_amount = amount
+        ledger_note = f"Post-checkout charge adjustment · {body.reason.strip()}"
+    else:
+        if current_due <= 0:
+            raise HTTPException(status_code=409, detail="There is no unpaid balance to reduce. Use Refund when money has already been collected.")
+        applied = min(amount, current_due)
+        new_total = round(max(current_paid, current_total - applied), 2)
+        new_due = round(max(0.0, current_due - applied), 2)
+        new_status = (
+            "paid" if new_due <= 0 and current_paid > 0
+            else "comped" if new_total <= 0
+            else "paid_partial" if current_paid > 0
+            else "unpaid"
+        )
+        amount = applied
+        balance_delta = -applied
+        ledger_amount = -applied
+        ledger_note = f"Post-checkout {body.kind} · {body.reason.strip()}"
+
+    update = {
+        "actual_price": new_total,
+        "balance_due": new_due,
+        "payment_status": new_status,
+        "cash_revenue": _cash_revenue({**booking, "actual_price": new_total, "balance_due": new_due, "payment_status": new_status}),
+        "financial_adjustment_total": round(float(booking.get("financial_adjustment_total") or 0) + (amount if body.kind == "charge" else -amount), 2),
+        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
+        "financial_locked": True,
+        "financial_locked_at": booking.get("financial_locked_at") or now_iso(),
+    }
+    balance_applied = False
+    ledger_ids: List[str] = []
+    event_id = None
+    try:
+        if booking.get("client_id") and abs(balance_delta) > 0.005:
+            await _adjust_client_balance(booking["client_id"], balance_delta)
+            balance_applied = True
+            ledger_row = await _write_ledger_row(
+                client_id=booking["client_id"], type_="adjustment" if body.kind != "charge" else "charge",
+                amount=ledger_amount, notes=ledger_note, booking_id=booking_id,
+                created_by=user.get("id") or "admin",
+            )
+            ledger_ids.append(ledger_row["id"])
+        result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
+        if result.matched_count != 1:
+            raise RuntimeError("Booking disappeared during the adjustment")
+        after = {"actual_price": new_total, "amount_paid": current_paid, "balance_due": new_due, "payment_status": new_status}
+        event = await _record_booking_financial_event(booking, kind=body.kind, amount=amount, reason=body.reason, user=user, before=before, after=after)
+        event_id = event.get("id")
+    except Exception as exc:
+        await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
+        if booking.get("client_id") and balance_applied:
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": -float(balance_delta)}})
+        if ledger_ids:
+            await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
+        if event_id:
+            await db.booking_financial_events.delete_one({"id": event_id})
+        logger.exception("Financial adjustment rolled back for booking %s", booking_id)
+        raise HTTPException(status_code=500, detail="The adjustment could not be saved safely. No financial changes were kept.") from exc
+    booking.update(update)
+    return booking
+
+
+@api.post("/bookings/{booking_id}/refund", response_model=BookingOut)
+async def booking_refund(booking_id: str, body: BookingRefundIn, user: dict = Depends(require_admin)):
+    owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
+    try:
+        return await _booking_refund_locked(booking_id, body, user)
+    finally:
+        await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
+
+
+async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: dict):
+    booking, booking_collection, _archived = await _load_booking_for_financial_correction(booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if not _booking_is_financially_locked(booking):
+        raise HTTPException(status_code=409, detail="This booking has not been checked out.")
+    originally_paid = round(float(booking.get("amount_paid") or booking.get("cash_revenue") or 0), 2)
+    already_refunded = round(float(booking.get("financial_refund_total") or 0), 2)
+    refundable = round(max(0.0, originally_paid - already_refunded), 2)
+    amount = round(float(body.amount), 2)
+    if amount > refundable + 0.005:
+        raise HTTPException(status_code=409, detail=f"Refund cannot exceed the remaining refundable cash (${refundable:.2f}).")
+    await _require_register_day_open(business_today().isoformat())
+
+    # Preserve the original invoice and original payment exactly as checked out.
+    # The refund is a new negative cash event on today's books. Rewriting the
+    # old booking would move historical revenue and then the refund row would
+    # subtract it again, producing a double-counted loss.
+    old_total = round(float(booking.get("actual_price") or 0), 2)
+    old_due = round(float(booking.get("balance_due") or 0), 2)
+    old_tax = round(float(booking.get("tax_amount") or 0), 2)
+    tax_refund = round(old_tax * min(1.0, amount / originally_paid), 2) if originally_paid > 0 else 0.0
+    new_refund_total = round(already_refunded + amount, 2)
+    update = {
+        "financial_refund_total": new_refund_total,
+        "financial_refund_status": "full" if new_refund_total >= originally_paid - 0.005 else "partial",
+        "financial_last_refund_at": now_iso(),
+        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
+        "financial_locked": True,
+    }
+    refund_row = {
+        "id": str(uuid.uuid4()), "date": business_today().isoformat(),
+        "description": f"Booking refund · {booking.get('dog_name') or ''} · {body.reason.strip()}",
+        "amount": -amount, "tax_amount": -tax_refund, "category": "Refund", "notes": body.reason.strip(),
+        "payment_method": _normalize_payment_method(body.payment_method, store=True),
+        "client_id": booking.get("client_id"), "client_name": booking.get("client_name"),
+        "booking_id": booking_id, "source_kind": "refund", "created_at": now_iso(),
+        "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
+    }
+    ledger_ids: List[str] = []
+    event_id = None
+    try:
+        await db.retail_sales.insert_one(refund_row.copy())
+        if booking.get("client_id"):
+            # The invoice reduction and cash return are separate append-only ledger
+            # entries with a net-zero client-tab effect.
+            row1 = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-amount, notes=f"Refund invoice adjustment · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+            row2 = await _write_ledger_row(client_id=booking["client_id"], type_="refund", amount=amount, method=body.payment_method, notes=f"Cash returned · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+            ledger_ids.extend([row1["id"], row2["id"]])
+        result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
+        if result.matched_count != 1:
+            raise RuntimeError("Booking disappeared during the refund")
+        before = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": already_refunded}
+        after = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": new_refund_total}
+        event = await _record_booking_financial_event(booking, kind="refund", amount=amount, reason=body.reason, user=user, before=before, after=after, payment_method=body.payment_method)
+        event_id = event.get("id")
+    except Exception as exc:
+        await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
+        await db.retail_sales.delete_one({"id": refund_row["id"]})
+        if ledger_ids:
+            await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
+        if event_id:
+            await db.booking_financial_events.delete_one({"id": event_id})
+        logger.exception("Booking refund rolled back for %s", booking_id)
+        raise HTTPException(status_code=500, detail="The refund could not be saved safely. No refund was recorded.") from exc
+    booking.update(update)
+    return booking
+
+
+@api.post("/bookings/{booking_id}/reopen-checkout", response_model=BookingOut)
+async def reopen_booking_checkout(booking_id: str, body: BookingReopenCheckoutIn, user: dict = Depends(require_admin)):
+    owner, keys, client_id, operation_id = await _acquire_booking_financial_correction_guard(booking_id)
+    try:
+        return await _reopen_booking_checkout_locked(booking_id, body, user)
+    finally:
+        await _release_booking_financial_correction_guard(owner, keys, client_id, operation_id)
+
+
+async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCheckoutIn, user: dict):
+    booking, booking_collection, archived = await _load_booking_for_financial_correction(booking_id)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if archived:
+        raise HTTPException(status_code=409, detail="Archived bookings cannot be reopened. Use an adjustment or refund instead.")
+    if not _booking_is_financially_locked(booking):
+        raise HTTPException(status_code=409, detail="This checkout is already open.")
+    paid = float(booking.get("amount_paid") or booking.get("cash_revenue") or 0)
+    credits = float(booking.get("credits_deducted") or 0)
+    refunds = float(booking.get("financial_refund_total") or 0)
+    if paid > 0.005 or credits > 0.005 or refunds > 0.005:
+        raise HTTPException(
+            status_code=409,
+            detail="This checkout has money or credits attached and cannot be reopened safely. Use an adjustment or refund instead.",
+        )
+    due = round(float(booking.get("balance_due") or _booking_balance_due(booking)), 2)
+    ledger_rows = await db.payment_ledger.find({"booking_id": booking_id}, {"_id": 0, "amount": 1}).to_list(500)
+    ledger_net = round(sum(float(row.get("amount") or 0) for row in ledger_rows), 2)
+    balance_applied = False
+    ledger_row_id = None
+    ts = now_iso()
+    history = list(booking.get("financial_reopen_history") or [])
+    history.append({"at": ts, "by": user.get("id"), "by_name": user.get("name") or user.get("email"), "reason": body.reason.strip(), "prior_total": booking.get("actual_price"), "prior_status": booking.get("payment_status")})
+    set_update = {
+        "status": "approved", "financial_locked": False, "financial_reopened_at": ts,
+        "financial_reopened_reason": body.reason.strip(), "financial_reopen_history": history,
+        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
+    }
+    unset_update = {k: "" for k in [
+        "checked_out_at", "checked_out_by", "checked_out_by_name", "checked_out_lat", "checked_out_lng",
+        "checked_out_accuracy_m", "actual_price", "payment_status", "payment_method", "paid_at",
+        "amount_paid", "balance_due", "cash_revenue", "tax_amount", "tax_rate_pct",
+        "taxable_cash_amount", "additional_cash_charge", "money_modifier_breakdown",
+    ]}
+    event_id = None
+    try:
+        if abs(ledger_net) > 0.005 and booking.get("client_id"):
+            await _adjust_client_balance(booking["client_id"], -ledger_net)
+            balance_applied = True
+            reversal = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-ledger_net, notes=f"Reopened checkout · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+            ledger_row_id = reversal["id"]
+        result = await booking_collection.update_one({"id": booking_id}, {"$set": set_update, "$unset": unset_update})
+        if result.matched_count != 1:
+            raise RuntimeError("Booking disappeared while reopening checkout")
+        before = {"actual_price": booking.get("actual_price"), "amount_paid": booking.get("amount_paid"), "balance_due": due, "payment_status": booking.get("payment_status")}
+        after = {"actual_price": None, "amount_paid": None, "balance_due": None, "payment_status": None}
+        event = await _record_booking_financial_event(booking, kind="reopen", amount=0, reason=body.reason, user=user, before=before, after=after)
+        event_id = event.get("id")
+    except Exception as exc:
+        await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
+        if booking.get("client_id") and balance_applied:
+            await db.clients.update_one({"id": booking["client_id"]}, {"$inc": {"account_balance": float(ledger_net)}})
+        if ledger_row_id:
+            await db.payment_ledger.delete_one({"id": ledger_row_id})
+        if event_id:
+            await db.booking_financial_events.delete_one({"id": event_id})
+        logger.exception("Checkout reopen rolled back for %s", booking_id)
+        raise HTTPException(status_code=500, detail="Checkout could not be reopened safely. No changes were kept.") from exc
+    booking.update(set_update)
+    for key in unset_update:
+        booking.pop(key, None)
+    return booking
+
+
 # -------- Booking Edit (Admin) --------
 class BookingPatchIn(BaseModel):
     notes: Optional[str] = None
@@ -8168,6 +8676,7 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    _assert_booking_financial_edit_allowed(booking, update.keys())
     if update:
         capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time"}
         if capacity_fields.intersection(update):
@@ -16997,6 +17506,8 @@ async def startup():
         (db.credit_lots, [("pack_kind", 1)], {}),
         (db.credit_lots, "id", {"unique": True}),
         # New collections from recent sprints.
+        (db.booking_financial_events, [("booking_id", 1), ("created_at", -1)], {}),
+        (db.booking_financial_events, "client_id", {}),
         (db.payment_plans, "client_id", {}),
         (db.payment_plans, [("client_id", 1), ("status", 1)], {}),
         (db.reschedule_requests, [("status", 1), ("created_at", -1)], {}),
@@ -17291,6 +17802,10 @@ async def log_service(body: LogServiceIn, user: dict = Depends(require_admin)):
         "amount_paid": round(float(price), 2) if body.payment_status == "paid" else 0.0,
         "balance_due": 0.0 if body.payment_status == "paid" else round(float(price), 2),
         "paid_at": now_iso() if body.payment_status == "paid" else None,
+        "financial_locked": body.status == "completed" or body.payment_status in ("paid", "refunded", "comped"),
+        "financial_locked_at": now_iso() if (body.status == "completed" or body.payment_status in ("paid", "refunded", "comped")) else None,
+        "financial_locked_by": user.get("id") if (body.status == "completed" or body.payment_status in ("paid", "refunded", "comped")) else None,
+        "financial_revision": 1 if (body.status == "completed" or body.payment_status in ("paid", "refunded", "comped")) else 0,
     }
     doc["cash_revenue"] = _cash_revenue(doc)
     if float(doc.get("cash_revenue") or 0) > 0:
@@ -17306,6 +17821,7 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
     update = {k: v for k, v in body.model_dump().items() if v is not None}
+    _assert_booking_financial_edit_allowed(booking, update.keys())
     # If a service_id is being set, also refresh service_name + default price (only if price not also being set)
     if body.service_id:
         svc = await db.services.find_one({"id": body.service_id}, {"_id": 0})
@@ -17331,6 +17847,12 @@ async def update_transaction(transaction_id: str, body: TransactionUpdateIn, _: 
     elif merged.get("payment_status") == "paid_partial":
         update["balance_due"] = _booking_balance_due(merged)
     update["cash_revenue"] = _cash_revenue({**booking, **update})
+    final_state = {**booking, **update}
+    if final_state.get("status") == "completed" or final_state.get("payment_status") in ("paid", "paid_partial", "refunded", "comped"):
+        update["financial_locked"] = True
+        update["financial_locked_at"] = booking.get("financial_locked_at") or now_iso()
+        update["financial_locked_by"] = booking.get("financial_locked_by") or _.get("id")
+        update["financial_revision"] = int(booking.get("financial_revision") or 0) + 1
     if float(update.get("cash_revenue") or 0) > 0 or float(booking.get("cash_revenue") or 0) > 0:
         money_day = _business_date_from_timestamp((update.get("paid_at") or booking.get("paid_at")))
         await _require_register_day_open(money_day)
@@ -17343,6 +17865,11 @@ async def delete_transaction(transaction_id: str, _: dict = Depends(require_admi
     booking = await db.bookings.find_one({"id": transaction_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if _booking_is_financially_locked(booking):
+        raise HTTPException(
+            status_code=409,
+            detail="Completed financial records cannot be deleted. Use a refund or adjustment so the audit trail remains intact.",
+        )
     if float(booking.get("cash_revenue") or 0) > 0:
         await _require_register_day_open(_business_date_from_timestamp(booking.get("paid_at")))
     # If it was created via log_service (no real check-in flow), hard-delete.
@@ -17401,6 +17928,7 @@ async def list_transactions(
     rows = await _booking_rows_anywhere(q, {"_id": 0}, limit=5000, sort_field="date", sort_desc=True)
     enriched = []
     for r in rows:
+        r["financial_locked"] = _booking_is_financially_locked(r)
         # Skip rejected and unchargeable cancellations — keep cancelled bookings
         # where the operator explicitly charged a no-show / late-cancel fee so
         # they show up as revenue events.
@@ -19101,19 +19629,112 @@ async def _require_register_day_open(date_value: str) -> None:
         )
 
 
+def _closeout_rollover_cash(closeout: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Return the explicit rollover saved at closeout, with legacy fallback.
+
+    New closeouts persist ``rollover_cash`` separately from the expected drawer
+    amount. Older rows only have ``cash_counted``; those remain valid.
+    """
+    if not closeout:
+        return None
+    raw = closeout.get("rollover_cash")
+    if raw is None:
+        raw = closeout.get("cash_counted")
+    if raw is None:
+        return None
+    try:
+        return round(float(raw), 2)
+    except (TypeError, ValueError):
+        return None
+
+
 async def _previous_closeout_rollover(date_value: str) -> Optional[Dict[str, Any]]:
     return await db.daily_closeouts.find_one(
         {
             "date": {"$lt": date_value},
-            "cash_counted": {"$ne": None},
             "$or": [
-                {"reopened_at": {"$exists": False}},
-                {"reopened_at": None},
+                {"rollover_cash": {"$ne": None}},
+                {"cash_counted": {"$ne": None}},
+            ],
+            "$and": [
+                {
+                    "$or": [
+                        {"reopened_at": {"$exists": False}},
+                        {"reopened_at": None},
+                    ]
+                }
             ],
         },
         {"_id": 0},
         sort=[("date", -1), ("created_at", -1)],
     )
+
+
+def _effective_register_opening(
+    session: Optional[Dict[str, Any]],
+    previous_closeout: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Resolve today's opening drawer without trusting stale browser state.
+
+    A saved session may differ from the previous closeout only when it carries
+    an explicit, auditable override reason. Legacy/stale rows that silently
+    replaced the rollover are recovered to the last confirmed count.
+    """
+    suggested = _closeout_rollover_cash(previous_closeout)
+    session_cash = None
+    if session and session.get("opening_cash") is not None:
+        try:
+            session_cash = round(float(session.get("opening_cash") or 0), 2)
+        except (TypeError, ValueError):
+            session_cash = None
+
+    override_reason = str((session or {}).get("opening_override_reason") or "").strip()
+    override_marked = bool((session or {}).get("opening_was_overridden"))
+    valid_override = override_marked and len(override_reason) >= 3
+
+    recovered = False
+    recorded_cash = session_cash
+    if suggested is not None:
+        if session_cash is None:
+            opening_cash = suggested
+            source = "previous_closeout"
+        elif abs(session_cash - suggested) <= 0.005:
+            opening_cash = session_cash
+            source = "drawer_session"
+        elif valid_override:
+            opening_cash = session_cash
+            source = "drawer_session_override"
+        else:
+            # Old UI/PWA state could write yesterday's opening amount into the
+            # next day without a reason. Never let that silently defeat the
+            # confirmed closeout rollover.
+            opening_cash = suggested
+            source = "previous_closeout_recovered"
+            recovered = True
+    elif session_cash is not None:
+        opening_cash = session_cash
+        source = "drawer_session"
+    else:
+        opening_cash = 0.0
+        source = "not_set"
+
+    effective_session = dict(session) if session else None
+    if effective_session is not None and recovered:
+        effective_session["recorded_opening_cash"] = recorded_cash
+        effective_session["opening_cash"] = opening_cash
+        effective_session["opening_recovered_from_rollover"] = True
+
+    return {
+        "opening_cash": round(float(opening_cash), 2),
+        "source": source,
+        "suggested_cash": suggested,
+        "suggested_from_date": (previous_closeout or {}).get("date"),
+        "valid_override": valid_override,
+        "override_reason": override_reason if valid_override else "",
+        "recovered": recovered,
+        "recorded_cash": recorded_cash,
+        "session": effective_session,
+    }
 
 
 class TillAdjustmentIn(BaseModel):
@@ -19337,20 +19958,12 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
     # forward the most recent closeout cash count as a helpful default.
     session = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
     previous_closeout = await _previous_closeout_rollover(d)
-    suggested_opening_cash = None
-    suggested_opening_date = None
-    if previous_closeout and previous_closeout.get("cash_counted") is not None:
-        suggested_opening_cash = round(float(previous_closeout.get("cash_counted") or 0), 2)
-        suggested_opening_date = previous_closeout.get("date")
-
-    opening_cash = 0.0
-    opening_source = "not_set"
-    if session and session.get("opening_cash") is not None:
-        opening_cash = round(float(session.get("opening_cash") or 0), 2)
-        opening_source = "drawer_session"
-    elif suggested_opening_cash is not None:
-        opening_cash = suggested_opening_cash
-        opening_source = "previous_closeout"
+    opening_resolution = _effective_register_opening(session, previous_closeout)
+    session = opening_resolution.get("session")
+    suggested_opening_cash = opening_resolution.get("suggested_cash")
+    suggested_opening_date = opening_resolution.get("suggested_from_date")
+    opening_cash = round(float(opening_resolution.get("opening_cash") or 0), 2)
+    opening_source = opening_resolution.get("source") or "not_set"
 
     cash_in = round(float(incoming_by_method.get("cash") or 0), 2)
     expected_cash = round(opening_cash + cash_in - drawer_payouts + till_additions - till_removals, 2)
@@ -19390,8 +20003,10 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "opening_rollover": {
             "suggested_cash": suggested_opening_cash,
             "from_date": suggested_opening_date,
-            "is_override": bool(session and suggested_opening_cash is not None and abs(opening_cash - suggested_opening_cash) > 0.005),
-            "override_reason": (session or {}).get("opening_override_reason") or "",
+            "is_override": bool(opening_resolution.get("valid_override")),
+            "override_reason": opening_resolution.get("override_reason") or "",
+            "recovered_stale_opening": bool(opening_resolution.get("recovered")),
+            "recorded_stale_cash": opening_resolution.get("recorded_cash") if opening_resolution.get("recovered") else None,
         },
         "latest_closeout": closeout,
         "register_closed": bool(closeout),
@@ -19804,13 +20419,13 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
     opening_cash = round(float(body.opening_cash), 2)
     existing = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
     previous = await _previous_closeout_rollover(d)
-    suggested = round(float(previous.get("cash_counted") or 0), 2) if previous and previous.get("cash_counted") is not None else None
-    baseline = None
-    if existing and existing.get("opening_cash") is not None:
-        baseline = round(float(existing.get("opening_cash") or 0), 2)
-    elif suggested is not None:
-        baseline = suggested
-    is_override = baseline is not None and abs(opening_cash - baseline) > 0.005
+    current_resolution = _effective_register_opening(existing, previous)
+    suggested = current_resolution.get("suggested_cash")
+    # The confirmed previous closeout remains the comparison baseline. A valid
+    # existing override is honored by the summary, but re-saving it must keep
+    # its reason instead of silently converting it into a normal opening.
+    baseline = suggested if suggested is not None else current_resolution.get("opening_cash")
+    is_override = baseline is not None and abs(opening_cash - float(baseline)) > 0.005
     override_reason = (body.opening_override_reason or "").strip()
     if is_override and len(override_reason) < 3:
         raise HTTPException(
@@ -20047,7 +20662,8 @@ async def booking_history(booking_id: str, _: dict = Depends(require_admin)):
     """Booking change history from audit log + payment ledger. No writes."""
     audits = await db.audit_log.find({"record_id": booking_id}, {"_id": 0}).sort("ts", -1).to_list(200)
     ledger = await db.payment_ledger.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"booking_id": booking_id, "audit": audits, "ledger": ledger}
+    financial_events = await db.booking_financial_events.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"booking_id": booking_id, "audit": audits, "ledger": ledger, "financial_events": financial_events}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarterly Tax Estimate (Sole-Proprietor / Schedule C)

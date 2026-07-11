@@ -1897,6 +1897,7 @@ function CountTile({ label, value = 0, color = "text-white" }) {
 // ─── Register / POS / Cash Drawer ─────────────────────────────────────────
 export function RegisterTab() {
   const [date, setDate] = useState(todayISO());
+  const [liveToday, setLiveToday] = useState(todayISO());
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -1947,6 +1948,7 @@ export function RegisterTab() {
       setData(r.data);
       if (r.data?.drawer_session?.opening_cash != null) setOpeningCash(String(r.data.drawer_session.opening_cash));
       else if (r.data?.totals?.opening_cash != null) setOpeningCash(String(r.data.totals.opening_cash));
+      setOpeningOverrideReason(r.data?.opening_rollover?.is_override ? (r.data?.opening_rollover?.override_reason || "") : "");
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Failed to load register"); }
   };
   const loadChoices = async () => {
@@ -1973,6 +1975,22 @@ export function RegisterTab() {
   };
   useEffect(() => { loadChoices(); loadExpenseChoices(); }, []);
   useEffect(() => { load(); loadExpenses(); /* eslint-disable-next-line */ }, [date]);
+  useEffect(() => {
+    const syncBusinessDay = () => {
+      const nowDay = todayISO();
+      if (nowDay === liveToday) return;
+      // If the register was left on the live day overnight, advance it. Keep
+      // deliberately selected historical dates untouched.
+      setDate(current => current === liveToday ? nowDay : current);
+      setReportEnd(current => current === liveToday ? nowDay : current);
+      setLiveToday(nowDay);
+      setOpeningCash("");
+      setOpeningOverrideReason("");
+    };
+    const timer = setInterval(syncBusinessDay, 60000);
+    window.addEventListener("focus", syncBusinessDay);
+    return () => { clearInterval(timer); window.removeEventListener("focus", syncBusinessDay); };
+  }, [liveToday]);
 
   const selectedClient = (id) => clients.find(c => c.id === id);
   const selectedPack = packs.find(p => p.id === packSale.pack_id);
@@ -2246,6 +2264,12 @@ export function RegisterTab() {
             <div className="bg-bgPanel border border-bgHover rounded-xl p-4">
               <h4 className="text-white font-black uppercase italic mb-3"><i className="fas fa-door-open text-shGreen mr-2"/>Cash drawer</h4>
               <p className="text-[12px] text-gray-500 mb-3">Opening source: <span className="text-gray-300 font-bold">{data?.opening_cash_source || "—"}</span></p>
+              {data?.opening_rollover?.recovered_stale_opening && (
+                <div className="mb-3 bg-shOrange/10 border border-shOrange/40 rounded-lg p-3" data-testid="register-opening-recovered">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-shOrange">Stale opening amount corrected</p>
+                  <p className="text-[12px] text-gray-300 mt-1">The saved ${Number(data.opening_rollover.recorded_stale_cash || 0).toFixed(2)} opening did not have a valid override reason, so the register restored the confirmed ${Number(suggestedOpening || 0).toFixed(2)} rollover.</p>
+                </div>
+              )}
               {suggestedOpening != null && (
                 <div className="mb-3 bg-bgBase/70 border border-shGreen/30 rounded-lg p-3">
                   <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Previous closeout · {data?.opening_rollover?.from_date}</p>

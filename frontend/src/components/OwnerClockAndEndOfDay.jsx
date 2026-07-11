@@ -125,15 +125,29 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const [startDay, setStartDay] = useState({ opening_cash: "", notes: "", opening_override_reason: "" });
   const [reopenReason, setReopenReason] = useState("");
   const [reopening, setReopening] = useState(false);
+
+  const hydrateStartDay = (payload) => {
+    const register = payload?.register || {};
+    const opening = register?.drawer_session?.opening_cash
+      ?? register?.opening_rollover?.suggested_cash
+      ?? register?.totals?.opening_cash;
+    setStartDay({
+      opening_cash: opening === undefined || opening === null ? "" : Number(opening || 0).toFixed(2),
+      notes: register?.drawer_session?.notes || "",
+      opening_override_reason: register?.opening_rollover?.is_override
+        ? (register?.opening_rollover?.override_reason || "")
+        : "",
+    });
+  };
+
   const loadStatus = async () => {
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
-      const suggested = r.data?.register?.opening_rollover?.suggested_cash;
-      const opening = suggested ?? r.data?.register?.totals?.opening_cash;
-      if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
-        setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
-      }
+      // Always rehydrate from the server. The dashboard/PWA can stay open
+      // across midnight; keeping yesterday's React state here was how an old
+      // opening amount (commonly $15) could overwrite today's rollover.
+      hydrateStartDay(r.data);
     } catch { /* dashboard card should not be noisy */ }
   };
   useEffect(() => { loadStatus(); }, []);
@@ -143,11 +157,7 @@ export function EndOfDayPanel({ onJump = () => {} }) {
     try {
       const r = await api.get("/admin/end-of-day");
       setData(r.data);
-      const suggested = r.data?.register?.opening_rollover?.suggested_cash;
-      const opening = suggested ?? r.data?.register?.totals?.opening_cash;
-      if (opening !== undefined && opening !== null && startDay.opening_cash === "") {
-        setStartDay(s => ({ ...s, opening_cash: Number(opening || 0).toFixed(2) }));
-      }
+      hydrateStartDay(r.data);
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Couldn't load wrap-up"); }
     finally { setLoading(false); }
   };
@@ -155,6 +165,18 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const saveStartDay = async () => {
     setStarting(true);
     try {
+      // Refresh immediately before saving. A PWA tab can remain open across
+      // midnight, so the visible form may belong to yesterday even though the
+      // API correctly targets today. Never post that stale amount.
+      const fresh = await api.get("/admin/end-of-day");
+      const freshSuggested = fresh.data?.register?.opening_rollover?.suggested_cash;
+      const freshDate = fresh.data?.date;
+      if (freshDate !== data?.date || (freshSuggested != null && Math.abs(Number(startDay.opening_cash || 0) - Number(freshSuggested)) > 0.005 && !startDay.opening_override_reason.trim())) {
+        setData(fresh.data);
+        hydrateStartDay(fresh.data);
+        toast.info("The business day or rollover changed. The opening drawer was refreshed—review it and press Start Day again.");
+        return;
+      }
       await api.post("/admin/register/open-drawer", {
         opening_cash: startDay.opening_cash === "" ? 0 : Number(startDay.opening_cash),
         notes: startDay.notes || "Start-day checklist completed",
@@ -194,6 +216,9 @@ export function EndOfDayPanel({ onJump = () => {} }) {
       toast.success(`Day closed. $${counted.toFixed(2)} will carry forward.`);
       setCloseoutReview(false);
       setCloseout({ notes: "", cash_counted: "", clover_batch: "", venmo_total: "", paypal_total: "", check_total: "" });
+      // Do not carry today's opening form state into tomorrow. The next open
+      // always hydrates from the confirmed server rollover.
+      setStartDay({ opening_cash: "", notes: "", opening_override_reason: "" });
       close();
     } catch (e) { toast.error(formatErr(e.response?.data?.detail) || "Closeout failed"); }
     finally { setClosing(false); }
@@ -267,6 +292,12 @@ export function EndOfDayPanel({ onJump = () => {} }) {
                         <p className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-sun mr-1"/>Start-the-day checklist</p>
                         <p className="text-[13px] text-gray-400 mt-1">This does not block the app. It just opens the drawer and gives you a clean daily starting point.</p>
                       </div>
+                      {data.register?.opening_rollover?.recovered_stale_opening && (
+                        <div className="bg-shOrange/10 border border-shOrange/40 rounded-lg p-3" data-testid="start-day-opening-recovered">
+                          <p className="text-[10px] font-black uppercase tracking-widest text-shOrange">Stale opening corrected</p>
+                          <p className="text-[11px] text-gray-300 mt-1">The saved ${Number(data.register.opening_rollover.recorded_stale_cash || 0).toFixed(2)} amount had no valid override reason. The confirmed closeout rollover was restored.</p>
+                        </div>
+                      )}
                       {suggestedOpening != null && (
                         <div className="bg-bgPanel/70 border border-shGreen/30 rounded-lg p-3">
                           <p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Carried forward from {data.register?.opening_rollover?.from_date}</p>
