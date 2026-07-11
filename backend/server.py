@@ -1137,9 +1137,14 @@ async def login(body: LoginIn, request: Request):
     except Exception:
         pass
     token = create_access_token(user["id"], user["email"], user["role"], _token_version(user))
+    login_user = {k: user.get(k) for k in ["id", "email", "name", "role", "client_id", "staff_role"]}
+    # Legacy accounts created before the security hardening do not have this
+    # field.  Sending null violates UserOut.must_change_password: bool and turns
+    # an otherwise successful login into a 500 ResponseValidationError.
+    login_user["must_change_password"] = bool(user.get("must_change_password", False))
     return {
         "token": token,
-        "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id", "staff_role", "must_change_password"]},
+        "user": login_user,
     }
 
 
