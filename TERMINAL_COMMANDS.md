@@ -9,7 +9,7 @@ Run them all from inside `~/sit-happens/` unless otherwise noted.
 
 | Goal | Command |
 |---|---|
-| Pull latest features from GitHub + rebuild | `./update.sh` |
+| Safely update (required backup first, then pull + rebuild) | `./update.sh` |
 | Run a manual backup right now | `./backup-now.sh` |
 | Start the app (if stopped) | `docker compose -p sit-happens up -d` |
 | Stop the app cleanly | `docker compose -p sit-happens down` |

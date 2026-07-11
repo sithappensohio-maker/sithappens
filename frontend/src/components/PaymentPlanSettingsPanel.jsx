@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import RichTextEditor from "./RichTextEditor";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 /**
  * Sprint 110ch — Payment plans admin settings.
@@ -125,14 +126,14 @@ export default function PaymentPlanSettingsPanel() {
           </p>
           <div className="prose prose-sm max-w-none text-gray-900"
                dangerouslySetInnerHTML={{
-                 __html: (draft.agreement_html || "")
+                 __html: sanitizeHtml((draft.agreement_html || "")
                    .replaceAll("{{business_name}}", draft.business_name || "Sit Happens")
                    .replaceAll("{{client_name}}", "Alex Rivera")
                    .replaceAll("{{program_name}}", "Service Dog Program")
                    .replaceAll("{{total_amount}}", "$2,000.00")
                    .replaceAll("{{installment_count}}", "4")
                    .replaceAll("{{installment_amount}}", "$500.00")
-                   .replaceAll("{{schedule_list}}", "• 2026-07-01 — $500.00<br/>• 2026-07-15 — $500.00<br/>• 2026-07-29 — $500.00<br/>• 2026-08-12 — $500.00"),
+                   .replaceAll("{{schedule_list}}", "• 2026-07-01 — $500.00<br/>• 2026-07-15 — $500.00<br/>• 2026-07-29 — $500.00<br/>• 2026-08-12 — $500.00")),
                }} />
         </div>
       )}

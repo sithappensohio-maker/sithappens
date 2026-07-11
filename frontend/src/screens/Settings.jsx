@@ -50,9 +50,11 @@ export default function Settings() {
 
   const changePw = async () => {
     setPwMsg("");
+    if (pw.next.length < 8) { setPwMsg("Use at least 8 characters"); return; }
     if (pw.next !== pw.confirm) { setPwMsg("New passwords don't match"); return; }
     try {
-      await api.post("/auth/change-password", { current_password: pw.current, new_password: pw.next });
+      const { data } = await api.post("/auth/change-password", { current_password: pw.current, new_password: pw.next });
+      if (data?.token) localStorage.setItem("sh_token", data.token);
       setPwMsg("Password updated");
       setPw({ current: "", next: "", confirm: "" });
     } catch (e) { setPwMsg(formatErr(e.response?.data?.detail)); }

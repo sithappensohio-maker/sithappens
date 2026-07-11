@@ -613,7 +613,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
           <p className="text-[15px] text-gray-400 mb-4">Set the email and password the client will use to access the portal.</p>
           <div className="space-y-4">
             <Input label="Login Email" type="email" value={portalForm.email} onChange={(v)=>setPortalForm({...portalForm, email:v})} testId="portal-email-input" />
-            <Input label="Password (min 6 chars)" type="password" value={portalForm.password} onChange={(v)=>setPortalForm({...portalForm, password:v})} testId="portal-password-input" />
+            <Input label="Temporary password (min 8 chars)" type="password" value={portalForm.password} onChange={(v)=>setPortalForm({...portalForm, password:v})} testId="portal-password-input" />
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
               <button onClick={()=>setPortalOpen(null)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>

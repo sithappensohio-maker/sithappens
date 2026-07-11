@@ -8,6 +8,7 @@ import re
 import uuid
 import asyncio
 import secrets
+import hashlib
 import logging
 import contextvars
 import traceback
@@ -17,6 +18,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta, date, time
 from zoneinfo import ZoneInfo
+from urllib.parse import urlsplit
 from typing import List, Optional, Literal, Dict, Any, Tuple
 
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Request, Query, Body, UploadFile, File
@@ -60,7 +62,7 @@ from trophies_data import TIER_COLORS
 # -------- Config --------
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALG = "HS256"
-ACCESS_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_DAYS = max(1, int(os.environ.get("ACCESS_TOKEN_EXPIRE_DAYS", "7")))
 DAYCARE_CAPACITY = int(os.environ.get("DAYCARE_CAPACITY", "30"))
 
 mongo_url = os.environ["MONGO_URL"]
@@ -201,11 +203,13 @@ def verify_password(plain: str, hashed: str) -> bool:
     except Exception:
         return False
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, token_version: int = 0) -> str:
     payload = {
         "sub": user_id,
         "email": email,
         "role": role,
+        "ver": int(token_version or 0),
+        "iat": datetime.now(timezone.utc),
         "exp": datetime.now(timezone.utc) + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS),
         "type": "access",
     }
@@ -213,6 +217,82 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP behind nginx/Cloudflare without trusting arbitrary hops."""
+    cf = (request.headers.get("cf-connecting-ip") or "").strip()
+    if cf:
+        return cf[:80]
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",", 1)[0].strip()
+    if forwarded:
+        return forwarded[:80]
+    return (request.client.host if request.client else "unknown")[:80]
+
+
+def _security_key(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8", "ignore")).hexdigest()
+
+
+async def _enforce_rate_limit(
+    request: Request,
+    scope: str,
+    subject: str,
+    *,
+    limit: int,
+    window_seconds: int,
+    silent: bool = False,
+) -> bool:
+    """Mongo-backed fixed-window limiter shared by every backend worker.
+
+    Only hashes of identifiers are stored.  Returning False is useful for
+    forgot-password, where the response must not reveal whether an account
+    exists.  Other callers receive a normal 429 with Retry-After.
+    """
+    now = datetime.now(timezone.utc)
+    bucket = int(now.timestamp()) // max(1, int(window_seconds))
+    raw = f"{scope}|{subject}|{bucket}"
+    doc_id = _security_key(raw)
+    expires = now + timedelta(seconds=max(60, int(window_seconds) * 2))
+    update = {
+        "$inc": {"count": 1},
+        "$setOnInsert": {
+            "scope": scope,
+            "subject_hash": _security_key(subject),
+            "bucket": bucket,
+            "created_at": now,
+            "expires_at": expires,
+        },
+    }
+    try:
+        row = await db.auth_rate_limits.find_one_and_update(
+            {"_id": doc_id}, update, upsert=True, return_document=ReturnDocument.AFTER
+        )
+    except DuplicateKeyError:
+        # Two workers can attempt the first insert in the same millisecond.
+        # The deterministic key makes a simple non-upsert retry safe.
+        row = await db.auth_rate_limits.find_one_and_update(
+            {"_id": doc_id}, {"$inc": {"count": 1}}, upsert=False,
+            return_document=ReturnDocument.AFTER,
+        )
+    count = int((row or {}).get("count") or 0)
+    if count <= limit:
+        return True
+    if silent:
+        return False
+    retry_after = max(1, int(window_seconds - (int(now.timestamp()) % window_seconds)))
+    raise HTTPException(
+        status_code=429,
+        detail="Too many attempts. Please wait and try again.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _token_version(user: dict) -> int:
+    try:
+        return int(user.get("token_version") or 0)
+    except Exception:
+        return 0
 
 
 # Sprint 110bg — Business timezone. The whole app's "today" / "this month" /
@@ -293,6 +373,18 @@ async def get_current_user(request: Request, creds: Optional[HTTPAuthorizationCr
         # active so existing production accounts are not locked out.
         if user.get("active") is False:
             raise HTTPException(status_code=403, detail="Account disabled")
+        # Backward compatible session invalidation. Legacy tokens/users both
+        # resolve to version 0; changing/resetting a password increments the
+        # user version and immediately invalidates every older token.
+        if int(payload.get("ver") or 0) != _token_version(user):
+            raise HTTPException(status_code=401, detail="Session expired. Please sign in again.")
+        if user.get("must_change_password") is True and request.url.path not in (
+            "/api/auth/me", "/api/auth/change-password"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Temporary password must be changed before continuing.",
+            )
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -318,7 +410,7 @@ async def require_employee_or_admin(user: dict = Depends(get_current_user)) -> d
 # -------- Models --------
 class RegisterIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
     name: str
     referred_by_code: Optional[str] = None  # optional referral code from another client
 
@@ -335,6 +427,7 @@ class UserOut(BaseModel):
     client_id: Optional[str] = None
     # Sprint 110ex — Phase 7: fine-grained staff role layered on top of `role`
     staff_role: Optional[str] = None
+    must_change_password: bool = False
 
 class AuthOut(BaseModel):
     token: str
@@ -384,7 +477,7 @@ class ClientOut(ClientIn):
 
 class PortalAccountIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
 
 class Vaccines(BaseModel):
     rabies: Optional[str] = ""  # ISO date
@@ -894,8 +987,11 @@ async def _record_booking_financial_event(
 
 # -------- Auth --------
 @api.post("/auth/register", response_model=AuthOut)
-async def register(body: RegisterIn):
+async def register(body: RegisterIn, request: Request):
     email = body.email.lower()
+    ip = _client_ip(request)
+    await _enforce_rate_limit(request, "register_ip", ip, limit=10, window_seconds=3600)
+    await _enforce_rate_limit(request, "register_email_ip", f"{ip}|{email}", limit=5, window_seconds=3600)
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -957,6 +1053,8 @@ async def register(body: RegisterIn):
         "role": "client",
         "client_id": client_id,
         "created_at": now_iso(),
+        "token_version": 0,
+        "must_change_password": False,
     }
     await db.users.insert_one(user)
     # Best-effort: alert the operator that a new client just signed up (or merged).
@@ -964,15 +1062,20 @@ async def register(body: RegisterIn):
         await notify_admin_new_client(user, {**client_doc, "_merged": merged})
     except Exception:
         pass
-    token = create_access_token(user["id"], user["email"], user["role"])
+    token = create_access_token(user["id"], user["email"], user["role"], _token_version(user))
     return {"token": token, "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]}}
 
 
 @api.post("/auth/login", response_model=AuthOut)
-async def login(body: LoginIn):
+async def login(body: LoginIn, request: Request):
     email = body.email.lower()
+    ip = _client_ip(request)
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user["password_hash"]):
+        # Count only failed attempts. Normal successful sign-ins (and the live
+        # integration suite) never consume the brute-force allowance.
+        await _enforce_rate_limit(request, "login_ip", ip, limit=30, window_seconds=900)
+        await _enforce_rate_limit(request, "login_email_ip", f"{ip}|{email}", limit=10, window_seconds=900)
         raise HTTPException(status_code=401, detail="Invalid email or password")
     # Safety: employee/client deactivation must actually stop login. Missing
     # `active` on legacy users is allowed for backwards compatibility.
@@ -987,10 +1090,10 @@ async def login(body: LoginIn):
         )
     except Exception:
         pass
-    token = create_access_token(user["id"], user["email"], user["role"])
+    token = create_access_token(user["id"], user["email"], user["role"], _token_version(user))
     return {
         "token": token,
-        "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id"]},
+        "user": {k: user.get(k) for k in ["id", "email", "name", "role", "client_id", "staff_role", "must_change_password"]},
     }
 
 
@@ -1202,7 +1305,7 @@ async def delete_client(client_id: str, user: dict = Depends(require_admin)):
     )
     await db.users.update_many(
         {"client_id": client_id},
-        {"$set": {"active": False, "deactivated_at": stamp, "deactivated_by": user.get("id")}},
+        {"$set": {"active": False, "deactivated_at": stamp, "deactivated_by": user.get("id")}, "$inc": {"token_version": 1}},
     )
     return {"ok": True, "soft_deleted": True}
 
@@ -1216,7 +1319,13 @@ async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict =
     if existing and existing.get("client_id") != client_id:
         raise HTTPException(status_code=400, detail="Email already used")
     if existing:
-        await db.users.update_one({"id": existing["id"]}, {"$set": {"password_hash": hash_password(body.password)}})
+        await db.users.update_one(
+            {"id": existing["id"]},
+            {
+                "$set": {"password_hash": hash_password(body.password), "must_change_password": True},
+                "$inc": {"token_version": 1},
+            },
+        )
         u = await db.users.find_one({"id": existing["id"]}, {"_id": 0, "password_hash": 0})
         return u
     user = {
@@ -1227,6 +1336,8 @@ async def create_portal_account(client_id: str, body: PortalAccountIn, _: dict =
         "role": "client",
         "client_id": client_id,
         "created_at": now_iso(),
+        "token_version": 0,
+        "must_change_password": True,
     }
     await db.users.insert_one(user)
     user.pop("password_hash", None)
@@ -1254,7 +1365,7 @@ class ClaimVerifyOut(BaseModel):
 
 
 class ClaimSetIn(BaseModel):
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
 
 
 # -------- Client files (Sprint 84) --------
@@ -1607,7 +1718,8 @@ async def send_claim_email(client_id: str, _: dict = Depends(require_admin)):
 
 
 @api.get("/claim/{token}", response_model=ClaimVerifyOut)
-async def verify_claim_token(token: str):
+async def verify_claim_token(token: str, request: Request):
+    await _enforce_rate_limit(request, "claim_verify_ip", _client_ip(request), limit=60, window_seconds=900)
     """Public — verify a claim/reset token and return who it's for."""
     rec = await db.claim_tokens.find_one({"token": token, "used": False}, {"_id": 0})
     if not rec:
@@ -1639,7 +1751,9 @@ async def verify_claim_token(token: str):
 
 
 @api.post("/claim/{token}", response_model=AuthOut)
-async def consume_claim_token(token: str, body: ClaimSetIn):
+async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
+    await _enforce_rate_limit(request, "claim_consume_ip", _client_ip(request), limit=20, window_seconds=900)
+    await _enforce_rate_limit(request, "claim_consume_token", token, limit=10, window_seconds=900)
     """Public — set the password using a valid claim/reset token and auto-log in.
     Handles three cases:
       1. Token tied to a client_id + existing portal user → update user's password.
@@ -1670,10 +1784,11 @@ async def consume_claim_token(token: str, body: ClaimSetIn):
             raise HTTPException(status_code=400, detail="That account no longer exists.")
         await db.users.update_one(
             {"id": existing_user["id"]},
-            {"$set": {"password_hash": new_hash}},
+            {"$set": {"password_hash": new_hash, "must_change_password": False}, "$inc": {"token_version": 1}},
         )
         await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
-        access = create_access_token(existing_user["id"], existing_user["email"], existing_user.get("role", "admin"))
+        new_ver = _token_version(existing_user) + 1
+        access = create_access_token(existing_user["id"], existing_user["email"], existing_user.get("role", "admin"), new_ver)
         return AuthOut(
             token=access,
             user=UserOut(
@@ -1695,7 +1810,7 @@ async def consume_claim_token(token: str, body: ClaimSetIn):
     if existing_user:
         await db.users.update_one(
             {"id": existing_user["id"]},
-            {"$set": {"password_hash": new_hash}},
+            {"$set": {"password_hash": new_hash, "must_change_password": False}, "$inc": {"token_version": 1}},
         )
         user_id = existing_user["id"]
         user_email = existing_user["email"]
@@ -1713,13 +1828,16 @@ async def consume_claim_token(token: str, body: ClaimSetIn):
             "role": "client",
             "client_id": client_id,
             "created_at": now_iso(),
+            "token_version": 0,
+            "must_change_password": False,
         })
         user_email = email
         user_name = client.get("name", email)
 
     await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
 
-    access = create_access_token(user_id, user_email, "client")
+    claim_user = await db.users.find_one({"id": user_id}, {"_id": 0, "token_version": 1})
+    access = create_access_token(user_id, user_email, "client", _token_version(claim_user or {}))
     return AuthOut(
         token=access,
         user=UserOut(id=user_id, email=user_email, name=user_name, role="client", client_id=client_id),
@@ -1731,12 +1849,17 @@ class ForgotPasswordIn(BaseModel):
     email: str
 
 @api.post("/auth/forgot-password")
-async def forgot_password(body: ForgotPasswordIn):
+async def forgot_password(body: ForgotPasswordIn, request: Request):
     """Public — anyone can request a password reset for their email.
     For security, ALWAYS returns ok regardless of whether the email exists.
     This prevents attackers from probing the DB for valid emails."""
     email = (body.email or "").strip().lower()
     if not email:
+        return {"ok": True}
+    ip = _client_ip(request)
+    allowed_ip = await _enforce_rate_limit(request, "forgot_ip", ip, limit=20, window_seconds=3600, silent=True)
+    allowed_pair = await _enforce_rate_limit(request, "forgot_email_ip", f"{ip}|{email}", limit=5, window_seconds=3600, silent=True)
+    if not (allowed_ip and allowed_pair):
         return {"ok": True}
 
     user = await db.users.find_one({"email": email}, {"_id": 0})
@@ -8216,15 +8339,24 @@ async def mark_announcement_read(ann_id: str, user: dict = Depends(get_current_u
 # -------- Change Password --------
 class ChangePwIn(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=6)
+    new_password: str = Field(min_length=8)
 
 @api.post("/auth/change-password")
-async def change_password(body: ChangePwIn, user: dict = Depends(get_current_user)):
+async def change_password(body: ChangePwIn, request: Request, user: dict = Depends(get_current_user)):
+    await _enforce_rate_limit(request, "change_password_user", user.get("id", "unknown"), limit=10, window_seconds=900)
     full = await db.users.find_one({"id": user["id"]})
     if not full or not verify_password(body.current_password, full["password_hash"]):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.new_password)}})
-    return {"ok": True}
+    new_ver = _token_version(full) + 1
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {"password_hash": hash_password(body.new_password), "must_change_password": False},
+            "$inc": {"token_version": 1},
+        },
+    )
+    token = create_access_token(full["id"], full["email"], full.get("role", "client"), new_ver)
+    return {"ok": True, "token": token, "must_change_password": False}
 
 
 # -------- Per-user UI Preferences (Sprint 68) --------
@@ -17514,6 +17646,8 @@ async def startup():
         (db.reschedule_requests, "client_id", {}),
         (db.reschedule_requests, "booking_id", {}),
         (db.capacity_locks, "expires_at", {"expireAfterSeconds": 0}),
+        (db.auth_rate_limits, "expires_at", {"expireAfterSeconds": 0}),
+        (db.auth_rate_limits, [("scope", 1), ("created_at", -1)], {}),
         (db.waitlist, [("status", 1), ("requested_date", 1), ("service_type", 1)], {}),
         (db.waitlist, "dedupe_key", {"unique": True, "partialFilterExpression": {"status": {"$in": ["waiting", "offered", "converting"]}}}),
         # Sprint 110cn — new staff-portal collections.
@@ -17536,9 +17670,25 @@ async def startup():
     #  - Set FORCE_ADMIN_PASSWORD_SYNC=true to opt back into the legacy
     #    "always overwrite from env" behaviour for emergency re-sync.
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@sithappens.com").lower()
-    admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")
+    admin_pw = os.environ.get("ADMIN_PASSWORD") or "admin123"
     force_sync = os.environ.get("FORCE_ADMIN_PASSWORD_SYNC", "").lower() in ("1", "true", "yes")
     existing = await db.users.find_one({"email": admin_email})
+    if not existing:
+        # Backward-compatible safeguard: older installs may have changed the
+        # admin email in Mongo without updating ADMIN_EMAIL in .env. Any real
+        # existing admin means this is not a first run and must never be blocked.
+        existing = await db.users.find_one({"role": "admin"})
+        if existing:
+            logger.warning(
+                "ADMIN_EMAIL does not match the existing admin account (%s); preserving the database account.",
+                existing.get("email"),
+            )
+    weak_seed_password = admin_pw in ("", "admin123", "password", "CHANGE_ME_ON_INSTALL", "CHANGE_ME_BEFORE_FIRST_RUN")
+    if not existing and weak_seed_password:
+        raise RuntimeError(
+            "Refusing to create the first admin with a default password. "
+            "Set a unique ADMIN_PASSWORD in .env, then restart. No data was changed."
+        )
     if not existing:
         await db.users.insert_one({
             "id": str(uuid.uuid4()),
@@ -17548,10 +17698,12 @@ async def startup():
             "role": "admin",
             "client_id": None,
             "created_at": now_iso(),
+            "token_version": 0,
+            "must_change_password": False,
         })
         logger.info("Seeded admin %s", admin_email)
     elif force_sync and not verify_password(admin_pw, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_pw)}})
+        await db.users.update_one({"id": existing["id"]}, {"$set": {"password_hash": hash_password(admin_pw), "must_change_password": False}, "$inc": {"token_version": 1}})
         logger.warning("FORCE_ADMIN_PASSWORD_SYNC=true — overwrote existing admin password from env")
     # Seed settings (idempotent)
     await get_settings()
@@ -18736,7 +18888,7 @@ class EmployeeIn(BaseModel):
 
 
 class EmployeeCreateIn(EmployeeIn):
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8)
 
 
 class EmployeeOut(EmployeeIn):
@@ -18746,6 +18898,7 @@ class EmployeeOut(EmployeeIn):
     last_login_at: Optional[str] = None
     # Sprint 110ex — Phase 7
     staff_role: Optional[str] = None
+    must_change_password: bool = False
 
 
 def _employee_doc_to_out(u: dict) -> dict:
@@ -18769,6 +18922,7 @@ def _employee_doc_to_out(u: dict) -> dict:
         "staff_role": u.get("staff_role") or "read_only",
         "created_at": u.get("created_at"),
         "last_login_at": u.get("last_login_at"),
+        "must_change_password": bool(u.get("must_change_password", False)),
     }
 
 
@@ -18824,6 +18978,8 @@ async def create_employee(body: EmployeeCreateIn, _: dict = Depends(require_admi
         "password_hash": hash_password(body.password),
         "created_at": now_iso(),
         "login_count": 0,
+        "token_version": 0,
+        "must_change_password": True,
     }
     await db.users.insert_one(doc)
     if doc["is_owner"]:
@@ -18861,11 +19017,11 @@ async def update_employee(user_id: str, body: EmployeeIn, _: dict = Depends(requ
 @api.post("/admin/employees/{user_id}/reset-password")
 async def admin_reset_employee_password(user_id: str, body: dict, _: dict = Depends(require_admin)):
     new_pw = (body or {}).get("password", "")
-    if len(new_pw) < 6:
-        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     res = await db.users.update_one(
         {"id": user_id, "role": "employee"},
-        {"$set": {"password_hash": hash_password(new_pw)}},
+        {"$set": {"password_hash": hash_password(new_pw), "must_change_password": True, "password_reset_at": now_iso()}, "$inc": {"token_version": 1}},
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -18877,7 +19033,7 @@ async def deactivate_employee(user_id: str, _: dict = Depends(require_admin)):
     """Soft-deactivate (sets active=False). Never hard-delete so historical
     time-clock entries keep a referenceable owner."""
     res = await db.users.update_one(
-        {"id": user_id, "role": "employee"}, {"$set": {"active": False}}
+        {"id": user_id, "role": "employee"}, {"$set": {"active": False}, "$inc": {"token_version": 1}}
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -19576,10 +19732,33 @@ async def admin_production_health(_: dict = Depends(require_admin)):
     email_ok = bool(os.environ.get("RESEND_API_KEY")) and bool(os.environ.get("SENDER_EMAIL")) and bool(os.environ.get("ADMIN_NOTIFICATION_EMAIL"))
     add("email", email_ok, "Email notifications", "Resend/admin/sender env vars present." if email_ok else "Missing RESEND_API_KEY, SENDER_EMAIL, or ADMIN_NOTIFICATION_EMAIL.", "warn")
     add("jwt", len(JWT_SECRET or "") >= 32, "JWT secret", "Looks long enough." if len(JWT_SECRET or "") >= 32 else "JWT_SECRET is short; set a long random value before public exposure.", "danger")
-    admin_email_env = os.environ.get("ADMIN_EMAIL") or ""
-    admin_pw_env = os.environ.get("ADMIN_PASSWORD") or ""
-    default_admin_risk = (not admin_email_env) or admin_pw_env in ("", "admin123", "password")
-    add("admin_password", not default_admin_risk, "Admin seed credentials", "Admin env credentials look custom." if not default_admin_risk else "ADMIN_EMAIL/ADMIN_PASSWORD env vars look missing or default-risk.", "danger")
+    admin_email_env = (os.environ.get("ADMIN_EMAIL") or "admin@sithappens.com").lower()
+    admin_user = await db.users.find_one({"email": admin_email_env}, {"_id": 0, "password_hash": 1})
+    if not admin_user:
+        admin_user = await db.users.find_one({"role": "admin"}, {"_id": 0, "password_hash": 1, "email": 1})
+    actual_default_password = bool(
+        admin_user and (
+            verify_password("admin123", admin_user.get("password_hash", ""))
+            or verify_password("password", admin_user.get("password_hash", ""))
+        )
+    )
+    add(
+        "admin_password",
+        bool(admin_user) and not actual_default_password,
+        "Admin login password",
+        "The active admin account is not using a known default password." if admin_user and not actual_default_password
+        else "The active admin account is missing or still uses a known default password. Change it in Settings.",
+        "danger",
+    )
+    cors_origins = _cors_origins()
+    add(
+        "cors",
+        "*" not in cors_origins,
+        "Cross-origin access",
+        "Same-origin only." if not cors_origins else f"Restricted to {', '.join(cors_origins)}.",
+        "danger",
+    )
+    add("auth_throttle", True, "Login protection", "Mongo-backed failed-login and password-reset throttling is enabled.")
 
     counts = {}
     for coll in ["clients", "dogs", "bookings", "bookings_archive", "credit_lots", "payment_ledger", "retail_sales", "expenses", "tax_payments", "daily_closeouts", "cash_drawer_sessions", "till_adjustments"]:
@@ -30084,11 +30263,47 @@ async def admin_duplicates_report(include_archived: bool = False, _: dict = Depe
     return await _duplicate_finder_report(include_archived=include_archived)
 
 
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if request.url.path.startswith("/api/auth/") or request.url.path.startswith("/api/claim/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+def _cors_origins() -> List[str]:
+    def origin_only(value: str) -> Optional[str]:
+        try:
+            parsed = urlsplit((value or "").strip())
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            pass
+        return None
+
+    raw = (os.environ.get("CORS_ORIGINS") or "").strip()
+    if raw and raw != "*":
+        return list(dict.fromkeys(
+            origin for origin in (origin_only(x) for x in raw.split(",")) if origin
+        ))
+    # The shipped deployment is same-origin through nginx and needs no CORS.
+    # If APP_PUBLIC_URL is set, allowing only that exact origin keeps split
+    # deployments working without restoring the unsafe wildcard.
+    public = origin_only(os.environ.get("APP_PUBLIC_URL") or "")
+    return [public] if public else []
+
+
 app.include_router(api)
-app.add_middleware(
-    CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors = _cors_origins()
+if _cors:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_credentials=True,
+        allow_origins=_cors,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "X-Requested-With"],
+    )

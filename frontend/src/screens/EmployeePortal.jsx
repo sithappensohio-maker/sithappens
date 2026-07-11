@@ -590,16 +590,21 @@ function SummaryTile({ label, subtitle, hours, gross, testId }) {
 
 // ─────────────────────── Profile tab ───────────────────────
 function ProfileTab({ user }) {
-  const [pw, setPw] = useState("");
+  const [pw, setPw] = useState({ current: "", next: "", confirm: "" });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
   const change = async () => {
-    if (pw.length < 6) { setErr("Min 6 characters"); return; }
+    if (pw.next.length < 8) { setErr("Use at least 8 characters"); return; }
+    if (pw.next !== pw.confirm) { setErr("New passwords do not match"); return; }
     setBusy(true); setErr(""); setMsg("");
     try {
-      await api.post("/auth/change-password", { password: pw });
-      setMsg("Password updated."); setPw("");
+      const { data } = await api.post("/auth/change-password", {
+        current_password: pw.current,
+        new_password: pw.next,
+      });
+      if (data?.token) localStorage.setItem("sh_token", data.token);
+      setMsg("Password updated."); setPw({ current: "", next: "", confirm: "" });
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
     finally { setBusy(false); }
   };
@@ -613,12 +618,18 @@ function ProfileTab({ user }) {
       </div>
       <div className="bg-bgPanel border border-bgHover rounded-xl p-5 space-y-3">
         <p className="text-[13px] font-black uppercase tracking-widest text-gray-500">Change password</p>
-        <input type="password" value={pw} onChange={(e)=>setPw(e.target.value)} placeholder="New password (min 6)"
-               data-testid="pw-input"
+        <input type="password" value={pw.current} onChange={(e)=>setPw({...pw,current:e.target.value})} placeholder="Current password"
+               autoComplete="current-password" data-testid="pw-current"
+               className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        <input type="password" value={pw.next} onChange={(e)=>setPw({...pw,next:e.target.value})} placeholder="New password (min 8)"
+               autoComplete="new-password" data-testid="pw-input"
+               className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+        <input type="password" value={pw.confirm} onChange={(e)=>setPw({...pw,confirm:e.target.value})} placeholder="Confirm new password"
+               autoComplete="new-password" data-testid="pw-confirm"
                className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
         {err && <p className="text-red-400 text-[14px] font-black uppercase tracking-widest">{err}</p>}
         {msg && <p className="text-shGreen text-[14px] font-black uppercase tracking-widest">{msg}</p>}
-        <button onClick={change} disabled={busy || !pw} data-testid="pw-save"
+        <button onClick={change} disabled={busy || !pw.current || !pw.next || !pw.confirm} data-testid="pw-save"
                 className="w-full bg-shBlue text-white py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
           {busy ? "Saving…" : "Update Password"}
         </button>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 const fmt = (n) => `$${(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const STATUS_META = {
@@ -158,7 +159,7 @@ function SignAgreementModal({ plan, onClose, onSigned }) {
           {/* Render the agreement HTML the admin set up */}
           <div className="bg-white rounded-lg p-5 prose prose-sm max-w-none text-gray-900 mb-5"
                data-testid="agreement-body"
-               dangerouslySetInnerHTML={{ __html: plan.agreement_snapshot || "" }} />
+               dangerouslySetInnerHTML={{ __html: sanitizeHtml(plan.agreement_snapshot || "") }} />
 
           <label className="flex items-start gap-2 mb-4 cursor-pointer">
             <input type="checkbox" checked={agreed} onChange={e => setAgreed(e.target.checked)}

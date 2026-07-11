@@ -179,6 +179,8 @@ You'll see all the settings. Use arrow keys to move around. Replace these values
 | Variable | What to put |
 |---|---|
 | `JWT_SECRET` | The long hex string you just generated |
+| `ADMIN_PASSWORD` | A unique admin password with at least 8 characters |
+| `CORS_ORIGINS` | Leave blank for the normal same-origin setup; only set explicit trusted origins for split-domain hosting |
 | `RESEND_API_KEY` | Your Resend key (starts with `re_`) |
 | `ADMIN_NOTIFICATION_EMAIL` | Your email — where booking notifications go |
 | `APP_PUBLIC_URL` | Leave empty for now. You'll set this in Section 5. |
@@ -415,7 +417,7 @@ Look for one starting with `192.168.` or `10.` — that's your LAN IP. Open `htt
 | **See live logs** | `cd ~/sit-happens && docker compose logs -f` |
 | **See logs for just the backend** | `docker compose logs -f backend` |
 | **Restart just the backend** | `docker compose restart backend` |
-| **Update to a newer version of the code** | `cd ~/sit-happens && git pull && docker compose up -d --build` |
+| **Update to a newer version of the code** | `cd ~/sit-happens && ./update.sh` — this now creates a required Mongo + `.env` backup before pulling or rebuilding |
 
 ---
 

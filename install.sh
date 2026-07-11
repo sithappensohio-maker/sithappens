@@ -70,6 +70,7 @@ ok "User '$USER' is in the docker group"
 
 # ── 2. .env file ────────────────────────────────────────────────────────────
 b "[2/6]  Configuring secrets (.env)..."
+NEW_ENV_CREATED=0
 if [ ! -f .env ]; then
   if [ -f .env.example ]; then
     cp .env.example .env
@@ -82,14 +83,16 @@ APP_PUBLIC_URL=""
 RESEND_API_KEY=""
 ADMIN_NOTIFICATION_EMAIL=""
 ADMIN_EMAIL="admin@sithappens.com"
-ADMIN_PASSWORD="admin123"
+ADMIN_PASSWORD="CHANGE_ME_ON_INSTALL"
 ADMIN_NAME="Admin"
-CORS_ORIGINS="*"
+CORS_ORIGINS=""
+ACCESS_TOKEN_EXPIRE_DAYS="7"
 EMERGENT_LLM_KEY=""
 REACT_APP_BACKEND_URL=""
 EOF
     ok "Created a blank .env"
   fi
+  NEW_ENV_CREATED=1
 fi
 
 # Auto-generate JWT_SECRET if still placeholder
@@ -102,6 +105,33 @@ if grep -qE 'JWT_SECRET="(REPLACE_ME|CHANGE_ME[^"]*)"' .env; then
   fi
   sed -i "s|^JWT_SECRET=.*|JWT_SECRET=\"${NEW_SECRET}\"|" .env
   ok "Generated a new JWT_SECRET"
+fi
+
+
+# Never leave a fresh install on the public default admin password. Existing
+# installations keep their current .env untouched.
+if [ "$NEW_ENV_CREATED" = "1" ] && grep -qE '^ADMIN_PASSWORD="?(CHANGE_ME_ON_INSTALL|admin123|password)?"?$' .env; then
+  prompt "Choose a new admin password (at least 8 characters):"
+  read -rs ADMIN_PW_NEW
+  echo
+  if [ ${#ADMIN_PW_NEW} -lt 8 ]; then
+    err "Admin password must be at least 8 characters. Re-run the installer."
+    exit 1
+  fi
+  if [[ "$ADMIN_PW_NEW" == *'"'* || "$ADMIN_PW_NEW" == *'\'* ]]; then
+    err "For this installer, do not use a double quote or backslash in the admin password."
+    exit 1
+  fi
+  prompt "Type it again:"
+  read -rs ADMIN_PW_CONFIRM
+  echo
+  if [ "$ADMIN_PW_NEW" != "$ADMIN_PW_CONFIRM" ]; then
+    err "Passwords did not match. Re-run the installer."
+    exit 1
+  fi
+  SAFE_ADMIN_PW=$(printf '%s' "$ADMIN_PW_NEW" | sed 's/[\&|]/\\&/g')
+  sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=\"${SAFE_ADMIN_PW}\"|" .env
+  ok "Saved a non-default admin password"
 fi
 
 # Prompt for the things that have no good default

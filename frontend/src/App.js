@@ -42,6 +42,7 @@ import { ConfirmProvider } from "./lib/useConfirm";
 import ImpersonationBanner from "./components/ImpersonationBanner";
 import TextSizePicker from "./components/TextSizePicker";
 import BrandFooter from "./components/BrandFooter";
+import ForcedPasswordChange from "./components/ForcedPasswordChange";
 import { api } from "./lib/api";
 
 function AdminShell() {
@@ -335,6 +336,7 @@ function Gate() {
   const { user } = useAuth();
   if (user === null) return <div className="h-screen w-screen flex items-center justify-center bg-bgBase text-gray-400 text-sm font-black uppercase tracking-widest">Loading…</div>;
   if (!user) return <Login />;
+  if (user.must_change_password) return <ForcedPasswordChange />;
   if (user.role === "admin") return <AdminShell />;
   if (user.role === "employee") return <EmployeePortal />;
   return <Portal />;

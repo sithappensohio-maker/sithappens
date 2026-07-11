@@ -43,9 +43,10 @@ services:
       EMERGENT_LLM_KEY: "${EMERGENT_LLM_KEY:-}"
       JWT_SECRET: "${JWT_SECRET:-}"
       ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@sithappens.com}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-admin123}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       ADMIN_NAME: "${ADMIN_NAME:-Admin}"
-      CORS_ORIGINS: "${CORS_ORIGINS:-*}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      ACCESS_TOKEN_EXPIRE_DAYS: "${ACCESS_TOKEN_EXPIRE_DAYS:-7}"
       BACKUP_ROOT: "/app/backups"
     volumes:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.

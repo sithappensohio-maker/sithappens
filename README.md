@@ -71,7 +71,7 @@ After setup: `https://yourdomain.app` works from any device, anywhere.
 ```bash
 cd ~/sit-happens
 
-./update.sh        # Pull the latest features from GitHub + rebuild
+./update.sh        # Backup Mongo + .env, then pull, rebuild, and health-check
 ./backup-now.sh    # Run a backup right now (local + Google Drive)
 ```
 

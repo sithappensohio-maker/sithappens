@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 import RichTextEditor from "./RichTextEditor";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 const fmt = (n) => `$${(Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const STATUS_META = {
@@ -375,7 +376,7 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               <div className="bg-white p-4 max-h-[300px] overflow-y-auto"
                    data-testid="agreement-live-preview">
                 <div className="prose prose-sm max-w-none text-gray-900"
-                     dangerouslySetInnerHTML={{ __html: renderedAgreement }}/>
+                     dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderedAgreement) }}/>
               </div>
             </div>
           )}

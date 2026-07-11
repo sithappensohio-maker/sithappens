@@ -238,8 +238,11 @@ export default function Login() {
                 </div>
                 <div>
                   <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Password</label>
-                  <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required data-testid="login-password-input"
+                  <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required
+                         minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
+                         data-testid="login-password-input"
                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+                  {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
                   {mode === "login" && (
                     <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
                             className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">

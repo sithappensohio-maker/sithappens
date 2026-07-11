@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 /**
  * Sprint 110ci — Friendly rich-text editor.
@@ -24,14 +25,15 @@ export default function RichTextEditor({
   // Sync external value → DOM (only when it differs to avoid caret jumping)
   useEffect(() => {
     if (!ref.current) return;
-    if ((value || "") !== lastEmittedRef.current && ref.current.innerHTML !== (value || "")) {
-      ref.current.innerHTML = value || "";
+    const safeValue = sanitizeHtml(value || "");
+    if (safeValue !== lastEmittedRef.current && ref.current.innerHTML !== safeValue) {
+      ref.current.innerHTML = safeValue;
     }
   }, [value]);
 
   const emit = () => {
     if (!ref.current) return;
-    const html = ref.current.innerHTML;
+    const html = sanitizeHtml(ref.current.innerHTML);
     lastEmittedRef.current = html;
     onChange(html);
   };
@@ -75,6 +77,11 @@ export default function RichTextEditor({
         suppressContentEditableWarning
         onInput={emit}
         onBlur={emit}
+        onPaste={(e) => {
+          e.preventDefault();
+          document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
+          emit();
+        }}
         data-testid={testId}
         data-placeholder={placeholder}
         className="px-3 py-2 text-sm text-white outline-none rte-body"

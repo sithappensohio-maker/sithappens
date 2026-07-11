@@ -24,7 +24,7 @@ export default function Claim({ token }) {
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
-    if (password.length < 6) { setErr("Password must be at least 6 characters."); return; }
+    if (password.length < 8) { setErr("Password must be at least 8 characters."); return; }
     if (password !== confirmPw) { setErr("Passwords don't match."); return; }
     setStatus("submitting");
     try {
@@ -95,7 +95,7 @@ export default function Claim({ token }) {
                 value={password}
                 onChange={(e)=>setPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 data-testid="claim-password-input"
                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
                 placeholder="At least 6 characters"
@@ -110,7 +110,7 @@ export default function Claim({ token }) {
                 value={confirmPw}
                 onChange={(e)=>setConfirmPw(e.target.value)}
                 required
-                minLength={6}
+                minLength={8}
                 data-testid="claim-confirm-input"
                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
                 placeholder="Type it again"

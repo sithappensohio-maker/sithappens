@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import RichTextEditor from "./RichTextEditor";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 /**
  * Sprint 110by — Email Designer.
@@ -367,11 +368,11 @@ function BrandPreview({ draft }) {
             <a href="#preview" style={{ display: "inline-block", background: draft.brand_blue, color: "#fff", textDecoration: "none", padding: "10px 20px", borderRadius: 6, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 11 }}>Sample CTA</a>
             {draft.signature_html && (
               <div style={{ marginTop: 16, color: "#334155", fontSize: 13 }}
-                   dangerouslySetInnerHTML={{ __html: draft.signature_html }}/>
+                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.signature_html) }}/>
             )}
           </div>
           <div style={{ padding: "14px 26px", background: "#f8fafc", borderTop: "1px solid #e2e8f0", color: "#94a3b8", fontSize: 10 }}
-               dangerouslySetInnerHTML={{ __html: draft.footer_html }}/>
+               dangerouslySetInnerHTML={{ __html: sanitizeHtml(draft.footer_html) }}/>
         </div>
       </div>
     </div>
@@ -878,7 +879,7 @@ function EmailPreview({ subject, intro, cta }) {
             <h1 style={{ color: "#fff", margin: "4px 0 0 0", fontWeight: 900, fontSize: 17 }}>{subject || "(no subject)"}</h1>
           </div>
           <div style={{ padding: "16px 20px", color: "#334155", fontSize: 13, lineHeight: 1.5 }}>
-            <div dangerouslySetInnerHTML={{ __html: intro || "<em>(empty intro)</em>" }}/>
+            <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(intro || "<em>(empty intro)</em>") }}/>
             {cta && (
               <a href="#preview" style={{ display: "inline-block", marginTop: 12, background: "#00a9e0", color: "#fff", textDecoration: "none", padding: "8px 16px", borderRadius: 4, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", fontSize: 10 }}>{cta}</a>
             )}

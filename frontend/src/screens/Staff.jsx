@@ -504,12 +504,12 @@ function EmployeeFormModal({ mode, emp, onClose, onSaved }) {
     setBusy(true); setErr("");
     try {
       if (mode === "new") {
-        if (!password || password.length < 6) throw new Error("Password must be at least 6 characters");
+        if (!password || password.length < 8) throw new Error("Password must be at least 8 characters");
         await api.post("/admin/employees", { ...form, password });
       } else if (mode === "edit") {
         await api.put(`/admin/employees/${emp.id}`, form);
       } else if (mode === "reset-pw") {
-        if (!password || password.length < 6) throw new Error("Password must be at least 6 characters");
+        if (!password || password.length < 8) throw new Error("Password must be at least 8 characters");
         await api.post(`/admin/employees/${emp.id}/reset-password`, { password });
       }
       onSaved();

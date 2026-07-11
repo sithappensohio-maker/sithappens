@@ -19,6 +19,21 @@ if [ ! -d .git ]; then
   exit 1
 fi
 
+# Data-safety gate: never replace application code/containers until a fresh
+# Mongo + .env backup exists outside the project folder. backup-now.sh exits
+# non-zero if the dump/archive cannot be verified, and set -e stops the update.
+if [ "${SKIP_PREUPDATE_BACKUP:-0}" != "1" ]; then
+  echo "💾  Creating required pre-update backup..."
+  if [ ! -x ./backup-now.sh ]; then
+    echo "❌ backup-now.sh is missing or not executable. Update aborted; no code was changed."
+    exit 1
+  fi
+  ./backup-now.sh
+  echo "✅  Pre-update backup complete."
+else
+  echo "⚠️  SKIP_PREUPDATE_BACKUP=1 — proceeding without the safety backup."
+fi
+
 echo "📥  Pulling latest code from GitHub..."
 git pull
 
