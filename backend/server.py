@@ -358,7 +358,7 @@ _suppress_admin_booking_email: contextvars.ContextVar[bool] = contextvars.Contex
 # changes/deactivation still take effect quickly, while simultaneous requests
 # share one database lookup per backend worker.
 _AUTH_USER_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_AUTH_USER_INFLIGHT: Dict[str, asyncio.Task] = {}
+_AUTH_USER_INFLIGHT: Dict[str, asyncio.Future] = {}
 _AUTH_USER_CACHE_TTL_SECONDS = max(1.0, float(os.environ.get("AUTH_USER_CACHE_TTL_SECONDS", "5")))
 _AUTH_USER_CACHE_MAX = 512
 
@@ -370,7 +370,10 @@ async def _load_auth_user(user_id: str) -> Optional[dict]:
         return dict(hit[1])
     task = _AUTH_USER_INFLIGHT.get(user_id)
     if task is None:
-        task = asyncio.create_task(
+        # Motor returns an asyncio-compatible Future here, not a coroutine.
+        # ensure_future accepts either and still lets parallel requests share
+        # the same in-flight lookup. create_task would raise TypeError.
+        task = asyncio.ensure_future(
             db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
         )
         _AUTH_USER_INFLIGHT[user_id] = task
