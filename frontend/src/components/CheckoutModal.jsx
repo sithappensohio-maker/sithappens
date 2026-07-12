@@ -20,12 +20,42 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // Sprint 110ao — pauses background polling while this modal is open so
   // the booking row can't churn under the admin's input.
   useEditLock(true);
-  // Pre-deducted credit info — if non-zero, the owner already has a pending charge
-  // on their pack that we'll either consume (default) or refund.
-  const hadCredit = !!booking.credit_value && !booking.actual_price;
-  const creditAmt = Number(booking.credit_value || 0);
+  // Multi-dog reservations share a group_id. When two or more active rows in
+  // that group still need checked out, this modal becomes one household checkout.
+  const [groupBookings, setGroupBookings] = useState([booking]);
+  const [groupLoading, setGroupLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setGroupLoading(true);
+    (async () => {
+      try {
+        const { data } = await api.get(`/bookings/${booking.id}/checkout-group-preview`);
+        if (!alive) return;
+        const active = (data.bookings || []).filter(b =>
+          b.client_id === booking.client_id &&
+          b.service_type === booking.service_type &&
+          b.date === booking.date &&
+          b.status !== "completed" && !b.checked_out_at
+        );
+        setGroupBookings(active.length ? active : [booking]);
+      } catch {
+        if (alive) setGroupBookings([booking]);
+      } finally {
+        if (alive) setGroupLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [booking]);
+  const checkoutBookings = groupBookings.length ? groupBookings : [booking];
+  const isGroupCheckout = checkoutBookings.length > 1;
+  const groupDogNames = checkoutBookings.map(b => b.dog_name).filter(Boolean);
+
+  // Pre-deducted credit info — group bookings normally reserve each dog's
+  // fractional credit separately, so add them together for one clear checkout.
+  const hadCredit = checkoutBookings.every(b => !!b.credit_value && !b.actual_price);
+  const creditAmt = checkoutBookings.reduce((sum, b) => sum + Number(b.credit_value || 0), 0);
   const creditPool = booking.credit_service_type || booking.service_type || "daycare";
-  const creditsDeducted = booking.credits_deducted || 0;
+  const creditsDeducted = checkoutBookings.reduce((sum, b) => sum + Number(b.credits_deducted || 0), 0);
 
   const fmtCredits = (n) => {
     const val = Math.round((Number(n) || 0) * 10) / 10;
@@ -34,16 +64,17 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   // Credit units for this row. New group bookings snapshot .5 credits on
   // additional dogs; legacy rows fall back to one credit/day or one credit/night.
-  const creditUnitsNeeded = (() => {
-    const snap = Number(booking.credit_units_required || 0);
+  const creditUnitsFor = (row) => {
+    const snap = Number(row.credit_units_required || 0);
     if (snap > 0) return snap;
-    if (booking.service_type !== "boarding") return 1;
+    if (row.service_type !== "boarding") return 1;
     try {
-      const s = new Date(booking.date), e = new Date(booking.end_date || booking.date);
+      const s = new Date(row.date), e = new Date(row.end_date || row.date);
       const n = Math.round((e - s) / (1000 * 60 * 60 * 24)) || 1;
       return Math.max(1, n);
     } catch { return 1; }
-  })();
+  };
+  const creditUnitsNeeded = checkoutBookings.reduce((sum, row) => sum + creditUnitsFor(row), 0);
   // Fetch client balance so we can offer "pay with credits" at checkout when
   // the booking was made without any pre-deduction (e.g. client had no credits
   // at booking time, then bought a pack later).
@@ -179,11 +210,17 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const cartItems = Object.values(cart);
   const addOnTotal = cartItems.reduce((s, it) => s + (Number(it.service.base_price || 0) * it.qty), 0);
-  const existingAddonTotal = (booking.add_ons || []).reduce(
-    (s, ao) => s + (Number(ao.price || 0) * Number(ao.qty || 1)),
-    0,
+  const addonTotalFor = (row) => (row.add_ons || []).reduce(
+    (sum, ao) => sum + (Number(ao.price || 0) * Number(ao.qty || 1)), 0,
   );
-  const bookingBaseEstimate = Math.max(0, Number(booking.estimated_price || 0) - existingAddonTotal);
+  const anchorExistingAddonTotal = addonTotalFor(booking);
+  const existingAddonTotal = checkoutBookings.reduce((sum, row) => sum + addonTotalFor(row), 0);
+  const anchorPreviewRow = checkoutBookings.find(row => row.id === booking.id) || booking;
+  const anchorTicketEstimate = Number(anchorPreviewRow.checkout_preview_total ?? anchorPreviewRow.estimated_price ?? 0);
+  const bookingBaseEstimate = Math.max(0, anchorTicketEstimate - anchorExistingAddonTotal);
+  const groupOtherBaseTotal = checkoutBookings
+    .filter(row => row.id !== booking.id)
+    .reduce((sum, row) => sum + Math.max(0, Number(row.checkout_preview_total ?? row.estimated_price ?? 0) - addonTotalFor(row)), 0);
 
   // Sprint 110eg — When paying with credits, the `basePrice` input is
   // interpreted as the EXTRA cash to charge today on top of credits
@@ -217,7 +254,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           : (defaultSvc ? Number(defaultSvc.base_price || 0) : Number(booking.actual_price || 0)));
   }
   const isAdditionalDogRow = booking.pricing_snapshot?.group_dog_index > 0 || !!booking.multi_dog_discount?.pre_applied;
-  const extraCreditUnitsPerNight = isAdditionalDogRow ? 0.5 : 1;
+  const extraCreditUnitsPerNight = isGroupCheckout
+    ? checkoutBookings.reduce((sum, row) => sum + ((row.pricing_snapshot?.group_dog_index > 0 || row.multi_dog_discount?.pre_applied) ? 0.5 : 1), 0)
+    : (isAdditionalDogRow ? 0.5 : 1);
   const extraCreditUnitsNeeded = isBoarding ? Number(extraNights || 0) * extraCreditUnitsPerNight : 0;
   const creditsReservedForBase = useCredits && !hadCredit ? Number(creditsToUseNow || 0) : 0;
   const creditsAvailableForExtra = Math.max(0, Number(available || 0) - creditsReservedForBase);
@@ -253,7 +292,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // and must be included alongside any new checkout add-ons.
   const preTaxChargedToday = Math.max(
     0,
-    (useCredits ? baseCashDueOnCredits : basePreview) + moneyModifierTotal + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
+    (useCredits ? baseCashDueOnCredits : (basePreview + groupOtherBaseTotal)) + moneyModifierTotal + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
   );
   const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
@@ -321,7 +360,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           }
         }
       } catch { /* silent */ }
-      await api.post(`/bookings/${booking.id}/check-out`, body);
+      const checkoutPath = isGroupCheckout
+        ? `/bookings/${booking.id}/check-out-group`
+        : `/bookings/${booking.id}/check-out`;
+      await api.post(checkoutPath, body);
       onClose();
     } catch (e) {
       setErr(e.response?.data?.detail || "Check-out failed");
@@ -334,11 +376,18 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
-            <i className="fas fa-sign-out-alt text-shBlue mr-2"/>Check Out · {booking.dog_name}
+            <i className="fas fa-sign-out-alt text-shBlue mr-2"/>{isGroupCheckout ? `Household Check Out · ${groupDogNames.length} Dogs` : `Check Out · ${booking.dog_name}`}
           </h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times" /></button>
         </div>
         <p className="text-[14px] text-gray-400 mb-4">{booking.client_name} · {booking.service_type}</p>
+        {isGroupCheckout && (
+          <div className="mb-4 rounded-lg border border-shBlue/40 bg-shBlue/10 p-3" data-testid="group-checkout-summary">
+            <p className="text-[12px] uppercase tracking-widest text-shBlue font-black mb-1"><i className="fas fa-dog mr-1"/>One checkout for the household</p>
+            <p className="text-sm text-white font-black">{groupDogNames.join(" + ")}</p>
+            <p className="text-[13px] text-gray-400 mt-1">All {groupDogNames.length} dogs will be checked out together. The additional-dog discount is already included in the combined total below.</p>
+          </div>
+        )}
 
         {/* Section 1 — How to pay the base service */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
@@ -468,7 +517,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
         {/* Section 2 — Add-ons */}
         <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
+          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black mb-3">Add-on services{isGroupCheckout ? ` for ${booking.dog_name}` : ""} <span className="text-gray-600">(bath, nail trim, etc.)</span></p>
           {/* Sprint 110an — pre-attached add-ons (added at booking or check-in)
               are already on the booking and will auto-bill at checkout. Show
               them so the admin doesn't accidentally re-add them as extras. */}
@@ -480,7 +529,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               <ul className="space-y-1.5">
                 {(booking.add_ons || []).map((ao, i) => (
                   <li key={i} className="flex items-center justify-between text-[13px]">
-                    <span className="text-white"><i className={`fas ${ao.icon || "fa-plus"} text-amber-400 mr-1.5"`}/>{ao.name} × {ao.qty || 1}</span>
+                    <span className="text-white"><i className={`fas ${ao.icon || "fa-plus"} text-amber-400 mr-1.5`}/>{ao.name} × {ao.qty || 1}</span>
                     <span className="text-shGreen font-black">+${(Number(ao.price || 0) * (ao.qty || 1)).toFixed(2)}</span>
                   </li>
                 ))}
@@ -547,7 +596,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               an Amount Paid input prefilled with the full total. The
               client's existing tab is surfaced here too so the operator
               knows the running balance going into this checkout. */}
-          {!useCredits && (
+          {!useCredits && !isGroupCheckout && (
             <div className="mt-4 pt-3 border-t border-bgHover" data-testid="checkout-pay-mode-section">
               {clientBal && Math.abs(clientBal.account_balance) > 0.005 && (
                 <div className={`mb-3 rounded p-2.5 text-[13px] font-black ${clientBal.account_balance > 0 ? "bg-shOrange/15 text-shOrange border border-shOrange/30" : "bg-shGreen/10 text-shGreen border border-shGreen/30"}`}
@@ -651,6 +700,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
               )}
             </div>
           )}
+          {!useCredits && isGroupCheckout && (
+            <p className="mt-3 text-[13px] text-gray-400 border-t border-bgHover pt-3" data-testid="group-checkout-full-payment-note">
+              <i className="fas fa-receipt text-shGreen mr-1"/>Combined household checkouts are paid in full as one ticket. Use separate checkouts only when putting part of the balance on the client's tab.
+            </p>
+          )}
         </div>
 
         {/* Total summary */}
@@ -667,6 +721,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
                 <i className="fas fa-dog mr-1"/>Additional dog discount already included
               </p>
             )}
+            {isGroupCheckout && !useCredits && <p className="text-[12px] uppercase tracking-widest text-shBlue font-black" data-testid="checkout-group-service-total">{groupDogNames.length} dogs · ${(basePreview + groupOtherBaseTotal).toFixed(2)} service total</p>}
             {existingAddonTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-amber-400 font-black">Booked add-ons · ${existingAddonTotal.toFixed(2)}</p>}
             {addOnTotal > 0 && <p className="text-[12px] uppercase tracking-widest text-gray-500 font-black">New add-ons · ${addOnTotal.toFixed(2)}</p>}
             {useCredits && basePrice === "" && baseCreditShortfallCash > 0 && (
@@ -722,9 +777,9 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           ) : <span/>}
           <div className="flex gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
-            <button onClick={submit} disabled={busy} data-testid="confirm-checkout"
+            <button onClick={submit} disabled={busy || groupLoading} data-testid="confirm-checkout"
                     className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
-              {busy ? "Checking out…" : "Complete Check-out"}
+              {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : "Complete Check-out"))}
             </button>
           </div>
         </div>

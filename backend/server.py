@@ -6239,6 +6239,317 @@ async def _rollback_checkout_finances(
         logger.critical("checkout rollback could not remove ledger rows for %s: %s", operation_id, exc)
 
 
+
+
+async def _active_household_checkout_rows(anchor: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Find the dogs that should close on one household ticket.
+
+    New reservations use group_id. Legacy/separately-entered daycare and
+    boarding rows are also grouped when owner, service, and stay dates match.
+    """
+    service_type = anchor.get("service_type")
+    if service_type not in ("daycare", "boarding") and not anchor.get("group_id"):
+        return [anchor]
+    q: Dict[str, Any] = {
+        "client_id": anchor.get("client_id"),
+        "service_type": service_type,
+        "date": anchor.get("date"),
+        "status": {"$nin": ["completed", "cancelled", "rejected"]},
+        "$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}],
+    }
+    if service_type == "boarding":
+        q["end_date"] = anchor.get("end_date")
+    elif anchor.get("group_id") and service_type not in ("daycare", "boarding"):
+        q["group_id"] = anchor.get("group_id")
+    rows = await db.bookings.find(q, {"_id": 0}).to_list(50)
+    # One ticket should never include duplicate rows for the same dog.
+    unique: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        key = row.get("dog_id") or row.get("id")
+        unique.setdefault(key, row)
+    items = list(unique.values())
+    items.sort(key=lambda row: (
+        int((row.get("pricing_snapshot") or {}).get("group_dog_index") or 0),
+        row.get("created_at") or "",
+        row.get("id") or "",
+    ))
+    return items
+
+
+@api.get("/bookings/{booking_id}/checkout-group-preview")
+async def checkout_group_preview(
+    booking_id: str,
+    _: dict = Depends(require_employee_or_admin),
+):
+    """Return the household rows and a combined pre-checkout ticket preview."""
+    anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not anchor:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    rows = await _active_household_checkout_rows(anchor)
+    settings = await get_settings()
+    cfg = _multi_dog_discount_config_for(settings, anchor.get("service_type") or "")
+    preview_rows: List[Dict[str, Any]] = []
+    combined = 0.0
+    discount_total = 0.0
+    prior_completed = await db.bookings.count_documents({
+        "client_id": anchor.get("client_id"),
+        "date": anchor.get("date"),
+        "status": "completed",
+        "checked_out_at": {"$exists": True, "$ne": None},
+    })
+    for idx, row in enumerate(rows):
+        addons = _booking_addon_total_from(row)
+        total = float(row.get("estimated_price") or row.get("actual_price") or 0)
+        if total <= 0 and row.get("service_type") in ("daycare", "boarding"):
+            quote = await _quote_base_service_price(
+                client_id=row.get("client_id"),
+                service_type=row.get("service_type"),
+                start_date=row.get("date"),
+                end_date=row.get("end_date"),
+                pickup_time=row.get("pickup_time"),
+                service_id=row.get("service_id"),
+                legacy_boarding_minimum=1,
+            )
+            total = round(float(quote.get("unit_price") or 0) * float(quote.get("units") or 1) + addons, 2)
+        base = max(0.0, round(total - addons, 2))
+        pre_applied = bool((row.get("multi_dog_discount") or {}).get("pre_applied"))
+        predicted_discount = 0.0
+        if (prior_completed + idx) > 0 and not pre_applied:
+            predicted_discount = _discount_amount_for_extra_dogs(base, cfg, additional_dogs=1)
+        row_total = max(0.0, round(total - predicted_discount, 2))
+        out = dict(row)
+        out["checkout_preview_total"] = row_total
+        out["checkout_preview_discount"] = round(predicted_discount, 2)
+        preview_rows.append(out)
+        combined += row_total
+        discount_total += predicted_discount
+    return {
+        "bookings": preview_rows,
+        "count": len(preview_rows),
+        "is_group_checkout": len(preview_rows) > 1,
+        "combined_total": round(combined, 2),
+        "discount_total": round(discount_total, 2),
+    }
+
+
+@api.post("/bookings/{booking_id}/check-out-group")
+async def check_out_group(
+    booking_id: str,
+    body: Optional[CheckoutIn] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Check out every active dog in the same multi-dog booking group at once.
+
+    The individual booking rows remain intact for care history, reporting, and
+    per-dog pricing, but one click now closes the whole household visit and
+    writes a single grouped checkout receipt with the combined total.
+    """
+    body = body or CheckoutIn()
+    anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
+    if not anchor:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    group_id = anchor.get("group_id")
+    if body.amount_paid is not None and not bool(body.use_credits):
+        raise HTTPException(
+            status_code=400,
+            detail="Partial payments are not available during a combined multi-dog checkout. Use paid in full, or check the dogs out separately for a partial payment.",
+        )
+
+    targets = await _active_household_checkout_rows(anchor)
+    if len(targets) < 2:
+        raise HTTPException(status_code=409, detail="There are no other active dogs left in this checkout group.")
+
+    operation_id = str(uuid.uuid4())
+    checkout_group_id = str(uuid.uuid4())
+    lock_ts = now_iso()
+    stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
+    originals: List[Dict[str, Any]] = []
+    client_id = anchor.get("client_id")
+    client_lock_acquired = False
+    snapshot: Dict[str, Any] = {"client": None, "lots": []}
+    token = _checkout_operation_id_ctx.set(operation_id)
+
+    try:
+        # Lock every row before touching money so a double click cannot complete
+        # one dog while the grouped checkout is still being calculated.
+        for target in targets:
+            original = await db.bookings.find_one_and_update(
+                {
+                    "$and": [
+                        {"id": target["id"]},
+                        {"status": {"$ne": "completed"}},
+                        {"$or": [{"checked_out_at": {"$exists": False}}, {"checked_out_at": None}]},
+                        {"$or": [
+                            {"checkout_in_progress": {"$exists": False}},
+                            {"checkout_in_progress": False},
+                            {"checkout_started_at": {"$lt": stale_lock_before}},
+                        ]},
+                    ]
+                },
+                {"$set": {
+                    "checkout_in_progress": True,
+                    "checkout_operation_id": operation_id,
+                    "checkout_started_at": lock_ts,
+                }},
+                projection={"_id": 0},
+                return_document=ReturnDocument.BEFORE,
+            )
+            if not original:
+                raise HTTPException(status_code=409, detail="One of the dogs is already being checked out. Refresh and try again.")
+            original.pop("checkout_in_progress", None)
+            original.pop("checkout_operation_id", None)
+            original.pop("checkout_started_at", None)
+            originals.append(original)
+
+        if client_id:
+            locked_client = await db.clients.find_one_and_update(
+                {
+                    "id": client_id,
+                    "$and": [
+                        {"$or": [
+                            {"financial_checkout_in_progress": {"$exists": False}},
+                            {"financial_checkout_in_progress": False},
+                            {"financial_checkout_started_at": {"$lt": stale_lock_before}},
+                        ]},
+                        {"$or": [
+                            {"financial_correction_in_progress": {"$exists": False}},
+                            {"financial_correction_in_progress": False},
+                            {"financial_correction_started_at": {"$lt": stale_lock_before}},
+                        ]},
+                    ],
+                },
+                {"$set": {
+                    "financial_checkout_in_progress": True,
+                    "financial_checkout_operation_id": operation_id,
+                    "financial_checkout_started_at": lock_ts,
+                }},
+                projection={"_id": 0, "id": 1},
+                return_document=ReturnDocument.BEFORE,
+            )
+            if not locked_client:
+                raise HTTPException(status_code=409, detail="Another checkout or financial correction for this client is already in progress. Wait a moment and refresh.")
+            client_lock_acquired = True
+
+        snapshot = await _checkout_financial_snapshot(client_id)
+        might_collect_money = (
+            body.use_credits is False
+            or body.amount_paid is not None
+            or (body.payment_method not in (None, "credits"))
+            or bool(body.add_ons)
+            or int(body.extra_nights or 0) > 0
+        )
+        if might_collect_money:
+            await _require_register_day_open(business_today().isoformat())
+
+        completed: List[Dict[str, Any]] = []
+        for target in targets:
+            payload = body.model_dump()
+            # New add-ons and a manual base override belong to the dog whose
+            # checkout button was clicked. Shared stay extensions apply to all
+            # dogs because the group has the same reservation dates/service.
+            if target.get("id") != booking_id:
+                payload["add_ons"] = []
+                payload["base_price"] = None
+                payload["additional_cash_charge"] = 0
+            # In a mixed credits + cash group, each row calculates its own exact
+            # uncovered cash. A combined amount_paid must not be copied to every dog.
+            if bool(body.use_credits):
+                payload["amount_paid"] = None
+            row_body = CheckoutIn(**payload)
+            row = await _check_out_locked(target["id"], row_body, user)
+            completed.append(row)
+
+        combined_total = round(sum(float(row.get("actual_price") or 0) for row in completed), 2)
+        combined_cash = round(sum(float(row.get("cash_revenue") or 0) for row in completed), 2)
+        combined_discount = round(sum(float((row.get("multi_dog_discount") or {}).get("amount") or 0) for row in completed), 2)
+        dog_names = [row.get("dog_name") or "Dog" for row in completed]
+        group_meta = {
+            "id": checkout_group_id,
+            "booking_group_id": group_id or checkout_group_id,
+            "booking_ids": [row.get("id") for row in completed],
+            "client_id": client_id,
+            "client_name": anchor.get("client_name"),
+            "service_type": anchor.get("service_type"),
+            "date": anchor.get("date"),
+            "dog_names": dog_names,
+            "total": combined_total,
+            "cash_total": combined_cash,
+            "discount_total": combined_discount,
+            "payment_method": _normalize_payment_method(body.payment_method or (completed[0].get("payment_method") if completed else None), store=True),
+            "checked_out_at": now_iso(),
+            "checked_out_by": user.get("id"),
+            "checked_out_by_name": user.get("display_name") or user.get("name"),
+            "operation_id": operation_id,
+        }
+        await db.checkout_groups.insert_one(group_meta.copy())
+        await db.bookings.update_many(
+            {"id": {"$in": group_meta["booking_ids"]}},
+            {"$set": {
+                "checkout_group_id": checkout_group_id,
+                "checkout_group_total": combined_total,
+                "checkout_group_cash_total": combined_cash,
+                "checkout_group_dog_count": len(completed),
+            }},
+        )
+        for row in completed:
+            row.update({
+                "checkout_group_id": checkout_group_id,
+                "checkout_group_total": combined_total,
+                "checkout_group_cash_total": combined_cash,
+                "checkout_group_dog_count": len(completed),
+            })
+        return {
+            "checkout_group_id": checkout_group_id,
+            "booking_group_id": group_id or checkout_group_id,
+            "bookings": completed,
+            "dog_names": dog_names,
+            "count": len(completed),
+            "total": combined_total,
+            "cash_total": combined_cash,
+            "discount_total": combined_discount,
+            "payment_method": group_meta["payment_method"],
+        }
+    except Exception:
+        if originals:
+            # Restore the first booking plus all mutable client/credit/ledger
+            # state, then restore the remaining booking rows.
+            await _rollback_checkout_finances(
+                booking_id=originals[0]["id"],
+                original_booking=originals[0],
+                snapshot=snapshot,
+                operation_id=operation_id,
+            )
+            for original in originals[1:]:
+                try:
+                    await db.bookings.replace_one({"id": original["id"]}, original, upsert=False)
+                except Exception as exc:
+                    logger.critical("group checkout rollback could not restore booking %s: %s", original.get("id"), exc)
+        try:
+            await db.checkout_groups.delete_one({"id": checkout_group_id})
+        except Exception:
+            pass
+        raise
+    finally:
+        _checkout_operation_id_ctx.reset(token)
+        if client_lock_acquired and client_id:
+            await db.clients.update_one(
+                {"id": client_id, "financial_checkout_operation_id": operation_id},
+                {"$unset": {
+                    "financial_checkout_in_progress": "",
+                    "financial_checkout_operation_id": "",
+                    "financial_checkout_started_at": "",
+                }},
+            )
+        await db.bookings.update_many(
+            {"checkout_operation_id": operation_id},
+            {"$unset": {
+                "checkout_in_progress": "",
+                "checkout_operation_id": "",
+                "checkout_started_at": "",
+            }},
+        )
+
+
 @api.post("/bookings/{booking_id}/check-out", response_model=BookingOut)
 async def check_out(
     booking_id: str,
@@ -13636,7 +13947,7 @@ BACKUP_COLLECTIONS = [
     "awarded_trophies", "referrals", "rewards_ledger",
     # Financial state
     "expenses", "retail_sales", "credit_lots", "credit_adjustments",
-    "price_overrides", "payment_transactions",
+    "price_overrides", "payment_transactions", "checkout_groups",
     # Front-desk inbox + admin task state
     "quote_requests", "tasks", "task_dismissals",
     # Staff scheduling + actual clocked hours (drives payroll)
@@ -14462,7 +14773,7 @@ def _backup_file_info(path: Optional[str]) -> Dict[str, Any]:
 
 _CRITICAL_BACKUP_COLLECTIONS = [
     "clients", "dogs", "bookings", "bookings_archive",
-    "credit_lots", "credit_adjustments", "payment_ledger", "retail_sales",
+    "credit_lots", "credit_adjustments", "payment_ledger", "checkout_groups", "retail_sales",
     "expenses", "daily_closeouts", "cash_drawer_sessions", "till_adjustments",
     "vaccine_uploads", "referrals", "rewards_ledger", "audit_log", "duplicate_merge_audit",
 ]
