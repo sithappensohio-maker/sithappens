@@ -23130,17 +23130,31 @@ async def today_pnl(_: dict = Depends(require_admin)):
             legacy_delta += (price - catalog_price)
             if client_id_for_lookup:
                 legacy_client_set.add(client_id_for_lookup)
-    revenue = round(revenue, 2)
+    # Keep the booking loop above for operational counts and forecast-only
+    # details (booked_count, completed_count, legacy pricing impact). Actual
+    # P&L revenue, however, must use the same cash-basis source of truth as the
+    # register: the BUSINESS DATE the money was collected, regardless of the
+    # booking/service date or tender. This prevents Clover, Venmo, PayPal,
+    # checks, tab payments, pack sales, and payments on earlier boarding stays
+    # from disappearing from Today's P&L while still showing in the register.
     catalog_forecast = round(catalog_forecast, 2)
     legacy_delta = round(legacy_delta, 2)
 
-    # ── Retail sales today (external POS — adds to gross revenue)
+    register_day = await _register_day_summary(today)
+    register_totals = register_day.get("totals") or {}
+    register_sources = register_day.get("incoming_sources") or {}
+    revenue_by_method = register_day.get("incoming_by_method") or _empty_method_totals()
+
+    revenue = round(float(register_totals.get("incoming_total") or 0), 2)
+    service_revenue = round(float(register_sources.get("booking_payments") or 0), 2)
+    # Historically this response called every non-booking income row "retail".
+    # Preserve the field for UI/backward compatibility, but derive it from the
+    # register so pack/program/tab/manual sales and refunds reconcile exactly.
+    retail_total = round(revenue - service_revenue, 2)
     retail_rows = await db.retail_sales.find(
-        {"date": today}, {"_id": 0, "amount": 1},
+        {"date": today}, {"_id": 0, "id": 1},
     ).to_list(2000)
-    retail_total = round(sum(float(r.get("amount") or 0) for r in retail_rows), 2)
     retail_count = len(retail_rows)
-    revenue = round(revenue + retail_total, 2)
 
     # ── Labor cost today
     today_start = f"{today}T00:00:00"
@@ -23220,9 +23234,11 @@ async def today_pnl(_: dict = Depends(require_admin)):
     return {
         "date": today,
         "revenue": revenue,
-        "service_revenue": round(revenue - retail_total, 2),
+        "service_revenue": service_revenue,
         "retail_revenue": retail_total,
         "retail_count": retail_count,
+        "revenue_by_method": revenue_by_method,
+        "revenue_sources": register_sources,
         "labor_cost": labor_cost,        # gross wages (legacy field name kept for back-compat)
         "labor_burden": labor_burden,    # employer-side payroll tax + workers comp
         "labor_total": labor_total,      # gross + burden

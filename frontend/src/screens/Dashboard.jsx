@@ -821,6 +821,11 @@ function QuickRegisterButton({ label, icon, onClick }) {
 function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
   const fmt = (n) => `${n < 0 ? "-" : ""}$${Math.abs(Number(n)||0).toFixed(2)}`;
   const isProfit = data.net >= 0;
+  const revenueMethods = [
+    ["cash", "Cash"], ["clover", "Clover / Card"], ["venmo", "Venmo"],
+    ["paypal", "PayPal"], ["check", "Check"],
+    ["venmo_paypal", "Venmo / PayPal (legacy)"], ["other", "Other"],
+  ].filter(([key]) => Math.abs(Number(data.revenue_by_method?.[key] || 0)) >= 0.005);
   const accent = isProfit ? "text-shGreen border-shGreen/40" : "text-red-300 border-red-500/40";
   const bg = isProfit ? "bg-shGreen/5" : "bg-red-500/5";
   return (
@@ -847,7 +852,7 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
           )}
           {(data.retail_revenue > 0 || data.retail_count > 0) && (
             <p className="text-[12px] text-purple-300 font-black uppercase tracking-widest mt-1" data-testid="pnl-retail-chip">
-              <i className="fas fa-bag-shopping mr-1"/>Retail {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})
+              <i className="fas fa-bag-shopping mr-1"/>Other register income {fmt(data.retail_revenue || 0)} ({data.retail_count || 0})
             </p>
           )}
           {/* Sprint 110bf — owner's-draw chip (owner's hours still count toward
@@ -898,6 +903,19 @@ function TodayPnlTile({ data, expanded, onToggle, onNavStaff, onRefresh }) {
       </div>
       {expanded && (
         <div className="mt-3 border-t border-bgHover/60 pt-3" data-testid="pnl-details">
+          {revenueMethods.length > 0 && (
+            <div className="mb-3" data-testid="pnl-method-breakdown">
+              <p className="text-[12px] font-black uppercase tracking-widest text-gray-500 mb-1">Revenue by payment method</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {revenueMethods.map(([key, label]) => (
+                  <div key={key} className="flex justify-between gap-2 rounded border border-bgHover bg-bgBase/50 px-2 py-1 text-[13px]">
+                    <span className="text-gray-400">{label}</span>
+                    <span className="text-white font-black">{fmt(data.revenue_by_method[key])}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {data.per_employee.length === 0 ? (
             <p className="text-[14px] text-gray-500">No staff clocked in today.</p>
           ) : (
