@@ -2142,6 +2142,7 @@ export function RegisterTab() {
   const submitCloseout = () => submit(async () => {
     const counted = Number(closeout.cash_counted);
     await api.post("/admin/end-of-day/closeout", {
+      date,
       cash_counted: counted,
       rollover_confirmed: true,
       confirmed_rollover_cash: counted,

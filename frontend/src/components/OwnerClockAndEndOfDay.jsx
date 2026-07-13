@@ -201,8 +201,20 @@ export function EndOfDayPanel({ onJump = () => {} }) {
   const saveCloseout = async () => {
     setClosing(true);
     try {
+      // Re-check the business date immediately before closing. A dashboard tab
+      // can remain open across midnight; never let yesterday's count close the
+      // new day or create the wrong rollover chain.
+      const fresh = await api.get("/admin/end-of-day");
+      if (fresh.data?.date !== data?.date) {
+        setData(fresh.data);
+        hydrateStartDay(fresh.data);
+        setCloseoutReview(false);
+        toast.info("The business day changed. Closeout was refreshed—review today's drawer before closing.");
+        return;
+      }
       const counted = Number(closeout.cash_counted);
       const payload = {
+        date: data?.date,
         notes: closeout.notes || "",
         cash_counted: counted,
         rollover_confirmed: true,
