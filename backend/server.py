@@ -20169,6 +20169,24 @@ class ReopenRegisterDayIn(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
 
+def _validated_register_date(value: Optional[str] = None, *, allow_future: bool = False) -> str:
+    """Return a safe YYYY-MM-DD register date.
+
+    Register writes must never drift to a different business day because a
+    browser tab crossed midnight.  Accepting the date explicitly also lets the
+    full Register screen close a deliberately selected historical day without
+    accidentally closing today's register.
+    """
+    raw = (value or business_today().isoformat()).strip()
+    try:
+        parsed = date.fromisoformat(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Register date must be YYYY-MM-DD")
+    if not allow_future and parsed > business_today():
+        raise HTTPException(status_code=400, detail="A future register day cannot be opened, closed, or reopened")
+    return parsed.isoformat()
+
+
 async def _active_register_closeout(date_value: str) -> Optional[Dict[str, Any]]:
     """Return the newest closeout that has not been explicitly reopened."""
     return await db.daily_closeouts.find_one(
@@ -20296,6 +20314,7 @@ def _effective_register_opening(
         "source": source,
         "suggested_cash": suggested,
         "suggested_from_date": (previous_closeout or {}).get("date"),
+        "suggested_from_closeout_id": (previous_closeout or {}).get("id"),
         "valid_override": valid_override,
         "override_reason": override_reason if valid_override else "",
         "recovered": recovered,
@@ -20570,6 +20589,7 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         "opening_rollover": {
             "suggested_cash": suggested_opening_cash,
             "from_date": suggested_opening_date,
+            "source_closeout_id": opening_resolution.get("suggested_from_closeout_id"),
             "is_override": bool(opening_resolution.get("valid_override")),
             "override_reason": opening_resolution.get("override_reason") or "",
             "recovered_stale_opening": bool(opening_resolution.get("recovered")),
@@ -20981,7 +21001,7 @@ async def admin_register_day(date: Optional[str] = None, _: dict = Depends(requi
 
 @api.post("/admin/register/open-drawer")
 async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(require_admin)):
-    d = body.date or business_today().isoformat()
+    d = _validated_register_date(body.date)
     await _require_register_day_open(d)
     opening_cash = round(float(body.opening_cash), 2)
     existing = await db.cash_drawer_sessions.find_one({"date": d}, {"_id": 0})
@@ -21008,6 +21028,7 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
         "notes": (body.notes or "").strip()[:1000],
         "suggested_opening_cash": suggested,
         "suggested_opening_from_date": previous.get("date") if previous else None,
+        "suggested_opening_from_closeout_id": previous.get("id") if previous else None,
         "opening_override_reason": override_reason if is_override else "",
         "opening_was_overridden": bool(is_override),
         "opened_at": now_iso(),
@@ -21021,7 +21042,7 @@ async def admin_open_cash_drawer(body: CashDrawerOpenIn, user: dict = Depends(re
 
 @api.post("/admin/register/reopen-day")
 async def admin_reopen_register_day(body: ReopenRegisterDayIn, user: dict = Depends(require_admin)):
-    d = body.date or business_today().isoformat()
+    d = _validated_register_date(body.date)
     reason = body.reason.strip()
     closeout = await _active_register_closeout(d)
     if not closeout:
@@ -21152,6 +21173,7 @@ async def admin_register_cash_payout(body: RegisterCashPayoutIn, user: dict = De
 
 
 class EndOfDayCloseoutIn(BaseModel):
+    date: Optional[str] = None
     notes: Optional[str] = ""
     cash_counted: float = Field(ge=0)
     rollover_confirmed: bool = False
@@ -21172,8 +21194,8 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
     will be suggested as the next opening balance so a blank field can never
     silently turn into a zero-dollar morning drawer.
     """
-    snapshot = await admin_end_of_day(_=user)  # type: ignore[arg-type]
-    d = snapshot.get("date")
+    d = _validated_register_date(body.date)
+    snapshot = await _admin_end_of_day_snapshot(d)
     if await _active_register_closeout(d):
         raise HTTPException(status_code=409, detail="This register is already closed. Reopen the day before saving a replacement closeout.")
     counted = round(float(body.cash_counted), 2)
@@ -21217,6 +21239,8 @@ async def admin_end_of_day_closeout(body: EndOfDayCloseoutIn, user: dict = Depen
             "closed_by_name": doc["created_by_name"],
             "closing_cash_counted": counted,
             "closeout_id": doc["id"],
+            "rollover_cash": counted,
+            "rollover_closeout_id": doc["id"],
         }},
         upsert=True,
     )
@@ -22880,8 +22904,7 @@ async def employee_my_shifts(
 
 
 
-@api.get("/admin/end-of-day")
-async def admin_end_of_day(_: dict = Depends(require_admin)):
+async def _admin_end_of_day_snapshot(day: Optional[str] = None) -> Dict[str, Any]:
     """Sprint 110cr — Wrap-up snapshot for the operator at end of day:
        - who's still on-site (checked in, never checked out)
        - which completed bookings are unpaid
@@ -22890,7 +22913,7 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
        - care-log roll-up (total feedings/medications/bathroom across all visits)
     Designed to drive a single 'did I close everything out?' review screen so
     the solo operator doesn't leave anything dangling overnight."""
-    today = business_today().isoformat()
+    today = _validated_register_date(day)
     bookings = await db.bookings.find(
         {"date": today, "status": {"$in": ["approved", "completed"]}},
         {"_id": 0},
@@ -22973,6 +22996,14 @@ async def admin_end_of_day(_: dict = Depends(require_admin)):
         "hard_clear": (not still_on and not unpaid),
         "all_clear": (not still_on and not unpaid),
     }
+
+
+@api.get("/admin/end-of-day")
+async def admin_end_of_day(
+    date: Optional[str] = None,
+    _: dict = Depends(require_admin),
+):
+    return await _admin_end_of_day_snapshot(date)
 
 
 
