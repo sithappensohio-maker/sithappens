@@ -1,10 +1,9 @@
 """Daily background tasks for Sit Happens.
 
-We avoid an in-process scheduler (one less moving part for a solo-operator
-deploy) by lazily triggering this runner whenever the admin dashboard loads.
-The `system_runs` collection tracks the last successful run-date for each
-job_id so each job fires at most once per day, no matter how many times the
-admin opens the dashboard.
+The server starts a lightweight in-process automation loop at startup. It
+runs the daily job gate and drains a durable email outbox, so warnings do not
+depend on an admin opening the dashboard and temporary send failures retry.
+The `system_runs` collection tracks the last run-date for each daily batch.
 
 Each job is fully idempotent on its own (de-duped by `notification_log`
 entries) — the system_runs gate is just a perf shortcut to avoid re-iterating
@@ -88,20 +87,25 @@ async def run_birthday_job(db) -> dict:
             skipped += 1
             continue
         try:
-            await email_service.notify_client_dog_birthday(client, dog)
-            await _mark_notified(db, key, {"job": "birthday", "dog_id": dog.get("id"), "client_id": client.get("id")})
-            sent += 1
+            meta = {"job": "birthday", "dog_id": dog.get("id"), "client_id": client.get("id")}
+            ok = await email_service.notify_client_dog_birthday(
+                client, dog, delivery_key=key, delivery_meta=meta,
+            )
+            if ok:
+                sent += 1
+            else:
+                skipped += 1
         except Exception as e:
             logger.warning("birthday email failed for dog=%s: %s", dog.get("id"), e)
     return {"sent": sent, "skipped": skipped}
 
 
 async def run_vaccine_expiry_job(db) -> dict:
-    """Email owners whose dog has any vaccine expiring exactly `VACCINE_NUDGE_DAYS`
-    days from today. One email per dog, listing all expiring vaccines.
-    De-duped per (dog, target-date)."""
-    target = datetime.now(BUSINESS_TZ).date() + timedelta(days=VACCINE_NUDGE_DAYS)
-    target_iso = target.isoformat()
+    """Email owners whose dog has a vaccine expiring within the next
+    `VACCINE_NUDGE_DAYS` days. This catch-up window prevents a reminder from
+    being lost when the app was offline on the exact 30-day date."""
+    today = datetime.now(BUSINESS_TZ).date()
+    target = today + timedelta(days=VACCINE_NUDGE_DAYS)
     sent = 0
     skipped = 0
     async for dog in db.dogs.find({}, {"_id": 0}):
@@ -111,11 +115,16 @@ async def run_vaccine_expiry_job(db) -> dict:
             v = (vaccines.get(field) or "").strip()
             if len(v) < 10:
                 continue
-            if v[:10] == target_iso:
-                expiring.append({"name": label, "expires_on": v[:10]})
+            try:
+                expires = date.fromisoformat(v[:10])
+            except ValueError:
+                continue
+            if today <= expires <= target:
+                expiring.append({"name": label, "expires_on": expires.isoformat()})
         if not expiring:
             continue
-        key = f"vax30:{dog.get('id')}:{target_iso}"
+        expiry_signature = "|".join(sorted(f"{v['name']}={v['expires_on']}" for v in expiring))
+        key = f"vax30:{dog.get('id')}:{expiry_signature}"
         if await _already_notified(db, key):
             skipped += 1
             continue
@@ -124,14 +133,20 @@ async def run_vaccine_expiry_job(db) -> dict:
             skipped += 1
             continue
         try:
-            await email_service.notify_client_vaccine_expiring(client, dog, expiring)
-            await _mark_notified(db, key, {
+            meta = {
                 "job": "vaccine_expiry_30d",
                 "dog_id": dog.get("id"),
                 "client_id": client.get("id"),
                 "vaccines": [v["name"] for v in expiring],
-            })
-            sent += 1
+                "expires_on": [v["expires_on"] for v in expiring],
+            }
+            ok = await email_service.notify_client_vaccine_expiring(
+                client, dog, expiring, delivery_key=key, delivery_meta=meta,
+            )
+            if ok:
+                sent += 1
+            else:
+                skipped += 1
         except Exception as e:
             logger.warning("vaccine nudge failed for dog=%s: %s", dog.get("id"), e)
     return {"sent": sent, "skipped": skipped}
@@ -162,14 +177,18 @@ async def run_pl_monthly_job(db) -> Dict[str, Any]:
         brand_name = settings.get("brand_name") or "Sit Happens"
         data = await pl_report.build_pl_data(db, start_iso, end_iso)
         pdf_bytes = await asyncio.to_thread(pl_report.render_pl_pdf, data, brand_name)
-        await email_service.notify_admin_pl_report(pdf_bytes, start_iso, end_iso, data)
-        await _mark_notified(db, key, {
+        meta = {
             "job": "pl_monthly",
             "start_date": start_iso,
             "end_date": end_iso,
             "net": data["net"],
-        })
-        return {"sent": True, "key": key, "start_date": start_iso, "end_date": end_iso, "net": data["net"]}
+        }
+        ok = await email_service.notify_admin_pl_report(
+            pdf_bytes, start_iso, end_iso, data, delivery_key=key, delivery_meta=meta,
+        )
+        if ok:
+            return {"sent": True, "key": key, "start_date": start_iso, "end_date": end_iso, "net": data["net"]}
+        return {"sent": False, "queued_or_failed": True, "key": key}
     except Exception as e:
         logger.warning("pl_monthly failed for %s: %s", key, e)
         return {"error": str(e), "key": key}
@@ -295,16 +314,12 @@ async def run_homework_weekly_digest_job(db) -> dict:
 
         try:
             attempted += 1
+            meta = {"job": "hw_weekly_digest", "client_id": cid, "week_start": week_start, "items": len(items)}
             ok = await email_service.notify_client_weekly_homework_digest(
                 client, items, week_start, week_end,
+                delivery_key=key, delivery_meta=meta,
             )
             if ok:
-                await _mark_notified(db, key, {
-                    "job": "hw_weekly_digest",
-                    "client_id": cid,
-                    "week_start": week_start,
-                    "items": len(items),
-                })
                 sent += 1
             else:
                 errors.append({"client_id": cid, "reason": "email_send_failed"})
@@ -326,7 +341,7 @@ async def run_homework_practice_reminder_job(db) -> dict:
     """Daily 'time to practice' nudge for clients who opted in and whose
     reminder window includes today. Skips clients whose only open day was
     already submitted/approved today (no point pinging if they already did it)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(BUSINESS_TZ)
     today_iso = now.date().isoformat()
     weekday_keys = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
     today_dow = weekday_keys[now.date().weekday()]
@@ -382,9 +397,11 @@ async def run_homework_practice_reminder_job(db) -> dict:
             continue
         attempted += 1
         try:
-            ok = await email_service.notify_client_homework_reminder(client, plans)
+            meta = {"job": "hw_reminder", "client_id": client["id"], "plans": len(plans)}
+            ok = await email_service.notify_client_homework_reminder(
+                client, plans, delivery_key=key, delivery_meta=meta,
+            )
             if ok:
-                await _mark_notified(db, key, {"job": "hw_reminder", "client_id": client["id"], "plans": len(plans)})
                 sent += 1
             else:
                 errors.append({"client_id": client["id"], "reason": "email_send_failed"})
@@ -407,7 +424,7 @@ async def run_homework_step_rollup_job(db) -> dict:
     today_iso = today.isoformat()
     dedup_key = f"hw_step_rollup:{today_iso}"
     existing = await db.system_runs.find_one({"id": dedup_key}, {"_id": 0})
-    if existing:
+    if existing and int(existing.get("sent") or 0) == 1:
         return {"sent": 0, "skipped_already_sent": True}
 
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
@@ -452,7 +469,14 @@ async def run_homework_step_rollup_job(db) -> dict:
         '<p style="color:#64748b;font-size:12px;margin-top:16px;">Per-step emails are off. To get an email on every step instead of this nightly roll-up, go to Settings → Notifications.</p>'
         '</td></tr></table></body></html>'
     )
-    sent = await _send(ADMIN_NOTIFICATION_EMAIL, subj, body_html)
+    sent = await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        subj,
+        body_html,
+        outbox_key=dedup_key,
+        on_success={"type": "system_run", "id": dedup_key, "meta": {"total_steps": total}},
+        queue_on_failure=True,
+    )
     await db.system_runs.update_one(
         {"id": dedup_key},
         {"$set": {"id": dedup_key, "ran_at": datetime.now(timezone.utc).isoformat(), "sent": int(bool(sent)), "total_steps": total}},
@@ -567,6 +591,7 @@ async def run_trainer_monday_digest_job(db) -> dict:
         return {"sent": 0, "reason": "nothing_to_report", "week_start": week_start}
 
     try:
+        meta = {"job": "trainer_monday_digest", "week_start": week_start}
         ok = await email_service.notify_trainer_monday_digest({
             "week_start": week_start,
             "week_end": week_end,
@@ -578,9 +603,8 @@ async def run_trainer_monday_digest_job(db) -> dict:
             "expiring_vax": expiring_vax[:8],
             "week_bookings": week_bookings,
             "week_revenue_forecast": week_revenue_forecast,
-        })
+        }, delivery_key=key, delivery_meta=meta)
         if ok:
-            await _mark_notified(db, key, {"job": "trainer_monday_digest", "week_start": week_start})
             return {"sent": 1, "week_start": week_start, "week_end": week_end}
         return {"sent": 0, "reason": "email_send_failed", "week_start": week_start}
     except Exception as exc:
@@ -589,9 +613,8 @@ async def run_trainer_monday_digest_job(db) -> dict:
 
 
 async def maybe_run_daily(db) -> dict | None:
-    """Run every daily job at most once per UTC day. Returns a summary dict
-    on the first call of the day, or None if already ran today.
-    Lazy-triggered from the admin dashboard endpoint."""
+    """Run every daily job at most once per business-local day. Returns a
+    summary on the first call of the day, or None when already processed."""
     today = _today_iso()
     existing = await db.system_runs.find_one({"id": "daily"}, {"_id": 0})
     if existing and existing.get("last_run") == today:
@@ -615,7 +638,7 @@ async def maybe_run_daily(db) -> dict | None:
         if datetime.now(BUSINESS_TZ).date().weekday() == 6:
             results["hw_weekly_digest"] = await run_homework_weekly_digest_job(db)
         # Monthly P&L only fires on the 1st of the month
-        if date.today().day == 1:
+        if _today_local().day == 1:
             results["pl_monthly"] = await run_pl_monthly_job(db)
         # Sprint 110o — auto-backup removed (was unreliable in unprivileged
         # Docker containers; admin uses manual backup + host-side rclone timer).
@@ -631,4 +654,27 @@ async def maybe_run_daily(db) -> dict | None:
         await db.system_runs.update_one({"id": "daily"}, {"$set": {"last_run": None, "error": str(e)}})
         raise
 
+async def automation_loop(db, interval_seconds: int = 300) -> None:
+    """Persistent lightweight scheduler for automated email jobs.
+
+    Runs once at server startup and then every five minutes. The daily gate
+    prevents duplicate daily scans; the durable outbox retries deferred or
+    failed sends independently of dashboard traffic.
+    """
+    while True:
+        try:
+            await maybe_run_daily(db)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("automated daily email run failed: %s", exc)
+        try:
+            result = await email_service.process_email_outbox(db)
+            if result.get("sent") or result.get("failed"):
+                logger.info("email outbox result: %s", result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("email outbox processing failed: %s", exc)
+        await asyncio.sleep(max(60, interval_seconds))
 

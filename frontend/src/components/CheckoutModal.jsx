@@ -173,6 +173,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   // feature DISCOVERABLE (the legacy "optional field" was being missed).
   const [payMode, setPayMode] = useState("full"); // "full" | "partial"
   const [amountPaid, setAmountPaid] = useState("");
+  // One-time checkout discount. This changes only the dollar amount due and
+  // never changes old credits, credit lots, or the number of credits redeemed.
+  const [checkoutDiscount, setCheckoutDiscount] = useState("");
+  const [checkoutDiscountReason, setCheckoutDiscountReason] = useState("");
   // Sprint 110 — fetch multi-dog discount preview (only shows if 2nd+ dog of
   // the same client has already been checked out today).
   const [discountPreview, setDiscountPreview] = useState(null);
@@ -290,10 +294,15 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   }
   // What is due before tax. Pre-attached add-ons are locked onto the booking
   // and must be included alongside any new checkout add-ons.
-  const preTaxChargedToday = Math.max(
+  const preTaxBeforeCheckoutDiscount = Math.max(
     0,
     (useCredits ? baseCashDueOnCredits : (basePreview + groupOtherBaseTotal)) + moneyModifierTotal + existingAddonTotal + addOnTotal + extraNightsCharge - multiDogDiscount,
   );
+  const checkoutDiscountRequested = Math.max(0, Number(checkoutDiscount || 0));
+  const checkoutDiscountApplied = Math.min(preTaxBeforeCheckoutDiscount, checkoutDiscountRequested);
+  const preTaxChargedToday = Math.max(0, preTaxBeforeCheckoutDiscount - checkoutDiscountApplied);
+  const checkoutDiscountTooHigh = checkoutDiscountRequested > preTaxBeforeCheckoutDiscount + 0.005;
+  const checkoutDiscountReasonMissing = checkoutDiscountRequested > 0 && checkoutDiscountReason.trim().length < 3;
   const salesTaxCfg = moneyModifierPreview?.sales_tax || {};
   const salesTaxRate = salesTaxCfg.enabled && salesTaxCfg.applies
     ? Math.max(0, Number(salesTaxCfg.rate_pct || 0))
@@ -302,7 +311,16 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
   const chargedToday = Math.round((preTaxChargedToday + salesTaxAmount) * 100) / 100;
 
   const submit = async () => {
-    setBusy(true); setErr("");
+    setErr("");
+    if (checkoutDiscountReasonMissing) {
+      setErr("Enter a reason for the checkout discount (at least 3 characters).");
+      return;
+    }
+    if (checkoutDiscountTooHigh) {
+      setErr(`The discount cannot exceed the $${preTaxBeforeCheckoutDiscount.toFixed(2)} dollar amount due.`);
+      return;
+    }
+    setBusy(true);
     try {
       const body = {
         use_credits: useCredits,
@@ -311,6 +329,10 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           price: Number(it.service.base_price || 0), qty: it.qty,
         })),
       };
+      if (checkoutDiscountRequested > 0) {
+        body.checkout_discount_amount = Number(checkoutDiscountRequested.toFixed(2));
+        body.checkout_discount_reason = checkoutDiscountReason.trim();
+      }
       if (isBoarding && extraNights > 0) {
         body.extra_nights = Number(extraNights);
         body.extra_nights_use_credits = extraUseCredits;
@@ -707,6 +729,49 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           )}
         </div>
 
+        {/* One-time checkout discount — applies to dollars due only. */}
+        <div className="mb-5 border border-bgHover rounded-lg p-4 bg-bgBase" data-testid="checkout-discount-panel">
+          <div className="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
+                <i className="fas fa-tag text-shOrange mr-1.5"/>One-time discount
+              </p>
+              <p className="text-[12px] text-gray-500 mt-1">Reduces only the dollar amount due. Credits and credit lots stay exactly the same.</p>
+            </div>
+            <span className="text-[11px] uppercase tracking-widest text-gray-500 font-black whitespace-nowrap">
+              Max ${preTaxBeforeCheckoutDiscount.toFixed(2)}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-3">
+            <div>
+              <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Discount amount</label>
+              <input type="number" min="0" step="0.01" value={checkoutDiscount}
+                     onChange={(e)=>setCheckoutDiscount(e.target.value)}
+                     data-testid="checkout-discount-amount"
+                     placeholder="$0.00"
+                     className={`w-full mt-1 bg-bgPanel border rounded p-2 text-white text-sm ${checkoutDiscountTooHigh ? "border-red-500" : "border-bgHover"}`}/>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-widest text-gray-500 font-black">Reason {checkoutDiscountRequested > 0 && <span className="text-shOrange">· required</span>}</label>
+              <input type="text" maxLength={500} value={checkoutDiscountReason}
+                     onChange={(e)=>setCheckoutDiscountReason(e.target.value)}
+                     data-testid="checkout-discount-reason"
+                     placeholder="Example: Courtesy discount for missed pickup update"
+                     className={`w-full mt-1 bg-bgPanel border rounded p-2 text-white text-sm ${checkoutDiscountReasonMissing ? "border-red-500" : "border-bgHover"}`}/>
+            </div>
+          </div>
+          {checkoutDiscountTooHigh && (
+            <p className="text-[12px] text-red-400 mt-2" data-testid="checkout-discount-too-high">
+              Discount exceeds the dollar amount due. Credits cannot be reduced or converted into a cash discount.
+            </p>
+          )}
+          {checkoutDiscountApplied > 0 && !checkoutDiscountTooHigh && (
+            <p className="text-[12px] text-shOrange mt-2 font-black" data-testid="checkout-discount-preview">
+              <i className="fas fa-arrow-down mr-1"/>Total reduced by ${checkoutDiscountApplied.toFixed(2)} before tax.
+            </p>
+          )}
+        </div>
+
         {/* Total summary */}
         <div className="mb-4 border-t-2 border-shGreen pt-3 flex items-end justify-between">
           <div>
@@ -737,6 +802,11 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
             {Math.abs(moneyModifierTotal) > 0.001 && (
               <p className="text-[12px] uppercase tracking-widest text-purple-300 font-black" data-testid="checkout-money-modifiers">
                 {moneyModifierPreview?.seasonal_label || (modifierLateFee > 0 ? "Late pickup / pricing rule" : "Pricing rule")} · {moneyModifierTotal >= 0 ? "+" : "−"}${Math.abs(moneyModifierTotal).toFixed(2)}
+              </p>
+            )}
+            {checkoutDiscountApplied > 0 && !checkoutDiscountTooHigh && (
+              <p className="text-[12px] uppercase tracking-widest text-shOrange font-black" data-testid="checkout-manual-discount-line">
+                <i className="fas fa-tag mr-1"/>One-time discount · −${checkoutDiscountApplied.toFixed(2)}
               </p>
             )}
             {salesTaxAmount > 0 && (
@@ -777,7 +847,7 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
           ) : <span/>}
           <div className="flex gap-3">
             <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
-            <button onClick={submit} disabled={busy || groupLoading} data-testid="confirm-checkout"
+            <button onClick={submit} disabled={busy || groupLoading || checkoutDiscountTooHigh || checkoutDiscountReasonMissing} data-testid="confirm-checkout"
                     className="bg-shBlue text-white px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
               {busy ? "Checking out…" : (groupLoading ? "Loading household…" : (isGroupCheckout ? `Check Out All ${groupDogNames.length} Dogs` : "Complete Check-out"))}
             </button>

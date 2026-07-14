@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import qrcode
 import resend
@@ -239,6 +241,219 @@ def _date_range(start: str, end: str | None) -> str:
     return start
 
 
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _serialize_attachments(attachments: list | None) -> list:
+    stored = []
+    for item in attachments or []:
+        raw = item.get("content", b"")
+        if isinstance(raw, list):
+            raw = bytes(raw)
+        elif isinstance(raw, str):
+            raw = raw.encode("utf-8")
+        stored.append({
+            "filename": item.get("filename") or "attachment",
+            "content_b64": base64.b64encode(raw).decode("ascii"),
+        })
+    return stored
+
+
+def _deserialize_attachments(attachments: list | None) -> list:
+    restored = []
+    for item in attachments or []:
+        try:
+            raw = base64.b64decode(item.get("content_b64") or "")
+        except Exception:
+            raw = b""
+        restored.append({
+            "filename": item.get("filename") or "attachment",
+            "content": list(raw),
+        })
+    return restored
+
+
+async def _queue_email(
+    *,
+    to_email: str,
+    subject: str,
+    html: str,
+    outbox_key: str,
+    on_success: dict | None,
+    attachments: list | None,
+    error: str,
+) -> bool:
+    """Persist an automated email for retry. The key is unique so repeated
+    scheduler/check-out attempts update one pending row instead of duplicating it."""
+    if _db is None or not to_email or not outbox_key:
+        return False
+    now = _utc_now_iso()
+    try:
+        existing = await _db.email_outbox.find_one({"key": outbox_key}, {"_id": 0, "status": 1})
+        if existing and existing.get("status") == "delivered_pending_stamp":
+            return True
+        await _db.email_outbox.update_one(
+            {"key": outbox_key},
+            {
+                "$setOnInsert": {
+                    "key": outbox_key,
+                    "to_email": to_email,
+                    "subject": subject,
+                    "html": html,
+                    "attachments": _serialize_attachments(attachments),
+                    "on_success": on_success or {},
+                    "created_at": now,
+                    "attempts": 0,
+                },
+                "$set": {
+                    "status": "pending",
+                    "last_error": error,
+                    "next_attempt_at": now,
+                    "updated_at": now,
+                },
+            },
+            upsert=True,
+        )
+        logger.info("Queued automated email %s to %s (%s)", outbox_key, to_email, error)
+        return True
+    except Exception as exc:
+        logger.error("Could not queue automated email %s: %s", outbox_key, exc)
+        return False
+
+
+async def _queue_delivery_stamp(outbox_key: str, on_success: dict, error: str) -> None:
+    """Persist only the post-delivery stamp when Resend accepted the message
+    but the database stamp failed. These rows are never resent."""
+    if _db is None or not outbox_key:
+        return
+    now = _utc_now_iso()
+    await _db.email_outbox.update_one(
+        {"key": outbox_key},
+        {
+            "$setOnInsert": {"key": outbox_key, "created_at": now, "attempts": 0},
+            "$set": {
+                "status": "delivered_pending_stamp",
+                "on_success": on_success,
+                "delivered_at": now,
+                "last_error": error,
+                "updated_at": now,
+            },
+        },
+        upsert=True,
+    )
+
+
+async def _apply_outbox_success(action: dict | None) -> None:
+    if _db is None or not action:
+        return
+    kind = action.get("type")
+    now = _utc_now_iso()
+    if kind == "notification_log":
+        key = action.get("key")
+        if key:
+            meta = dict(action.get("meta") or {})
+            await _db.notification_log.update_one(
+                {"key": key},
+                {"$setOnInsert": {"key": key, "sent_at": now, **meta}},
+                upsert=True,
+            )
+    elif kind == "client_low_credit":
+        client_id = action.get("client_id")
+        service_type = action.get("service_type")
+        if client_id and service_type:
+            await _db.clients.update_one(
+                {"id": client_id},
+                {"$set": {f"low_credit_emailed_at.{service_type}": {
+                    "balance": action.get("balance"),
+                    "at": now,
+                }}},
+            )
+    elif kind == "system_run":
+        run_id = action.get("id")
+        if run_id:
+            await _db.system_runs.update_one(
+                {"id": run_id},
+                {"$set": {"id": run_id, "sent": 1, "sent_at": now, **(action.get("meta") or {})}},
+                upsert=True,
+            )
+
+
+async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
+    """Retry durable automated-email rows. Successful sends apply their
+    delivery stamp only after Resend accepts the message."""
+    global _db
+    if db_handle is not None:
+        _db = db_handle
+    if _db is None:
+        return {"sent": 0, "failed": 0, "reason": "database unavailable"}
+    if await _is_in_quiet_hours():
+        return {"sent": 0, "failed": 0, "quiet_hours": True}
+    now = _utc_now_iso()
+    # Finish delivery stamps that previously failed after Resend had already
+    # accepted the email. Never resend those rows.
+    delivered_rows = await _db.email_outbox.find(
+        {"status": "delivered_pending_stamp"}, {"_id": 0},
+    ).sort("created_at", 1).to_list(limit)
+    stamped = 0
+    for row in delivered_rows:
+        try:
+            await _apply_outbox_success(row.get("on_success"))
+            await _db.email_outbox.delete_one({"key": row.get("key")})
+            stamped += 1
+        except Exception as exc:
+            await _db.email_outbox.update_one(
+                {"key": row.get("key")},
+                {"$set": {"last_error": f"delivery stamp failed: {exc}", "updated_at": _utc_now_iso()}},
+            )
+
+    rows = await _db.email_outbox.find(
+        {"status": "pending", "next_attempt_at": {"$lte": now}},
+        {"_id": 0},
+    ).sort("created_at", 1).to_list(max(0, limit - stamped))
+    sent = 0
+    failed = 0
+    for row in rows:
+        ok = await _send(
+            row.get("to_email") or "",
+            row.get("subject") or "",
+            row.get("html") or "",
+            attachments=_deserialize_attachments(row.get("attachments")),
+            queue_on_failure=False,
+        )
+        if ok:
+            await _db.email_outbox.update_one(
+                {"key": row.get("key")},
+                {"$set": {"status": "delivered_pending_stamp", "delivered_at": _utc_now_iso()}},
+            )
+            try:
+                await _apply_outbox_success(row.get("on_success"))
+                await _db.email_outbox.delete_one({"key": row.get("key")})
+                sent += 1
+            except Exception as exc:
+                failed += 1
+                await _db.email_outbox.update_one(
+                    {"key": row.get("key")},
+                    {"$set": {"last_error": f"delivery stamp failed: {exc}", "updated_at": _utc_now_iso()}},
+                )
+        else:
+            failed += 1
+            attempts = int(row.get("attempts") or 0) + 1
+            delay_minutes = min(360, 5 * (2 ** min(attempts - 1, 6)))
+            await _db.email_outbox.update_one(
+                {"key": row.get("key")},
+                {"$set": {
+                    "attempts": attempts,
+                    "last_error": last_send_error or "email_send_failed",
+                    "last_attempt_at": _utc_now_iso(),
+                    "next_attempt_at": (datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)).isoformat(),
+                }},
+            )
+    return {"sent": sent, "stamped": stamped, "failed": failed, "checked": len(rows) + len(delivered_rows)}
+
+
 async def _is_in_quiet_hours() -> bool:
     """Sprint 110dm — return True if the local time is inside the admin's
     configured quiet-hours window. Non-fatal: any error returns False so
@@ -254,7 +469,7 @@ async def _is_in_quiet_hours() -> bool:
         if not start or not end:
             return False
         from datetime import datetime as _dt
-        now_hm = _dt.now().strftime("%H:%M")
+        now_hm = _dt.now(ZoneInfo("America/New_York")).strftime("%H:%M")
         # Window spans midnight when end <= start (e.g. 21:00 → 08:00)
         if end <= start:
             return now_hm >= start or now_hm < end
@@ -263,7 +478,16 @@ async def _is_in_quiet_hours() -> bool:
         return False
 
 
-async def _send(to_email: str, subject: str, html: str) -> bool:
+async def _send(
+    to_email: str,
+    subject: str,
+    html: str,
+    *,
+    outbox_key: str | None = None,
+    on_success: dict | None = None,
+    attachments: list | None = None,
+    queue_on_failure: bool = False,
+) -> bool:
     """Fire-and-forget send. Logs failures but never raises. Returns True on success.
 
     Sprint 110eg-4 — stores the last failure on `last_send_error` (module
@@ -275,6 +499,9 @@ async def _send(to_email: str, subject: str, html: str) -> bool:
     if not RESEND_API_KEY:
         last_send_error = "RESEND_API_KEY not set"
         logger.warning("RESEND_API_KEY not set — skipping email to %s", to_email)
+        if queue_on_failure and outbox_key:
+            await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
+                               on_success=on_success, attachments=attachments, error=last_send_error)
         return False
     if not to_email:
         last_send_error = "Missing recipient address"
@@ -285,18 +512,36 @@ async def _send(to_email: str, subject: str, html: str) -> bool:
     if await _is_in_quiet_hours():
         last_send_error = "Quiet hours active"
         logger.info("Email to %s deferred — quiet hours active. Subject: %s", to_email, subject)
+        if queue_on_failure and outbox_key:
+            await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
+                               on_success=on_success, attachments=attachments, error=last_send_error)
         return False
     try:
         params = {"from": SENDER_EMAIL, "to": [to_email], "subject": subject, "html": html}
+        if attachments:
+            params["attachments"] = attachments
         # Replies land in the admin inbox instead of the unmonitored sender address
         if ADMIN_NOTIFICATION_EMAIL:
             params["reply_to"] = ADMIN_NOTIFICATION_EMAIL
         result = await asyncio.to_thread(resend.Emails.send, params)
         logger.info("Email sent to %s: %s", to_email, result.get("id") if isinstance(result, dict) else result)
+        if on_success:
+            try:
+                await _apply_outbox_success(on_success)
+            except Exception as stamp_exc:
+                logger.error("Email delivered but delivery stamp failed for %s: %s", outbox_key, stamp_exc)
+                if outbox_key:
+                    try:
+                        await _queue_delivery_stamp(outbox_key, on_success, str(stamp_exc))
+                    except Exception as queue_exc:
+                        logger.error("Could not preserve delivery stamp %s: %s", outbox_key, queue_exc)
         return True
     except Exception as e:
         last_send_error = str(e)
         logger.warning("Email send to %s failed: %s", to_email, e)
+        if queue_on_failure and outbox_key:
+            await _queue_email(to_email=to_email, subject=subject, html=html, outbox_key=outbox_key,
+                               on_success=on_success, attachments=attachments, error=last_send_error)
         return False
 
 
@@ -313,6 +558,9 @@ async def _dispatch(
     fallback_title: str | None = None,
     fallback_intro: str | None = None,
     fallback_cta_text: str | None = None,
+    outbox_key: str | None = None,
+    on_success: dict | None = None,
+    queue_on_failure: bool = False,
 ) -> bool:
     """Slug-aware send: looks up admin overrides + branding, applies `{{var}}`
     substitution, renders branded HTML, then sends via Resend.
@@ -358,7 +606,12 @@ async def _dispatch(
         body_html=(body_html or "") + (signoff_html or ""),
         settings=settings,
     )
-    return await _send(to_email, subject, html)
+    return await _send(
+        to_email, subject, html,
+        outbox_key=outbox_key,
+        on_success=on_success,
+        queue_on_failure=queue_on_failure,
+    )
 
 
 async def notify_admin_new_booking(booking: dict, client: dict) -> None:
@@ -833,7 +1086,7 @@ async def notify_admin_homework_completed(hw: dict, client: dict, dog: dict) -> 
     )
 
 
-async def notify_trainer_monday_digest(data: dict) -> bool:
+async def notify_trainer_monday_digest(data: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Monday-morning digest to the operator (admin email)."""
     if not ADMIN_NOTIFICATION_EMAIL:
         return False
@@ -929,6 +1182,9 @@ async def notify_trainer_monday_digest(data: dict) -> bool:
         fallback_intro="Here's your week ahead. Knock these out before the coffee gets cold.",
         fallback_subject=f"Monday brief · {week_start}",
         fallback_cta_text="Open Dashboard" if cta_url else "",
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
     ))
 
 
@@ -958,7 +1214,7 @@ async def notify_client_certificate_issued(hw: dict, client: dict) -> bool:
     ))
 
 
-async def notify_client_homework_reminder(client: dict, plans: list) -> bool:
+async def notify_client_homework_reminder(client: dict, plans: list, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Email the client a 'time to practice' nudge for their open daily-tracker
     plans. `plans` is a list of {hw_title, dog_name, today_focus, day_number, total_days}."""
     to_email = client.get("email", "")
@@ -997,10 +1253,13 @@ async def notify_client_homework_reminder(client: dict, plans: list) -> bool:
         fallback_intro=intro,
         fallback_subject=f"Practice nudge · {plans[0].get('dog_name','')} 🐾",
         fallback_cta_text="Open Portal" if cta_url else "",
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
     ))
 
 
-async def notify_client_weekly_homework_digest(client: dict, items: list, week_start: str, week_end: str) -> bool:
+async def notify_client_weekly_homework_digest(client: dict, items: list, week_start: str, week_end: str, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Sunday-night digest of the client's daily-tracker progress for the week.
 
     `items` is a list of dicts shaped:
@@ -1068,6 +1327,9 @@ async def notify_client_weekly_homework_digest(client: dict, items: list, week_s
         fallback_intro=intro,
         fallback_subject=subject,
         fallback_cta_text="Open Portal" if cta_url else "",
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
     ))
 
 
@@ -1166,12 +1428,12 @@ async def notify_client_homework_assigned(hw: dict, client: dict) -> None:
     )
 
 
-async def notify_client_low_credits(client: dict, service_type: str, remaining: int) -> None:
+async def notify_client_low_credits(client: dict, service_type: str, remaining: int) -> bool:
     """Heads-up to the client when their daycare/training/boarding credits hit
     the low-balance threshold (currently 2 or fewer)."""
     to_email = client.get("email", "")
     if not to_email:
-        return
+        return False
     label_map = {"training": "Training", "boarding": "Boarding"}
     label = label_map.get(service_type, "Daycare")
     unit_map = {"training": "sessions", "boarding": "nights"}
@@ -1182,7 +1444,7 @@ async def notify_client_low_credits(client: dict, service_type: str, remaining: 
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     first_name = (client.get('name') or 'there').split(' ')[0]
-    await _dispatch(
+    return bool(await _dispatch(
         slug="client_low_credits",
         to_email=to_email,
         ctx={
@@ -1194,7 +1456,15 @@ async def notify_client_low_credits(client: dict, service_type: str, remaining: 
         },
         rows=rows,
         cta_url=cta_url,
-    )
+        outbox_key=f"low_credit:{client.get('id')}:{service_type}:{remaining}" if client.get("id") else None,
+        on_success={
+            "type": "client_low_credit",
+            "client_id": client.get("id"),
+            "service_type": service_type,
+            "balance": remaining,
+        } if client.get("id") else None,
+        queue_on_failure=bool(client.get("id")),
+    ))
 
 
 async def notify_client_pack_receipt(client: dict, lines: list, totals: dict, payment_method: str, note: str, sold_by: str, sold_at: str) -> None:
@@ -1642,12 +1912,12 @@ async def send_account_claim(
 
 
 
-async def notify_client_dog_birthday(client: dict, dog: dict) -> None:
+async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Wish the owner a happy birthday for their dog. Uses the dog's first
     photo (if any) as a hero image. No discount code — just a card."""
     to_email = client.get("email", "")
     if not to_email:
-        return
+        return False
     dog_name = (dog.get("name") or "your pup").strip()
     breed = (dog.get("breed") or "").strip()
     first_name = (client.get("name") or "there").split(" ")[0]
@@ -1672,7 +1942,7 @@ async def notify_client_dog_birthday(client: dict, dog: dict) -> None:
         ("From", "The Sit Happens crew 🐾"),
     ]
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
-    await _dispatch(
+    return bool(await _dispatch(
         slug="client_dog_birthday",
         to_email=to_email,
         ctx={
@@ -1687,15 +1957,18 @@ async def notify_client_dog_birthday(client: dict, dog: dict) -> None:
         fallback_intro=intro,
         fallback_subject=f"🎂 Happy birthday, {dog_name}!",
         fallback_cta_text="Open Portal" if cta_url else "",
-    )
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
+    ))
 
 
-async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expiring: list) -> None:
+async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expiring: list, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Heads-up that one or more of a dog's vaccines expires in ~30 days.
     `vaccines_expiring` is [{"name": "Rabies", "expires_on": "2026-06-15"}, ...]."""
     to_email = client.get("email", "")
     if not to_email or not vaccines_expiring:
-        return
+        return False
     dog_name = (dog.get("name") or "your dog").strip()
     first_name = (client.get("name") or "there").split(" ")[0]
     list_html = "".join(
@@ -1711,7 +1984,7 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
     )
     cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
     rows = [("Dog", dog_name), ("Renewals due", str(len(vaccines_expiring)))]
-    await _dispatch(
+    return bool(await _dispatch(
         slug="client_vaccine_expiring",
         to_email=to_email,
         ctx={
@@ -1725,20 +1998,20 @@ async def notify_client_vaccine_expiring(client: dict, dog: dict, vaccines_expir
         fallback_intro=intro,
         fallback_subject=f"📋 {dog_name}: vaccine renewal in 30 days",
         fallback_cta_text="Upload Updated Record" if cta_url else "",
-    )
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
+    ))
 
 
 
-async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: str, summary: dict) -> None:
+async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: str, summary: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Email the admin a Profit & Loss PDF report as an attachment.
     `summary` is the dict returned by `pl_report.build_pl_data` — used to
     render KPI snapshots in the email body."""
     if not ADMIN_NOTIFICATION_EMAIL:
         logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping P&L email")
-        return
-    if not RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY not set — skipping P&L email")
-        return
+        return False
 
     service_income = summary.get("income", {}).get("completed_total", 0)
     retail_income = summary.get("retail", {}).get("total", 0)
@@ -1782,22 +2055,15 @@ async def notify_admin_pl_report(pdf_bytes: bytes, start_date: str, end_date: st
     )
 
     attachment_name = f"PL_Report_{start_date}_to_{end_date}.pdf"
-    try:
-        params = {
-            "from": SENDER_EMAIL,
-            "to": [ADMIN_NOTIFICATION_EMAIL],
-            "subject": subject,
-            "html": html,
-            "attachments": [{
-                "filename": attachment_name,
-                "content": list(pdf_bytes),  # Resend SDK accepts a list of ints
-            }],
-        }
-        result = await asyncio.to_thread(resend.Emails.send, params)
-        logger.info("P&L email sent to %s: %s", ADMIN_NOTIFICATION_EMAIL,
-                    result.get("id") if isinstance(result, dict) else result)
-    except Exception as e:
-        logger.warning("P&L email send failed: %s", e)
+    return bool(await _send(
+        ADMIN_NOTIFICATION_EMAIL,
+        subject,
+        html,
+        attachments=[{"filename": attachment_name, "content": list(pdf_bytes)}],
+        outbox_key=delivery_key,
+        on_success={"type": "notification_log", "key": delivery_key, "meta": delivery_meta or {}} if delivery_key else None,
+        queue_on_failure=bool(delivery_key),
+    ))
 
 
 

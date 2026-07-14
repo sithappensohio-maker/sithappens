@@ -189,7 +189,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
 
   // Use actual_price when checkout has locked it in; otherwise show our
   // estimate so the operator never sees a misleading $0.
-  const hasActualPrice = Number.isFinite(Number(booking.actual_price)) && Number(booking.actual_price) > 0;
+  const hasActualPrice = done && Number.isFinite(Number(booking.actual_price));
   const displayTotal = hasActualPrice
     ? Number(booking.actual_price)
     : (isGrouped ? groupTotal : estimatedSingleTotal);
@@ -406,7 +406,12 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                     data-testid="booking-detail-service-total"/>
               {booking.payment_method && <Pill icon="fa-credit-card" label="Payment" value={<span className="capitalize">{booking.payment_method}</span>}/>}
               {booking.payment_status && <Pill icon="fa-circle-check" label="Status" value={<span className="capitalize">{booking.payment_status}</span>}
-                                              tone={booking.payment_status === "paid" ? "green" : "orange"}/>}
+                                              tone={booking.payment_status === "paid" || booking.payment_status === "comped" ? "green" : "orange"}/>}
+              {Number(booking.checkout_discount?.amount || 0) > 0 && (
+                <Pill icon="fa-tag" label="One-time discount"
+                      value={<>−{fmtMoney(booking.checkout_discount.amount)}<span className="block text-[11px] font-normal mt-1 normal-case">{booking.checkout_discount.reason}</span></>}
+                      tone="orange" data-testid="booking-detail-checkout-discount"/>
+              )}
               {(booking.credits_deducted || 0) > 0 && (
                 <Pill icon="fa-coins" label="Credits used" value={`${booking.credits_deducted} cr · ${fmtMoney(booking.credit_value_deducted || 0)}`} tone="purple"/>
               )}
