@@ -9188,6 +9188,8 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
 # -------- Booking Edit (Admin) --------
 class BookingPatchIn(BaseModel):
     notes: Optional[str] = None
+    date: Optional[str] = None
+    end_date: Optional[str] = None
     kennel: Optional[str] = None
     dropoff_time: Optional[str] = None
     pickup_time: Optional[str] = None
@@ -9206,7 +9208,7 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
     if update:
-        capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time"}
+        capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time", "date", "end_date"}
         if capacity_fields.intersection(update):
             return await _update_booking_with_capacity(booking, update)
         await db.bookings.update_one({"id": booking_id}, {"$set": update})

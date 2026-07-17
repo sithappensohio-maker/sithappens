@@ -477,6 +477,8 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
       if (isEdit) {
         await api.patch(`/bookings/${existing.id}`, {
           notes,
+          date,
+          end_date: serviceType === "boarding" ? (endDate || date) : null,
           kennel: serviceType === "boarding" ? kennel : "",
           dropoff_time: dropoffTime || "",
           pickup_time: pickupTime || "",
