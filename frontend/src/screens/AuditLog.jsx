@@ -29,6 +29,12 @@ const ACTION_META = {
   client_created:         { label: "Client created",      icon: "fa-user-plus",      color: "text-shGreen" },
   client_edited:          { label: "Client edited",       icon: "fa-pen",            color: "text-shBlue" },
   client_deleted:         { label: "Client deleted",      icon: "fa-trash",          color: "text-red-300" },
+  // Credits
+  credit_pack_sold:       { label: "Credit pack sold",    icon: "fa-cart-shopping",  color: "text-shGreen" },
+  credit_manual_adjustment: { label: "Credit adjusted",   icon: "fa-sliders",        color: "text-shOrange" },
+  referral_credit_granted: { label: "Referral credit",    icon: "fa-user-group",     color: "text-shGreen" },
+  credit_lot_edited:      { label: "Credit lot edited",   icon: "fa-pen",            color: "text-shBlue" },
+  program_sold:           { label: "Program sold",        icon: "fa-cart-shopping",  color: "text-shGreen" },
   // Incidents
   incident_created:       { label: "Incident logged",     icon: "fa-triangle-exclamation", color: "text-red-300" },
   incident_edited:        { label: "Incident edited",     icon: "fa-pen",            color: "text-shBlue" },
@@ -107,7 +113,8 @@ export default function AuditLog() {
       (e.user_name || "").toLowerCase().includes(q) ||
       (e.action || "").toLowerCase().includes(q) ||
       (e.path || "").toLowerCase().includes(q) ||
-      (e.record_id || "").toLowerCase().includes(q)
+      (e.record_id || "").toLowerCase().includes(q) ||
+      (e.record_name || "").toLowerCase().includes(q)
     );
   }, [data, search]);
 
@@ -193,6 +200,7 @@ export default function AuditLog() {
                             <span className="text-gray-500 font-mono text-[11px]">{e.ts?.slice(11,19)}</span>
                             <span className="text-white font-black ml-2">{e.user_name}</span>
                             <span className="text-gray-500 ml-1">({e.user_role})</span>
+                            {e.record_name && <span className="text-white font-bold ml-2">→ {e.record_name}</span>}
                             {e.record_id && <span className="text-gray-500 ml-2 font-mono text-[11px]">#{e.record_id.slice(0,8)}</span>}
                           </span>
                           <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${
@@ -208,6 +216,7 @@ export default function AuditLog() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 text-[12px]">
                             <KV label="Path"   value={`${e.method} ${e.path}`} mono />
                             {e.ip && <KV label="IP" value={e.ip} mono />}
+                            {e.record_name && <KV label="Record name" value={e.record_name} />}
                             {e.record_id && <KV label="Record" value={e.record_id} mono />}
                             <KV label="When" value={fmtTs(e.ts)} />
                           </div>

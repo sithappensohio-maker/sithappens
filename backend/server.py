@@ -745,10 +745,6 @@ class BookingOut(BaseModel):
     credit_value: Optional[float] = None
     credit_lot_ids: Optional[List[str]] = None
     credit_lot_redemptions: Optional[List[Dict[str, Any]]] = None
-    # Credits that existed before lot tracking (or were added by adjustments /
-    # rewards) are valid spendable credits too. Keep their quantity separate
-    # from lot redemptions so refunds and audits remain exact.
-    legacy_credits_deducted: Optional[float] = 0
     credit_service_type: Optional[str] = None  # 'daycare' or 'training' — which pool was charged
     # Sprint 29 — add-ons logged at check-out (bath, nail trim, etc.). Each
     # row contributes to `actual_price` and the weekly income tally.
@@ -759,9 +755,6 @@ class BookingOut(BaseModel):
     extra_nights: Optional[Dict[str, Any]] = None
     # Sprint 110 — multi-dog household discount applied at check-out.
     multi_dog_discount: Optional[Dict[str, Any]] = None
-    # One-time operator discount applied only to the dollar portion due at
-    # checkout. Credit quantities / lot redemptions are never changed.
-    checkout_discount: Optional[Dict[str, Any]] = None
     # Sprint 94 — silent audit: who/where the check-in / check-out happened.
     checked_in_by: Optional[str] = None
     checked_in_by_name: Optional[str] = None
@@ -843,11 +836,6 @@ class CheckoutIn(BaseModel):
     payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
-    # One-time courtesy/discount adjustment. Applied to the cash portion only,
-    # after normal pricing and multi-dog rules but before sales tax. A reason is
-    # required by the endpoint whenever the amount is greater than zero.
-    checkout_discount_amount: float = Field(default=0, ge=0, le=100000)
-    checkout_discount_reason: Optional[str] = Field(default=None, max_length=500)
     add_ons: List[CheckoutAddOn] = []
     # Sprint 110di-51 — Partial payment. When provided AND less than the
     # computed total, the booking is marked `paid_partial` and the
@@ -909,8 +897,8 @@ FINANCIAL_MONEY_FIELDS = {
     "dog_id", "client_id", "add_ons", "actual_price", "payment_status",
     "payment_method", "amount_paid", "balance_due", "cash_revenue",
     "tax_amount", "tax_rate_pct", "taxable_cash_amount", "credit_value",
-    "credits_deducted", "credit_lot_ids", "credit_lot_redemptions", "legacy_credits_deducted",
-    "multi_dog_discount", "checkout_discount", "extra_nights", "additional_cash_charge",
+    "credits_deducted", "credit_lot_ids", "credit_lot_redemptions",
+    "multi_dog_discount", "extra_nights", "additional_cash_charge",
     "cancellation_charged", "cancellation_fee", "cancellation_fee_pct",
 }
 
@@ -5309,6 +5297,13 @@ async def _maybe_send_low_credit_email(client_id: str, service_type: str, new_ba
         return  # already emailed for this exact balance — skip
     try:
         await notify_client_low_credits(client, service_type, new_balance)
+        await db.clients.update_one(
+            {"id": client_id},
+            {"$set": {f"low_credit_emailed_at.{service_type}": {
+                "balance": new_balance,
+                "at": now_iso(),
+            }}},
+        )
     except Exception as exc:
         logger.warning("Low-credit email failed for client=%s pool=%s: %s", client_id, service_type, exc)
 
@@ -6337,15 +6332,6 @@ async def checkout_group_preview(
     }
 
 
-def _validated_checkout_discount(body: CheckoutIn) -> Tuple[float, str]:
-    """Return a normalized one-time checkout discount and its required reason."""
-    amount = round(max(0.0, float(body.checkout_discount_amount or 0)), 2)
-    reason = (body.checkout_discount_reason or "").strip()
-    if amount > 0 and len(reason) < 3:
-        raise HTTPException(status_code=400, detail="Enter a reason for the checkout discount (at least 3 characters).")
-    return amount, reason
-
-
 @api.post("/bookings/{booking_id}/check-out-group")
 async def check_out_group(
     booking_id: str,
@@ -6359,7 +6345,6 @@ async def check_out_group(
     writes a single grouped checkout receipt with the combined total.
     """
     body = body or CheckoutIn()
-    requested_checkout_discount, checkout_discount_reason = _validated_checkout_discount(body)
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -6457,14 +6442,8 @@ async def check_out_group(
             await _require_register_day_open(business_today().isoformat())
 
         completed: List[Dict[str, Any]] = []
-        remaining_checkout_discount = requested_checkout_discount
         for target in targets:
             payload = body.model_dump()
-            # Spread one household-level discount across the individual dog
-            # rows without changing each row's credit usage. Each row applies
-            # only what its dollar portion can safely absorb.
-            payload["checkout_discount_amount"] = remaining_checkout_discount
-            payload["checkout_discount_reason"] = checkout_discount_reason if remaining_checkout_discount > 0 else None
             # New add-ons and a manual base override belong to the dog whose
             # checkout button was clicked. Shared stay extensions apply to all
             # dogs because the group has the same reservation dates/service.
@@ -6478,20 +6457,11 @@ async def check_out_group(
                 payload["amount_paid"] = None
             row_body = CheckoutIn(**payload)
             row = await _check_out_locked(target["id"], row_body, user)
-            applied_here = round(float((row.get("checkout_discount") or {}).get("amount") or 0), 2)
-            remaining_checkout_discount = round(max(0.0, remaining_checkout_discount - applied_here), 2)
             completed.append(row)
-
-        if remaining_checkout_discount > 0.005:
-            raise HTTPException(
-                status_code=400,
-                detail=f"The discount exceeds the household's dollar amount due by ${remaining_checkout_discount:.2f}. Reduce the discount and try again.",
-            )
 
         combined_total = round(sum(float(row.get("actual_price") or 0) for row in completed), 2)
         combined_cash = round(sum(float(row.get("cash_revenue") or 0) for row in completed), 2)
         combined_discount = round(sum(float((row.get("multi_dog_discount") or {}).get("amount") or 0) for row in completed), 2)
-        combined_checkout_discount = round(sum(float((row.get("checkout_discount") or {}).get("amount") or 0) for row in completed), 2)
         dog_names = [row.get("dog_name") or "Dog" for row in completed]
         group_meta = {
             "id": checkout_group_id,
@@ -6505,8 +6475,6 @@ async def check_out_group(
             "total": combined_total,
             "cash_total": combined_cash,
             "discount_total": combined_discount,
-            "checkout_discount_total": combined_checkout_discount,
-            "checkout_discount_reason": checkout_discount_reason if combined_checkout_discount > 0 else None,
             "payment_method": _normalize_payment_method(body.payment_method or (completed[0].get("payment_method") if completed else None), store=True),
             "checked_out_at": now_iso(),
             "checked_out_by": user.get("id"),
@@ -6539,8 +6507,6 @@ async def check_out_group(
             "total": combined_total,
             "cash_total": combined_cash,
             "discount_total": combined_discount,
-            "checkout_discount_total": combined_checkout_discount,
-            "checkout_discount_reason": group_meta.get("checkout_discount_reason"),
             "payment_method": group_meta["payment_method"],
         }
     except Exception:
@@ -6597,7 +6563,6 @@ async def check_out(
     money step fails before checkout completes.
     """
     body = body or CheckoutIn()
-    requested_checkout_discount, _checkout_discount_reason = _validated_checkout_discount(body)
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
     stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -6691,13 +6656,6 @@ async def check_out(
             await _require_register_day_open(business_today().isoformat())
 
         result = await _check_out_locked(booking_id, body, user)
-        applied_checkout_discount = round(float((result.get("checkout_discount") or {}).get("amount") or 0), 2)
-        if requested_checkout_discount - applied_checkout_discount > 0.005:
-            excess = round(requested_checkout_discount - applied_checkout_discount, 2)
-            raise HTTPException(
-                status_code=400,
-                detail=f"The discount exceeds the dollar amount due by ${excess:.2f}. Reduce the discount and try again.",
-            )
         result.pop("checkout_in_progress", None)
         result.pop("checkout_operation_id", None)
         result.pop("checkout_started_at", None)
@@ -6766,13 +6724,7 @@ async def _check_out_locked(
         "financial_revision": int(booking.get("financial_revision") or 0) + 1,
     }
 
-    # Older pre-checkout rows may have credits_deducted without a dollar
-    # credit_value (especially pre-lot legacy credits). Treat either marker as
-    # an existing deduction so checkout never charges the same credits twice.
-    had_credit = (
-        float(booking.get("credit_value") or 0) > 0
-        or float(booking.get("credits_deducted") or 0) > 0
-    ) and not booking.get("actual_price")
+    had_credit = bool(booking.get("credit_value")) and not booking.get("actual_price")
     use_credits = bool(body.use_credits)
 
     # Resolve a sensible service value for income tracking. Admin's manual
@@ -6872,7 +6824,6 @@ async def _check_out_locked(
         update["credit_value"] = 0.0
         update["credit_lot_ids"] = []
         update["credit_lot_redemptions"] = []
-        update["legacy_credits_deducted"] = 0
         update["credit_service_type"] = None
         update["credits_deducted"] = 0
         # Fall through to base-price logic below.
@@ -6901,27 +6852,18 @@ async def _check_out_locked(
                     )
                     if enrol:
                         prefer_pid = enrol.get("program_id")
-            credit_value, credit_redemptions, lot_credits_consumed = await _consume_credit_lots(
+            credit_value, credit_redemptions, credits_consumed = await _consume_credit_lots(
                 booking["client_id"], credits_to_use, svc_type,
                 prefer_program_id=prefer_pid,
             )
-            # The client balance is the source of truth. Many long-time clients
-            # received credits before credit_lots existed, and manual/referral
-            # credits intentionally have no lot. Spend lots first for FIFO /
-            # expiration tracking, then spend the remaining valid balance as
-            # legacy credits instead of silently switching the checkout to cash.
-            legacy_credits_consumed = round(max(0.0, credits_to_use - lot_credits_consumed), 2)
-            balance_result = await db.clients.update_one(
-                {"id": booking["client_id"], balance_field: {"$gte": credits_to_use}},
-                {"$inc": {balance_field: -credits_to_use}},
-            )
-            if balance_result.matched_count != 1:
-                # The per-client checkout lock should make this rare, but fail
-                # closed rather than completing a checkout without deduction.
-                await _restore_credit_lots(credit_redemptions, lot_credits_consumed)
-                raise HTTPException(
-                    status_code=409,
-                    detail="The client's credit balance changed during checkout. Refresh and try again.",
+            if credits_consumed <= 0:
+                use_credits = False
+                credits_to_use = 0.0
+            else:
+                credits_to_use = credits_consumed
+                await db.clients.update_one(
+                    {"id": booking["client_id"]},
+                    {"$inc": {balance_field: -credits_consumed}},
                 )
             new_balance = round(available - credits_to_use, 2)
             await _maybe_send_low_credit_email(booking["client_id"], svc_type, new_balance)
@@ -6929,7 +6871,6 @@ async def _check_out_locked(
             update["credit_value"] = round(float(credit_value), 2)
             update["credit_lot_ids"] = [row["lot_id"] for row in credit_redemptions]
             update["credit_lot_redemptions"] = credit_redemptions
-            update["legacy_credits_deducted"] = legacy_credits_consumed
             update["credit_service_type"] = svc_type
             update["credits_deducted"] = credits_to_use
 
@@ -6939,16 +6880,6 @@ async def _check_out_locked(
                 # but `cash_revenue` stays $0 because payment_method=credits.
                 if body.base_price is not None:
                     svc_value = float(body.base_price)
-                elif legacy_credits_consumed > 0:
-                    # A mixed lot/legacy redemption must not value the whole
-                    # visit using only the partial lot value. Preserve the
-                    # booking-time price (including grandfathered/group rates).
-                    snap_base = max(
-                        0.0,
-                        round(float(booking.get("estimated_price") or 0) - _booking_addon_total_from(booking), 2),
-                    )
-                    svc_value = snap_base or await _resolve_service_value(float(credit_value))
-                    update["credit_value"] = round(float(svc_value), 2)
                 elif credit_value > 0:
                     svc_value = float(credit_value)
                 else:
@@ -6975,9 +6906,6 @@ async def _check_out_locked(
                     )
                     unit_rate = float(q.get("unit_price") or 0)
                 remaining_cash = round(credit_shortfall * unit_rate, 2)
-                # Record the full redeemed service value, including legacy
-                # credits that have no historical lot/value_each record.
-                update["credit_value"] = round(credits_to_use * unit_rate, 2)
                 update["actual_price"] = remaining_cash
                 update["credit_shortfall"] = credit_shortfall
                 update["payment_method"] = _normalize_payment_method(body.payment_method, store=True)
@@ -7143,19 +7071,14 @@ async def _check_out_locked(
             available = float(client_doc.get("boarding_credits") or 0)
             extra_credits_used = round(min(extra_credit_need, available), 2)
             if extra_credits_used > 0:
-                extra_credit_value, extra_redemptions, extra_lot_consumed = await _consume_credit_lots(
+                extra_credit_value, extra_redemptions, extra_consumed = await _consume_credit_lots(
                     booking["client_id"], extra_credits_used, "boarding"
                 )
-                extra_legacy_consumed = round(max(0.0, extra_credits_used - extra_lot_consumed), 2)
-                balance_result = await db.clients.update_one(
-                    {"id": booking["client_id"], "boarding_credits": {"$gte": extra_credits_used}},
-                    {"$inc": {"boarding_credits": -extra_credits_used}},
-                )
-                if balance_result.matched_count != 1:
-                    await _restore_credit_lots(extra_redemptions, extra_lot_consumed)
-                    raise HTTPException(
-                        status_code=409,
-                        detail="The client's boarding credit balance changed during checkout. Refresh and try again.",
+                extra_credits_used = extra_consumed
+                if extra_credits_used > 0:
+                    await db.clients.update_one(
+                        {"id": booking["client_id"]},
+                        {"$inc": {"boarding_credits": -extra_credits_used}},
                     )
                 # Sprint 110g — low-credit email when extra-night burns drop pool.
                 await _maybe_send_low_credit_email(
@@ -7166,8 +7089,6 @@ async def _check_out_locked(
                 update["credit_value"] = round(prev_credit_value + float(extra_credit_value), 2)
                 prior_credits_deducted = float(update.get("credits_deducted") or booking.get("credits_deducted") or 0)
                 update["credits_deducted"] = round(prior_credits_deducted + extra_credits_used, 2)
-                prior_legacy = float(update.get("legacy_credits_deducted") or booking.get("legacy_credits_deducted") or 0)
-                update["legacy_credits_deducted"] = round(prior_legacy + extra_legacy_consumed, 2)
                 # Track exact lot usage for refund-on-cancel and failed-checkout rollback.
                 prior_redemptions = list(update.get("credit_lot_redemptions") or booking.get("credit_lot_redemptions") or [])
                 prior_lot_ids = list(update.get("credit_lot_ids") or booking.get("credit_lot_ids") or [])
@@ -7309,40 +7230,6 @@ async def _check_out_locked(
         prev_price = float(update.get("actual_price") or booking.get("actual_price") or 0)
         update["actual_price"] = round(prev_price + additional_cash_charge, 2)
         update["additional_cash_charge"] = additional_cash_charge
-
-    # One-time checkout discount. It reduces only the dollar portion due; the
-    # service credits and their lot/legacy deductions remain exactly as already
-    # calculated. This prevents a courtesy discount from refunding, shrinking,
-    # or otherwise rewriting old/new credit balances. Tax is calculated after
-    # this adjustment, so taxable revenue stays accurate.
-    requested_discount, discount_reason = _validated_checkout_discount(body)
-    if requested_discount > 0:
-        price_before_discount = round(float(update.get("actual_price") or booking.get("actual_price") or 0), 2)
-        credit_floor = 0.0
-        if update.get("payment_method") == "credits":
-            credit_floor = round(float(update.get("credit_value") or booking.get("credit_value") or 0), 2)
-        discountable_cash = round(max(0.0, price_before_discount - credit_floor), 2)
-        applied_discount = round(min(requested_discount, discountable_cash), 2)
-        if applied_discount > 0:
-            update["actual_price"] = round(price_before_discount - applied_discount, 2)
-            price_after_discount = round(price_before_discount - applied_discount, 2)
-            update["checkout_discount"] = {
-                "amount": applied_discount,
-                "reason": discount_reason,
-                "requested_amount": requested_discount,
-                "price_before": price_before_discount,
-                "price_after": price_after_discount,
-                "credit_value_preserved": credit_floor,
-                "applied_at": ts,
-                "applied_by": user.get("id"),
-                "applied_by_name": user.get("display_name") or user.get("name") or user.get("email"),
-            }
-            if price_after_discount <= 0.005 and credit_floor <= 0.005:
-                update["actual_price"] = 0.0
-                update["payment_status"] = "comped"
-                update["payment_method"] = "other"
-                update["amount_paid"] = 0.0
-                update["paid_at"] = ts
 
     # Resolve payment_status / payment_method when a charge is involved.
     is_paid_today = update.get("payment_method") == "credits"
@@ -9253,7 +9140,7 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
         "checked_out_at", "checked_out_by", "checked_out_by_name", "checked_out_lat", "checked_out_lng",
         "checked_out_accuracy_m", "actual_price", "payment_status", "payment_method", "paid_at",
         "amount_paid", "balance_due", "cash_revenue", "tax_amount", "tax_rate_pct",
-        "taxable_cash_amount", "additional_cash_charge", "checkout_discount", "money_modifier_breakdown",
+        "taxable_cash_amount", "additional_cash_charge", "money_modifier_breakdown",
     ]}
     event_id = None
     try:
@@ -14764,7 +14651,6 @@ def _seconds_until_next_run(hour: int, minute: int) -> float:
 
 
 _auto_backup_task: Optional[asyncio.Task] = None
-_email_automation_task: Optional[asyncio.Task] = None
 
 
 async def _auto_backup_loop():
@@ -18153,9 +18039,6 @@ async def startup():
         # Sprint 110cn — new staff-portal collections.
         (db.punch_corrections, [("status", 1), ("created_at", -1)], {}),
         (db.punch_corrections, "user_id", {}),
-        # Durable automated-email retry queue.
-        (db.email_outbox, "key", {"unique": True}),
-        (db.email_outbox, [("status", 1), ("next_attempt_at", 1)], {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -18218,13 +18101,9 @@ async def startup():
     # Sprint 110av — start the auto-backup loop. Loop honors the
     # `enabled` flag on every iteration so disabling the feature simply
     # makes it a no-op (it doesn't get cancelled).
-    global _auto_backup_task, _email_automation_task
+    global _auto_backup_task
     if _auto_backup_task is None or _auto_backup_task.done():
         _auto_backup_task = asyncio.create_task(_auto_backup_loop())
-    # Automated email jobs no longer depend on opening the admin dashboard.
-    if _email_automation_task is None or _email_automation_task.done():
-        from daily_jobs import automation_loop
-        _email_automation_task = asyncio.create_task(automation_loop(db))
     # Sprint 110ax — seed the dog-facts library on first boot
     try:
         await _seed_dog_facts_if_empty()
@@ -18239,14 +18118,13 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    global _auto_backup_task, _email_automation_task
-    for task in (_auto_backup_task, _email_automation_task):
-        if task and not task.done():
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+    global _auto_backup_task
+    if _auto_backup_task and not _auto_backup_task.done():
+        _auto_backup_task.cancel()
+        try:
+            await _auto_backup_task
+        except (asyncio.CancelledError, Exception):
+            pass
     mongo_client.close()
 
 
@@ -28592,6 +28470,15 @@ _AUDIT_ACTION_RULES: List[Tuple[str, str, str]] = [
     ("PUT",    "/intake/templates",   "intake_template_edited"),
     ("POST",   "/intake/templates",   "intake_template_created"),
     ("DELETE", "/intake/templates",   "intake_template_deleted"),
+    # Credit-related client sub-resources — these paths contain "/clients/"
+    # too, so they MUST be listed before the generic client_created/edited
+    # rules below or they get mislabeled as plain client actions.
+    ("POST",   "/sell-packs",        "credit_pack_sold"),
+    ("POST",   "/sell-pack",         "credit_pack_sold"),
+    ("POST",   "/adjust-credits",    "credit_manual_adjustment"),
+    ("POST",   "/credit-referral",   "referral_credit_granted"),
+    ("PATCH",  "/credit-lots/",      "credit_lot_edited"),
+    ("POST",   "/sell-program",      "program_sold"),
     # method, contains, action
     ("POST",   "/bookings/", "booking_status_changed"),  # /bookings/{id}/cancel|approve|deny|complete|care
     ("POST",   "/bookings",  "booking_created"),
@@ -28814,6 +28701,26 @@ async def list_audit_log(
         q["action"] = {"$in": AUDIT_ACTION_GROUPS[group]}
     if since: q["ts"] = {"$gte": since}
     rows = await db.audit_log.find(q, {"_id": 0}).sort("ts", -1).to_list(min(max(limit, 1), 1000))
+
+    # Resolve record_id -> a human name so rows are searchable/readable by
+    # name instead of only by raw UUID. Most audit rows key off a client_id
+    # (sales, adjustments, bookings all live under /clients/{id}/...), with
+    # dogs as the next most common. Batch both lookups instead of querying
+    # per-row.
+    record_ids = list({r["record_id"] for r in rows if r.get("record_id")})
+    record_names: Dict[str, str] = {}
+    if record_ids:
+        async for c in db.clients.find({"id": {"$in": record_ids}}, {"_id": 0, "id": 1, "name": 1}):
+            if c.get("name"):
+                record_names[c["id"]] = c["name"]
+        missing = [rid for rid in record_ids if rid not in record_names]
+        if missing:
+            async for d in db.dogs.find({"id": {"$in": missing}}, {"_id": 0, "id": 1, "name": 1}):
+                if d.get("name"):
+                    record_names[d["id"]] = f"{d['name']} (dog)"
+    for r in rows:
+        r["record_name"] = record_names.get(r.get("record_id") or "")
+
     # Distinct users for the filter dropdown
     pipeline = [{"$group": {"_id": {"user_id": "$user_id", "user_name": "$user_name", "user_role": "$user_role"}}},
                 {"$limit": 200}]
