@@ -1,0 +1,24 @@
+Reply from 192.168.0.14
+
+cd ~/sit-happens
+
+# 1) (optional but smart) Grab a fresh backup in the browser first:
+#    Settings → Backup & Restore → Download Backup
+
+# 2) Pull latest code
+git fetch --all
+git pull
+# If git says "diverged" or "unrelated histories":
+#   git reset --hard origin/main
+
+# 3) Rebuild & restart (mongo stays untouched)
+docker compose build --pull backend frontend
+docker compose up -d
+
+# 4) Watch the logs for ~30 sec
+docker compose logs -f --tail=50
+#   backend  → "Uvicorn running on http://0.0.0.0:8001"
+#   frontend → "Compiled successfully" / "webpack compiled"
+# Ctrl-C exits the tail (containers keep running)
+
+# 5) Hard-refresh your admin tab (Ctrl-Shift-R) to load fresh JS
