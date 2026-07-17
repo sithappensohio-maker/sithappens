@@ -16,7 +16,18 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
-export default function PortalDogModal({ dog = null, onClose, onSaved }) {
+function vaxStatusLabel(dateStr) {
+  if (!dateStr) return { text: "Not on file", cls: "bg-red-500/15 text-red-400" };
+  if (dateStr < todayISO()) return { text: "Expired", cls: "bg-red-500/15 text-red-400" };
+  return { text: "Valid", cls: "bg-shGreen/15 text-shGreen" };
+}
+function fmtVaxDate(iso) {
+  if (!iso) return "—";
+  try { return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }); }
+  catch { return iso; }
+}
+
+export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadVaccines }) {
   const [form, setForm] = useState(dog ? {
     ...empty, ...dog,
     vaccines: { ...empty.vaccines, ...(dog.vaccines || {}) },
@@ -32,7 +43,6 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
   };
 
   const set = (patch) => setForm((p) => ({ ...p, ...patch }));
-  const setVax = (patch) => setForm((p) => ({ ...p, vaccines: { ...p.vaccines, ...patch } }));
 
   const save = async () => {
     setErr("");
@@ -51,7 +61,6 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
     const hasBirthday = !!(form.birthday || "").trim();
     const hasAge = (parseInt(form.age_y) || 0) > 0 || (parseInt(form.age_m) || 0) > 0;
     if (!hasBirthday && !hasAge) { setErr("Age (years/months) or birthday is required"); return; }
-    if (!form.vaccines?.rabies) { setErr("Rabies expiration is required"); return; }
     setSaving(true);
     try {
       const body = {
@@ -72,8 +81,6 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
     setSaving(false);
   };
-
-  const rabiesValid = form.vaccines.rabies && form.vaccines.rabies >= todayISO();
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="portal-dog-modal">
@@ -149,30 +156,32 @@ export default function PortalDogModal({ dog = null, onClose, onSaved }) {
             </Field>
           </div>
 
-          <div className="bg-bgBase/50 border border-bgHover rounded-lg p-4 space-y-3">
+          <div className="bg-bgBase/50 border border-bgHover rounded-lg p-4 space-y-3" data-testid="pd-vaccines-readonly">
             <div className="flex items-center justify-between">
               <p className="text-[15px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-shield-virus mr-2"/>Vaccinations</p>
-              {form.vaccines.rabies && (
-                <span className={`text-[15px] font-black uppercase tracking-widest px-2 py-1 rounded ${rabiesValid?"bg-shGreen/15 text-shGreen":"bg-red-500/15 text-red-400"}`}>
-                  Rabies {rabiesValid?"Valid":"Expired"}
-                </span>
-              )}
             </div>
-            <p className="text-[15px] text-gray-400">Enter the <span className="text-shOrange font-black">expiration date</span> from your vet's certificate. Rabies is required to book daycare or boarding.</p>
-            <Field label="Rabies expiration *">
-              <input type="date" value={form.vaccines.rabies} onChange={(e)=>setVax({rabies:e.target.value})} data-testid="pd-rabies"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Bordetella expiration">
-                <input type="date" value={form.vaccines.bordetella} onChange={(e)=>setVax({bordetella:e.target.value})}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-              </Field>
-              <Field label="DHPP expiration">
-                <input type="date" value={form.vaccines.dhpp} onChange={(e)=>setVax({dhpp:e.target.value})}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
-              </Field>
+            <p className="text-[13px] text-gray-400 leading-snug">
+              Vaccine dates can't be edited here — they only update once {"Sit Happens"} reviews and approves an uploaded certificate.
+              {isEdit ? " Use the button below to submit a new certificate." : " You can add certificates for this pup right after saving."}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {[["rabies","Rabies"],["bordetella","Bordetella"],["dhpp","DHPP"]].map(([k,label]) => {
+                const st = vaxStatusLabel(form.vaccines?.[k]);
+                return (
+                  <div key={k} className="rounded border border-bgHover bg-bgBase p-2.5" data-testid={`pd-vax-status-${k}`}>
+                    <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
+                    <p className="text-[12px] text-gray-500 mt-0.5">On file: {fmtVaxDate(form.vaccines?.[k])}</p>
+                    <span className={`inline-block mt-1 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${st.cls}`}>{st.text}</span>
+                  </div>
+                );
+              })}
             </div>
+            {isEdit && onUploadVaccines && (
+              <button type="button" onClick={() => onUploadVaccines(dog)} data-testid="pd-upload-vaccines-cta"
+                      className="w-full bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
+                <i className="fas fa-camera mr-1.5"/>Upload / update vaccine certificate
+              </button>
+            )}
           </div>
 
           <Field label="Photo (optional)">

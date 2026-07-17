@@ -20,6 +20,7 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
   const [savedCount, setSavedCount] = useState(0);
   const [err, setErr] = useState("");
   const [notice, setNotice] = useState("");
+  const [done, setDone] = useState(false);
 
   const current = queue[idx];
   const total = queue.length;
@@ -41,6 +42,31 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
   useEffect(() => {
     setExpiresOn(""); setPhoto(""); setErr("");
   }, [idx]);
+
+  if (done) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black/80 p-3 sm:p-6 overflow-y-auto flex items-center"
+           data-testid="vaccine-wizard-done">
+        <div className="bg-bgPanel rounded-xl border border-shGreen/40 max-w-md mx-auto overflow-hidden">
+          <div className="p-6 space-y-4 text-center">
+            <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl">
+              <i className="fas fa-circle-check"/>
+            </span>
+            <p className="text-lg font-black text-white uppercase italic leading-tight">
+              {savedCount} of {total} submitted for review
+            </p>
+            <p className="text-[13px] text-gray-300 leading-snug">
+              Thanks! Your new records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — booking stays locked until then, and you'll see the status update here once we're done.
+            </p>
+            <button onClick={onClose} data-testid="vaccine-wizard-done-close"
+                    className="w-full text-[13px] font-black uppercase tracking-widest px-4 py-3 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 transition">
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (!current) return null;
 
@@ -68,9 +94,8 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
       setSavedCount(next);
       onProgress(next);
       if (isLast) {
-        setNotice(`Final vaccine uploaded. Sit Happens will review the records now — booking stays locked until approval.`);
+        setDone(true);
         onAllDone();
-        onClose();
       } else {
         const nextItem = queue[idx + 1];
         setNotice(`${label} uploaded for ${current.dog.name}. Next: upload ${vaxLabel(nextItem.vaccine)} for ${nextItem.dog.name}. You are not done yet.`);

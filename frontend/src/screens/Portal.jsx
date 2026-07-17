@@ -859,6 +859,11 @@ export default function Portal() {
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
   const [vaccineQuick, setVaccineQuick] = useState(null); // { initialDogId }
+  // Confirmation MODAL shown after a client submits something that goes into
+  // Sit Happens' review queue (vaccine certs today; other reviewed record
+  // types can reuse this the same way). Stays open until the client
+  // explicitly closes it — no auto-dismiss, so it can't be missed.
+  const [reviewConfirm, setReviewConfirm] = useState(null); // { title, msg }
   // Onboarding checklist — auto-pops on portal load when any required vaccine
   // is missing/expired (or the client has no dog yet). Dismissed-this-session
   // is tracked in sessionStorage so it reappears next login until resolved.
@@ -2230,7 +2235,8 @@ export default function Portal() {
       {dogModal.open && (
         <PortalDogModal dog={dogModal.dog}
                         onClose={()=>setDogModal({open:false, dog:null})}
-                        onSaved={async () => { await loadAll(); bumpSetupRefresh(); }} />
+                        onSaved={async () => { await loadAll(); bumpSetupRefresh(); }}
+                        onUploadVaccines={(dog) => { setDogModal({open:false, dog:null}); setVaccineQuick({ initialDogId: dog.id }); }} />
       )}
       {profileOpen && client && (
         <PortalProfileModal client={client}
@@ -2287,15 +2293,55 @@ export default function Portal() {
       {celebrating.length > 0 && (
         <TrophyCelebration awards={celebrating} onAllSeen={()=>{ setCelebrating([]); loadTrophies(); }}/>
       )}
-      {vaccineModal && <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine} onClose={()=>setVaccineModal(null)} onSaved={async()=>{ setVaccineModal(null); await loadAll(); bumpSetupRefresh(); }} />}
+      {vaccineModal && (
+        <VaccineUploadModal dog={vaccineModal.dog} vaccine={vaccineModal.vaccine}
+          onClose={()=>setVaccineModal(null)}
+          onSaved={async()=>{
+            const dogName = vaccineModal.dog?.name || "your dog";
+            setVaccineModal(null);
+            await loadAll(); bumpSetupRefresh();
+            setReviewConfirm({
+              title: "Submitted for review",
+              msg: `${dogName}'s new vaccine record has been sent to Sit Happens. We'll review the certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
+            });
+          }} />
+      )}
 
       {vaccineQuick && (
         <VaccineQuickUploadModal
           dogs={dogs}
           initialDogId={vaccineQuick.initialDogId}
           onClose={()=>setVaccineQuick(null)}
-          onSaved={async()=>{ setVaccineQuick(null); await loadAll(); bumpSetupRefresh(); }}
+          onSaved={async()=>{
+            const dogName = dogs.find(d => d.id === vaccineQuick.initialDogId)?.name || "your dog";
+            setVaccineQuick(null);
+            await loadAll(); bumpSetupRefresh();
+            setReviewConfirm({
+              title: "Submitted for review",
+              msg: `${dogName}'s new vaccine records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
+            });
+          }}
         />
+      )}
+
+      {reviewConfirm && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
+             data-testid="review-confirm-modal" onClick={()=>setReviewConfirm(null)}>
+          <div onClick={(e)=>e.stopPropagation()}
+               className="bg-bgPanel border border-shGreen/40 rounded-2xl w-full max-w-md p-6 shadow-2xl text-center animate-slide-in">
+            <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl mb-3">
+              <i className="fas fa-circle-check"/>
+            </span>
+            <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-2">
+              {reviewConfirm.title || "Submitted for review"}
+            </h4>
+            <p className="text-[14px] text-gray-300 leading-snug mb-5">{reviewConfirm.msg}</p>
+            <button onClick={()=>setReviewConfirm(null)} data-testid="review-confirm-close"
+                    className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">
+              Got it
+            </button>
+          </div>
+        </div>
       )}
 
       {vaccineWizard && vaccineWizard.length > 0 && (
