@@ -859,16 +859,11 @@ export default function Portal() {
   const [showReferModal, setShowReferModal] = useState(false);
   const [vaccineModal, setVaccineModal] = useState(null); // { dog, vaccine }
   const [vaccineQuick, setVaccineQuick] = useState(null); // { initialDogId }
-  // Confirmation banner shown after a client submits something that goes into
+  // Confirmation MODAL shown after a client submits something that goes into
   // Sit Happens' review queue (vaccine certs today; other reviewed record
-  // types can reuse this the same way). Auto-dismisses after a few seconds
-  // but the client can also close it early.
-  const [reviewConfirm, setReviewConfirm] = useState(null); // { msg }
-  useEffect(() => {
-    if (!reviewConfirm) return;
-    const t = setTimeout(() => setReviewConfirm(null), 7000);
-    return () => clearTimeout(t);
-  }, [reviewConfirm]);
+  // types can reuse this the same way). Stays open until the client
+  // explicitly closes it — no auto-dismiss, so it can't be missed.
+  const [reviewConfirm, setReviewConfirm] = useState(null); // { title, msg }
   // Onboarding checklist — auto-pops on portal load when any required vaccine
   // is missing/expired (or the client has no dog yet). Dismissed-this-session
   // is tracked in sessionStorage so it reappears next login until resolved.
@@ -2305,7 +2300,10 @@ export default function Portal() {
             const dogName = vaccineModal.dog?.name || "your dog";
             setVaccineModal(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({ msg: `Got it! We'll check ${dogName}'s new vaccine record and approve it shortly — you'll see it update here once it's confirmed.` });
+            setReviewConfirm({
+              title: "Submitted for review",
+              msg: `${dogName}'s new vaccine record has been sent to Sit Happens. We'll review the certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
+            });
           }} />
       )}
 
@@ -2318,18 +2316,29 @@ export default function Portal() {
             const dogName = dogs.find(d => d.id === vaccineQuick.initialDogId)?.name || "your dog";
             setVaccineQuick(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({ msg: `Thanks! We'll check ${dogName}'s new vaccine records and approve them shortly — you'll see them update here once confirmed.` });
+            setReviewConfirm({
+              title: "Submitted for review",
+              msg: `${dogName}'s new vaccine records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
+            });
           }}
         />
       )}
 
       {reviewConfirm && (
-        <div className="fixed bottom-4 inset-x-0 z-[9999] px-3 flex justify-center pointer-events-none" data-testid="review-confirm-toast">
-          <div className="pointer-events-auto max-w-md w-full bg-shGreen/15 border border-shGreen/50 rounded-xl px-4 py-3 shadow-2xl flex items-start gap-3 animate-slide-in">
-            <i className="fas fa-circle-check text-shGreen text-lg mt-0.5"/>
-            <p className="text-[13px] text-white font-semibold leading-snug flex-1">{reviewConfirm.msg}</p>
-            <button onClick={()=>setReviewConfirm(null)} className="text-gray-400 hover:text-white" data-testid="review-confirm-dismiss">
-              <i className="fas fa-xmark"/>
+        <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
+             data-testid="review-confirm-modal" onClick={()=>setReviewConfirm(null)}>
+          <div onClick={(e)=>e.stopPropagation()}
+               className="bg-bgPanel border border-shGreen/40 rounded-2xl w-full max-w-md p-6 shadow-2xl text-center animate-slide-in">
+            <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl mb-3">
+              <i className="fas fa-circle-check"/>
+            </span>
+            <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-2">
+              {reviewConfirm.title || "Submitted for review"}
+            </h4>
+            <p className="text-[14px] text-gray-300 leading-snug mb-5">{reviewConfirm.msg}</p>
+            <button onClick={()=>setReviewConfirm(null)} data-testid="review-confirm-close"
+                    className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">
+              Got it
             </button>
           </div>
         </div>

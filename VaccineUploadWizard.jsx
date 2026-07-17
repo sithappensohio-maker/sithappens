@@ -56,7 +56,7 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
               {savedCount} of {total} submitted for review
             </p>
             <p className="text-[13px] text-gray-300 leading-snug">
-              Thanks! We'll check the new records and approve them shortly. Booking stays locked until Sit Happens reviews and approves the uploaded vaccine records — you'll see the status update here once that's done.
+              Thanks! Your new records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — booking stays locked until then, and you'll see the status update here once we're done.
             </p>
             <button onClick={onClose} data-testid="vaccine-wizard-done-close"
                     className="w-full text-[13px] font-black uppercase tracking-widest px-4 py-3 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 transition">
