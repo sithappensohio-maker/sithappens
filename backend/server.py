@@ -3055,6 +3055,31 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
     return merged
 
 
+async def _dog_conflicting_booking(
+    dog_id: str, date: str, end_date: Optional[str], service_type: str,
+    *, exclude_booking_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Find an existing active booking for the same dog + same service type
+    whose date range overlaps the given one. Scoped to matching service
+    types only — a dog boarding while also having a same-day grooming
+    appointment is normal and must stay allowed."""
+    new_days = set(_dates_in_range(date, end_date))
+    q: Dict[str, Any] = {
+        "dog_id": dog_id,
+        "service_type": service_type,
+        "status": {"$in": ["pending", "approved", "completed"]},
+    }
+    if exclude_booking_id:
+        q["id"] = {"$ne": exclude_booking_id}
+    existing = await db.bookings.find(q, {"_id": 0}).to_list(500)
+    for b in existing:
+        if b.get("checked_out_at"):
+            continue
+        if new_days & set(_dates_in_range(b.get("date"), b.get("end_date"))):
+            return b
+    return None
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -3159,6 +3184,25 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     is_admin = user.get("role") == "admin"
     if not (is_admin and body.override_vaccines):
         await _validate_dog_vaccines(dog, required)
+
+    # Sprint 110ff — Same-dog duplicate-booking guard. GET /bookings/conflicts
+    # only ever showed an informational "heads up" banner in one screen and
+    # nothing actually stopped the save — a dog could end up with two active
+    # bookings for the same service overlapping the same day(s) (e.g. a
+    # manual booking landing on top of a recurring-template session),
+    # producing duplicate charges and duplicate cards on the Run Sheet.
+    # Scoped to the SAME service_type only — a dog boarding and also having
+    # a same-day grooming appointment is normal and must stay allowed.
+    if not (is_admin and body.override_capacity):
+        dup = await _dog_conflicting_booking(body.dog_id, body.date, body.end_date, body.service_type)
+        if dup:
+            dup_end = dup.get("end_date")
+            span = f" through {dup_end}" if dup_end else ""
+            raise HTTPException(
+                status_code=409,
+                detail=f"{dog['name']} already has a {body.service_type} booking on {dup.get('date')}"
+                       f"{span} (status: {dup.get('status')}).",
+            )
 
     # Closed-day enforcement (clients only — admin can override by creating manually).
     # Blocks any booking whose start date OR any day in its range falls on a closed date.
