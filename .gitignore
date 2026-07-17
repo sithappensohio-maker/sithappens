@@ -19,7 +19,9 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.venv_local_test/
 .ruff_cache/
+backend/_local_test_backups/
 
 # ── Logs ────────────────────────────────────────────────────────────
 *.log

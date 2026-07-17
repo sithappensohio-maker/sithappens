@@ -1901,6 +1901,7 @@ export function RegisterTab() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(() => {
     try {
       const wanted = localStorage.getItem("sh_register_default_tab");
@@ -2011,9 +2012,11 @@ export function RegisterTab() {
   const closeoutOverShort = closeoutCountedCash == null || !Number.isFinite(closeoutCountedCash) ? null : closeoutCountedCash - closeoutExpectedCash;
   const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
   const submit = async (fn) => {
-    setErr(""); setMsg("");
+    if (busy) return;
+    setBusy(true); setErr(""); setMsg("");
     try { await fn(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail) || "Register action failed"); }
+    finally { setBusy(false); }
   };
 
   const openDrawer = () => submit(async () => {
@@ -2243,9 +2246,9 @@ export function RegisterTab() {
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={reopenReason} onChange={e=>setReopenReason(e.target.value)} placeholder="Reason for reopening · required"
                    className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-white text-sm"/>
-            <button onClick={reopenDay} disabled={reopenReason.trim().length < 3}
+            <button onClick={reopenDay} disabled={busy || reopenReason.trim().length < 3}
                     className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
-              <i className="fas fa-lock-open mr-1"/>Reopen Day
+              <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock-open"} mr-1`}/>{busy ? "Reopening…" : "Reopen Day"}
             </button>
           </div>
         </div>
@@ -2281,7 +2284,7 @@ export function RegisterTab() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                 <RegisterFormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={v=>{setOpeningCash(v); setOpeningOverrideReason("");}}/>
                 <RegisterFormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
-                <button onClick={openDrawer} disabled={data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
+                <button onClick={openDrawer} disabled={busy || data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock-open"} mr-1`}/>{busy ? "Saving…" : "Set opening"}</button>
               </div>
               {openingOverride && (
                 <div className="mt-3 bg-shOrange/10 border border-shOrange/40 rounded-lg p-3">
@@ -2362,7 +2365,7 @@ export function RegisterTab() {
           <span className="block text-[11px] text-gray-500 mt-1">For items, enter quantity and price each. For a one-off service/deposit, you can just enter Amount collected.</span>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!sale.apply_tax} onChange={e=>setSale({...sale, apply_tax:e.target.checked})}/> Apply configured retail sales tax to this total</label>
-        <button disabled={!sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log sale</button>
+        <button disabled={busy || !sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log sale"}</button>
       </div>}
 
       {active === "pack" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2382,7 +2385,7 @@ export function RegisterTab() {
           <div><span className="font-black text-white">Order total:</span> {packQty} × {money(selectedPack.price)} = {money(packOrderTotal)}</div>
           <div className="text-[11px] text-gray-500">Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</div>
         </div>}
-        <button disabled={!packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Sell credit order</button>
+        <button disabled={busy || !packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Sell credit order"}</button>
       </div>}
 
       {active === "payment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2395,7 +2398,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
         </div>
         {selectedClient(payment.client_id) && <p className="text-[12px] text-gray-400">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-white">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
-        <button disabled={!payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record payment</button>
+        <button disabled={busy || !payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record payment"}</button>
       </div>}
 
       {active === "refund" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2408,7 +2411,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
           <RegisterFormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
         </div>
-        <button disabled={!Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record refund</button>
+        <button disabled={busy || !Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record refund"}</button>
       </div>}
 
       {active === "adjustment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-till-adjustment-tab">
@@ -2436,7 +2439,7 @@ export function RegisterTab() {
           <i className={`fas ${tillAdjustment.direction === "add" ? "fa-plus" : "fa-minus"} mr-2`}/>
           This will {tillAdjustment.direction === "add" ? "increase" : "decrease"} expected drawer cash by <strong>{money(tillAdjustment.amount)}</strong>. It will not change sales income or business expenses.
         </div>
-        <button disabled={!Number(tillAdjustment.amount) || !tillAdjustment.reason.trim()} onClick={submitTillAdjustment} className={`${tillAdjustment.direction === "add" ? "bg-shGreen" : "bg-shOrange"} disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest`} data-testid="save-till-adjustment"><i className="fas fa-save mr-1"/>Save till adjustment</button>
+        <button disabled={busy || !Number(tillAdjustment.amount) || !tillAdjustment.reason.trim()} onClick={submitTillAdjustment} className={`${tillAdjustment.direction === "add" ? "bg-shGreen" : "bg-shOrange"} disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest`} data-testid="save-till-adjustment"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-save"} mr-1`}/>{busy ? "Saving…" : "Save till adjustment"}</button>
       </div>}
 
       {active === "payout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2450,7 +2453,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Notes" value={payout.notes} onChange={v=>setPayout({...payout, notes:v})}/>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!payout.tax_deductible} onChange={e=>setPayout({...payout, tax_deductible:e.target.checked})}/> Mark as tax deductible</label>
-        <button disabled={!Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log cash payout</button>
+        <button disabled={busy || !Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log cash payout"}</button>
       </div>}
 
       {active === "expenses" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-expenses-tab">
@@ -2499,7 +2502,7 @@ export function RegisterTab() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-[13px] text-gray-400">Expense total: <span className="text-white font-black">{money(expenseLineTotal)}</span>{expense.from_cash_drawer && <span className="text-shOrange font-black ml-2">will reduce expected cash drawer</span>}</div>
-          <button disabled={!expense.description || !Number(expenseLineTotal)} onClick={submitExpense} className="bg-red-500/20 disabled:opacity-50 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log expense</button>
+          <button disabled={busy || !expense.description || !Number(expenseLineTotal)} onClick={submitExpense} className="bg-red-500/20 disabled:opacity-50 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log expense"}</button>
         </div>
         <div className="bg-bgBase/70 border border-bgHover rounded-xl p-4">
           <h5 className="text-white font-black uppercase italic mb-2"><i className="fas fa-list text-shGreen mr-2"/>Expenses for {date}</h5>
@@ -2555,7 +2558,7 @@ export function RegisterTab() {
                 <AuditTile label="Over / short" value={closeoutOverShort}/>
               </div>
               <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3 text-center"><p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Opening next business day</p><p className="text-2xl text-white font-black">{money(closeoutCountedCash)}</p></div>
-              <div className="flex flex-col sm:flex-row gap-2"><button onClick={()=>setCloseoutReview(false)} className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">Go back</button><button onClick={submitCloseout} className="flex-1 bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Confirm & carry {money(closeoutCountedCash)} forward</button></div>
+              <div className="flex flex-col sm:flex-row gap-2"><button onClick={()=>setCloseoutReview(false)} disabled={busy} className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">Go back</button><button onClick={submitCloseout} disabled={busy} className="flex-1 bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock"} mr-1`}/>{busy ? "Saving…" : `Confirm & carry ${money(closeoutCountedCash)} forward`}</button></div>
             </div>
           )}
         </>)}

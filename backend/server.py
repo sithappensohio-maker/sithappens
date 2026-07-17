@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import re
+import socket
 import uuid
 import asyncio
 import secrets
@@ -14020,7 +14021,7 @@ BACKUP_VERSION = 8
 # so files survive backend container rebuilds. Operators may use subfolders,
 # but cannot point the app back at an ephemeral container path.
 BACKUP_ROOT = os.path.realpath(os.environ.get("BACKUP_ROOT", "/app/backups"))
-_BACKUP_PROCESS_ID = f"{os.uname().nodename}:{os.getpid()}:{uuid.uuid4()}"
+_BACKUP_PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4()}"
 _BACKUP_LEASE_ID = "auto_backup_lease"
 
 
