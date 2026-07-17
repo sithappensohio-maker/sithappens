@@ -30290,13 +30290,15 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
 
     # ---- Step 4: vaccines ----------------------------------------------------
     today = business_today().isoformat()
-    vac_missing: List[str] = []
+    vac_missing: List[str] = []    # still needs the client to upload/re-upload
+    vac_awaiting: List[str] = []   # uploaded, sitting in the admin review queue
     vac_pending_review = False
     if not dogs:
         vac_step_status = SETUP_STATUS_NOT_STARTED
     else:
         for d in dogs:
             vacs = d.get("vaccines") or {}
+            certs = d.get("vaccine_certs") or {}
             # vaccines historically stored two shapes: dict (legacy) and list of dicts.
             def _vac_expiry(key: str):
                 if isinstance(vacs, dict):
@@ -30308,16 +30310,36 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
                 return ""
             for r in required_vax:
                 expiry = str(_vac_expiry(r) or "")[:10]
-                if not expiry:
+                if expiry and expiry >= today:
+                    continue  # approved and currently valid — nothing to report
+                # Not currently valid/approved. Check whether the client already
+                # submitted a certificate that's just sitting in the admin's
+                # review queue (dog.vaccine_certs — the real pending-upload
+                # record) vs. genuinely still needing the client to act. This
+                # used to check a `vaccine_uploads` collection that nothing in
+                # the app ever wrote to, so this step could never detect
+                # "awaiting review" — it showed "needs attention" forever even
+                # right after the client uploaded a certificate.
+                cert = certs.get(r) if isinstance(certs, dict) else None
+                cert_is_pending = bool(
+                    cert and isinstance(cert, dict)
+                    and not cert.get("reviewed_at")
+                    and not cert.get("uploaded_by_admin")
+                    and (cert.get("status") in ("pending_review", "pending") or cert.get("pending_expires_on"))
+                )
+                if cert_is_pending:
+                    vac_awaiting.append(f"{d.get('name')}: {r}")
+                    vac_pending_review = True
+                elif not expiry:
                     vac_missing.append(f"{d.get('name')}: {r}")
-                elif expiry < today:
+                else:
                     vac_missing.append(f"{d.get('name')}: {r} (expired)")
-            # Pending review = vaccine_uploads collection has un-approved row for this dog.
-            pending = await db.vaccine_uploads.count_documents({"dog_id": d.get("id"), "status": "pending"})
-            if pending:
-                vac_pending_review = True
+        total_slots = len(required_vax) * len(dogs)
         if vac_missing:
-            vac_step_status = SETUP_STATUS_NOT_STARTED if len(vac_missing) == len(required_vax) * len(dogs) else SETUP_STATUS_IN_PROGRESS
+            # Some vaccines still need the client to act, even if others are
+            # already submitted and waiting on us — keep the step actionable
+            # so the "what's missing" list stays visible and accurate.
+            vac_step_status = SETUP_STATUS_NOT_STARTED if len(vac_missing) == total_slots else SETUP_STATUS_IN_PROGRESS
         elif vac_pending_review:
             vac_step_status = SETUP_STATUS_PENDING
         else:
@@ -30424,6 +30446,7 @@ async def _compute_setup_status_for_client(client: Dict[str, Any]) -> Dict[str, 
             "action_label": "Upload Vaccine Records",
             "action_target": "vaccines",
             "missing": vac_missing,
+            "awaiting_review": vac_awaiting,
             "pending_review": vac_pending_review,
         },
         {

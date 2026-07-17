@@ -39,6 +39,7 @@ function stepPlainEnglish(step) {
       return "Add someone we can call if we cannot reach you.";
     case "vaccines":
       if (step.status === "pending_review") return "Your vaccine records are uploaded. Sit Happens just needs to review and approve them.";
+      if (step.awaiting_review && step.awaiting_review.length > 0) return "Some of your vaccine records are already in and waiting on our review. You still need to upload the rest listed below.";
       return "Upload current Rabies, Bordetella, and DHPP records for each dog.";
     case "waiver":
       return "Review and sign the required waiver. It only takes a minute.";
@@ -207,7 +208,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                 {nextStep.missing && nextStep.missing.length > 0 && (
                   <div className="mt-3 rounded-lg bg-bgBase/80 border border-bgHover p-3">
                     <p className="text-[11px] text-shOrange font-black uppercase tracking-widest mb-1">
-                      What&apos;s missing
+                      Still need from you
                     </p>
                     <ul className="space-y-1">
                       {nextStep.missing.slice(0, 5).map((m, i) => (
@@ -217,6 +218,23 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                       ))}
                       {nextStep.missing.length > 5 && (
                         <li className="text-[12px] text-gray-500">+ {nextStep.missing.length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+                {nextStep.awaiting_review && nextStep.awaiting_review.length > 0 && (
+                  <div className="mt-3 rounded-lg bg-shBlue/10 border border-shBlue/30 p-3" data-testid="portal-setup-next-awaiting">
+                    <p className="text-[11px] text-shBlue font-black uppercase tracking-widest mb-1">
+                      <i className="fas fa-clock mr-1"/>Already submitted — waiting on us
+                    </p>
+                    <ul className="space-y-1">
+                      {nextStep.awaiting_review.slice(0, 5).map((m, i) => (
+                        <li key={i} className="text-[12px] text-gray-300 break-words">
+                          <i className="fas fa-hourglass-half text-shBlue mr-1.5"/>{m}
+                        </li>
+                      ))}
+                      {nextStep.awaiting_review.length > 5 && (
+                        <li className="text-[12px] text-gray-500">+ {nextStep.awaiting_review.length - 5} more</li>
                       )}
                     </ul>
                   </div>
@@ -301,6 +319,18 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                         ))}
                         {s.missing.length > 3 && (
                           <li className="text-[11px] text-gray-500">+ {s.missing.length - 3} more</li>
+                        )}
+                      </ul>
+                    )}
+                    {!isComplete && s.awaiting_review && s.awaiting_review.length > 0 && (
+                      <ul className="mt-2 space-y-0.5" data-testid={`portal-setup-step-awaiting-${s.id}`}>
+                        {s.awaiting_review.slice(0, 3).map((m, i) => (
+                          <li key={i} className="text-[11px] text-shBlue break-words">
+                            <i className="fas fa-hourglass-half mr-1"/>{m} — waiting on us
+                          </li>
+                        ))}
+                        {s.awaiting_review.length > 3 && (
+                          <li className="text-[11px] text-gray-500">+ {s.awaiting_review.length - 3} more</li>
                         )}
                       </ul>
                     )}
