@@ -5147,6 +5147,13 @@ async def admin_update_help_request(req_id: str, body: HelpRequestStatusIn, _: d
 async def portal_create_dog(body: PortalDogIn, user: dict = Depends(get_current_user)):
     cid = await _require_client_with_record(user)
     doc = body.model_dump()
+    # Vaccine dates typed into this form are self-reported with no certificate
+    # attached, so they must never go live as the admin-approved record —
+    # that would let a client silently unlock booking gates without a cert.
+    # Vaccine dates can only become official through `/portal/dogs/{id}/vaccine-update`,
+    # which requires a photo/PDF and sits in the admin's Pending Vaccine Reviews
+    # queue until approved. Drop whatever was typed here on dog creation.
+    doc["vaccines"] = Vaccines().model_dump()
     doc.update({
         "id": str(uuid.uuid4()),
         "owner_id": cid,
@@ -5170,6 +5177,11 @@ async def portal_update_dog(dog_id: str, body: PortalDogIn, user: dict = Depends
     if existing.get("owner_id") != cid:
         raise HTTPException(status_code=403, detail="Not your dog")
     update = body.model_dump()
+    # Same rule as creation: this form has no certificate-upload step, so any
+    # vaccine dates the client typed here must not overwrite the admin-approved
+    # `vaccines` record. Keep whatever is already on file — vaccine changes
+    # only ever land through the reviewed `/vaccine-update` endpoint.
+    update["vaccines"] = existing.get("vaccines") or Vaccines().model_dump()
     await db.dogs.update_one({"id": dog_id}, {"$set": update})
     existing.update(update)
     return existing
