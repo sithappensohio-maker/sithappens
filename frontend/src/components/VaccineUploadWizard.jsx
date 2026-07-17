@@ -48,16 +48,40 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
       <div className="fixed inset-0 z-50 bg-black/80 p-3 sm:p-6 overflow-y-auto flex items-center"
            data-testid="vaccine-wizard-done">
         <div className="bg-bgPanel rounded-xl border border-shGreen/40 max-w-md mx-auto overflow-hidden">
-          <div className="p-6 space-y-4 text-center">
-            <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl">
-              <i className="fas fa-circle-check"/>
-            </span>
-            <p className="text-lg font-black text-white uppercase italic leading-tight">
-              {savedCount} of {total} submitted for review
-            </p>
-            <p className="text-[13px] text-gray-300 leading-snug">
-              Thanks! Your new records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — booking stays locked until then, and you'll see the status update here once we're done.
-            </p>
+          <div className="p-6 space-y-4">
+            <div className="text-center">
+              <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl mb-2">
+                <i className="fas fa-circle-check"/>
+              </span>
+              <p className="text-lg font-black text-white uppercase italic leading-tight">
+                Upload Received!
+              </p>
+              <p className="text-[13px] text-shOrange font-black uppercase tracking-widest mt-1">
+                This is NOT approved yet
+              </p>
+            </div>
+            <div className="space-y-2.5">
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">1</span>
+                <p className="text-[13px] text-gray-200 leading-snug">We got {savedCount} of {total} vaccine record{total === 1 ? "" : "s"} you uploaded.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">2</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Our staff will look at each certificate you sent.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">3</span>
+                <p className="text-[13px] text-gray-200 leading-snug">We will either <span className="text-shGreen font-black">APPROVE</span> it or <span className="text-red-400 font-black">DECLINE</span> it — this takes a little time, it is not instant.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">4</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Booking stays <span className="font-black">locked</span> until this is approved.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">5</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Come back and check this page later to see if it was approved.</p>
+              </div>
+            </div>
             <button onClick={onClose} data-testid="vaccine-wizard-done-close"
                     className="w-full text-[13px] font-black uppercase tracking-widest px-4 py-3 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 transition">
               Got it
