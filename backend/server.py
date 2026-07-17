@@ -8939,8 +8939,10 @@ class IncidentOut(IncidentIn):
     created_at: str
 
 @api.get("/incidents", response_model=List[IncidentOut])
-async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None):
-    q = {"dog_id": dog_id} if dog_id else {}
+async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None, include_archived: bool = False):
+    q: Dict[str, Any] = {"dog_id": dog_id} if dog_id else {}
+    if not include_archived:
+        q["archived"] = {"$ne": True}
     items = await db.incidents.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
     return items
 
@@ -8978,9 +8980,36 @@ async def update_incident(incident_id: str, body: IncidentIn, _: dict = Depends(
     return existing
 
 @api.delete("/incidents/{incident_id}")
-async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
-    await db.incidents.delete_one({"id": incident_id})
+async def delete_incident(incident_id: str, user: dict = Depends(require_admin)):
+    # Sprint 110ff — incidents are a legal/liability record (bite reports,
+    # injuries). Deleting one used to be a hard, unrecoverable delete_one
+    # with no backup; the audit log could only show THAT something was
+    # deleted, not what it said. Archive in place instead so the full
+    # record is still recoverable (see POST .../restore) — same pattern
+    # already used for clients/dogs elsewhere in this file.
+    existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    await db.incidents.update_one({"id": incident_id}, {"$set": {
+        "archived": True,
+        "archived_at": now_iso(),
+        "archived_by": user.get("name") or user.get("email") or "admin",
+    }})
     return {"ok": True}
+
+
+@api.post("/incidents/{incident_id}/restore", response_model=IncidentOut)
+async def restore_incident(incident_id: str, _: dict = Depends(require_admin)):
+    existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    await db.incidents.update_one({"id": incident_id}, {"$unset": {
+        "archived": "", "archived_at": "", "archived_by": "",
+    }})
+    existing.pop("archived", None)
+    existing.pop("archived_at", None)
+    existing.pop("archived_by", None)
+    return existing
 
 
 # -------- Financially locked booking corrections (Admin) --------
