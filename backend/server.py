@@ -867,6 +867,13 @@ class CheckInIn(BaseModel):
     # client-portal check-in). Resolved + appended to booking.add_ons,
     # honouring the legacy-pricing override per add-on.
     addon_service_ids: List[str] = []
+    # Staff confirmed a vaccine warning shown by the client and wants to
+    # proceed anyway. Vaccines were only re-checked at booking time before
+    # this — a booking made weeks earlier could check in with an
+    # since-expired vaccine on ANY screen with no warning at all. Now the
+    # server itself re-checks at check-in and requires this explicit
+    # acknowledgement, so no client screen can silently skip the warning.
+    vaccine_ack: bool = False
 
 
 class BookingAddonsIn(BaseModel):
@@ -2678,6 +2685,25 @@ async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
         d = vaccines.get(v, "")
         if not d or d < today:
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
+
+
+def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str]:
+    """Non-fatal check-in-time vaccine check — a booking can be days or
+    weeks old, so a vaccine valid when the booking was made may have since
+    expired. Returns a human-readable warning if so, else None. Unlike
+    _validate_dog_vaccines (booking time), this never blocks by itself —
+    the caller decides whether to require staff acknowledgement."""
+    today = business_today().isoformat()
+    vaccines = dog.get("vaccines") or {}
+    for v in required:
+        if _pending_vaccine_cert_for(dog, v):
+            return f"{v.title()} vaccine is pending admin review."
+        d = vaccines.get(v, "")
+        if not d:
+            return f"{v.title()} vaccine is missing from this dog's record."
+        if d < today:
+            return f"{v.title()} vaccine expired {d}."
+    return None
 
 
 def _parse_hhmm_strict(value: Optional[str], *, field_label: str) -> Optional[time]:
@@ -5201,6 +5227,18 @@ async def check_in(
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking is already financially closed and cannot be checked in again.")
     body = body or CheckInIn()
+    if not body.vaccine_ack:
+        dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
+        if dog:
+            settings = await get_settings()
+            required = settings.get("required_vaccines", ["rabies"])
+            warning = _dog_vaccine_checkin_warning(dog, required)
+            if warning:
+                raise HTTPException(status_code=409, detail={
+                    "code": "vaccine_warning",
+                    "message": warning,
+                    "dog_name": dog.get("name"),
+                })
     ts = now_iso()
     update = {
         "checked_in_at": ts,

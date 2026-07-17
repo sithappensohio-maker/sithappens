@@ -22,6 +22,11 @@ venv/
 .venv_local_test/
 .ruff_cache/
 backend/_local_test_backups/
+backend/_local_backend_stdout.log
+backend/_local_backend_stderr.log
+frontend/_local_frontend_stdout.log
+frontend/_local_frontend_stderr.log
+frontend/_start_local_frontend.ps1
 
 # ── Logs ────────────────────────────────────────────────────────────
 *.log

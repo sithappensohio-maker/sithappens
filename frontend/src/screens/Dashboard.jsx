@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
 import HelpRequestsTile from "../components/HelpRequestsTile";
@@ -150,10 +150,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
     );
   });
-  const checkIn = async (id) => {
+  const checkIn = async (id, vaccineAck = false) => {
     try {
       const geo = await captureGeo();
-      await api.post(`/bookings/${id}/check-in`, geo);
+      await api.post(`/bookings/${id}/check-in`, { ...geo, vaccine_ack: vaccineAck });
       // Sprint 110di-69 — if this booking is for a training service AND the dog
       // has an active training enrollment, open the Training Tracker directly.
       try {
@@ -164,7 +164,24 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         }
       } catch { /* training context is best-effort */ }
       load();
-    } catch { /* silent — geo errors are non-fatal */ }
+    } catch (e) {
+      // The server re-checks vaccines at the actual moment of check-in (a
+      // booking can be weeks old, so a vaccine valid at booking time may
+      // have since expired) and asks for explicit staff acknowledgement —
+      // this used to be a silent no-op error on this screen.
+      const detail = e.response?.data?.detail;
+      if (detail?.code === "vaccine_warning") {
+        const ok = await confirm({
+          title: `Vaccine warning · ${detail.dog_name || "this dog"}`,
+          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          confirmText: "Check in anyway",
+          destructive: true,
+        });
+        if (ok) await checkIn(id, true);
+        return;
+      }
+      toast.error(formatErr(detail) || "Check-in failed");
+    }
   };
 
   const approveVax = async (v) => {
