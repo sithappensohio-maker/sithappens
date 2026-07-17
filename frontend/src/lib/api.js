@@ -25,9 +25,17 @@ api.interceptors.request.use((cfg) => {
 const _inflight = new Map();
 const _keyFor = (cfg) => {
   if ((cfg.method || "get").toLowerCase() !== "get") return null;
-  // Auth header omitted on purpose — keys would needlessly miss otherwise.
+  // Sprint 110ff — the dedup key used to omit who's asking. On a shared
+  // device (a lobby tablet, a family handing off a phone), if person A
+  // logs out and person B logs in right away, a request still in flight
+  // for A could get handed to B's screen before B's own request even
+  // went out. Scoping the key to the current token keeps de-duplication
+  // working within one login (the original point of this cache — many
+  // sibling components firing the same GET) while making sure a login
+  // swap never shares an in-flight response across identities.
+  const token = localStorage.getItem("sh_token") || "";
   const params = cfg.params ? JSON.stringify(cfg.params) : "";
-  return `GET ${cfg.baseURL || ""}${cfg.url || ""}?${params}`;
+  return `${token}::GET ${cfg.baseURL || ""}${cfg.url || ""}?${params}`;
 };
 const _origRequest = api.request.bind(api);
 api.request = (cfg) => {
