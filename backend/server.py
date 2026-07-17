@@ -3080,6 +3080,28 @@ async def _dog_conflicting_booking(
     return None
 
 
+async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], crate: str) -> Optional[dict]:
+    """A crate is a single physical container — unlike Room, Yard Group, or
+    Training Group (which the app's own default labels — "Big Dogs",
+    "Group A", etc. — show are meant to hold several dogs together), a
+    crate can only ever hold one dog. Kennel already had this protection;
+    Crate didn't, so two dogs could be assigned the same crate at once
+    with no warning."""
+    if not crate:
+        return None
+    new_days = set(_dates_in_range(date, end_date))
+    existing = await db.bookings.find(
+        {"crate": crate, "status": {"$in": ["pending", "approved", "completed"]}, "id": {"$ne": booking_id}},
+        {"_id": 0},
+    ).to_list(500)
+    for b in existing:
+        if b.get("checked_out_at"):
+            continue
+        if new_days & set(_dates_in_range(b.get("date"), b.get("end_date"))):
+            return b
+    return None
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -9326,6 +9348,18 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
     if update:
+        if update.get("crate"):
+            conflict = await _crate_conflict(
+                booking_id,
+                update.get("date", booking.get("date")),
+                update.get("end_date", booking.get("end_date")),
+                update["crate"],
+            )
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{update['crate']} is already assigned to {conflict.get('dog_name', 'another dog')} on overlapping dates.",
+                )
         capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time", "date", "end_date"}
         if capacity_fields.intersection(update):
             return await _update_booking_with_capacity(booking, update)
