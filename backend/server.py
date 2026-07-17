@@ -6614,6 +6614,13 @@ async def check_out(
     money step fails before checkout completes.
     """
     body = body or CheckoutIn()
+    # Sprint 110ff — the price-override field was open to every staff
+    # account regardless of their assigned Roles & Permissions matrix,
+    # which made the "pricing" permission toggle decorative for checkout.
+    # Admins (and staff explicitly granted "pricing") can still override;
+    # everyone else checks out at the normal computed price.
+    if body.base_price is not None and user.get("role") != "admin" and not _perms_for(user).get("pricing"):
+        raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
     stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
