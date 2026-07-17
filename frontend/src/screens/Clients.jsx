@@ -156,8 +156,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             });
             // Attach any cert photos the admin pasted/uploaded in the modal.
             // Each cert is its own POST so a single failure doesn't break the
-            // whole new-client flow.
+            // whole new-client flow — but a failure still needs to reach the
+            // admin, otherwise the dog saves as if the photo attached fine.
             const dogId = dogResp.data?.id;
+            const failedCerts = [];
             if (dogId) {
               for (const v of ["rabies", "bordetella", "dhpp"]) {
                 const photo = dog[`${v}_photo`];
@@ -165,9 +167,14 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 if (photo && expires_on) {
                   try {
                     await api.post(`/dogs/${dogId}/vaccine-cert`, { vaccine: v, expires_on, photo });
-                  } catch { /* surfaced below if all certs fail; harmless if just one fails */ }
+                  } catch (e) {
+                    failedCerts.push(`${v} (${formatErr(e.response?.data?.detail) || "upload failed"})`);
+                  }
                 }
               }
+            }
+            if (failedCerts.length) {
+              dogWarning = `${dog.name.trim()} added, but the cert photo didn't attach for: ${failedCerts.join(", ")}. Re-upload from the Dogs screen.`;
             }
           } catch (e) {
             dogWarning = formatErr(e.response?.data?.detail) || "Dog couldn't be added — add it from the Dogs screen.";
