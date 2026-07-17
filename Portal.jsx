@@ -2300,10 +2300,7 @@ export default function Portal() {
             const dogName = vaccineModal.dog?.name || "your dog";
             setVaccineModal(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({
-              title: "Submitted for review",
-              msg: `${dogName}'s new vaccine record has been sent to Sit Happens. We'll review the certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
-            });
+            setReviewConfirm({ dogName, plural: false });
           }} />
       )}
 
@@ -2316,10 +2313,7 @@ export default function Portal() {
             const dogName = dogs.find(d => d.id === vaccineQuick.initialDogId)?.name || "your dog";
             setVaccineQuick(null);
             await loadAll(); bumpSetupRefresh();
-            setReviewConfirm({
-              title: "Submitted for review",
-              msg: `${dogName}'s new vaccine records have been sent to Sit Happens. We'll review each certificate and approve or decline it as soon as possible — you'll see the status update here once we're done.`,
-            });
+            setReviewConfirm({ dogName, plural: true });
           }}
         />
       )}
@@ -2328,14 +2322,40 @@ export default function Portal() {
         <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4"
              data-testid="review-confirm-modal" onClick={()=>setReviewConfirm(null)}>
           <div onClick={(e)=>e.stopPropagation()}
-               className="bg-bgPanel border border-shGreen/40 rounded-2xl w-full max-w-md p-6 shadow-2xl text-center animate-slide-in">
-            <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl mb-3">
-              <i className="fas fa-circle-check"/>
-            </span>
-            <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-2">
-              {reviewConfirm.title || "Submitted for review"}
-            </h4>
-            <p className="text-[14px] text-gray-300 leading-snug mb-5">{reviewConfirm.msg}</p>
+               className="bg-bgPanel border border-shGreen/40 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in">
+            <div className="text-center">
+              <span className="inline-flex w-14 h-14 rounded-full bg-shGreen/15 text-shGreen items-center justify-center text-2xl mb-3">
+                <i className="fas fa-circle-check"/>
+              </span>
+              <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-1">
+                Upload Received!
+              </h4>
+              <p className="text-[13px] text-shOrange font-black uppercase tracking-widest mb-4">
+                This is NOT approved yet
+              </p>
+            </div>
+            <div className="space-y-2.5 mb-5">
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">1</span>
+                <p className="text-[13px] text-gray-200 leading-snug">We got {reviewConfirm.dogName || "your dog"}'s new vaccine {reviewConfirm.plural ? "records" : "record"}.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">2</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Our staff will look at what you uploaded.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">3</span>
+                <p className="text-[13px] text-gray-200 leading-snug">We will either <span className="text-shGreen font-black">APPROVE</span> it or <span className="text-red-400 font-black">DECLINE</span> it — this takes a little time, it is not instant.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">4</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Booking stays <span className="font-black">locked</span> until this is approved.</p>
+              </div>
+              <div className="flex items-start gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+                <span className="shrink-0 w-6 h-6 rounded-full bg-shGreen/20 text-shGreen font-black text-[12px] flex items-center justify-center">5</span>
+                <p className="text-[13px] text-gray-200 leading-snug">Come back and check this page later to see if it was approved.</p>
+              </div>
+            </div>
             <button onClick={()=>setReviewConfirm(null)} data-testid="review-confirm-close"
                     className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl">
               Got it
