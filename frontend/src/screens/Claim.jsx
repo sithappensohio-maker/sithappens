@@ -98,7 +98,7 @@ export default function Claim({ token }) {
                 minLength={8}
                 data-testid="claim-password-input"
                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
-                placeholder="At least 6 characters"
+                placeholder="At least 8 characters"
                 autoFocus
               />
             </div>

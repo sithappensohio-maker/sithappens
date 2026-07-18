@@ -843,6 +843,47 @@ async def notify_admin_quote_request(client: dict, item: dict, message: str) -> 
     )
 
 
+async def notify_admin_help_request(client: dict, help_request: dict) -> None:
+    """A client submitted feedback/a problem report/a suggestion from the
+    portal's Need Help button. This is intentionally not a full ticket
+    system (no replies), but the admin should still be alerted it exists
+    rather than relying on noticing an unread-count badge."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    name = client.get("name") or "—"
+    type_label = {
+        "feedback": "Feedback", "problem": "Problem", "feature": "Feature idea",
+        "booking": "Booking question", "other": "Other",
+    }.get(help_request.get("type"), "Other")
+    rows = [
+        ("Client", name),
+        ("Type", type_label),
+        ("Subject", help_request.get("subject") or "—"),
+        ("Message", help_request.get("message") or "—"),
+    ]
+    if client.get("phone"):
+        rows.append(("Phone", client["phone"]))
+    if client.get("email"):
+        rows.append(("Email", client["email"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    await _dispatch(
+        slug="admin_help_request",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": name,
+            "type_label": type_label,
+            "subject": help_request.get("subject") or "",
+            "message": help_request.get("message") or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"Need Help: {type_label} from {name}",
+        fallback_title="New Need Help submission",
+        fallback_intro=f"{name} submitted a {type_label.lower()} note from the client portal.",
+    )
+
+
 async def notify_client_quote_received(client: dict, item: dict, message: str) -> None:
     """Auto-responder: thank the client for their quote request so they know
     we got it and don't feel ghosted while we draft a real reply."""

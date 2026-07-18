@@ -39,6 +39,7 @@ from email_service import (
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
     notify_admin_first_booking,
+    notify_admin_help_request,
     notify_admin_quote_request,
     notify_admin_pl_report,
     notify_client_booking_approved,
@@ -2672,8 +2673,14 @@ def _validate_base64_uploads(photos: List[str], *, max_items: int = 4, max_chars
         raise HTTPException(status_code=400, detail=f"Please upload no more than {max_items} photos.")
     for p in photos:
         if not isinstance(p, str):
-            raise HTTPException(status_code=400, detail="Invalid uploaded photo.")
+            raise HTTPException(status_code=400, detail="Invalid uploaded file.")
         if len(p) > max_chars_each:
+            # Sprint 110ff — this used to always say "image", which was
+            # confusing for PDF vaccine-cert uploads (the wizard explicitly
+            # invites those) since a PDF can't be "compressed" the way a
+            # photo can from the portal.
+            if p.startswith("data:application/pdf"):
+                raise HTTPException(status_code=400, detail="Uploaded PDF is too large. Please upload a smaller PDF, or a photo of the document instead.")
             raise HTTPException(status_code=400, detail="Uploaded photo is too large. Please use a smaller/compressed image.")
 
 
@@ -5211,6 +5218,15 @@ async def portal_create_help_request(body: HelpRequestIn, user: dict = Depends(g
     }
     await db.help_requests.insert_one(doc)
     doc.pop("_id", None)
+    # Sprint 110ff — this only ever surfaced as a small unread-count badge
+    # on the admin dashboard, unlike the separate Messages feature which
+    # emails staff. A client's note here could sit unseen indefinitely
+    # unless the admin happened to check that specific tile.
+    try:
+        if client:
+            await notify_admin_help_request(client, doc)
+    except Exception:
+        pass
     return doc
 
 
@@ -29924,6 +29940,15 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
 
     if body.client_ids is not None:
         ids = [c for c in (body.client_ids or []) if c]
+        # Sprint 110ff — hand-picked recipients used to hardcode dog_names
+        # to "" (always falling back to the generic "your pup" below),
+        # unlike the filtered-group path which looks each client's dogs
+        # up. An email meant to read "hope Bella is doing great" went out
+        # saying "hope your pup is doing great" for every hand-picked send.
+        dogs_by_owner: Dict[str, List[str]] = {}
+        async for d in db.dogs.find({"owner_id": {"$in": ids}}, {"_id": 0, "owner_id": 1, "name": 1}):
+            if d.get("name"):
+                dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d["name"])
         recipients: List[Dict[str, Any]] = []
         async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0}):
             recipients.append({
@@ -29931,7 +29956,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
                 "name": c.get("name") or "",
                 "email": c.get("email") or "",
                 "first_name": (c.get("name") or "").strip().split(" ")[0],
-                "dog_names": "",
+                "dog_names": ", ".join(dogs_by_owner.get(c.get("id") or "", [])),
             })
     else:
         recipients = await _bulk_email_resolve_recipients(body.filters or [])
