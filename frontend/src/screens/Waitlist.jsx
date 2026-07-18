@@ -147,7 +147,7 @@ export default function Waitlist() {
   const convertToBooking = async (entry) => {
     const ok = await confirm({
       title: `Book ${entry.dog_name} for ${entry.requested_date}?`,
-      body: "This bypasses the daily capacity limit (admin override) and runs the rest of the booking pipeline (vaccines, waiver, conflicts).",
+      body: "This checks for a real open spot before booking — it will fail if the day is still full — and runs the rest of the booking pipeline (vaccines, waiver, conflicts).",
       confirmText: "Create booking",
     });
     if (!ok) return;

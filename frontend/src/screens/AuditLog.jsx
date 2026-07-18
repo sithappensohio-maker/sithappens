@@ -16,6 +16,8 @@ const ACTION_META = {
   booking_checked_in:     { label: "Checked in",          icon: "fa-arrow-down",     color: "text-shGreen" },
   booking_checked_out:    { label: "Checked out",         icon: "fa-arrow-up",       color: "text-gray-400" },
   booking_status_changed: { label: "Booking action",      icon: "fa-shuffle",        color: "text-shBlue" },
+  booking_financial_adjustment: { label: "Financial adjustment", icon: "fa-sliders", color: "text-shOrange" },
+  booking_checkout_reopened:    { label: "Checkout reopened",    icon: "fa-lock-open", color: "text-shOrange" },
   care_logged:            { label: "Care action",         icon: "fa-bowl-food",      color: "text-shGreen" },
   care_completed:         { label: "Care completed",      icon: "fa-check",          color: "text-shGreen" },
   care_skipped:           { label: "Care skipped",        icon: "fa-forward",        color: "text-purple-300" },

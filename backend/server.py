@@ -42,6 +42,7 @@ from email_service import (
     notify_admin_quote_request,
     notify_admin_pl_report,
     notify_client_booking_approved,
+    notify_client_booking_rejected,
     notify_client_certificate_issued,
     notify_client_day_reviewed,
     notify_client_homework_assigned,
@@ -4294,6 +4295,14 @@ async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
     _assert_booking_financial_edit_allowed(booking, {"status"})
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "rejected"}})
     booking["status"] = "rejected"
+    # Best-effort notification — approve already emails the client, reject
+    # never did, leaving a declined request with no explanation.
+    try:
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        if client_doc:
+            await notify_client_booking_rejected(booking, client_doc)
+    except Exception:
+        pass
     return booking
 
 @api.delete("/bookings/{booking_id}")
@@ -9003,6 +9012,17 @@ INCIDENT_SEVERITIES = (
     "minor", "moderate", "severe",
 )
 
+class IncidentEditHistoryEntry(BaseModel):
+    ts: str
+    by: str
+    reason: str
+    changed_fields: List[str] = []
+
+
+class IncidentUpdateIn(IncidentIn):
+    edit_reason: str = Field(min_length=3, description="Why is this incident being edited?")
+
+
 class IncidentOut(IncidentIn):
     id: str
     dog_name: str
@@ -9010,6 +9030,7 @@ class IncidentOut(IncidentIn):
     client_name: str
     reported_by: str
     created_at: str
+    edit_history: List[IncidentEditHistoryEntry] = []
 
 @api.get("/incidents", response_model=List[IncidentOut])
 async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None, include_archived: bool = False):
@@ -9043,11 +9064,26 @@ async def create_incident(body: IncidentIn, user: dict = Depends(require_admin))
     return doc
 
 @api.put("/incidents/{incident_id}", response_model=IncidentOut)
-async def update_incident(incident_id: str, body: IncidentIn, _: dict = Depends(require_admin)):
+async def update_incident(incident_id: str, body: IncidentUpdateIn, user: dict = Depends(require_admin)):
     existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Incident not found")
-    update = body.model_dump()
+    update = body.model_dump(exclude={"edit_reason"})
+    # Sprint 110ff — incident edits previously carried no explanation and no
+    # visible history, so a quietly downgraded severity looked identical to
+    # a typo fix. A reason is now required, and each edit appends to a
+    # lightweight history the owner can review without digging through the
+    # separate audit log.
+    changed_fields = sorted(k for k, v in update.items() if existing.get(k) != v)
+    history_entry = {
+        "ts": now_iso(),
+        "by": user.get("name") or user.get("email") or "admin",
+        "reason": body.edit_reason.strip(),
+        "changed_fields": changed_fields,
+    }
+    history = list(existing.get("edit_history") or [])
+    history.append(history_entry)
+    update["edit_history"] = history
     await db.incidents.update_one({"id": incident_id}, {"$set": update})
     existing.update(update)
     return existing
@@ -28722,6 +28758,13 @@ def _audit_action_for(method: str, path: str) -> str:
                 if "/check-in" in path: return "booking_checked_in"
                 if "/check-out" in path: return "booking_checked_out"
                 if "/checkout" in path: return "booking_checked_out"
+                # Sprint 110ff — these two used to fall through to the
+                # generic "booking_action" tag, which the Audit Log's
+                # "Bookings" filter didn't recognize and which rendered
+                # with no readable label — easy to miss when scanning for
+                # irregular money corrections.
+                if path.endswith("/financial-adjustment"): return "booking_financial_adjustment"
+                if path.endswith("/reopen-checkout"): return "booking_checkout_reopened"
                 # not a recognized subaction — fall through to "booking_created"-ish
                 return "booking_action"
             return action
@@ -28792,9 +28835,6 @@ async def audit_log_middleware(request, call_next):
             return response
         if any(frag in path for frag in _AUDIT_SKIP_PATH_FRAGMENTS):
             return response
-        # Only log successful or expected-fail writes (skip 401/403/404 noise from probes)
-        if response.status_code in (401, 403, 404, 405) and method != "DELETE":
-            return response
         # User context — pulled from the bearer token. If absent, log anonymously.
         user_info = {"id": None, "name": "anonymous", "role": "anonymous", "email": None}
         try:
@@ -28808,6 +28848,19 @@ async def audit_log_middleware(request, call_next):
                 user_info["email"] = payload.get("email")
         except Exception:
             pass
+        # Sprint 110ff — a logged-in account hitting a 403 means they tried
+        # something they're not allowed to do, which is exactly what an
+        # audit log should catch (e.g. a staff member probing for an
+        # owner-only page). That used to be skipped along with genuine
+        # anonymous probe noise. Anonymous 403s (bots hitting random URLs)
+        # are still skipped; 401/404/405 stay skipped even when
+        # authenticated — "stale token" / "not found" / "wrong verb" aren't
+        # access-control signals worth an audit row.
+        is_authenticated = user_info["role"] != "anonymous"
+        if response.status_code in (401, 404, 405) and method != "DELETE":
+            return response
+        if response.status_code == 403 and method != "DELETE" and not is_authenticated:
+            return response
         # Anonymous mutations get logged only if they're explicit (e.g. claim links)
         if user_info["role"] == "anonymous" and "/portal/" not in path and "/claim/" not in path:
             return response
@@ -28858,7 +28911,8 @@ AUDIT_ACTION_GROUPS = {
     "bookings": ["booking_created", "booking_edited", "booking_deleted", "booking_canceled",
                  "booking_approved", "booking_denied", "booking_completed",
                  "booking_checked_in", "booking_checked_out", "care_logged",
-                 "care_completed", "care_skipped", "care_reset"],
+                 "care_completed", "care_skipped", "care_reset",
+                 "booking_financial_adjustment", "booking_checkout_reopened"],
     "dogs": ["dog_created", "dog_edited", "dog_deleted", "safety_flags_changed"],
     "clients": ["client_created", "client_edited", "client_deleted"],
     "incidents": ["incident_created", "incident_edited", "incident_deleted"],
@@ -28868,7 +28922,8 @@ AUDIT_ACTION_GROUPS = {
                "intake_submitted_by_client"],
     "waitlist": ["waitlist_added", "waitlist_edited", "waitlist_removed", "waitlist_status_changed"],
     "money": ["expense_created", "expense_edited", "expense_deleted", "retail_recorded",
-              "retail_deleted", "payment_plan_created", "payment_plan_edited"],
+              "retail_deleted", "payment_plan_created", "payment_plan_edited",
+              "booking_financial_adjustment", "booking_checkout_reopened"],
     "settings": ["settings_changed", "kennel_labels_changed", "timeclock_edited"],
     "waivers": ["waiver_action"],
 }

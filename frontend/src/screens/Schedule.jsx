@@ -8,7 +8,11 @@ import PageHero from "../components/PageHero";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import BookingDetailModal from "../components/BookingDetailModal";
 
-function isoOnly(d) { return d.toISOString().split("T")[0]; }
+// Sprint 110ff — toISOString() reads the date in UTC, so dragging a
+// booking to a new day could silently save it to the previous (or next)
+// day depending on the device's clock/timezone. Use local date parts
+// instead, matching the todayISO() pattern used elsewhere in the app.
+function isoOnly(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function isMobile() {
   // Sprint 110di-43 — widened to (max-width: 1023px) so iPad portrait,
   // landscape phones, and small tablets all get the mobile-friendly list

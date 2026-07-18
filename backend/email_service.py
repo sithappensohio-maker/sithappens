@@ -1593,6 +1593,39 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
 
 
 
+async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
+    """Booking rejected — approve already emails the client; reject never
+    did, so a declined request could sit with no explanation from the
+    client's side unless staff happened to follow up by phone."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    svc_label = _service_label(booking.get("service_type", ""))
+    first_name = client.get('name', 'there').split(' ')[0]
+    rows = [
+        ("Dog", booking.get("dog_name", "—")),
+        ("Service", svc_label),
+        ("Requested dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
+    ]
+    await _dispatch(
+        slug="client_booking_rejected",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+        },
+        rows=rows,
+        fallback_subject="Your booking request couldn't be approved",
+        fallback_title="Booking request declined",
+        fallback_intro=(
+            f"Hi {first_name} — we're not able to approve this booking request. "
+            f"Reach out to us and we'll help find another time that works."
+        ),
+    )
+
+
 async def _build_report_card_email_body(booking: dict, client: dict, dog: dict | None = None) -> str:
     """Sprint 110cq — Build (but do not send) the HTML body of the
     Day-in-Pictures email. Extracted from `notify_client_report_card` so the

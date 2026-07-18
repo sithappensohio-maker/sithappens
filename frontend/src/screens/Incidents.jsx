@@ -47,6 +47,7 @@ export default function Incidents() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(emptyForm);
+  const [editReason, setEditReason] = useState("");
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("all");
 
@@ -62,7 +63,7 @@ export default function Incidents() {
     setForm({ ...emptyForm, dog_id: dogs[0].id });
     setOpen(true); setErr("");
   };
-  const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm, ...inc }); setOpen(true); setErr(""); };
+  const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm, ...inc }); setEditReason(""); setOpen(true); setErr(""); };
 
   const onFiles = async (e) => {
     const files = Array.from(e.target.files || []).slice(0, 4 - form.photos.length);
@@ -72,8 +73,11 @@ export default function Incidents() {
 
   const save = async () => {
     setErr("");
+    // Sprint 110ff — a quietly downgraded severity used to look identical
+    // to a typo fix in the record. Editing now requires saying why.
+    if (editing && editReason.trim().length < 3) { setErr("Enter a reason for this edit (at least 3 characters)."); return; }
     try {
-      if (editing) await api.put(`/incidents/${editing.id}`, form);
+      if (editing) await api.put(`/incidents/${editing.id}`, { ...form, edit_reason: editReason.trim() });
       else await api.post("/incidents", form);
       setOpen(false); load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -81,7 +85,8 @@ export default function Incidents() {
 
   const remove = async (id) => {
     if (!(await confirm({ title: "Delete this incident?", body: "Incident reports are a permanent legal record. Deleting one is rare — usually you'd resolve or amend instead.", confirmText: "Delete anyway", tone: "danger" }))) return;
-    await api.delete(`/incidents/${id}`); load();
+    try { await api.delete(`/incidents/${id}`); load(); }
+    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
   };
 
   const filtered = filter==="all" ? incidents : incidents.filter(i => i.type === filter);
@@ -276,6 +281,22 @@ export default function Incidents() {
                   )}
                 </div>
               </div>
+
+              {editing && (
+                <div>
+                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Reason for this edit</label>
+                  <input value={editReason} onChange={(e)=>setEditReason(e.target.value)} placeholder="e.g. correcting a typo, adding vet follow-up notes"
+                         data-testid="incident-edit-reason"
+                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                  {editing.edit_history?.length > 0 && (
+                    <div className="mt-2 text-[12px] text-gray-500 space-y-1 max-h-24 overflow-y-auto">
+                      {editing.edit_history.slice().reverse().map((h, i) => (
+                        <p key={i}>{new Date(h.ts).toLocaleString()} · {h.by}: {h.reason}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
