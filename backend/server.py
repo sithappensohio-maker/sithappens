@@ -51,6 +51,7 @@ from email_service import (
     notify_client_pack_receipt,
     notify_client_quote_received,
     send_account_claim,
+    send_meet_greet_request_received,
 )
 import email_service
 
@@ -479,6 +480,10 @@ class UserOut(BaseModel):
     # Sprint 110ex — Phase 7: fine-grained staff role layered on top of `role`
     staff_role: Optional[str] = None
     must_change_password: bool = False
+    # Passwordless-first claim flow — client accounts created via
+    # POST /claim/{token}/login get an unusable random password_hash and this
+    # flag set, so the portal can gently prompt them to set a real one.
+    needs_password: bool = False
 
 class AuthOut(BaseModel):
     token: str
@@ -1438,6 +1443,11 @@ class ClaimVerifyOut(BaseModel):
     email: Optional[str] = None
     is_reset: bool = False
     expires_at: Optional[str] = None
+    # True when this token is tied to a client_id (claim/reset for a client
+    # portal account). False for user_id-only tokens (staff/admin resets),
+    # which must go through the password path — the frontend uses this to
+    # decide whether to offer the passwordless "Continue to setup" option.
+    is_client: bool = False
 
 
 class ClaimSetIn(BaseModel):
@@ -1823,6 +1833,7 @@ async def verify_claim_token(token: str, request: Request):
         email=rec.get("email", ""),
         is_reset=bool(rec.get("is_reset", False)),
         expires_at=rec.get("expires_at"),
+        is_client=bool(rec.get("client_id")),
     )
 
 
@@ -1887,7 +1898,10 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
     if existing_user:
         await db.users.update_one(
             {"id": existing_user["id"]},
-            {"$set": {"password_hash": new_hash, "must_change_password": False}, "$inc": {"token_version": 1}},
+            # `needs_password` may have been set by the passwordless claim
+            # login (POST /claim/{token}/login) — setting a real password
+            # here through the classic form satisfies that, so clear it too.
+            {"$set": {"password_hash": new_hash, "must_change_password": False, "needs_password": False}, "$inc": {"token_version": 1}},
         )
         _invalidate_auth_user_cache(existing_user["id"])
         user_id = existing_user["id"]
@@ -1919,6 +1933,83 @@ async def consume_claim_token(token: str, body: ClaimSetIn, request: Request):
     return AuthOut(
         token=access,
         user=UserOut(id=user_id, email=user_email, name=user_name, role="client", client_id=client_id),
+    )
+
+
+@api.post("/claim/{token}/login", response_model=AuthOut)
+async def claim_token_login(token: str, request: Request):
+    """Public — passwordless-first claim. Validates the token exactly like
+    consume_claim_token (unused, unexpired) but only ever accepts tokens tied
+    to a client_id. Tokens without a client_id (staff/admin resets — case 3
+    of consume_claim_token) are rejected; those must keep using the password
+    path. Logs the client straight in: if a portal user already exists for
+    this client, log them in as-is; otherwise create one with an unusable
+    random password and `needs_password=True` so the portal can prompt them
+    to set a real password later, on their own schedule."""
+    await _enforce_rate_limit(request, "claim_login_ip", _client_ip(request), limit=20, window_seconds=900)
+    await _enforce_rate_limit(request, "claim_login_token", token, limit=10, window_seconds=900)
+
+    rec = await db.claim_tokens.find_one({"token": token, "used": False}, {"_id": 0})
+    if not rec:
+        raise HTTPException(status_code=400, detail="This link is invalid or has already been used.")
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="This link is invalid.")
+    if datetime.now(timezone.utc) > exp:
+        raise HTTPException(status_code=400, detail="This link has expired. Request a new one.")
+
+    client_id = rec.get("client_id")
+    email = (rec.get("email") or "").lower()
+
+    # Case 3 (staff/admin reset) tokens never carry a client_id — reject and
+    # keep them on the password path (consume_claim_token / POST /claim/{token}).
+    if not client_id:
+        raise HTTPException(status_code=400, detail="This link requires setting a password.")
+
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=400, detail="The client account no longer exists.")
+
+    existing_user = await db.users.find_one({"client_id": client_id})
+
+    if existing_user:
+        user_id = existing_user["id"]
+        user_email = existing_user["email"]
+        user_name = existing_user.get("name") or client.get("name", "")
+    else:
+        conflict = await db.users.find_one({"email": email})
+        if conflict:
+            raise HTTPException(status_code=400, detail="This email is already in use. Contact your trainer.")
+        user_id = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": user_id,
+            "email": email,
+            "password_hash": hash_password(secrets.token_urlsafe(32)),  # unusable — nobody knows this
+            "name": client.get("name", email),
+            "role": "client",
+            "client_id": client_id,
+            "created_at": now_iso(),
+            "token_version": 0,
+            "must_change_password": False,
+            "needs_password": True,
+        })
+        user_email = email
+        user_name = client.get("name", email)
+
+    await db.claim_tokens.update_one({"token": token}, {"$set": {"used": True, "used_at": now_iso()}})
+    _invalidate_auth_user_cache(user_id)
+
+    claim_user = await db.users.find_one({"id": user_id}, {"_id": 0, "token_version": 1, "needs_password": 1})
+    access = create_access_token(user_id, user_email, "client", _token_version(claim_user or {}))
+    return AuthOut(
+        token=access,
+        user=UserOut(
+            id=user_id, email=user_email, name=user_name, role="client", client_id=client_id,
+            needs_password=bool((claim_user or {}).get("needs_password", False)),
+        ),
     )
 
 
@@ -1984,6 +2075,173 @@ async def forgot_password(body: ForgotPasswordIn, request: Request):
     return {"ok": True}
 
 
+# -------- Public "Request a Meet & Greet" --------
+@api.get("/public/meet-greet-slots")
+async def public_meet_greet_slots(date_str: str, request: Request):
+    """Public — candidate Meet & Greet times for one date, computed from
+    Settings → meet_greet (admin-configured days/hours) with anything that
+    overlaps an existing appointment on the calendar marked unavailable."""
+    await _enforce_rate_limit(request, "meet_greet_slots_ip", _client_ip(request), limit=120, window_seconds=900)
+    try:
+        the_date = date.fromisoformat(date_str)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date.")
+    settings = await get_settings()
+    result = await _compute_meet_greet_slots(settings, the_date)
+    return {"date": date_str, **result}
+
+
+class MeetGreetRequestIn(BaseModel):
+    owner_name: str = Field(min_length=1)
+    email: EmailStr
+    phone: str = Field(min_length=1)
+    dog_name: str = Field(min_length=1)
+    date: str = Field(min_length=1)  # YYYY-MM-DD — must be an open Meet & Greet slot
+    time: str = Field(min_length=1)  # HH:MM
+
+
+@api.post("/public/meet-greet-request")
+async def request_meet_greet(body: MeetGreetRequestIn, request: Request):
+    """Public — anyone can request a meet & greet straight from the landing
+    page. Creates (or reuses) a `prospect` client record, books the chosen
+    slot onto the calendar (re-validated server-side against the admin's
+    real schedule and configured availability), mints a claim link via the
+    existing claim_tokens system, and pings the admin. Rate-limited the same
+    as /auth/register since it's an unauthenticated write."""
+    email = body.email.lower()
+    ip = _client_ip(request)
+    await _enforce_rate_limit(request, "meet_greet_ip", ip, limit=10, window_seconds=3600)
+    await _enforce_rate_limit(request, "meet_greet_email_ip", f"{ip}|{email}", limit=5, window_seconds=3600)
+
+    owner_name = body.owner_name.strip()
+    phone = body.phone.strip()
+    dog_name = body.dog_name.strip()
+    chosen_date = body.date.strip()
+    chosen_time = body.time.strip()
+
+    try:
+        the_date = date.fromisoformat(chosen_date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date.")
+    if _hhmm_to_min(chosen_time) is None:
+        raise HTTPException(status_code=400, detail="Invalid time.")
+
+    # Re-validate against the admin's real schedule + configured availability
+    # right before booking — defends against the slot list going stale
+    # between page-load and submit (someone else grabbed it, hours changed).
+    settings = await get_settings()
+    day_slots = await _compute_meet_greet_slots(settings, the_date)
+    if day_slots["closed"] or not any(s["time"] == chosen_time and s["available"] for s in day_slots["slots"]):
+        raise HTTPException(status_code=400, detail="That time is no longer available. Please pick another time.")
+    slot_minutes = day_slots["slot_minutes"]
+
+    request_note_parts = [f"Meet & Greet request ({now_iso()})."]
+    if dog_name:
+        request_note_parts.append(f"Dog: {dog_name}.")
+    request_note_parts.append(f"Scheduled: {chosen_date} at {chosen_time}.")
+    request_note = " ".join(request_note_parts)
+
+    # Auto-merge (same pattern as /auth/register): reuse an admin-created
+    # client record with this email instead of creating a duplicate. Unlike
+    # register, there's no "email already registered" error path here — a
+    # meet & greet request from someone who already has a portal account
+    # just re-uses their existing client record and (below) sends them a
+    # reset-capable claim link instead of a fresh one.
+    existing_client = await db.clients.find_one(
+        {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+
+    if existing_client:
+        client_id = existing_client["id"]
+        merged = True
+        prior_notes = (existing_client.get("evaluation_notes") or "").strip()
+        update_fields = {
+            "evaluation_notes": f"{prior_notes}\n{request_note}".strip() if prior_notes else request_note,
+        }
+        # Only fill in phone if missing — don't overwrite admin's data.
+        if phone and not existing_client.get("phone"):
+            update_fields["phone"] = phone
+        await db.clients.update_one({"id": client_id}, {"$set": update_fields})
+        client_doc = {**existing_client, **update_fields}
+    else:
+        client_id = str(uuid.uuid4())
+        client_doc = {
+            "id": client_id,
+            "name": owner_name,
+            "address": "",
+            "phone": phone,
+            "email": email,
+            "emerg": "",
+            "credits": 0,
+            "waiver": False,
+            "referred_by_code": None,
+            "client_status": "prospect",
+            "evaluation_notes": request_note,
+            "created_at": now_iso(),
+        }
+        await db.clients.insert_one(client_doc)
+        merged = False
+
+    # Put the slot on the calendar so it (a) shows up on the admin's schedule
+    # and (b) itself blocks any later Meet & Greet request for the same time.
+    # `service_type="other"` keeps this out of every existing service_type
+    # switch/enum in checkout, P&L, etc.; `is_meet_greet` is how GET /events
+    # and the admin recognize it as a Meet & Greet rather than a generic
+    # booking. `dog_id` is intentionally blank — there's no dog record yet.
+    await db.bookings.insert_one({
+        "id": str(uuid.uuid4()),
+        "dog_id": "",
+        "dog_name": dog_name,
+        "client_id": client_id,
+        "client_name": client_doc.get("name") or owner_name,
+        "date": chosen_date,
+        "time": chosen_time,
+        "duration_minutes": slot_minutes,
+        "service_type": "other",
+        "status": "pending",
+        "notes": "Meet & Greet requested via the public landing page.",
+        "created_at": now_iso(),
+        "is_meet_greet": True,
+    })
+
+    # Claim token (existing system) — lets them set a portal password, or
+    # (if a portal account already exists on this client) reset it.
+    linked_user = await db.users.find_one({"client_id": client_id}, {"_id": 0, "id": 1})
+    await db.claim_tokens.delete_many({"client_id": client_id, "used": False})
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=CLAIM_TOKEN_EXPIRY_DAYS)
+    await db.claim_tokens.insert_one({
+        "token": token,
+        "client_id": client_id,
+        "email": email,
+        "is_reset": bool(linked_user),
+        "used": False,
+        "created_at": now_iso(),
+        "expires_at": expires_at.isoformat(),
+    })
+    claim_url = _build_claim_url(token)
+    try:
+        await send_meet_greet_request_received(
+            to_email=email,
+            client_name=client_doc.get("name") or owner_name,
+            dog_name=dog_name,
+            claim_url=claim_url,
+            expires_days=CLAIM_TOKEN_EXPIRY_DAYS,
+        )
+    except Exception as e:
+        logger.warning("meet_greet_request: email dispatch failed for %s: %s", email, e)
+
+    # Best-effort: alert the operator, same path as a self-registered client.
+    try:
+        await notify_admin_new_client(
+            {"email": email, "name": owner_name},
+            {**client_doc, "_merged": merged},
+        )
+    except Exception:
+        pass
+
+    return {"ok": True}
 
 
 # -------- Dogs --------
@@ -4523,6 +4781,67 @@ async def _get_default_duration(service_type: str) -> int:
         {"_id": 0, "duration_minutes": 1},
     )
     return int((svc or {}).get("duration_minutes") or 60)
+
+
+async def _compute_meet_greet_slots(settings: dict, the_date: date) -> dict:
+    """Candidate Meet & Greet slots for one local business date, computed
+    from Settings → meet_greet (admin-configured days/hours) with any slot
+    that overlaps an existing appointment (any booking with a `time` set,
+    status pending/approved/completed) marked unavailable. Shared by the
+    public slots-listing endpoint and the request endpoint's server-side
+    re-validation, so both always agree on what's actually open.
+    """
+    mg = settings.get("meet_greet") or {}
+    slot_minutes = int(mg.get("slot_minutes") or 30)
+    if mg.get("enabled") is False:
+        return {"enabled": False, "closed": True, "slot_minutes": slot_minutes, "slots": []}
+
+    min_lead_hours = int(mg.get("min_lead_hours") or 0)
+    max_advance_days = int(mg.get("max_advance_days") or 60)
+    now_local = datetime.now(BUSINESS_TZ)
+    earliest_at = now_local + timedelta(hours=min_lead_hours)
+    latest_date = (now_local + timedelta(days=max_advance_days)).date()
+    if the_date > latest_date or the_date < now_local.date():
+        return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
+
+    day_key = DEFAULT_DAYS[the_date.weekday()]
+    hours_row = (mg.get("hours") or {}).get(day_key) or {}
+    if hours_row.get("closed", True):
+        return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
+    open_min = _hhmm_to_min(hours_row.get("open") or "")
+    close_min = _hhmm_to_min(hours_row.get("close") or "")
+    if open_min is None or close_min is None:
+        return {"enabled": True, "closed": True, "slot_minutes": slot_minutes, "slots": []}
+
+    date_str = the_date.isoformat()
+    existing = await db.bookings.find(
+        {"date": date_str, "status": {"$in": ["pending", "approved", "completed"]}, "time": {"$ne": ""}},
+        {"_id": 0, "time": 1, "duration_minutes": 1, "service_type": 1},
+    ).to_list(500)
+
+    candidates: List[Dict[str, Any]] = []
+    for total in range(open_min, close_min, slot_minutes):
+        if total + slot_minutes > close_min:
+            continue
+        hh, mm = divmod(total, 60)
+        label = f"{hh:02d}:{mm:02d}"
+        slot_start = datetime(the_date.year, the_date.month, the_date.day, hh, mm, tzinfo=BUSINESS_TZ)
+        if slot_start < earliest_at:
+            candidates.append({"time": label, "available": False})
+            continue
+        blocked = False
+        for b in existing:
+            bstart = _hhmm_to_min(b.get("time") or "")
+            if bstart is None:
+                continue
+            bdur = int(b.get("duration_minutes") or 0)
+            if bdur <= 0:
+                bdur = await _get_default_duration(b.get("service_type") or "") or 60
+            if _slot_overlaps(total, slot_minutes, bstart, bdur):
+                blocked = True
+                break
+        candidates.append({"time": label, "available": not blocked})
+    return {"enabled": True, "closed": False, "slot_minutes": slot_minutes, "slots": candidates}
 
 
 @api.get("/bookings/time-slots")
@@ -7911,6 +8230,17 @@ def _default_settings() -> dict:
         "evaluation": {
             "require_evaluation_first": False,
         },
+        # Sprint 110ez — Meet & Greet availability. Controls which days/times
+        # the public "Request a Meet & Greet" form can offer. Candidate slots
+        # that overlap an existing appointment on the calendar (any booking
+        # with a `time` set) are excluded — see _compute_meet_greet_slots().
+        "meet_greet": {
+            "enabled": True,
+            "slot_minutes": 30,
+            "min_lead_hours": 24,
+            "max_advance_days": 30,
+            "hours": _default_hours_grid("10:00", "16:00"),
+        },
         # Sprint 110dm — Day-to-day operator controls. All defaults preserve
         # current behavior (no behavior change until admin flips a toggle in
         # Settings). Wired into checkout, booking creation, email automation,
@@ -8437,6 +8767,8 @@ class SettingsIn(BaseModel):
     client_portal_links: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
     day_to_day: Optional[dict] = None  # Sprint 110dm — free-form day-to-day operator controls
+    evaluation: Optional[dict] = None  # {require_evaluation_first}
+    meet_greet: Optional[dict] = None  # {enabled, slot_minutes, min_lead_hours, max_advance_days, hours}
     # Branding (Sprint 68) — admin-set, applies to everyone (login screen, portal, admin shell)
     brand_primary: Optional[str] = None      # CSS color for the primary action (default #8cc63f green)
     brand_accent: Optional[str] = None       # CSS color for accents/highlights (default #00a9e0 blue)
@@ -8893,6 +9225,34 @@ async def change_password(body: ChangePwIn, request: Request, user: dict = Depen
     _invalidate_auth_user_cache(user["id"])
     token = create_access_token(full["id"], full["email"], full.get("role", "client"), new_ver)
     return {"ok": True, "token": token, "must_change_password": False}
+
+
+class SetPasswordIn(BaseModel):
+    password: str = Field(min_length=8)
+
+@api.patch("/auth/set-password")
+async def set_password(body: SetPasswordIn, request: Request, user: dict = Depends(get_current_user)):
+    """Lets a client who logged in passwordless (needs_password=True) set a
+    real password, one time, without knowing their current (unusable random)
+    one. Once cleared, `needs_password` stays false — call change-password
+    for any later password change."""
+    await _enforce_rate_limit(request, "set_password_user", user.get("id", "unknown"), limit=10, window_seconds=900)
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Only client accounts can use this endpoint")
+    full = await db.users.find_one({"id": user["id"]})
+    if not full or not full.get("needs_password"):
+        raise HTTPException(status_code=400, detail="A password is already set. Use Change Password instead.")
+    new_ver = _token_version(full) + 1
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {"password_hash": hash_password(body.password), "needs_password": False, "must_change_password": False},
+            "$inc": {"token_version": 1},
+        },
+    )
+    _invalidate_auth_user_cache(user["id"])
+    token = create_access_token(full["id"], full["email"], full.get("role", "client"), new_ver)
+    return {"ok": True, "token": token, "needs_password": False}
 
 
 # -------- Per-user UI Preferences (Sprint 68) --------
@@ -14081,6 +14441,8 @@ async def calendar_events(_: dict = Depends(require_admin)):
             "photography": "#f59e0b",
         }
         color = _svc_colors.get(b["service_type"], "#64748b")
+        if b.get("is_meet_greet"):
+            color = "#14b8a6"  # teal — distinct from every regular service color
         if b["status"] == "pending":
             color = "#f26522"
         elif b["status"] == "completed":
@@ -14089,14 +14451,17 @@ async def calendar_events(_: dict = Depends(require_admin)):
             color = "#64748b"
         # Add grooming sub-type to title so it shows on the calendar at a glance
         svc_label = b["service_type"]
-        if b["service_type"] == "grooming" and b.get("grooming_type"):
+        if b.get("is_meet_greet"):
+            svc_label = "meet & greet"
+        elif b["service_type"] == "grooming" and b.get("grooming_type"):
             gt = "bath" if b["grooming_type"] == "bath" else "nail trim"
             svc_label = f"grooming · {gt}"
         # Training (and grooming/photography) have appointment times — promote the event
         # from all-day to a timed event so FullCalendar renders the time prefix
-        # automatically (e.g. "2:16pm Buddy (training)").
+        # automatically (e.g. "2:16pm Buddy (training)"). Meet & Greets are
+        # timed too, even though they're stored as service_type="other".
         appt_time = (b.get("time") or "").strip()
-        is_timed = bool(appt_time) and b["service_type"] in TIME_SLOTTED_SERVICES
+        is_timed = bool(appt_time) and (b["service_type"] in TIME_SLOTTED_SERVICES or b.get("is_meet_greet"))
         title = f"{b['dog_name']} ({svc_label})"
         event = {
             "id": b["id"],

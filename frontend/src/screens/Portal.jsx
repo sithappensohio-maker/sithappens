@@ -27,6 +27,7 @@ import RescheduleRequestModal from "../components/RescheduleRequestModal";
 import PortalPaymentPlans from "../components/PortalPaymentPlans";
 import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
+import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
@@ -1093,6 +1094,7 @@ export default function Portal() {
             ]}
           />
         )}
+        <NeedsPasswordCard />
         <PortalSetupChecklist
           refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}

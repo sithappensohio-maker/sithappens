@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { api, formatErr } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import SetPasswordForm from "./SetPasswordForm";
 
 export default function PortalProfileModal({ client, onClose, onSaved }) {
+  const { user, reloadUser } = useAuth();
   const [form, setForm] = useState({
     name: client?.name || "",
     email: client?.email || "",
@@ -11,6 +14,8 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [passwordJustSet, setPasswordJustSet] = useState(false);
 
   const save = async () => {
     setErr("");
@@ -45,6 +50,25 @@ export default function PortalProfileModal({ client, onClose, onSaved }) {
           <h4 className="text-xl font-black text-white uppercase italic tracking-tight">My Profile</h4>
           <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>
         </div>
+
+        {user?.needs_password && !passwordJustSet && (
+          <div className="bg-shBlue/10 border border-shBlue/40 rounded-xl p-4 mb-4" data-testid="pp-needs-password">
+            <p className="text-[13px] font-black uppercase tracking-widest text-shBlue mb-1">
+              <i className="fas fa-key mr-1.5"/>You don't have a password yet
+            </p>
+            <p className="text-[12px] text-gray-300 leading-relaxed mb-3">
+              You signed in with a Meet &amp; Greet link. Set a password so you can log back in directly next time.
+            </p>
+            {!showPasswordForm ? (
+              <button onClick={() => setShowPasswordForm(true)} data-testid="pp-open-set-password"
+                      className="bg-shBlue text-white px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest hover:bg-shBlue/90 transition">
+                Set Password
+              </button>
+            ) : (
+              <SetPasswordForm submitLabel="Save Password" onSuccess={() => { reloadUser(); setPasswordJustSet(true); setShowPasswordForm(false); }} />
+            )}
+          </div>
+        )}
 
         <div className="space-y-4">
           {[

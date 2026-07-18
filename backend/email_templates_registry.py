@@ -161,6 +161,18 @@ EMAIL_TEMPLATES = [
         "default_cta_text": "Set Up My Portal",
         "variables": ["first_name", "client_name", "dog_name_or_dogs"],
     },
+    {
+        "slug": "meet_greet_request_received",
+        "name": "Meet & Greet Request Received",
+        "description": "Sent to a prospect right after they submit the public 'Request a Meet & Greet' form on the landing page.",
+        "category": "client",
+        "audience": "client",
+        "default_subject": "Meet & Greet request received · {{dog_name}}",
+        "default_title": "🐾 Request received",
+        "default_intro_html": "Hi {{first_name}}, thanks for requesting a meet &amp; greet for <strong>{{dog_name}}</strong>! We'll be in touch shortly to confirm a time. In the meantime, tap below to set up your portal password so you can track everything in one place.",
+        "default_cta_text": "Set Up My Portal",
+        "variables": ["first_name", "client_name", "dog_name"],
+    },
 
     # ---------------- Admin-facing ----------------
     {

@@ -1985,6 +1985,40 @@ async def send_account_claim(
     await _send(to_email, subject, html)
 
 
+async def send_meet_greet_request_received(
+    to_email: str,
+    client_name: str,
+    dog_name: str,
+    claim_url: str,
+    expires_days: int = 7,
+) -> None:
+    """Sent to a prospect right after they submit the public 'Request a Meet
+    & Greet' form on the landing page. Confirms receipt and hands them a
+    claim link so they can set up (or reset) their portal password."""
+    first = (client_name or "there").split(" ")[0]
+    rows = [("Dog", dog_name)] if dog_name else []
+    await _dispatch(
+        slug="meet_greet_request_received",
+        to_email=to_email,
+        ctx={
+            "first_name": first,
+            "client_name": client_name or "",
+            "dog_name": dog_name or "",
+        },
+        rows=rows,
+        cta_url=claim_url,
+        show_install=False,
+        fallback_subject=f"Meet & Greet request received · {dog_name}" if dog_name else "Meet & Greet request received",
+        fallback_title="🐾 Request received",
+        fallback_intro=(
+            f"Hi {first}, thanks for requesting a meet & greet"
+            + (f" for {dog_name}" if dog_name else "")
+            + f"! We'll be in touch shortly to confirm a time. In the meantime, tap below to set up your "
+            f"portal password so you can track everything in one place. This link expires in {expires_days} days."
+        ),
+        fallback_cta_text="Set Up My Portal",
+    )
+
 
 async def notify_client_dog_birthday(client: dict, dog: dict, *, delivery_key: str | None = None, delivery_meta: dict | None = None) -> bool:
     """Wish the owner a happy birthday for their dog. Uses the dog's first

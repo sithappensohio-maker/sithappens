@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import ForgotPasswordModal from "../components/ForgotPasswordModal";
+import RequestMeetGreetModal from "../components/RequestMeetGreetModal";
 
 /**
  * Sprint 110t — Landing + Auth combined screen.
@@ -96,6 +97,7 @@ export default function Login() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [services, setServices] = useState([]);
   const [browseOpen, setBrowseOpen] = useState(false);
+  const [meetGreetOpen, setMeetGreetOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -154,9 +156,9 @@ export default function Login() {
                "radial-gradient(circle at 12% 18%, #00a9e0 0%, transparent 38%), radial-gradient(circle at 88% 78%, #8cc63f 0%, transparent 42%), radial-gradient(circle at 70% 10%, #f26522 0%, transparent 30%)"
              }}/>
 
-        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-12 sm:py-20 grid lg:grid-cols-5 gap-8 lg:gap-12 items-center sh-splatter">
+        <div className="relative max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-20 sh-splatter">
           {/* Hero copy + feature logo */}
-          <div className="lg:col-span-3" data-testid="landing-hero-copy">
+          <div data-testid="landing-hero-copy">
             {/* Sprint 110u — feature logo, large and proud at the top of the
                 hero. Previously a 4%-opacity background watermark; now the
                 actual brand mark sits front-and-centre with a soft brand-color
@@ -180,16 +182,22 @@ export default function Login() {
               Training, daycare, boarding & photography from a team that actually knows your dog — with a portal that keeps you in the loop every single day.
             </p>
 
-            <div className="flex flex-wrap gap-3 mt-7">
-              <button onClick={() => { setMode("register"); scrollToAuth(); }}
-                      data-testid="landing-hero-register-cta"
-                      className="sh-cta-pill">
-                <i className="fas fa-paw"/>Get started — it's free
-              </button>
-              <button onClick={() => { setMode("login"); scrollToAuth(); }}
-                      data-testid="landing-hero-login-cta"
-                      className="bg-bgPanel border border-bgHover text-gray-200 px-6 py-3 rounded-full font-black text-[14px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
-                I'm already a client
+            {/* Primary CTA — this is THE entry point for new visitors: every
+                new pup starts with a free Meet & Greet before anything else. */}
+            <div className="mt-7 relative bg-gradient-to-br from-shOrange/25 via-shOrange/10 to-transparent border-2 border-shOrange rounded-2xl p-5 sm:p-6 shadow-[0_10px_40px_-12px_rgba(242,101,34,0.5)]">
+              <p className="text-[11px] sm:text-[12px] font-black uppercase tracking-[0.3em] text-shOrange mb-2">
+                <i className="fas fa-flag-checkered mr-2"/>How to get started
+              </p>
+              <h2 className="text-xl sm:text-2xl font-black uppercase italic tracking-tight text-white mb-2">
+                Let's get the ball rolling
+              </h2>
+              <p className="text-[14px] text-gray-300 leading-relaxed mb-4 max-w-md">
+                Every new pup starts with a free Meet &amp; Greet. Tell us a bit about you and your dog and we'll reach out to schedule it — no account needed.
+              </p>
+              <button onClick={() => setMeetGreetOpen(true)}
+                      data-testid="landing-hero-meet-greet-cta"
+                      className="w-full sm:w-auto justify-center bg-shOrange text-white px-7 py-3.5 rounded-full font-black text-[15px] uppercase tracking-widest shadow-lg hover:bg-shOrange/90 transition inline-flex items-center gap-2">
+                <i className="fas fa-paw"/>Request a Meet &amp; Greet
               </button>
             </div>
 
@@ -198,68 +206,72 @@ export default function Login() {
               <span><i className="fas fa-camera text-shOrange mr-1.5"/>Daily report cards</span>
               <span><i className="fas fa-graduation-cap text-shBlue mr-1.5"/>Trainer in-house</span>
             </div>
-          </div>
 
-          {/* Compact auth card */}
-          <div id="landing-auth" className="lg:col-span-2 scroll-mt-24" data-testid="landing-auth-card">
-            <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl card-form">
-              <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
-                <button onClick={() => setMode("login")} data-testid="tab-login"
-                        className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
-                  Sign In
-                </button>
-                <button onClick={() => setMode("register")} data-testid="tab-register"
-                        className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="register"?"bg-shGreen text-bgHeader":"text-gray-400 hover:text-gray-200"}`}>
-                  Register
-                </button>
-              </div>
-
-              <form onSubmit={onSubmit} className="space-y-3.5">
-                {mode === "register" && (
-                  <>
-                    <div>
-                      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Full Name</label>
-                      <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
-                    </div>
-                    <div>
-                      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
-                      <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
-                             placeholder="e.g. 7KTUMQ"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
-                      {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
-                    </div>
-                  </>
-                )}
-                <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Email</label>
-                  <input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} required data-testid="login-email-input"
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-                </div>
-                <div>
-                  <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Password</label>
-                  <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required
-                         minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
-                         data-testid="login-password-input"
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
-                  {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
-                  {mode === "login" && (
-                    <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
-                            className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
-                      Forgot password?
-                    </button>
-                  )}
-                </div>
-                {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
-                <button type="submit" disabled={loading} data-testid="login-submit-button"
-                        className={`w-full py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 transition ${mode==="register" ? "bg-shGreen text-bgHeader hover:bg-shGreen/90" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
-                  {loading?"Please wait...":(mode==="login"?"Sign In":"Create Account")}
-                </button>
-              </form>
-
-              <p className="mt-5 text-center text-[12px] text-gray-500 uppercase tracking-widest">
-                {mode==="login" ? "New here? Tap Register above." : "Already a client? Tap Sign In above."}
+            {/* Sign in / register — secondary to the Meet & Greet CTA above,
+                so it sits directly underneath rather than competing beside it. */}
+            <div id="landing-auth" className="mt-8 max-w-md scroll-mt-24" data-testid="landing-auth-card">
+              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
+                Already a client, or ready to sign up now?
               </p>
+              <div className="relative bg-bgPanel border border-bgHover rounded-2xl p-6 sm:p-7 shadow-2xl card-form">
+                <div className="flex gap-2 mb-5 bg-bgBase rounded-lg p-1">
+                  <button onClick={() => setMode("login")} data-testid="tab-login"
+                          className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="login"?"bg-shBlue text-white":"text-gray-400 hover:text-gray-200"}`}>
+                    Sign In
+                  </button>
+                  <button onClick={() => setMode("register")} data-testid="tab-register"
+                          className={`flex-1 py-2 rounded text-[13px] font-black uppercase tracking-widest transition ${mode==="register"?"bg-shGreen text-bgHeader":"text-gray-400 hover:text-gray-200"}`}>
+                    Register
+                  </button>
+                </div>
+
+                <form onSubmit={onSubmit} className="space-y-3.5">
+                  {mode === "register" && (
+                    <>
+                      <div>
+                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Full Name</label>
+                        <input value={name} onChange={(e)=>setName(e.target.value)} required data-testid="register-name-input"
+                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shGreen outline-none"/>
+                      </div>
+                      <div>
+                        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Referral Code <span className="text-gray-600 normal-case font-normal">(optional)</span></label>
+                        <input value={refCode} onChange={(e)=>setRefCode(e.target.value.toUpperCase())} maxLength={12} data-testid="register-refcode-input"
+                               placeholder="e.g. 7KTUMQ"
+                               className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm font-mono uppercase focus:border-shGreen outline-none"/>
+                        {refCode && <p className="text-[12px] text-shGreen mt-1 uppercase tracking-widest">Your friend gets a free daycare day once you finish your first appointment!</p>}
+                      </div>
+                    </>
+                  )}
+                  <div>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Email</label>
+                    <input type="email" value={email} onChange={(e)=>setEmail(e.target.value)} required data-testid="login-email-input"
+                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+                  </div>
+                  <div>
+                    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Password</label>
+                    <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} required
+                           minLength={mode === "register" ? 8 : undefined} autoComplete={mode === "register" ? "new-password" : "current-password"}
+                           data-testid="login-password-input"
+                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2.5 text-white text-sm focus:border-shBlue outline-none"/>
+                    {mode === "register" && <p className="mt-1 text-[11px] text-gray-500">Use at least 8 characters.</p>}
+                    {mode === "login" && (
+                      <button type="button" onClick={()=>setForgotOpen(true)} data-testid="forgot-password-link"
+                              className="mt-2 text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80 transition">
+                        Forgot password?
+                      </button>
+                    )}
+                  </div>
+                  {error && <div data-testid="login-error" className="text-[13px] text-red-400 bg-red-500/10 rounded p-2.5 uppercase font-black">{error}</div>}
+                  <button type="submit" disabled={loading} data-testid="login-submit-button"
+                          className={`w-full py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50 transition ${mode==="register" ? "bg-shGreen text-bgHeader hover:bg-shGreen/90" : "bg-shBlue text-white hover:bg-shBlue/90"}`}>
+                    {loading?"Please wait...":(mode==="login"?"Sign In":"Create Account")}
+                  </button>
+                </form>
+
+                <p className="mt-5 text-center text-[12px] text-gray-500 uppercase tracking-widest">
+                  {mode==="login" ? "New here? Tap Register above." : "Already a client? Tap Sign In above."}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -380,6 +392,7 @@ export default function Login() {
       </footer>
 
       <ForgotPasswordModal open={forgotOpen} onClose={()=>setForgotOpen(false)} initialEmail={email}/>
+      <RequestMeetGreetModal open={meetGreetOpen} onClose={()=>setMeetGreetOpen(false)}/>
 
       {/* ===== Browse-all-services modal ===== */}
       {browseOpen && (
