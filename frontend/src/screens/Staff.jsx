@@ -1935,6 +1935,7 @@ export function RegisterTab() {
   const [expenseUploadBusy, setExpenseUploadBusy] = useState(false);
   const blankExpense = { description: "", quantity: "1", unit_price: "", amount: "", category: "Cleaning supplies", payment_method: "clover", vendor: "", notes: "", tax_deductible: true, from_cash_drawer: false, recurring: false, recurring_interval: "monthly", receipt_image: "", receipt_filename: "" };
   const [expense, setExpense] = useState(blankExpense);
+  const confirm = useConfirm();
 
   const methodOptions = [
     ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
@@ -2089,6 +2090,19 @@ export function RegisterTab() {
     setTillAdjustment({ ...tillAdjustment, amount: "", reason: "", notes: "" });
     showDone(`Till adjustment saved: cash ${tillAdjustment.direction === "add" ? "added" : "removed"}.`);
   });
+  const deleteTillAdjustment = async (a) => {
+    const ok = await confirm({
+      title: "Remove till adjustment?",
+      body: `"${a.description}" (${money(a.amount)}) will be permanently removed. Use this instead of adding an offsetting entry for a typo'd amount.`,
+      confirmText: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
+    submit(async () => {
+      await api.delete(`/admin/register/till-adjustment/${a.id}`);
+      showDone("Till adjustment removed.");
+    });
+  };
   const submitExpense = () => submit(async () => {
     const qty = Math.max(1, Number(expense.quantity || 1));
     const unitPrice = Number(expense.unit_price || 0);
@@ -2339,7 +2353,13 @@ export function RegisterTab() {
                     <p className="text-white font-black">{a.label} <span className="text-gray-500 font-normal">· {a.description}</span></p>
                     <p className="text-[12px] text-gray-500">{a.client_name || "—"} · {a.payment_method || "other"}</p>
                   </div>
-                  <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shGreen"}`}>{money(a.amount)}</p>
+                  <div className="flex items-center gap-3">
+                    <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shGreen"}`}>{money(a.amount)}</p>
+                    {a.kind === "till_adjustment" && a.id && (
+                      <button onClick={()=>deleteTillAdjustment(a)} disabled={busy} title="Remove this till adjustment"
+                              className="text-gray-500 hover:text-red-400 disabled:opacity-50 px-1"><i className="fas fa-trash"/></button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

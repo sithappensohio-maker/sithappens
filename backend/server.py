@@ -6066,6 +6066,13 @@ async def apply_tab_adjustment(
     user: dict = Depends(require_admin),
 ):
     """Manual write-off / correction. Logged as type=adjustment in the ledger."""
+    if round(body.amount, 2) == 0:
+        raise HTTPException(status_code=400, detail="Adjustment amount cannot be zero.")
+    # Sprint 110ff — every other money action (tab payments, sales, expenses)
+    # is locked once a day's register is closed out; this one wasn't, so a
+    # balance could be adjusted after the books for that day were already
+    # closed and reconciled.
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -21268,6 +21275,23 @@ async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = De
     return {"ok": True, "adjustment": doc, "register": await _register_day_summary(d)}
 
 
+@api.delete("/admin/register/till-adjustment/{adjustment_id}")
+async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_admin)):
+    """Till adjustments (owner draws, change funds, corrections) had no way
+    to remove a mistaken entry — unlike expenses and retail sales/refunds,
+    which both already support delete. A typo'd amount used to have to be
+    corrected with a second offsetting entry, permanently cluttering the
+    day's audit trail."""
+    existing = await db.till_adjustments.find_one({"id": adjustment_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Till adjustment not found")
+    await _require_register_day_open(existing.get("date") or business_today().isoformat())
+    res = await db.till_adjustments.delete_one({"id": adjustment_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Till adjustment not found")
+    return {"ok": True, "register": await _register_day_summary(existing.get("date"))}
+
+
 class RegisterRefundIn(BaseModel):
     date: Optional[str] = None
     amount: float = Field(gt=0)
@@ -31078,26 +31102,36 @@ def _merge_unique_list(primary_list: Any, duplicate_list: Any, limit: int = 200)
     return out
 
 
-def _merge_vaccines(primary_v: Any, duplicate_v: Any) -> Dict[str, Any]:
-    p = dict(primary_v or {})
-    d = dict(duplicate_v or {})
-    for k, v in d.items():
-        if not v:
-            continue
-        cur = p.get(k)
-        # Keep the later-looking ISO/date string when both exist.
-        if not cur or str(v) > str(cur):
-            p[k] = v
-    return p
-
-
-def _merge_vaccine_certs(primary_c: Any, duplicate_c: Any) -> Dict[str, Any]:
-    p = dict(primary_c or {})
-    d = dict(duplicate_c or {})
-    for k, v in d.items():
-        if k not in p or not p.get(k):
-            p[k] = v
-    return p
+def _merge_vaccine_records(
+    primary_v: Any, duplicate_v: Any, primary_c: Any, duplicate_c: Any,
+) -> "tuple[Dict[str, Any], Dict[str, Any]]":
+    """Merge vaccine expiry dates AND their certificate photos together in
+    one pass, per vaccine, so the winning date and its backing cert always
+    come from the SAME dog. Merging dates and certs independently (the old
+    behavior) could leave the newer expiry date from one dog paired with
+    the older — or still-pending — certificate photo from the other."""
+    pv, dv = dict(primary_v or {}), dict(duplicate_v or {})
+    pc, dc = dict(primary_c or {}), dict(duplicate_c or {})
+    dated_keys = set(pv) | set(dv)
+    out_v: Dict[str, Any] = {}
+    out_c: Dict[str, Any] = {}
+    for k in dated_keys:
+        p_date, d_date = pv.get(k) or "", dv.get(k) or ""
+        # Keep the later-looking ISO/date string, and ONLY that same dog's
+        # cert — never borrow the other dog's cert for the winning date.
+        if d_date and (not p_date or str(d_date) > str(p_date)):
+            out_v[k] = d_date
+            if k in dc:
+                out_c[k] = dc[k]
+        else:
+            out_v[k] = p_date
+            if k in pc:
+                out_c[k] = pc[k]
+    # A vaccine with a pending upload but no approved date yet won't show up
+    # in either `vaccines` dict — still keep that cert so it isn't lost.
+    for k in (set(pc) | set(dc)) - dated_keys:
+        out_c[k] = pc.get(k) or dc.get(k)
+    return out_v, out_c
 
 
 @api.post("/admin/duplicates/dogs/merge")
@@ -31128,9 +31162,13 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
             moved_counts[coll] = 0
 
     # Merge useful dog-profile details without overwriting the main dog with worse data.
+    merged_vaccines, merged_vaccine_certs = _merge_vaccine_records(
+        primary.get("vaccines"), duplicate.get("vaccines"),
+        primary.get("vaccine_certs"), duplicate.get("vaccine_certs"),
+    )
     set_doc: Dict[str, Any] = {
-        "vaccines": _merge_vaccines(primary.get("vaccines"), duplicate.get("vaccines")),
-        "vaccine_certs": _merge_vaccine_certs(primary.get("vaccine_certs"), duplicate.get("vaccine_certs")),
+        "vaccines": merged_vaccines,
+        "vaccine_certs": merged_vaccine_certs,
         "training_logs": _merge_unique_list(primary.get("training_logs"), duplicate.get("training_logs"), limit=500),
         "feeding_schedule": _merge_unique_list(primary.get("feeding_schedule"), duplicate.get("feeding_schedule"), limit=100),
         "medications": _merge_unique_list(primary.get("medications"), duplicate.get("medications"), limit=100),

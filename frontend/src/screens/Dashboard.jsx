@@ -188,12 +188,17 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       await api.post(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}/review`);
       setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
-    } catch {}
+    } catch (e) {
+      // The server can legitimately reject an approval (e.g. an uploaded
+      // cert with no expiry date) — this used to fail with no feedback at
+      // all, leaving the item stuck in the queue with no explanation.
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't approve this vaccine cert.");
+    }
   };
   const rejectVax = async (v) => {
     const ok = await confirm({
       title: `Reject ${v.vaccine.toUpperCase()} cert?`,
-      body: `This will remove the upload AND clear ${v.dog_name}'s ${v.vaccine} expiry. The client will need to reupload before they can book.`,
+      body: `This will remove the upload. ${v.dog_name}'s current ${v.vaccine} expiry on file will only be cleared if it exactly matches this pending upload — an older, already-approved date is kept. The client will need to reupload before they can book.`,
       confirmText: "Reject",
       destructive: true,
     });
@@ -201,7 +206,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}`);
       setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
-    } catch (e) { console.warn("rejectVax failed:", e); }
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't reject this vaccine cert.");
+    }
   };
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);

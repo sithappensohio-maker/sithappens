@@ -236,8 +236,10 @@ export default function Income() {
 
   const removeTxn = async (r) => {
     if (!(await confirm({ title: "Remove transaction?", body: `Transaction for ${r.dog_name} on ${r.date} will be permanently removed from your income log.`, confirmText: "Remove", tone: "danger" }))) return;
-    await api.delete(`/transactions/${r.id}`);
-    load();
+    try {
+      await api.delete(`/transactions/${r.id}`);
+      load();
+    } catch (err) { setEditErr(`Delete failed: ${err.response?.data?.detail || err.message}`); }
   };
 
   const downloadPL = async () => {

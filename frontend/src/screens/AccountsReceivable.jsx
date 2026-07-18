@@ -354,7 +354,7 @@ function AdjustmentModal({ client, onClose, onSuccess }) {
         {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-          <button onClick={submit} disabled={busy || amount === "" || !notes.trim()}
+          <button onClick={submit} disabled={busy || amount === "" || Number(amount) === 0 || !notes.trim()}
                   data-testid="ar-adj-submit"
                   className="bg-shBlue text-white px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
             {busy ? "Saving…" : "Apply adjustment"}
