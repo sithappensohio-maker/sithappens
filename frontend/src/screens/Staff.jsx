@@ -630,6 +630,7 @@ function Field({ label, value, onChange, type = "text", testid }) {
 }
 
 function TimeClockEditModal({ entry, onClose, onSaved }) {
+  const confirm = useConfirm();
   const [form, setForm] = useState({
     clock_in_at: (entry.clock_in_at || "").slice(0, 16),
     clock_out_at: (entry.clock_out_at || "").slice(0, 16),
@@ -653,7 +654,7 @@ function TimeClockEditModal({ entry, onClose, onSaved }) {
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!window.confirm("Delete this clock entry permanently?")) return;
+    if (!(await confirm({ title: "Delete this clock entry?", body: "This removes it permanently.", confirmText: "Delete", tone: "danger" }))) return;
     setBusy(true);
     try { await api.delete(`/admin/time-clock/${entry.id}`); onSaved(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -690,6 +691,7 @@ function TimeClockEditModal({ entry, onClose, onSaved }) {
 const DOW_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 function ScheduleTab({ employees }) {
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [start, setStart] = useState(todayISO());
@@ -762,7 +764,7 @@ function ScheduleTab({ employees }) {
               </span>
               <div className="flex gap-3">
                 <button onClick={()=>setTmplModal({ mode: "edit", tmpl: t })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                <button onClick={async()=>{ if(confirm("Delete template?")){ await api.delete(`/admin/shift-templates/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
+                <button onClick={async()=>{ if(await confirm({ title: "Delete template?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/shift-templates/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
               </div>
             </div>
           ))}
@@ -801,7 +803,7 @@ function ScheduleTab({ employees }) {
                   <span className="text-gray-200">{empName(s.user_id)} · {s.start_time}–{s.end_time}{s.role ? ` · ${s.role}` : ""}{s.source === "template" ? <i className="fas fa-repeat ml-1 text-shGreen text-[10px]"/> : null}</span>
                   <div className="flex gap-3">
                     <button onClick={()=>setShiftModal({ mode: "edit", shift: s })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                    <button onClick={async()=>{ if(confirm("Delete shift?")){ await api.delete(`/admin/shifts/${s.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">×</button>
+                    <button onClick={async()=>{ if(await confirm({ title: "Delete shift?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/shifts/${s.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">×</button>
                   </div>
                 </div>
               ))}
@@ -956,6 +958,7 @@ function ShiftModal({ mode, shift, employees, onClose, onSaved }) {
 }
 
 function TasksTab({ employees }) {
+  const confirm = useConfirm();
   const [tasks, setTasks] = useState([]);
   const [filter, setFilter] = useState("open");
   const [modal, setModal] = useState(null);
@@ -1000,7 +1003,7 @@ function TasksTab({ employees }) {
               </div>
               <div className="flex gap-2">
                 <button onClick={()=>setModal({ mode: "edit", task: t })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                <button onClick={async()=>{ if(confirm("Delete task?")){ await api.delete(`/admin/tasks/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
+                <button onClick={async()=>{ if(await confirm({ title: "Delete task?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/tasks/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
               </div>
             </div>
           </div>
@@ -2050,6 +2053,17 @@ export function RegisterTab() {
     showDone("Sale logged in the Register.");
   });
   const submitPackSale = () => submit(async () => {
+    // Sprint 110ff — a typo like $500 instead of $50 used to be accepted
+    // with no warning, quietly turning the difference into prepaid credit.
+    if (packSale.amount_paid !== "" && Number(packSale.amount_paid) - packOrderTotal > 1) {
+      const overage = Number(packSale.amount_paid) - packOrderTotal;
+      const ok = await confirm({
+        title: "Amount paid is higher than the order total",
+        body: `Order total is ${money(packOrderTotal)}, but ${money(packSale.amount_paid)} was entered — ${money(overage)} more. If that's not a typo, the difference becomes prepaid credit on the client's account. Continue?`,
+        confirmText: "Yes, that's correct",
+      });
+      if (!ok) return;
+    }
     const body = {
       items: [{ pack_id: packSale.pack_id, quantity: Math.max(1, Number(packSale.quantity || 1)) }],
       payment_method: packSale.payment_method,

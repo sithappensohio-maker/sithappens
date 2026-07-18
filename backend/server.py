@@ -1225,9 +1225,6 @@ async def list_clients(_: dict = Depends(require_admin), include_deleted: bool =
             cidw = sig.get("client_id")
             if cidw and cidw not in waivers_by_client:
                 waivers_by_client[cidw] = sig
-        async for vu in db.vaccine_uploads.find({"status": "pending"}, {"_id": 0, "dog_id": 1}):
-            if vu.get("dog_id"):
-                pending_vac_dog_ids.add(vu["dog_id"])
         intake_pending_clients: Dict[str, int] = {}
         async for s in db.intake_submissions.find({"status": {"$in": ["sent", "in_progress"]}}, {"_id": 0, "client_id": 1}):
             cid = s.get("client_id")
@@ -20797,7 +20794,11 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         totals["cash_over_short"] = round(totals["actual_cash_counted"] - expected_cash, 2)
     totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
     totals["net_incoming_total"] = round(sum(float(v or 0) for v in incoming_by_method.values()), 2)
-    activity = sorted(activity, key=lambda x: x.get("created_at") or "", reverse=True)[:75]
+    # Sprint 110ff — was capped at 75, which on a genuinely busy day could
+    # make earlier same-day sales/payments quietly scroll out of this list
+    # (totals were never affected, just the visible feed). Raised well
+    # past any realistic single-day volume for this kind of business.
+    activity = sorted(activity, key=lambda x: x.get("created_at") or "", reverse=True)[:300]
 
     return {
         "date": d,
@@ -28479,7 +28480,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     def _vaccine_warning(dog: Dict[str, Any]) -> bool:
         vacc = dog.get("vaccines") or {}
         for v in required:
-            expires = vacc.get(v) or (vacc.get(v) if isinstance(vacc, dict) else None)
+            expires = vacc.get(v)
             # tolerate both flat string and {expires} nested dict
             if isinstance(expires, dict):
                 expires = expires.get("expires") or expires.get("expiry") or expires.get("date")
