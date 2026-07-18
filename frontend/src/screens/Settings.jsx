@@ -4155,12 +4155,34 @@ function YearEndPayrollPanel() {
 }
 
 // ─────── Sprint 110aw · Meet-n-Greet toggle ───────
+// ─────── Sprint 110ez · Meet & Greet availability defaults ───────
+const meetGreetDefaultHours = () =>
+  Object.fromEntries(DAYS.map(d => [d, { open: "10:00", close: "16:00", closed: d === "sunday" }]));
+
 function MeetNGreetPanel() {
   const [on, setOn] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [mg, setMg] = useState(null); // { enabled, slot_minutes, min_lead_hours, max_advance_days, hours }
+  const [mgBusy, setMgBusy] = useState(false);
+  const [mgSaved, setMgSaved] = useState(false);
+
   useEffect(() => {
-    api.get("/settings").then(r => setOn(!!r.data?.evaluation?.require_evaluation_first)).catch(() => setOn(false));
+    api.get("/settings").then(r => {
+      setOn(!!r.data?.evaluation?.require_evaluation_first);
+      const m = r.data?.meet_greet || {};
+      setMg({
+        enabled: m.enabled !== false,
+        slot_minutes: m.slot_minutes || 30,
+        min_lead_hours: m.min_lead_hours ?? 24,
+        max_advance_days: m.max_advance_days ?? 30,
+        hours: m.hours || meetGreetDefaultHours(),
+      });
+    }).catch(() => {
+      setOn(false);
+      setMg({ enabled: true, slot_minutes: 30, min_lead_hours: 24, max_advance_days: 30, hours: meetGreetDefaultHours() });
+    });
   }, []);
+
   const toggle = async () => {
     setBusy(true);
     try {
@@ -4169,19 +4191,73 @@ function MeetNGreetPanel() {
       setOn(next);
     } catch {} finally { setBusy(false); }
   };
+
+  const setMgDay = (day, k, v) => setMg({ ...mg, hours: { ...mg.hours, [day]: { ...mg.hours[day], [k]: v } } });
+
+  const saveAvailability = async () => {
+    setMgBusy(true); setMgSaved(false);
+    try {
+      await api.put("/settings", { meet_greet: mg });
+      setMgSaved(true);
+      setTimeout(() => setMgSaved(false), 2000);
+    } catch {} finally { setMgBusy(false); }
+  };
+
   return (
-    <div className="border-t border-bgHover pt-6" data-testid="meet-n-greet-panel">
-      <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-2"><i className="fas fa-handshake mr-2"/>Meet-n-Greet Required</h4>
-      <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
-        When ON, brand-new clients are flagged as <strong>prospects</strong> and can't book regular services until staff complete a temperament evaluation and mark them active. Existing clients are unaffected. You can override on a case-by-case basis from the Clients list.
-      </p>
-      <button onClick={toggle} disabled={busy || on === null}
-              data-testid="meet-n-greet-toggle"
-              className={`px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest transition ${
-                on ? "bg-shOrange text-bgHeader hover:bg-shOrange/90" : "bg-bgPanel text-gray-400 hover:bg-bgHover border border-bgHover"
-              } disabled:opacity-50`}>
-        {on === null ? "…" : on ? "Required" : "Disabled"}
-      </button>
+    <div className="border-t border-bgHover pt-6 space-y-6" data-testid="meet-n-greet-panel">
+      <div>
+        <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-2"><i className="fas fa-handshake mr-2"/>Meet-n-Greet Required</h4>
+        <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+          When ON, brand-new clients are flagged as <strong>prospects</strong> and can't book regular services until staff complete a temperament evaluation and mark them active. Existing clients are unaffected. You can override on a case-by-case basis from the Clients list.
+        </p>
+        <button onClick={toggle} disabled={busy || on === null}
+                data-testid="meet-n-greet-toggle"
+                className={`px-4 py-2 rounded font-black text-[13px] uppercase tracking-widest transition ${
+                  on ? "bg-shOrange text-bgHeader hover:bg-shOrange/90" : "bg-bgPanel text-gray-400 hover:bg-bgHover border border-bgHover"
+                } disabled:opacity-50`}>
+          {on === null ? "…" : on ? "Required" : "Disabled"}
+        </button>
+      </div>
+
+      {mg && (
+        <div className="border-t border-bgHover pt-6" data-testid="meet-greet-availability-panel">
+          <h4 className="text-sm font-black text-shOrange uppercase tracking-widest mb-2"><i className="fas fa-calendar-check mr-2"/>Meet &amp; Greet Availability</h4>
+          <p className="text-[14px] text-gray-400 mb-3 leading-relaxed">
+            Controls which days/times prospects can pick from your public "Request a Meet &amp; Greet" form. Any time that overlaps an appointment already on your calendar is automatically hidden, so they can never book over you.
+          </p>
+
+          <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-gray-300 mb-4 cursor-pointer">
+            <input type="checkbox" checked={mg.enabled} onChange={(e)=>setMg({...mg, enabled: e.target.checked})}
+                   data-testid="meet-greet-enabled" className="accent-shOrange"/>
+            Accept Meet &amp; Greet requests online
+          </label>
+
+          {mg.enabled && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <Field label="Slot Length (minutes)" type="number" value={mg.slot_minutes}
+                       onChange={(v)=>setMg({...mg, slot_minutes: parseInt(v)||30})} testId="meet-greet-slot-minutes"/>
+                <Field label="Minimum Notice (hours)" type="number" value={mg.min_lead_hours}
+                       onChange={(v)=>setMg({...mg, min_lead_hours: parseInt(v)||0})} testId="meet-greet-min-lead"/>
+                <Field label="Bookable This Many Days Out" type="number" value={mg.max_advance_days}
+                       onChange={(v)=>setMg({...mg, max_advance_days: parseInt(v)||1})} testId="meet-greet-max-advance"/>
+              </div>
+
+              <div className="space-y-1 mb-4">
+                {DAYS.map(d => (
+                  <DayRow key={d} day={d} val={mg.hours[d] || {}} onChange={(k,v)=>setMgDay(d,k,v)} testPrefix={`meet-greet-${d}`} />
+                ))}
+              </div>
+            </>
+          )}
+
+          <button onClick={saveAvailability} disabled={mgBusy}
+                  data-testid="meet-greet-save"
+                  className="bg-shGreen text-bgHeader px-6 py-2.5 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
+            {mgBusy ? "Saving…" : mgSaved ? "Saved ✓" : "Save Availability"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

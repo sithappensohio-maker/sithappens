@@ -6,6 +6,7 @@ const API = (process.env.REACT_APP_BACKEND_URL || "") + "/api";
 export default function Claim({ token }) {
   const [status, setStatus] = useState("loading"); // loading | invalid | ready | submitting | done
   const [info, setInfo] = useState(null);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [password, setPassword] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [err, setErr] = useState("");
@@ -14,12 +15,37 @@ export default function Claim({ token }) {
     let alive = true;
     axios.get(`${API}/claim/${encodeURIComponent(token)}`)
       .then(r => { if (!alive) return;
-        if (r.data?.valid) { setInfo(r.data); setStatus("ready"); }
+        if (r.data?.valid) {
+          setInfo(r.data);
+          setStatus("ready");
+          // Staff/admin reset links (is_client=false) never had a passwordless
+          // option — go straight to the password form for them.
+          setShowPasswordForm(!r.data.is_client);
+        }
         else { setStatus("invalid"); }
       })
       .catch(() => alive && setStatus("invalid"));
     return () => { alive = false; };
   }, [token]);
+
+  const finishLogin = (data) => {
+    localStorage.setItem("sh_token", data.token);
+    setStatus("done");
+    // Clean the URL and reload so AuthProvider picks up the new token and routes to the portal.
+    setTimeout(() => { window.location.href = "/"; }, 1200);
+  };
+
+  const continuePasswordless = async () => {
+    setErr("");
+    setStatus("submitting");
+    try {
+      const r = await axios.post(`${API}/claim/${encodeURIComponent(token)}/login`);
+      finishLogin(r.data);
+    } catch (e2) {
+      setErr(e2?.response?.data?.detail || "Something went wrong. Try again.");
+      setStatus("ready");
+    }
+  };
 
   const submit = async (e) => {
     e.preventDefault();
@@ -29,10 +55,7 @@ export default function Claim({ token }) {
     setStatus("submitting");
     try {
       const r = await axios.post(`${API}/claim/${encodeURIComponent(token)}`, { password });
-      localStorage.setItem("sh_token", r.data.token);
-      setStatus("done");
-      // Clean the URL and reload so AuthProvider picks up the new token and routes to the portal.
-      setTimeout(() => { window.location.href = "/"; }, 1200);
+      finishLogin(r.data);
     } catch (e2) {
       setErr(e2?.response?.data?.detail || "Something went wrong. Try again.");
       setStatus("ready");
@@ -71,15 +94,15 @@ export default function Claim({ token }) {
         )}
 
         {(status === "ready" || status === "submitting") && info && (
-          <form onSubmit={submit} className="space-y-4" data-testid="claim-form">
+          <div className="space-y-4" data-testid="claim-ready">
             <div>
               <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
                 {info.is_reset ? "Reset your password" : `Welcome${info.client_name ? ", " + info.client_name.split(" ")[0] : ""}!`}
               </h3>
               <p className="mt-1 text-[14px] text-gray-400">
-                {info.is_reset
-                  ? "Choose a new password for your Sit Happens portal."
-                  : "Set a password to finish activating your portal."}
+                {showPasswordForm
+                  ? (info.is_reset ? "Choose a new password for your Sit Happens portal." : "Set a password to finish activating your portal.")
+                  : "You're almost in — continue below and set a password later, whenever you're ready."}
               </p>
               {info.email && (
                 <p className="mt-3 text-[14px] text-gray-500 font-black uppercase tracking-widest">
@@ -88,50 +111,92 @@ export default function Claim({ token }) {
               )}
             </div>
 
-            <div>
-              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e)=>setPassword(e.target.value)}
-                required
-                minLength={8}
-                data-testid="claim-password-input"
-                className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
-                placeholder="At least 8 characters"
-                autoFocus
-              />
-            </div>
-
-            <div>
-              <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Confirm password</label>
-              <input
-                type="password"
-                value={confirmPw}
-                onChange={(e)=>setConfirmPw(e.target.value)}
-                required
-                minLength={8}
-                data-testid="claim-confirm-input"
-                className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
-                placeholder="Type it again"
-              />
-            </div>
-
-            {err && (
-              <div data-testid="claim-error" className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">
-                {err}
+            {!showPasswordForm && (
+              <div className="space-y-3" data-testid="claim-passwordless">
+                {err && (
+                  <div data-testid="claim-error" className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">
+                    {err}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={continuePasswordless}
+                  disabled={status === "submitting"}
+                  data-testid="claim-continue-passwordless"
+                  className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-sm uppercase tracking-widest shadow-lg hover:bg-shGreen/90 disabled:opacity-60"
+                >
+                  {status === "submitting" ? "Signing you in…" : "Continue to setup"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setErr(""); setShowPasswordForm(true); }}
+                  data-testid="claim-show-password-form"
+                  className="w-full text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest transition"
+                >
+                  Set a password now instead
+                </button>
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={status === "submitting"}
-              data-testid="claim-submit"
-              className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-sm uppercase tracking-widest shadow-lg hover:bg-shGreen/90 disabled:opacity-60"
-            >
-              {status === "submitting" ? "Activating…" : (info.is_reset ? "Reset password" : "Activate account")}
-            </button>
-          </form>
+            {showPasswordForm && (
+              <form onSubmit={submit} className="space-y-4" data-testid="claim-form">
+                <div>
+                  <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e)=>setPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    data-testid="claim-password-input"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
+                    placeholder="At least 8 characters"
+                    autoFocus
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Confirm password</label>
+                  <input
+                    type="password"
+                    value={confirmPw}
+                    onChange={(e)=>setConfirmPw(e.target.value)}
+                    required
+                    minLength={8}
+                    data-testid="claim-confirm-input"
+                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm focus:border-shBlue outline-none"
+                    placeholder="Type it again"
+                  />
+                </div>
+
+                {err && (
+                  <div data-testid="claim-error" className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">
+                    {err}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={status === "submitting"}
+                  data-testid="claim-submit"
+                  className="w-full bg-shGreen text-bgHeader py-3 rounded font-black text-sm uppercase tracking-widest shadow-lg hover:bg-shGreen/90 disabled:opacity-60"
+                >
+                  {status === "submitting" ? "Activating…" : (info.is_reset ? "Reset password" : "Activate account")}
+                </button>
+
+                {info.is_client && (
+                  <button
+                    type="button"
+                    onClick={() => { setErr(""); setShowPasswordForm(false); }}
+                    data-testid="claim-back-to-passwordless"
+                    className="w-full text-gray-500 hover:text-white text-[12px] font-black uppercase tracking-widest transition"
+                  >
+                    Back
+                  </button>
+                )}
+              </form>
+            )}
+          </div>
         )}
 
         {status === "done" && (
