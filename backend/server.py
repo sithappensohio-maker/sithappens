@@ -5,6 +5,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 import os
 import re
+import socket
 import uuid
 import asyncio
 import secrets
@@ -38,9 +39,11 @@ from email_service import (
     notify_admin_homework_section_log,
     notify_admin_homework_completed,
     notify_admin_first_booking,
+    notify_admin_help_request,
     notify_admin_quote_request,
     notify_admin_pl_report,
     notify_client_booking_approved,
+    notify_client_booking_rejected,
     notify_client_certificate_issued,
     notify_client_day_reviewed,
     notify_client_homework_assigned,
@@ -866,6 +869,13 @@ class CheckInIn(BaseModel):
     # client-portal check-in). Resolved + appended to booking.add_ons,
     # honouring the legacy-pricing override per add-on.
     addon_service_ids: List[str] = []
+    # Staff confirmed a vaccine warning shown by the client and wants to
+    # proceed anyway. Vaccines were only re-checked at booking time before
+    # this — a booking made weeks earlier could check in with an
+    # since-expired vaccine on ANY screen with no warning at all. Now the
+    # server itself re-checks at check-in and requires this explicit
+    # acknowledgement, so no client screen can silently skip the warning.
+    vaccine_ack: bool = False
 
 
 class BookingAddonsIn(BaseModel):
@@ -1215,9 +1225,6 @@ async def list_clients(_: dict = Depends(require_admin), include_deleted: bool =
             cidw = sig.get("client_id")
             if cidw and cidw not in waivers_by_client:
                 waivers_by_client[cidw] = sig
-        async for vu in db.vaccine_uploads.find({"status": "pending"}, {"_id": 0, "dog_id": 1}):
-            if vu.get("dog_id"):
-                pending_vac_dog_ids.add(vu["dog_id"])
         intake_pending_clients: Dict[str, int] = {}
         async for s in db.intake_submissions.find({"status": {"$in": ["sent", "in_progress"]}}, {"_id": 0, "client_id": 1}):
             cid = s.get("client_id")
@@ -2663,8 +2670,14 @@ def _validate_base64_uploads(photos: List[str], *, max_items: int = 4, max_chars
         raise HTTPException(status_code=400, detail=f"Please upload no more than {max_items} photos.")
     for p in photos:
         if not isinstance(p, str):
-            raise HTTPException(status_code=400, detail="Invalid uploaded photo.")
+            raise HTTPException(status_code=400, detail="Invalid uploaded file.")
         if len(p) > max_chars_each:
+            # Sprint 110ff — this used to always say "image", which was
+            # confusing for PDF vaccine-cert uploads (the wizard explicitly
+            # invites those) since a PDF can't be "compressed" the way a
+            # photo can from the portal.
+            if p.startswith("data:application/pdf"):
+                raise HTTPException(status_code=400, detail="Uploaded PDF is too large. Please upload a smaller PDF, or a photo of the document instead.")
             raise HTTPException(status_code=400, detail="Uploaded photo is too large. Please use a smaller/compressed image.")
 
 
@@ -2677,6 +2690,25 @@ async def _validate_dog_vaccines(dog: dict, required: List[str]) -> None:
         d = vaccines.get(v, "")
         if not d or d < today:
             raise HTTPException(status_code=400, detail=f"{v.title()} vaccine missing or expired")
+
+
+def _dog_vaccine_checkin_warning(dog: dict, required: List[str]) -> Optional[str]:
+    """Non-fatal check-in-time vaccine check — a booking can be days or
+    weeks old, so a vaccine valid when the booking was made may have since
+    expired. Returns a human-readable warning if so, else None. Unlike
+    _validate_dog_vaccines (booking time), this never blocks by itself —
+    the caller decides whether to require staff acknowledgement."""
+    today = business_today().isoformat()
+    vaccines = dog.get("vaccines") or {}
+    for v in required:
+        if _pending_vaccine_cert_for(dog, v):
+            return f"{v.title()} vaccine is pending admin review."
+        d = vaccines.get(v, "")
+        if not d:
+            return f"{v.title()} vaccine is missing from this dog's record."
+        if d < today:
+            return f"{v.title()} vaccine expired {d}."
+    return None
 
 
 def _parse_hhmm_strict(value: Optional[str], *, field_label: str) -> Optional[time]:
@@ -3028,6 +3060,53 @@ async def _update_booking_with_capacity(booking: dict, update: Dict[str, Any]) -
     return merged
 
 
+async def _dog_conflicting_booking(
+    dog_id: str, date: str, end_date: Optional[str], service_type: str,
+    *, exclude_booking_id: Optional[str] = None,
+) -> Optional[dict]:
+    """Find an existing active booking for the same dog + same service type
+    whose date range overlaps the given one. Scoped to matching service
+    types only — a dog boarding while also having a same-day grooming
+    appointment is normal and must stay allowed."""
+    new_days = set(_dates_in_range(date, end_date))
+    q: Dict[str, Any] = {
+        "dog_id": dog_id,
+        "service_type": service_type,
+        "status": {"$in": ["pending", "approved", "completed"]},
+    }
+    if exclude_booking_id:
+        q["id"] = {"$ne": exclude_booking_id}
+    existing = await db.bookings.find(q, {"_id": 0}).to_list(500)
+    for b in existing:
+        if b.get("checked_out_at"):
+            continue
+        if new_days & set(_dates_in_range(b.get("date"), b.get("end_date"))):
+            return b
+    return None
+
+
+async def _crate_conflict(booking_id: str, date: str, end_date: Optional[str], crate: str) -> Optional[dict]:
+    """A crate is a single physical container — unlike Room, Yard Group, or
+    Training Group (which the app's own default labels — "Big Dogs",
+    "Group A", etc. — show are meant to hold several dogs together), a
+    crate can only ever hold one dog. Kennel already had this protection;
+    Crate didn't, so two dogs could be assigned the same crate at once
+    with no warning."""
+    if not crate:
+        return None
+    new_days = set(_dates_in_range(date, end_date))
+    existing = await db.bookings.find(
+        {"crate": crate, "status": {"$in": ["pending", "approved", "completed"]}, "id": {"$ne": booking_id}},
+        {"_id": 0},
+    ).to_list(500)
+    for b in existing:
+        if b.get("checked_out_at"):
+            continue
+        if new_days & set(_dates_in_range(b.get("date"), b.get("end_date"))):
+            return b
+    return None
+
+
 @api.post("/bookings", response_model=BookingOut)
 async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)):
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
@@ -3132,6 +3211,25 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
     is_admin = user.get("role") == "admin"
     if not (is_admin and body.override_vaccines):
         await _validate_dog_vaccines(dog, required)
+
+    # Sprint 110ff — Same-dog duplicate-booking guard. GET /bookings/conflicts
+    # only ever showed an informational "heads up" banner in one screen and
+    # nothing actually stopped the save — a dog could end up with two active
+    # bookings for the same service overlapping the same day(s) (e.g. a
+    # manual booking landing on top of a recurring-template session),
+    # producing duplicate charges and duplicate cards on the Run Sheet.
+    # Scoped to the SAME service_type only — a dog boarding and also having
+    # a same-day grooming appointment is normal and must stay allowed.
+    if not (is_admin and body.override_capacity):
+        dup = await _dog_conflicting_booking(body.dog_id, body.date, body.end_date, body.service_type)
+        if dup:
+            dup_end = dup.get("end_date")
+            span = f" through {dup_end}" if dup_end else ""
+            raise HTTPException(
+                status_code=409,
+                detail=f"{dog['name']} already has a {body.service_type} booking on {dup.get('date')}"
+                       f"{span} (status: {dup.get('status')}).",
+            )
 
     # Closed-day enforcement (clients only — admin can override by creating manually).
     # Blocks any booking whose start date OR any day in its range falls on a closed date.
@@ -4201,6 +4299,14 @@ async def reject_booking(booking_id: str, _: dict = Depends(require_admin)):
     _assert_booking_financial_edit_allowed(booking, {"status"})
     await db.bookings.update_one({"id": booking_id}, {"$set": {"status": "rejected"}})
     booking["status"] = "rejected"
+    # Best-effort notification — approve already emails the client, reject
+    # never did, leaving a declined request with no explanation.
+    try:
+        client_doc = await db.clients.find_one({"id": booking["client_id"]}, {"_id": 0})
+        if client_doc:
+            await notify_client_booking_rejected(booking, client_doc)
+    except Exception:
+        pass
     return booking
 
 @api.delete("/bookings/{booking_id}")
@@ -5109,6 +5215,15 @@ async def portal_create_help_request(body: HelpRequestIn, user: dict = Depends(g
     }
     await db.help_requests.insert_one(doc)
     doc.pop("_id", None)
+    # Sprint 110ff — this only ever surfaced as a small unread-count badge
+    # on the admin dashboard, unlike the separate Messages feature which
+    # emails staff. A client's note here could sit unseen indefinitely
+    # unless the admin happened to check that specific tile.
+    try:
+        if client:
+            await notify_admin_help_request(client, doc)
+    except Exception:
+        pass
     return doc
 
 
@@ -5200,6 +5315,18 @@ async def check_in(
     if _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking is already financially closed and cannot be checked in again.")
     body = body or CheckInIn()
+    if not body.vaccine_ack:
+        dog = await db.dogs.find_one({"id": booking.get("dog_id")}, {"_id": 0})
+        if dog:
+            settings = await get_settings()
+            required = settings.get("required_vaccines", ["rabies"])
+            warning = _dog_vaccine_checkin_warning(dog, required)
+            if warning:
+                raise HTTPException(status_code=409, detail={
+                    "code": "vaccine_warning",
+                    "message": warning,
+                    "dog_name": dog.get("name"),
+                })
     ts = now_iso()
     update = {
         "checked_in_at": ts,
@@ -5961,6 +6088,13 @@ async def apply_tab_adjustment(
     user: dict = Depends(require_admin),
 ):
     """Manual write-off / correction. Logged as type=adjustment in the ledger."""
+    if round(body.amount, 2) == 0:
+        raise HTTPException(status_code=400, detail="Adjustment amount cannot be zero.")
+    # Sprint 110ff — every other money action (tab payments, sales, expenses)
+    # is locked once a day's register is closed out; this one wasn't, so a
+    # balance could be adjusted after the books for that day were already
+    # closed and reconciled.
+    await _require_register_day_open(business_today().isoformat())
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -6575,6 +6709,13 @@ async def check_out(
     money step fails before checkout completes.
     """
     body = body or CheckoutIn()
+    # Sprint 110ff — the price-override field was open to every staff
+    # account regardless of their assigned Roles & Permissions matrix,
+    # which made the "pricing" permission toggle decorative for checkout.
+    # Admins (and staff explicitly granted "pricing") can still override;
+    # everyone else checks out at the normal computed price.
+    if body.base_price is not None and user.get("role") != "admin" and not _perms_for(user).get("pricing"):
+        raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
     stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -8884,6 +9025,17 @@ INCIDENT_SEVERITIES = (
     "minor", "moderate", "severe",
 )
 
+class IncidentEditHistoryEntry(BaseModel):
+    ts: str
+    by: str
+    reason: str
+    changed_fields: List[str] = []
+
+
+class IncidentUpdateIn(IncidentIn):
+    edit_reason: str = Field(min_length=3, description="Why is this incident being edited?")
+
+
 class IncidentOut(IncidentIn):
     id: str
     dog_name: str
@@ -8891,10 +9043,13 @@ class IncidentOut(IncidentIn):
     client_name: str
     reported_by: str
     created_at: str
+    edit_history: List[IncidentEditHistoryEntry] = []
 
 @api.get("/incidents", response_model=List[IncidentOut])
-async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None):
-    q = {"dog_id": dog_id} if dog_id else {}
+async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None, include_archived: bool = False):
+    q: Dict[str, Any] = {"dog_id": dog_id} if dog_id else {}
+    if not include_archived:
+        q["archived"] = {"$ne": True}
     items = await db.incidents.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
     return items
 
@@ -8922,19 +9077,61 @@ async def create_incident(body: IncidentIn, user: dict = Depends(require_admin))
     return doc
 
 @api.put("/incidents/{incident_id}", response_model=IncidentOut)
-async def update_incident(incident_id: str, body: IncidentIn, _: dict = Depends(require_admin)):
+async def update_incident(incident_id: str, body: IncidentUpdateIn, user: dict = Depends(require_admin)):
     existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Incident not found")
-    update = body.model_dump()
+    update = body.model_dump(exclude={"edit_reason"})
+    # Sprint 110ff — incident edits previously carried no explanation and no
+    # visible history, so a quietly downgraded severity looked identical to
+    # a typo fix. A reason is now required, and each edit appends to a
+    # lightweight history the owner can review without digging through the
+    # separate audit log.
+    changed_fields = sorted(k for k, v in update.items() if existing.get(k) != v)
+    history_entry = {
+        "ts": now_iso(),
+        "by": user.get("name") or user.get("email") or "admin",
+        "reason": body.edit_reason.strip(),
+        "changed_fields": changed_fields,
+    }
+    history = list(existing.get("edit_history") or [])
+    history.append(history_entry)
+    update["edit_history"] = history
     await db.incidents.update_one({"id": incident_id}, {"$set": update})
     existing.update(update)
     return existing
 
 @api.delete("/incidents/{incident_id}")
-async def delete_incident(incident_id: str, _: dict = Depends(require_admin)):
-    await db.incidents.delete_one({"id": incident_id})
+async def delete_incident(incident_id: str, user: dict = Depends(require_admin)):
+    # Sprint 110ff — incidents are a legal/liability record (bite reports,
+    # injuries). Deleting one used to be a hard, unrecoverable delete_one
+    # with no backup; the audit log could only show THAT something was
+    # deleted, not what it said. Archive in place instead so the full
+    # record is still recoverable (see POST .../restore) — same pattern
+    # already used for clients/dogs elsewhere in this file.
+    existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    await db.incidents.update_one({"id": incident_id}, {"$set": {
+        "archived": True,
+        "archived_at": now_iso(),
+        "archived_by": user.get("name") or user.get("email") or "admin",
+    }})
     return {"ok": True}
+
+
+@api.post("/incidents/{incident_id}/restore", response_model=IncidentOut)
+async def restore_incident(incident_id: str, _: dict = Depends(require_admin)):
+    existing = await db.incidents.find_one({"id": incident_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    await db.incidents.update_one({"id": incident_id}, {"$unset": {
+        "archived": "", "archived_at": "", "archived_by": "",
+    }})
+    existing.pop("archived", None)
+    existing.pop("archived_at", None)
+    existing.pop("archived_by", None)
+    return existing
 
 
 # -------- Financially locked booking corrections (Admin) --------
@@ -9187,6 +9384,8 @@ async def _reopen_booking_checkout_locked(booking_id: str, body: BookingReopenCh
 # -------- Booking Edit (Admin) --------
 class BookingPatchIn(BaseModel):
     notes: Optional[str] = None
+    date: Optional[str] = None
+    end_date: Optional[str] = None
     kennel: Optional[str] = None
     dropoff_time: Optional[str] = None
     pickup_time: Optional[str] = None
@@ -9205,7 +9404,19 @@ async def patch_booking(booking_id: str, body: BookingPatchIn, _: dict = Depends
     update = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     _assert_booking_financial_edit_allowed(booking, update.keys())
     if update:
-        capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time"}
+        if update.get("crate"):
+            conflict = await _crate_conflict(
+                booking_id,
+                update.get("date", booking.get("date")),
+                update.get("end_date", booking.get("end_date")),
+                update["crate"],
+            )
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{update['crate']} is already assigned to {conflict.get('dog_name', 'another dog')} on overlapping dates.",
+                )
+        capacity_fields = {"kennel", "time", "dropoff_time", "pickup_time", "date", "end_date"}
         if capacity_fields.intersection(update):
             return await _update_booking_with_capacity(booking, update)
         await db.bookings.update_one({"id": booking_id}, {"$set": update})
@@ -14020,7 +14231,7 @@ BACKUP_VERSION = 8
 # so files survive backend container rebuilds. Operators may use subfolders,
 # but cannot point the app back at an ephemeral container path.
 BACKUP_ROOT = os.path.realpath(os.environ.get("BACKUP_ROOT", "/app/backups"))
-_BACKUP_PROCESS_ID = f"{os.uname().nodename}:{os.getpid()}:{uuid.uuid4()}"
+_BACKUP_PROCESS_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4()}"
 _BACKUP_LEASE_ID = "auto_backup_lease"
 
 
@@ -20583,7 +20794,11 @@ async def _register_day_summary(day: Optional[str] = None) -> Dict[str, Any]:
         totals["cash_over_short"] = round(totals["actual_cash_counted"] - expected_cash, 2)
     totals["refund_total"] = round(float(incoming_sources.get("refunds") or 0), 2)
     totals["net_incoming_total"] = round(sum(float(v or 0) for v in incoming_by_method.values()), 2)
-    activity = sorted(activity, key=lambda x: x.get("created_at") or "", reverse=True)[:75]
+    # Sprint 110ff — was capped at 75, which on a genuinely busy day could
+    # make earlier same-day sales/payments quietly scroll out of this list
+    # (totals were never affected, just the visible feed). Raised well
+    # past any realistic single-day volume for this kind of business.
+    activity = sorted(activity, key=lambda x: x.get("created_at") or "", reverse=True)[:300]
 
     return {
         "date": d,
@@ -21111,6 +21326,23 @@ async def admin_register_till_adjustment(body: TillAdjustmentIn, user: dict = De
     await db.till_adjustments.insert_one(doc.copy())
     doc.pop("_id", None)
     return {"ok": True, "adjustment": doc, "register": await _register_day_summary(d)}
+
+
+@api.delete("/admin/register/till-adjustment/{adjustment_id}")
+async def delete_till_adjustment(adjustment_id: str, _: dict = Depends(require_admin)):
+    """Till adjustments (owner draws, change funds, corrections) had no way
+    to remove a mistaken entry — unlike expenses and retail sales/refunds,
+    which both already support delete. A typo'd amount used to have to be
+    corrected with a second offsetting entry, permanently cluttering the
+    day's audit trail."""
+    existing = await db.till_adjustments.find_one({"id": adjustment_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Till adjustment not found")
+    await _require_register_day_open(existing.get("date") or business_today().isoformat())
+    res = await db.till_adjustments.delete_one({"id": adjustment_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Till adjustment not found")
+    return {"ok": True, "register": await _register_day_summary(existing.get("date"))}
 
 
 class RegisterRefundIn(BaseModel):
@@ -28248,7 +28480,7 @@ async def get_kennel_board(user: dict = Depends(require_employee_or_admin)):
     def _vaccine_warning(dog: Dict[str, Any]) -> bool:
         vacc = dog.get("vaccines") or {}
         for v in required:
-            expires = vacc.get(v) or (vacc.get(v) if isinstance(vacc, dict) else None)
+            expires = vacc.get(v)
             # tolerate both flat string and {expires} nested dict
             if isinstance(expires, dict):
                 expires = expires.get("expires") or expires.get("expiry") or expires.get("date")
@@ -28543,6 +28775,13 @@ def _audit_action_for(method: str, path: str) -> str:
                 if "/check-in" in path: return "booking_checked_in"
                 if "/check-out" in path: return "booking_checked_out"
                 if "/checkout" in path: return "booking_checked_out"
+                # Sprint 110ff — these two used to fall through to the
+                # generic "booking_action" tag, which the Audit Log's
+                # "Bookings" filter didn't recognize and which rendered
+                # with no readable label — easy to miss when scanning for
+                # irregular money corrections.
+                if path.endswith("/financial-adjustment"): return "booking_financial_adjustment"
+                if path.endswith("/reopen-checkout"): return "booking_checkout_reopened"
                 # not a recognized subaction — fall through to "booking_created"-ish
                 return "booking_action"
             return action
@@ -28613,9 +28852,6 @@ async def audit_log_middleware(request, call_next):
             return response
         if any(frag in path for frag in _AUDIT_SKIP_PATH_FRAGMENTS):
             return response
-        # Only log successful or expected-fail writes (skip 401/403/404 noise from probes)
-        if response.status_code in (401, 403, 404, 405) and method != "DELETE":
-            return response
         # User context — pulled from the bearer token. If absent, log anonymously.
         user_info = {"id": None, "name": "anonymous", "role": "anonymous", "email": None}
         try:
@@ -28629,6 +28865,19 @@ async def audit_log_middleware(request, call_next):
                 user_info["email"] = payload.get("email")
         except Exception:
             pass
+        # Sprint 110ff — a logged-in account hitting a 403 means they tried
+        # something they're not allowed to do, which is exactly what an
+        # audit log should catch (e.g. a staff member probing for an
+        # owner-only page). That used to be skipped along with genuine
+        # anonymous probe noise. Anonymous 403s (bots hitting random URLs)
+        # are still skipped; 401/404/405 stay skipped even when
+        # authenticated — "stale token" / "not found" / "wrong verb" aren't
+        # access-control signals worth an audit row.
+        is_authenticated = user_info["role"] != "anonymous"
+        if response.status_code in (401, 404, 405) and method != "DELETE":
+            return response
+        if response.status_code == 403 and method != "DELETE" and not is_authenticated:
+            return response
         # Anonymous mutations get logged only if they're explicit (e.g. claim links)
         if user_info["role"] == "anonymous" and "/portal/" not in path and "/claim/" not in path:
             return response
@@ -28679,7 +28928,8 @@ AUDIT_ACTION_GROUPS = {
     "bookings": ["booking_created", "booking_edited", "booking_deleted", "booking_canceled",
                  "booking_approved", "booking_denied", "booking_completed",
                  "booking_checked_in", "booking_checked_out", "care_logged",
-                 "care_completed", "care_skipped", "care_reset"],
+                 "care_completed", "care_skipped", "care_reset",
+                 "booking_financial_adjustment", "booking_checkout_reopened"],
     "dogs": ["dog_created", "dog_edited", "dog_deleted", "safety_flags_changed"],
     "clients": ["client_created", "client_edited", "client_deleted"],
     "incidents": ["incident_created", "incident_edited", "incident_deleted"],
@@ -28689,7 +28939,8 @@ AUDIT_ACTION_GROUPS = {
                "intake_submitted_by_client"],
     "waitlist": ["waitlist_added", "waitlist_edited", "waitlist_removed", "waitlist_status_changed"],
     "money": ["expense_created", "expense_edited", "expense_deleted", "retail_recorded",
-              "retail_deleted", "payment_plan_created", "payment_plan_edited"],
+              "retail_deleted", "payment_plan_created", "payment_plan_edited",
+              "booking_financial_adjustment", "booking_checkout_reopened"],
     "settings": ["settings_changed", "kennel_labels_changed", "timeclock_edited"],
     "waivers": ["waiver_action"],
 }
@@ -29690,6 +29941,15 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
 
     if body.client_ids is not None:
         ids = [c for c in (body.client_ids or []) if c]
+        # Sprint 110ff — hand-picked recipients used to hardcode dog_names
+        # to "" (always falling back to the generic "your pup" below),
+        # unlike the filtered-group path which looks each client's dogs
+        # up. An email meant to read "hope Bella is doing great" went out
+        # saying "hope your pup is doing great" for every hand-picked send.
+        dogs_by_owner: Dict[str, List[str]] = {}
+        async for d in db.dogs.find({"owner_id": {"$in": ids}}, {"_id": 0, "owner_id": 1, "name": 1}):
+            if d.get("name"):
+                dogs_by_owner.setdefault(d.get("owner_id") or "", []).append(d["name"])
         recipients: List[Dict[str, Any]] = []
         async for c in db.clients.find({"id": {"$in": ids}, "email": {"$nin": [None, ""]}}, {"_id": 0}):
             recipients.append({
@@ -29697,7 +29957,7 @@ async def bulk_email_send(body: BulkEmailSendIn, user: dict = Depends(require_ad
                 "name": c.get("name") or "",
                 "email": c.get("email") or "",
                 "first_name": (c.get("name") or "").strip().split(" ")[0],
-                "dog_names": "",
+                "dog_names": ", ".join(dogs_by_owner.get(c.get("id") or "", [])),
             })
     else:
         recipients = await _bulk_email_resolve_recipients(body.filters or [])
@@ -30923,26 +31183,36 @@ def _merge_unique_list(primary_list: Any, duplicate_list: Any, limit: int = 200)
     return out
 
 
-def _merge_vaccines(primary_v: Any, duplicate_v: Any) -> Dict[str, Any]:
-    p = dict(primary_v or {})
-    d = dict(duplicate_v or {})
-    for k, v in d.items():
-        if not v:
-            continue
-        cur = p.get(k)
-        # Keep the later-looking ISO/date string when both exist.
-        if not cur or str(v) > str(cur):
-            p[k] = v
-    return p
-
-
-def _merge_vaccine_certs(primary_c: Any, duplicate_c: Any) -> Dict[str, Any]:
-    p = dict(primary_c or {})
-    d = dict(duplicate_c or {})
-    for k, v in d.items():
-        if k not in p or not p.get(k):
-            p[k] = v
-    return p
+def _merge_vaccine_records(
+    primary_v: Any, duplicate_v: Any, primary_c: Any, duplicate_c: Any,
+) -> "tuple[Dict[str, Any], Dict[str, Any]]":
+    """Merge vaccine expiry dates AND their certificate photos together in
+    one pass, per vaccine, so the winning date and its backing cert always
+    come from the SAME dog. Merging dates and certs independently (the old
+    behavior) could leave the newer expiry date from one dog paired with
+    the older — or still-pending — certificate photo from the other."""
+    pv, dv = dict(primary_v or {}), dict(duplicate_v or {})
+    pc, dc = dict(primary_c or {}), dict(duplicate_c or {})
+    dated_keys = set(pv) | set(dv)
+    out_v: Dict[str, Any] = {}
+    out_c: Dict[str, Any] = {}
+    for k in dated_keys:
+        p_date, d_date = pv.get(k) or "", dv.get(k) or ""
+        # Keep the later-looking ISO/date string, and ONLY that same dog's
+        # cert — never borrow the other dog's cert for the winning date.
+        if d_date and (not p_date or str(d_date) > str(p_date)):
+            out_v[k] = d_date
+            if k in dc:
+                out_c[k] = dc[k]
+        else:
+            out_v[k] = p_date
+            if k in pc:
+                out_c[k] = pc[k]
+    # A vaccine with a pending upload but no approved date yet won't show up
+    # in either `vaccines` dict — still keep that cert so it isn't lost.
+    for k in (set(pc) | set(dc)) - dated_keys:
+        out_c[k] = pc.get(k) or dc.get(k)
+    return out_v, out_c
 
 
 @api.post("/admin/duplicates/dogs/merge")
@@ -30973,9 +31243,13 @@ async def admin_duplicate_dog_merge(body: DuplicateDogMergeIn, user: dict = Depe
             moved_counts[coll] = 0
 
     # Merge useful dog-profile details without overwriting the main dog with worse data.
+    merged_vaccines, merged_vaccine_certs = _merge_vaccine_records(
+        primary.get("vaccines"), duplicate.get("vaccines"),
+        primary.get("vaccine_certs"), duplicate.get("vaccine_certs"),
+    )
     set_doc: Dict[str, Any] = {
-        "vaccines": _merge_vaccines(primary.get("vaccines"), duplicate.get("vaccines")),
-        "vaccine_certs": _merge_vaccine_certs(primary.get("vaccine_certs"), duplicate.get("vaccine_certs")),
+        "vaccines": merged_vaccines,
+        "vaccine_certs": merged_vaccine_certs,
         "training_logs": _merge_unique_list(primary.get("training_logs"), duplicate.get("training_logs"), limit=500),
         "feeding_schedule": _merge_unique_list(primary.get("feeding_schedule"), duplicate.get("feeding_schedule"), limit=100),
         "medications": _merge_unique_list(primary.get("medications"), duplicate.get("medications"), limit=100),

@@ -843,6 +843,47 @@ async def notify_admin_quote_request(client: dict, item: dict, message: str) -> 
     )
 
 
+async def notify_admin_help_request(client: dict, help_request: dict) -> None:
+    """A client submitted feedback/a problem report/a suggestion from the
+    portal's Need Help button. This is intentionally not a full ticket
+    system (no replies), but the admin should still be alerted it exists
+    rather than relying on noticing an unread-count badge."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return
+    name = client.get("name") or "—"
+    type_label = {
+        "feedback": "Feedback", "problem": "Problem", "feature": "Feature idea",
+        "booking": "Booking question", "other": "Other",
+    }.get(help_request.get("type"), "Other")
+    rows = [
+        ("Client", name),
+        ("Type", type_label),
+        ("Subject", help_request.get("subject") or "—"),
+        ("Message", help_request.get("message") or "—"),
+    ]
+    if client.get("phone"):
+        rows.append(("Phone", client["phone"]))
+    if client.get("email"):
+        rows.append(("Email", client["email"]))
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    await _dispatch(
+        slug="admin_help_request",
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        ctx={
+            "client_name": name,
+            "type_label": type_label,
+            "subject": help_request.get("subject") or "",
+            "message": help_request.get("message") or "",
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"Need Help: {type_label} from {name}",
+        fallback_title="New Need Help submission",
+        fallback_intro=f"{name} submitted a {type_label.lower()} note from the client portal.",
+    )
+
+
 async def notify_client_quote_received(client: dict, item: dict, message: str) -> None:
     """Auto-responder: thank the client for their quote request so they know
     we got it and don't feel ghosted while we draft a real reply."""
@@ -1591,6 +1632,39 @@ async def notify_client_booking_approved(booking: dict, client: dict) -> None:
         rows=rows,
     )
 
+
+
+async def notify_client_booking_rejected(booking: dict, client: dict) -> None:
+    """Booking rejected — approve already emails the client; reject never
+    did, so a declined request could sit with no explanation from the
+    client's side unless staff happened to follow up by phone."""
+    to_email = client.get("email", "")
+    if not to_email:
+        return
+    svc_label = _service_label(booking.get("service_type", ""))
+    first_name = client.get('name', 'there').split(' ')[0]
+    rows = [
+        ("Dog", booking.get("dog_name", "—")),
+        ("Service", svc_label),
+        ("Requested dates", _date_range(booking.get("date", ""), booking.get("end_date"))),
+    ]
+    await _dispatch(
+        slug="client_booking_rejected",
+        to_email=to_email,
+        ctx={
+            "first_name": first_name,
+            "client_name": client.get("name", ""),
+            "dog_name": booking.get("dog_name", ""),
+            "service_label": svc_label,
+        },
+        rows=rows,
+        fallback_subject="Your booking request couldn't be approved",
+        fallback_title="Booking request declined",
+        fallback_intro=(
+            f"Hi {first_name} — we're not able to approve this booking request. "
+            f"Reach out to us and we'll help find another time that works."
+        ),
+    )
 
 
 async def _build_report_card_email_body(booking: dict, client: dict, dog: dict | None = None) -> str:

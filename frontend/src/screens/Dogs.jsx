@@ -113,6 +113,7 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
   const [lightbox, setLightbox] = useState({ open: false, photos: [], index: 0 });
   const [dogTrophies, setDogTrophies] = useState({});  // dog_id -> awarded[]
   const [awardPicker, setAwardPicker] = useState(null); // dog object
+  const [requiredVaccines, setRequiredVaccines] = useState(["rabies"]);
 
   const loadTrophies = async (dogList) => {
     // Sprint 110ef — Single batch call instead of N parallel `/dogs/{id}/trophies`
@@ -143,6 +144,16 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
     loadTrophies(d.data);
   };
   useEffect(() => { load(); }, []);
+  // Sprint 110ff — the dog card used to hardcode "Rabies" as the only
+  // vaccine shown, so a dog could show "Rabies: Valid" while missing or
+  // expired on Bordetella/DHPP with zero indication on this screen. Read
+  // whatever the business actually requires instead of assuming rabies-only.
+  useEffect(() => {
+    api.get("/settings").then(r => {
+      const rv = r.data?.required_vaccines;
+      if (Array.isArray(rv) && rv.length) setRequiredVaccines(rv);
+    }).catch(() => {});
+  }, []);
 
   // Sprint 110cm — Search result clicked → scroll-and-flash. Explicit
   // "Open dog profile" buttons (Pipeline/Dashboard/BookingDetail) pass
@@ -277,7 +288,6 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" data-testid="dog-grid">
         {dogs.length === 0 && <div className="col-span-full text-center text-gray-500 text-xs font-black uppercase py-16">No dog records yet.</div>}
         {dogs.map(d => {
-          const v = vaccineStatus(d.vaccines?.rabies);
           const careCount = (d.feeding_schedule?.length || 0) + (d.medications?.length || 0);
           return (
             <div key={d.id} className="card-dog rounded-xl relative group shadow-2xl overflow-hidden" data-testid={`dog-card-${d.id}`}>
@@ -302,9 +312,16 @@ export default function Dogs({ focusId = null, focusMode = "scroll", onConsumed 
                 <div className="mt-3 flex items-center justify-between text-[14px] uppercase font-black tracking-widest">
                   <span className="text-gray-500">{d.sex} • {d.fixed==="Yes"?"Fixed":"Intact"} • {dogAgeLabel(d)}</span>
                 </div>
-                <div className={`mt-3 ${v.bg} ${v.color} rounded p-2 text-[14px] font-black uppercase tracking-widest flex items-center justify-between`}>
-                  <span><i className="fas fa-shield-virus mr-2"/>Rabies: {v.label}</span>
-                  <span>{d.vaccines?.rabies || "—"}</span>
+                <div className="mt-3 space-y-1">
+                  {requiredVaccines.map(vac => {
+                    const v = vaccineStatus(d.vaccines?.[vac]);
+                    return (
+                      <div key={vac} className={`${v.bg} ${v.color} rounded p-2 text-[14px] font-black uppercase tracking-widest flex items-center justify-between`}>
+                        <span><i className="fas fa-shield-virus mr-2"/>{vac}: {v.label}</span>
+                        <span>{d.vaccines?.[vac] || "—"}</span>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5 text-[15px] font-black uppercase tracking-widest">
                   {(d.feeding_schedule?.length > 0) && <span className="bg-shGreen/10 text-shGreen px-2 py-1 rounded"><i className="fas fa-bowl-food mr-1"/>{d.feeding_schedule.length} feedings</span>}

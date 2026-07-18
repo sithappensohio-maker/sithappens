@@ -57,7 +57,7 @@ export default function KennelBoard() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="kennel-board-screen">
       <PageHero
-        eyebrow={{ icon: "fa-paw", text: `${board?.on_site_count || 0} dog${(board?.on_site_count||0)===1?"":"s"} on-site today`, color: "text-shGreen" }}
+        eyebrow={{ icon: "fa-paw", text: `${board?.on_site_count || 0} dog${(board?.on_site_count||0)===1?"":"s"} scheduled today`, color: "text-shGreen" }}
         title="Kennel Board."
         highlight="Where every dog goes."
         subtitle="Assign kennel, room, crate, yard group, or training group at a glance. Warning badges flag what needs attention."
@@ -91,7 +91,7 @@ export default function KennelBoard() {
        (!board || board.on_site_count === 0) ? (
         <div className="card-kennel rounded-xl p-10 text-center" data-testid="kennel-empty">
           <p className="text-shGreen font-black uppercase text-xs tracking-widest">
-            <i className="fas fa-shield-heart mr-2"/>No dogs on-site today. Quiet day for the team!
+            <i className="fas fa-shield-heart mr-2"/>No dogs scheduled today. Quiet day for the team!
           </p>
         </div>
       ) : (

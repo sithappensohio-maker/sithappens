@@ -15,6 +15,7 @@ import BrandFooter from "../components/BrandFooter";
 import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import { todayISO } from "../lib/date";
+import { useConfirm } from "../lib/useConfirm";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -248,6 +249,7 @@ function RosterTab() {
   const [services, setServices] = useState([]);
   const [checkoutFor, setCheckoutFor] = useState(null); // full booking row
   const [cancelFor, setCancelFor] = useState(null);
+  const confirm = useConfirm();
   const load = async () => {
     try { const r = await api.get("/employee/roster-today"); setData(r.data); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -258,30 +260,30 @@ function RosterTab() {
     api.get("/services").then(r => setServices(r.data || [])).catch(() => setServices([]));
   }, []);
 
-  const checkIn = async (bid, row) => {
-    // Sprint 110cn — block check-in if rabies is expired. Staff must
-    // acknowledge before the check-in goes through. Other vaccines warn but
-    // don't block (per most jurisdictions only rabies is legally required).
-    const today = new Date().toISOString().slice(0, 10);
-    const rabies = row?.vaccines?.rabies || "";
-    if (rabies && rabies < today) {
-      const ok = window.confirm(
-        `⚠️ RABIES EXPIRED for ${row.dog_name} (was ${rabies}).\n\nDo NOT check in unless you have a verbal/written ok from the owner. Continue?`
-      );
-      if (!ok) return;
-    } else if (!rabies) {
-      const ok = window.confirm(
-        `⚠️ NO RABIES on file for ${row.dog_name}.\n\nCheck-in anyway? (You're vouching that proof was shown.)`
-      );
-      if (!ok) return;
-    }
+  const checkIn = async (bid, row, vaccineAck = false) => {
     setBusyId(bid); setErr("");
     try {
       const geo = await getGeo();
-      await api.post(`/bookings/${bid}/check-in`, geo);
+      await api.post(`/bookings/${bid}/check-in`, { ...geo, vaccine_ack: vaccineAck });
       await load();
     }
-    catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+    catch (e) {
+      // The server checks every vaccine the business requires (not just
+      // rabies) at the actual moment of check-in and asks staff to
+      // explicitly confirm before proceeding on a warning.
+      const detail = e.response?.data?.detail;
+      if (detail?.code === "vaccine_warning") {
+        const ok = await confirm({
+          title: `Vaccine warning · ${detail.dog_name || row?.dog_name || "this dog"}`,
+          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          confirmText: "Check in anyway",
+          destructive: true,
+        });
+        if (ok) { setBusyId(null); await checkIn(bid, row, true); return; }
+      } else {
+        setErr(formatErr(detail));
+      }
+    }
     finally { setBusyId(null); }
   };
   // Open the same checkout modal admins use — credits, add-ons, payment method,

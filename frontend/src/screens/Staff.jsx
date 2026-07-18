@@ -630,6 +630,7 @@ function Field({ label, value, onChange, type = "text", testid }) {
 }
 
 function TimeClockEditModal({ entry, onClose, onSaved }) {
+  const confirm = useConfirm();
   const [form, setForm] = useState({
     clock_in_at: (entry.clock_in_at || "").slice(0, 16),
     clock_out_at: (entry.clock_out_at || "").slice(0, 16),
@@ -653,7 +654,7 @@ function TimeClockEditModal({ entry, onClose, onSaved }) {
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!window.confirm("Delete this clock entry permanently?")) return;
+    if (!(await confirm({ title: "Delete this clock entry?", body: "This removes it permanently.", confirmText: "Delete", tone: "danger" }))) return;
     setBusy(true);
     try { await api.delete(`/admin/time-clock/${entry.id}`); onSaved(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail)); }
@@ -690,6 +691,7 @@ function TimeClockEditModal({ entry, onClose, onSaved }) {
 const DOW_LABELS = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 
 function ScheduleTab({ employees }) {
+  const confirm = useConfirm();
   const [templates, setTemplates] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [start, setStart] = useState(todayISO());
@@ -762,7 +764,7 @@ function ScheduleTab({ employees }) {
               </span>
               <div className="flex gap-3">
                 <button onClick={()=>setTmplModal({ mode: "edit", tmpl: t })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                <button onClick={async()=>{ if(confirm("Delete template?")){ await api.delete(`/admin/shift-templates/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
+                <button onClick={async()=>{ if(await confirm({ title: "Delete template?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/shift-templates/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
               </div>
             </div>
           ))}
@@ -801,7 +803,7 @@ function ScheduleTab({ employees }) {
                   <span className="text-gray-200">{empName(s.user_id)} · {s.start_time}–{s.end_time}{s.role ? ` · ${s.role}` : ""}{s.source === "template" ? <i className="fas fa-repeat ml-1 text-shGreen text-[10px]"/> : null}</span>
                   <div className="flex gap-3">
                     <button onClick={()=>setShiftModal({ mode: "edit", shift: s })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                    <button onClick={async()=>{ if(confirm("Delete shift?")){ await api.delete(`/admin/shifts/${s.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">×</button>
+                    <button onClick={async()=>{ if(await confirm({ title: "Delete shift?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/shifts/${s.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">×</button>
                   </div>
                 </div>
               ))}
@@ -956,6 +958,7 @@ function ShiftModal({ mode, shift, employees, onClose, onSaved }) {
 }
 
 function TasksTab({ employees }) {
+  const confirm = useConfirm();
   const [tasks, setTasks] = useState([]);
   const [filter, setFilter] = useState("open");
   const [modal, setModal] = useState(null);
@@ -1000,7 +1003,7 @@ function TasksTab({ employees }) {
               </div>
               <div className="flex gap-2">
                 <button onClick={()=>setModal({ mode: "edit", task: t })} className="text-shBlue text-[13px] font-black uppercase">Edit</button>
-                <button onClick={async()=>{ if(confirm("Delete task?")){ await api.delete(`/admin/tasks/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
+                <button onClick={async()=>{ if(await confirm({ title: "Delete task?", confirmText: "Delete", tone: "danger" })){ await api.delete(`/admin/tasks/${t.id}`); load(); }}} className="text-red-400 text-[13px] font-black uppercase">Delete</button>
               </div>
             </div>
           </div>
@@ -1901,6 +1904,7 @@ export function RegisterTab() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(() => {
     try {
       const wanted = localStorage.getItem("sh_register_default_tab");
@@ -1934,6 +1938,7 @@ export function RegisterTab() {
   const [expenseUploadBusy, setExpenseUploadBusy] = useState(false);
   const blankExpense = { description: "", quantity: "1", unit_price: "", amount: "", category: "Cleaning supplies", payment_method: "clover", vendor: "", notes: "", tax_deductible: true, from_cash_drawer: false, recurring: false, recurring_interval: "monthly", receipt_image: "", receipt_filename: "" };
   const [expense, setExpense] = useState(blankExpense);
+  const confirm = useConfirm();
 
   const methodOptions = [
     ["cash", "Cash"], ["check", "Check"], ["venmo", "Venmo"], ["paypal", "PayPal"], ["clover", "Clover / Credit Card"], ["other", "Other"],
@@ -2011,9 +2016,11 @@ export function RegisterTab() {
   const closeoutOverShort = closeoutCountedCash == null || !Number.isFinite(closeoutCountedCash) ? null : closeoutCountedCash - closeoutExpectedCash;
   const showDone = (text) => { setMsg(text); setErr(""); load(); setTimeout(()=>setMsg(""), 5000); };
   const submit = async (fn) => {
-    setErr(""); setMsg("");
+    if (busy) return;
+    setBusy(true); setErr(""); setMsg("");
     try { await fn(); }
     catch (e) { setErr(formatErr(e.response?.data?.detail) || "Register action failed"); }
+    finally { setBusy(false); }
   };
 
   const openDrawer = () => submit(async () => {
@@ -2046,6 +2053,17 @@ export function RegisterTab() {
     showDone("Sale logged in the Register.");
   });
   const submitPackSale = () => submit(async () => {
+    // Sprint 110ff — a typo like $500 instead of $50 used to be accepted
+    // with no warning, quietly turning the difference into prepaid credit.
+    if (packSale.amount_paid !== "" && Number(packSale.amount_paid) - packOrderTotal > 1) {
+      const overage = Number(packSale.amount_paid) - packOrderTotal;
+      const ok = await confirm({
+        title: "Amount paid is higher than the order total",
+        body: `Order total is ${money(packOrderTotal)}, but ${money(packSale.amount_paid)} was entered — ${money(overage)} more. If that's not a typo, the difference becomes prepaid credit on the client's account. Continue?`,
+        confirmText: "Yes, that's correct",
+      });
+      if (!ok) return;
+    }
     const body = {
       items: [{ pack_id: packSale.pack_id, quantity: Math.max(1, Number(packSale.quantity || 1)) }],
       payment_method: packSale.payment_method,
@@ -2086,6 +2104,19 @@ export function RegisterTab() {
     setTillAdjustment({ ...tillAdjustment, amount: "", reason: "", notes: "" });
     showDone(`Till adjustment saved: cash ${tillAdjustment.direction === "add" ? "added" : "removed"}.`);
   });
+  const deleteTillAdjustment = async (a) => {
+    const ok = await confirm({
+      title: "Remove till adjustment?",
+      body: `"${a.description}" (${money(a.amount)}) will be permanently removed. Use this instead of adding an offsetting entry for a typo'd amount.`,
+      confirmText: "Remove",
+      destructive: true,
+    });
+    if (!ok) return;
+    submit(async () => {
+      await api.delete(`/admin/register/till-adjustment/${a.id}`);
+      showDone("Till adjustment removed.");
+    });
+  };
   const submitExpense = () => submit(async () => {
     const qty = Math.max(1, Number(expense.quantity || 1));
     const unitPrice = Number(expense.unit_price || 0);
@@ -2243,9 +2274,9 @@ export function RegisterTab() {
           <div className="flex flex-col sm:flex-row gap-2">
             <input value={reopenReason} onChange={e=>setReopenReason(e.target.value)} placeholder="Reason for reopening · required"
                    className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-white text-sm"/>
-            <button onClick={reopenDay} disabled={reopenReason.trim().length < 3}
+            <button onClick={reopenDay} disabled={busy || reopenReason.trim().length < 3}
                     className="bg-shOrange text-bgHeader px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
-              <i className="fas fa-lock-open mr-1"/>Reopen Day
+              <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock-open"} mr-1`}/>{busy ? "Reopening…" : "Reopen Day"}
             </button>
           </div>
         </div>
@@ -2281,7 +2312,7 @@ export function RegisterTab() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
                 <RegisterFormInput label="Opening cash" type="number" step="0.01" value={openingCash} onChange={v=>{setOpeningCash(v); setOpeningOverrideReason("");}}/>
                 <RegisterFormInput label="Note" value={notes} onChange={setNotes} placeholder="optional"/>
-                <button onClick={openDrawer} disabled={data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock-open mr-1"/>Set opening</button>
+                <button onClick={openDrawer} disabled={busy || data?.register_closed || (openingOverride && openingOverrideReason.trim().length < 3)} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock-open"} mr-1`}/>{busy ? "Saving…" : "Set opening"}</button>
               </div>
               {openingOverride && (
                 <div className="mt-3 bg-shOrange/10 border border-shOrange/40 rounded-lg p-3">
@@ -2336,7 +2367,13 @@ export function RegisterTab() {
                     <p className="text-white font-black">{a.label} <span className="text-gray-500 font-normal">· {a.description}</span></p>
                     <p className="text-[12px] text-gray-500">{a.client_name || "—"} · {a.payment_method || "other"}</p>
                   </div>
-                  <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shGreen"}`}>{money(a.amount)}</p>
+                  <div className="flex items-center gap-3">
+                    <p className={`font-black ${Number(a.amount || 0) < 0 ? "text-red-300" : "text-shGreen"}`}>{money(a.amount)}</p>
+                    {a.kind === "till_adjustment" && a.id && (
+                      <button onClick={()=>deleteTillAdjustment(a)} disabled={busy} title="Remove this till adjustment"
+                              className="text-gray-500 hover:text-red-400 disabled:opacity-50 px-1"><i className="fas fa-trash"/></button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -2362,7 +2399,7 @@ export function RegisterTab() {
           <span className="block text-[11px] text-gray-500 mt-1">For items, enter quantity and price each. For a one-off service/deposit, you can just enter Amount collected.</span>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!sale.apply_tax} onChange={e=>setSale({...sale, apply_tax:e.target.checked})}/> Apply configured retail sales tax to this total</label>
-        <button disabled={!sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log sale</button>
+        <button disabled={busy || !sale.description || !Number(saleLineTotal)} onClick={submitSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log sale"}</button>
       </div>}
 
       {active === "pack" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2382,7 +2419,7 @@ export function RegisterTab() {
           <div><span className="font-black text-white">Order total:</span> {packQty} × {money(selectedPack.price)} = {money(packOrderTotal)}</div>
           <div className="text-[11px] text-gray-500">Leave amount paid blank for full payment, or enter partial payment to put the rest on the client balance.</div>
         </div>}
-        <button disabled={!packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Sell credit order</button>
+        <button disabled={busy || !packSale.client_id || !packSale.pack_id || !packQty} onClick={submitPackSale} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Sell credit order"}</button>
       </div>}
 
       {active === "payment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2395,7 +2432,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Notes" value={payment.notes} onChange={v=>setPayment({...payment, notes:v})} placeholder="Balance payment, deposit, etc."/>
         </div>
         {selectedClient(payment.client_id) && <p className="text-[12px] text-gray-400">Current balance for {selectedClient(payment.client_id).name}: <span className="font-black text-white">{money(selectedClient(payment.client_id).account_balance)}</span></p>}
-        <button disabled={!payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record payment</button>
+        <button disabled={busy || !payment.client_id || !Number(payment.amount)} onClick={submitPayment} className="bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record payment"}</button>
       </div>}
 
       {active === "refund" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2408,7 +2445,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Reason" value={refund.reason} onChange={v=>setRefund({...refund, reason:v})} placeholder="Cancellation refund, overcharge, etc."/>
           <RegisterFormInput label="Notes" value={refund.notes} onChange={v=>setRefund({...refund, notes:v})}/>
         </div>
-        <button disabled={!Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Record refund</button>
+        <button disabled={busy || !Number(refund.amount) || !refund.reason} onClick={submitRefund} className="bg-red-500 disabled:opacity-50 text-white px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Record refund"}</button>
       </div>}
 
       {active === "adjustment" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-till-adjustment-tab">
@@ -2436,7 +2473,7 @@ export function RegisterTab() {
           <i className={`fas ${tillAdjustment.direction === "add" ? "fa-plus" : "fa-minus"} mr-2`}/>
           This will {tillAdjustment.direction === "add" ? "increase" : "decrease"} expected drawer cash by <strong>{money(tillAdjustment.amount)}</strong>. It will not change sales income or business expenses.
         </div>
-        <button disabled={!Number(tillAdjustment.amount) || !tillAdjustment.reason.trim()} onClick={submitTillAdjustment} className={`${tillAdjustment.direction === "add" ? "bg-shGreen" : "bg-shOrange"} disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest`} data-testid="save-till-adjustment"><i className="fas fa-save mr-1"/>Save till adjustment</button>
+        <button disabled={busy || !Number(tillAdjustment.amount) || !tillAdjustment.reason.trim()} onClick={submitTillAdjustment} className={`${tillAdjustment.direction === "add" ? "bg-shGreen" : "bg-shOrange"} disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest`} data-testid="save-till-adjustment"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-save"} mr-1`}/>{busy ? "Saving…" : "Save till adjustment"}</button>
       </div>}
 
       {active === "payout" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-3">
@@ -2450,7 +2487,7 @@ export function RegisterTab() {
           <RegisterFormInput label="Notes" value={payout.notes} onChange={v=>setPayout({...payout, notes:v})}/>
         </div>
         <label className="flex items-center gap-2 text-[12px] text-gray-300"><input type="checkbox" checked={!!payout.tax_deductible} onChange={e=>setPayout({...payout, tax_deductible:e.target.checked})}/> Mark as tax deductible</label>
-        <button disabled={!Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log cash payout</button>
+        <button disabled={busy || !Number(payout.amount) || !payout.description} onClick={submitPayout} className="bg-shOrange disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log cash payout"}</button>
       </div>}
 
       {active === "expenses" && <div className="bg-bgPanel border border-bgHover rounded-xl p-4 space-y-4" data-testid="register-expenses-tab">
@@ -2499,7 +2536,7 @@ export function RegisterTab() {
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-[13px] text-gray-400">Expense total: <span className="text-white font-black">{money(expenseLineTotal)}</span>{expense.from_cash_drawer && <span className="text-shOrange font-black ml-2">will reduce expected cash drawer</span>}</div>
-          <button disabled={!expense.description || !Number(expenseLineTotal)} onClick={submitExpense} className="bg-red-500/20 disabled:opacity-50 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Log expense</button>
+          <button disabled={busy || !expense.description || !Number(expenseLineTotal)} onClick={submitExpense} className="bg-red-500/20 disabled:opacity-50 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-check"} mr-1`}/>{busy ? "Saving…" : "Log expense"}</button>
         </div>
         <div className="bg-bgBase/70 border border-bgHover rounded-xl p-4">
           <h5 className="text-white font-black uppercase italic mb-2"><i className="fas fa-list text-shGreen mr-2"/>Expenses for {date}</h5>
@@ -2555,7 +2592,7 @@ export function RegisterTab() {
                 <AuditTile label="Over / short" value={closeoutOverShort}/>
               </div>
               <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3 text-center"><p className="text-[10px] font-black uppercase tracking-widest text-shGreen">Opening next business day</p><p className="text-2xl text-white font-black">{money(closeoutCountedCash)}</p></div>
-              <div className="flex flex-col sm:flex-row gap-2"><button onClick={()=>setCloseoutReview(false)} className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest">Go back</button><button onClick={submitCloseout} className="flex-1 bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className="fas fa-lock mr-1"/>Confirm & carry {money(closeoutCountedCash)} forward</button></div>
+              <div className="flex flex-col sm:flex-row gap-2"><button onClick={()=>setCloseoutReview(false)} disabled={busy} className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">Go back</button><button onClick={submitCloseout} disabled={busy} className="flex-1 bg-shGreen disabled:opacity-50 text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest"><i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-lock"} mr-1`}/>{busy ? "Saving…" : `Confirm & carry ${money(closeoutCountedCash)} forward`}</button></div>
             </div>
           )}
         </>)}

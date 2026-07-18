@@ -88,7 +88,10 @@ export default function Bookings() {
   };
 
   const approve = async (id) => { try { await api.post(`/bookings/${id}/approve`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); } };
-  const reject = async (id) => { try { await api.post(`/bookings/${id}/reject`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); } };
+  const reject = async (id) => {
+    if (!(await confirm({ title: "Reject booking?", body: "This immediately declines the request. The client is not automatically notified — follow up with them directly if needed.", confirmText: "Reject", cancelText: "Keep it", tone: "danger" }))) return;
+    try { await api.post(`/bookings/${id}/reject`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }
+  };
   const cancel = async (id) => {
     if (!(await confirm({ title: "Cancel booking?", body: "This will remove the booking. Credits aren't charged until check-out.", confirmText: "Cancel booking", cancelText: "Keep it", tone: "danger" }))) return;
     try { await api.delete(`/bookings/${id}`); load(); } catch (e) { setErr(formatErr(e.response?.data?.detail)); }

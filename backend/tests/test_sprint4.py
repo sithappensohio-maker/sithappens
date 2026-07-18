@@ -305,16 +305,19 @@ class TestIncidents:
             assert all(i["dog_id"] == dog1["id"] for i in f1)
             assert any(i["id"] == inc1["id"] for i in f1)
 
-            # PUT update
+            # PUT update — edit_reason is now required so a quietly
+            # downgraded severity can't look identical to a typo fix.
             upd = requests.put(f"{BASE_URL}/api/incidents/{inc1['id']}",
                                json={"dog_id": dog1["id"], "date": "2026-01-15",
                                      "type": "bite", "severity": "severe",
                                      "description": "Updated description",
-                                     "vet_required": True},
+                                     "vet_required": True,
+                                     "edit_reason": "Vet visit confirmed severity"},
                                headers=_h(admin_token), timeout=TIMEOUT)
             assert upd.status_code == 200
             assert upd.json()["severity"] == "severe"
             assert upd.json()["vet_required"] is True
+            assert upd.json()["edit_history"][-1]["reason"] == "Vet visit confirmed severity"
 
             # DELETE
             d = requests.delete(f"{BASE_URL}/api/incidents/{inc1['id']}",

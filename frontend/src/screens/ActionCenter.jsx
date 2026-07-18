@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
+import { useConfirm } from "../lib/useConfirm";
 
 const META = {
   urgent: { label: "Urgent", border: "border-red-500/40", bg: "bg-red-500/10", text: "text-red-300", icon: "fa-triangle-exclamation" },
@@ -8,6 +9,7 @@ const META = {
 };
 
 export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
+  const confirm = useConfirm();
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("all");
@@ -37,7 +39,7 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
   };
 
   const clearAll = async () => {
-    if (!window.confirm("Hide every current Action Center item? Anything that changes will come back automatically.")) return;
+    if (!(await confirm({ title: "Hide every current item?", body: "Anything that changes will come back automatically.", confirmText: "Hide all", tone: "warning" }))) return;
     setBusy(true);
     try { await api.post("/admin/today-brain/clear-all"); await load(); }
     finally { setBusy(false); }

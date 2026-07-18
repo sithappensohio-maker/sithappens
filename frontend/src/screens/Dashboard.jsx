@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../lib/api";
+import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import AdminBookingModal from "../components/AdminBookingModal";
 import HelpRequestsTile from "../components/HelpRequestsTile";
@@ -150,10 +150,10 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 30000 },
     );
   });
-  const checkIn = async (id) => {
+  const checkIn = async (id, vaccineAck = false) => {
     try {
       const geo = await captureGeo();
-      await api.post(`/bookings/${id}/check-in`, geo);
+      await api.post(`/bookings/${id}/check-in`, { ...geo, vaccine_ack: vaccineAck });
       // Sprint 110di-69 — if this booking is for a training service AND the dog
       // has an active training enrollment, open the Training Tracker directly.
       try {
@@ -164,19 +164,41 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         }
       } catch { /* training context is best-effort */ }
       load();
-    } catch { /* silent — geo errors are non-fatal */ }
+    } catch (e) {
+      // The server re-checks vaccines at the actual moment of check-in (a
+      // booking can be weeks old, so a vaccine valid at booking time may
+      // have since expired) and asks for explicit staff acknowledgement —
+      // this used to be a silent no-op error on this screen.
+      const detail = e.response?.data?.detail;
+      if (detail?.code === "vaccine_warning") {
+        const ok = await confirm({
+          title: `Vaccine warning · ${detail.dog_name || "this dog"}`,
+          body: `${detail.message} Do not check in unless you have a verbal/written OK from the owner. Continue?`,
+          confirmText: "Check in anyway",
+          destructive: true,
+        });
+        if (ok) await checkIn(id, true);
+        return;
+      }
+      toast.error(formatErr(detail) || "Check-in failed");
+    }
   };
 
   const approveVax = async (v) => {
     try {
       await api.post(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}/review`);
       setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
-    } catch {}
+    } catch (e) {
+      // The server can legitimately reject an approval (e.g. an uploaded
+      // cert with no expiry date) — this used to fail with no feedback at
+      // all, leaving the item stuck in the queue with no explanation.
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't approve this vaccine cert.");
+    }
   };
   const rejectVax = async (v) => {
     const ok = await confirm({
       title: `Reject ${v.vaccine.toUpperCase()} cert?`,
-      body: `This will remove the upload AND clear ${v.dog_name}'s ${v.vaccine} expiry. The client will need to reupload before they can book.`,
+      body: `This will remove the upload. ${v.dog_name}'s current ${v.vaccine} expiry on file will only be cleared if it exactly matches this pending upload — an older, already-approved date is kept. The client will need to reupload before they can book.`,
       confirmText: "Reject",
       destructive: true,
     });
@@ -184,7 +206,9 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
     try {
       await api.delete(`/admin/dogs/${v.dog_id}/vaccine-cert/${v.vaccine}`);
       setPendingVax(prev => prev.filter(x => !(x.dog_id===v.dog_id && x.vaccine===v.vaccine)));
-    } catch (e) { console.warn("rejectVax failed:", e); }
+    } catch (e) {
+      toast.error(formatErr(e.response?.data?.detail) || "Couldn't reject this vaccine cert.");
+    }
   };
 
   const { pulling, progress } = usePullToRefresh("[data-scroll-root]", load);
