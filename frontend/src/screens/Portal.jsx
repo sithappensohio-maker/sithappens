@@ -1157,6 +1157,7 @@ export default function Portal() {
           showCredits={sectionOn("credits")}
           showRewards={sectionOn("trivia_rewards") && feat.rewards}
           showUpload={sectionOn("vaccines_compliance")}
+          showReferral={feat.rewards && !!referralCode}
           onSetup={() => document.querySelector('[data-testid="portal-setup-checklist"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
           onMessages={() => setMessagesOpen(true)}
           onBookings={() => {
@@ -1170,6 +1171,7 @@ export default function Portal() {
           onHomework={() => document.getElementById("portal-homework-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })}
           onCredits={() => document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
           onRewards={() => document.querySelector('[data-testid="portal-trophies-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          onRefer={() => setShowReferModal(true)}
           onBook={() => {
             if (dogs.length === 0) setDogModal({ open: true, dog: null });
             else openBookingIfReady();

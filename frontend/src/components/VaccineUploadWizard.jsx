@@ -220,10 +220,25 @@ export default function VaccineUploadWizard({ queue = [], onClose = () => {}, on
             <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">
               Photo/PDF of {label} certificate <span className="text-shOrange">*</span>
             </label>
-            <input type="file" accept="image/*,application/pdf" onChange={handleFile}
-                   data-testid="vaccine-wizard-photo"
-                   className="block w-full text-[12px] text-gray-300 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-[11px] file:font-black file:uppercase file:tracking-widest file:bg-shBlue/15 file:text-shBlue hover:file:bg-shBlue/25"/>
-            <p className="text-[11px] text-gray-500 mt-1"><i className="fas fa-circle-info mr-1"/>Use a clear photo of the vet paperwork. PDFs are okay.</p>
+            {/* Sprint 110ff — a generic file picker made most phones show a
+                "browse files" screen instead of just opening the camera,
+                which is extra friction for the common case (snap the vet
+                paperwork right now). A dedicated camera-capture button is
+                the primary action; picking an existing photo/PDF is still
+                available as a secondary option. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex items-center gap-2 bg-shBlue text-bgHeader px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest cursor-pointer hover:bg-shBlue/90 transition">
+                <i className="fas fa-camera"/>Take Photo
+                <input type="file" accept="image/*" capture="environment" onChange={handleFile}
+                       data-testid="vaccine-wizard-camera" className="hidden"/>
+              </label>
+              <label className="inline-flex items-center gap-2 bg-bgBase border border-bgHover text-gray-300 px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest cursor-pointer hover:text-white hover:border-shBlue/40 transition">
+                <i className="fas fa-paperclip"/>Choose File / PDF
+                <input type="file" accept="image/*,application/pdf" onChange={handleFile}
+                       data-testid="vaccine-wizard-photo" className="hidden"/>
+              </label>
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1.5"><i className="fas fa-circle-info mr-1"/>Use a clear photo of the vet paperwork, or attach a PDF.</p>
             {photo && <p className="text-[11px] text-shGreen mt-1"><i className="fas fa-check mr-1"/>File attached for {label}</p>}
           </div>
 

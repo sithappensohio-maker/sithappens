@@ -204,13 +204,24 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">
                           Certificate photo/PDF required
                         </label>
-                        <label className="inline-flex items-center gap-2 cursor-pointer bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
-                          <i className="fas fa-camera"/> Add photos
-                          <input type="file" accept="image/*,application/pdf" multiple
-                                 onChange={(e)=>onAddPhotos(v.key, e)}
-                                 data-testid={`vquick-photos-${v.key}`}
-                                 className="hidden"/>
-                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {/* Sprint 110ff — camera-first: tap to snap the vet
+                              paperwork directly instead of browsing files first. */}
+                          <label className="inline-flex items-center gap-2 cursor-pointer bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
+                            <i className="fas fa-camera"/> Take Photo
+                            <input type="file" accept="image/*" capture="environment"
+                                   onChange={(e)=>onAddPhotos(v.key, e)}
+                                   data-testid={`vquick-camera-${v.key}`}
+                                   className="hidden"/>
+                          </label>
+                          <label className="inline-flex items-center gap-2 cursor-pointer bg-bgBase border border-bgHover text-gray-300 hover:text-white hover:border-shBlue/40 text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded transition">
+                            <i className="fas fa-paperclip"/> Choose Files
+                            <input type="file" accept="image/*,application/pdf" multiple
+                                   onChange={(e)=>onAddPhotos(v.key, e)}
+                                   data-testid={`vquick-photos-${v.key}`}
+                                   className="hidden"/>
+                          </label>
+                        </div>
                       </div>
                     </div>
 

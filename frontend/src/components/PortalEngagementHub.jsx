@@ -308,8 +308,9 @@ export default function PortalEngagementHub({
   dogs = [], bookings = [], homework = [], trophies = { client_trophies: [], dog_trophies: [] },
   setupStatus, messagesUnread = 0, credits = 0, trainingCredits = 0, boardingCredits = 0,
   showMessages = true, showHomework = true, showCredits = true, showRewards = true, showUpload = true,
+  showReferral = false,
   onSetup, onMessages, onBookings, onReportCards, onHomework, onCredits, onRewards, onBook,
-  onUpload, onHelp, onDogOpen,
+  onUpload, onHelp, onDogOpen, onRefer,
 }) {
   const priority = useMemo(() => buildPortalPriority({
     dogs, bookings, homework, messagesUnread, setupStatus, credits, trainingCredits, boardingCredits,
@@ -320,7 +321,8 @@ export default function PortalEngagementHub({
   const activity = useMemo(() => buildPortalActivity({ bookings: portalBookings, dogs, homework: showHomework ? homework : [], trophies: showRewards ? trophies : { client_trophies: [], dog_trophies: [] } }), [portalBookings, dogs, homework, trophies, showHomework, showRewards]);
   const dogSnapshots = useMemo(() => dogs.map((dog) => getDogPortalSnapshot(dog, portalBookings, showHomework ? homework : [])), [dogs, portalBookings, homework, showHomework]);
   const tone = TONES[priority.tone] || TONES.green;
-  const actionCount = 1 + (showMessages ? 1 : 0) + (showUpload ? 1 : 0) + (showCredits ? 1 : 0) + (onHelp ? 1 : 0);
+  const actionCount = 1 + (showMessages ? 1 : 0) + (showUpload ? 1 : 0) + (showCredits ? 1 : 0)
+    + (showRewards ? 1 : 0) + (showReferral ? 1 : 0) + (onHelp ? 1 : 0);
   const actions = { onSetup, onMessages, onBookings, onReportCards, onHomework, onCredits, onRewards, onBook };
 
   return (
@@ -393,6 +395,12 @@ export default function PortalEngagementHub({
             {showMessages && <ActionButton icon="fa-comments" label="Message Us" onClick={onMessages} tone="blue" badge={messagesUnread} testid="portal-action-messages"/>}
             {showUpload && <ActionButton icon="fa-file-arrow-up" label="Upload Records" onClick={onUpload} tone="orange" testid="portal-action-upload"/>}
             {showCredits && <ActionButton icon="fa-wallet" label="Credits" onClick={onCredits} tone="purple" testid="portal-action-credits"/>}
+            {/* Sprint 110ff — Rewards and Refer-a-Friend were already wired
+                through as props (used by the priority card + activity feed)
+                but never actually got a button here, so they had no real
+                entry point on the page a client would ever see. */}
+            {showRewards && <ActionButton icon="fa-trophy" label="Rewards" onClick={onRewards} tone="purple" testid="portal-action-rewards"/>}
+            {showReferral && <ActionButton icon="fa-gift" label="Refer a Friend" onClick={onRefer} tone="orange" testid="portal-action-refer"/>}
             {onHelp && <ActionButton icon="fa-circle-question" label="Get Help" onClick={onHelp} tone="gray" testid="portal-action-help" wide={actionCount % 2 === 1}/>}
           </div>
         </div>
