@@ -125,9 +125,14 @@ export default function Staff() {
           ["corrections", "Corrections", "fa-clock-rotate-left"],
           ["training", "Training", "fa-clipboard-user"],
         ].map(([k, label, icon]) => (
-          <button key={k} onClick={()=>setSubtab(k)} data-testid={`staff-subtab-${k}`}
+          <button key={k}
+                  onClick={() => k === "register"
+                    ? window.dispatchEvent(new CustomEvent("sh:nav", { detail: "pos" }))
+                    : setSubtab(k)}
+                  data-testid={`staff-subtab-${k}`}
+                  title={k === "register" ? "Opens the Front Desk screen — Register now lives there" : undefined}
                   className={`shrink-0 px-3 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 transition ${subtab===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`}>
-            <i className={`fas ${icon} mr-1.5`}/>{label}
+            <i className={`fas ${icon} mr-1.5`}/>{label}{k === "register" && <i className="fas fa-arrow-up-right-from-square ml-1.5 text-[10px]"/>}
           </button>
         ))}
       </div>
@@ -304,7 +309,6 @@ export default function Staff() {
       {subtab === "taxes" && <TaxEstimatorTab />}
       {subtab === "quarterly" && <QuarterlyTaxTab />}
       {subtab === "money" && <MoneyAuditTab />}
-      {subtab === "register" && <RegisterTab />}
       {subtab === "timeoff" && <TimeOffAdminTab />}
       {subtab === "corrections" && <PunchCorrectionsAdminTab />}
       {subtab === "training" && <TrainerScorecardTab />}
@@ -1898,7 +1902,8 @@ function CountTile({ label, value = 0, color = "text-white" }) {
 
 
 // ─── Register / POS / Cash Drawer ─────────────────────────────────────────
-export function RegisterTab() {
+export function RegisterTab({ excludeTabs = [] } = {}) {
+  const excluded = (k) => excludeTabs.includes(k);
   const [date, setDate] = useState(todayISO());
   const [liveToday, setLiveToday] = useState(todayISO());
   const [data, setData] = useState(null);
@@ -1910,7 +1915,7 @@ export function RegisterTab() {
       const wanted = localStorage.getItem("sh_register_default_tab");
       if (wanted) {
         localStorage.removeItem("sh_register_default_tab");
-        return wanted;
+        if (!excluded(wanted)) return wanted;
       }
     } catch { /* ignore */ }
     return "overview";
@@ -2262,7 +2267,8 @@ export function RegisterTab() {
         {[
           ["overview", "Today", "fa-chart-pie"], ["sale", "New Sale", "fa-cart-plus"], ["pack", "Sell Credits", "fa-ticket"],
           ["payment", "Record Payment", "fa-hand-holding-dollar"], ["refund", "Refund", "fa-rotate-left"], ["adjustment", "Till Adjustment", "fa-scale-balanced"], ["payout", "Cash Expense", "fa-money-bill-transfer"], ["expenses", "Expenses", "fa-receipt"], ["closeout", "Close Day", "fa-clipboard-check"], ["reports", "Reports", "fa-file-csv"],
-        ].map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
+        ].filter(([k]) => !excludeTabs.includes(k))
+         .map(([k,l,i]) => <button key={k} onClick={()=>setActive(k)} className={`shrink-0 px-3 py-2 text-[12px] font-black uppercase tracking-widest border-b-2 ${active===k ? "border-shGreen text-shGreen" : "border-transparent text-gray-400 hover:text-white"}`} data-testid={`register-mode-${k}`}><i className={`fas ${i} mr-1.5`}/>{l}</button>)}
       </div>
 
       {data?.register_closed && (

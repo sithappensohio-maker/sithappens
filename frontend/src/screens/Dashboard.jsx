@@ -768,15 +768,17 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
 
 
 function RegisterDashboardCard({ data, onNavigate }) {
+  // Sprint — Money Hub consolidation. This card is now a SUMMARY only —
+  // every operational money action (new sale, sell credits, record payment,
+  // expenses, cash payout, close day) lives in Front Desk. Duplicating those
+  // as quick-action buttons here is exactly the scattered-UI problem the
+  // consolidation pass removes; this card's only job is "here's where things
+  // stand" plus one strong way in.
   const money = (n) => `$${Number(n || 0).toFixed(2)}`;
   const totals = data?.totals || {};
-  const incoming = data?.incoming_by_method || {};
-  const openRegister = (tab = "overview") => {
-    try { localStorage.setItem("sh_register_default_tab", tab); } catch { /* ignore */ }
-    onNavigate("register");
-  };
   const collected = Number(totals.net_incoming || totals.incoming_total || 0);
   const expectedCash = Number(totals.expected_cash || 0);
+  const registerOpen = !!data?.drawer_session && !data?.register_closed;
   return (
     <div className="relative overflow-hidden rounded-2xl border border-shGreen/40 bg-gradient-to-br from-bgPanel via-bgBase to-bgPanel p-5 shadow-xl" data-testid="dashboard-register-card">
       <div className="absolute inset-0 pointer-events-none opacity-30"
@@ -784,35 +786,22 @@ function RegisterDashboardCard({ data, onNavigate }) {
       <div className="relative flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
           <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
-            <i className="fas fa-cash-register mr-2"/>Today's Register
+            <i className="fas fa-cash-register mr-2"/>Today's Sales
           </p>
           <h3 className="text-2xl sm:text-3xl font-black text-white uppercase italic tracking-tight" data-testid="dashboard-register-total">
             {money(collected)} <span className="text-[13px] text-gray-500 not-italic uppercase tracking-widest">net incoming</span>
           </h3>
           <p className="text-[13px] text-gray-400 mt-1">
             Expected drawer: <span className="font-black text-shGreen" data-testid="dashboard-register-cash">{money(expectedCash)}</span>
+            <span className="mx-2 text-gray-600">·</span>
+            Register: <span className={`font-black ${registerOpen ? "text-shGreen" : "text-shOrange"}`}>{registerOpen ? "Open" : "Closed"}</span>
           </p>
         </div>
-        <button onClick={()=>openRegister("overview")}
+        <button onClick={()=>onNavigate("pos")}
                 data-testid="dashboard-open-register"
                 className="bg-shGreen text-bgHeader px-4 py-2 rounded-lg text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 transition">
-          Open Register <i className="fas fa-arrow-right ml-1"/>
+          Open Front Desk <i className="fas fa-arrow-right ml-1"/>
         </button>
-      </div>
-      <div className="relative grid grid-cols-2 md:grid-cols-5 gap-2 mt-4">
-        <RegisterMiniTile label="Cash" value={incoming.cash} icon="fa-money-bill-wave" />
-        <RegisterMiniTile label="Clover" value={incoming.clover} icon="fa-credit-card" />
-        <RegisterMiniTile label="Venmo" value={incoming.venmo} icon="fa-mobile-screen" />
-        <RegisterMiniTile label="PayPal" value={incoming.paypal} icon="fa-p" />
-        <RegisterMiniTile label="Checks" value={incoming.check} icon="fa-money-check" />
-      </div>
-      <div className="relative flex flex-wrap gap-2 mt-4">
-        <QuickRegisterButton label="New Sale" icon="fa-plus" onClick={()=>openRegister("sale")} />
-        <QuickRegisterButton label="Sell Credits" icon="fa-ticket" onClick={()=>openRegister("pack")} />
-        <QuickRegisterButton label="Record Payment" icon="fa-hand-holding-dollar" onClick={()=>openRegister("payment")} />
-        <QuickRegisterButton label="Expenses" icon="fa-receipt" onClick={()=>openRegister("expenses")} />
-        <QuickRegisterButton label="Cash Payout" icon="fa-right-left" onClick={()=>openRegister("payout")} />
-        <QuickRegisterButton label="Close Day" icon="fa-clipboard-check" onClick={()=>openRegister("closeout")} />
       </div>
       {data?.closeout && (
         <p className="relative mt-3 text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="dashboard-register-closeout-saved">
@@ -820,25 +809,6 @@ function RegisterDashboardCard({ data, onNavigate }) {
         </p>
       )}
     </div>
-  );
-}
-
-function RegisterMiniTile({ label, value, icon }) {
-  return (
-    <div className="bg-bgBase/70 border border-bgHover rounded-xl p-3" data-testid={`dashboard-register-${label.toLowerCase().replace(/\s+/g, "-")}`}>
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 text-shBlue`}/>{label}</p>
-      <p className="text-lg font-black text-white mt-1">${Number(value || 0).toFixed(2)}</p>
-    </div>
-  );
-}
-
-function QuickRegisterButton({ label, icon, onClick }) {
-  return (
-    <button onClick={onClick}
-            className="bg-bgBase border border-bgHover hover:border-shGreen hover:text-shGreen text-gray-300 px-3 py-2 rounded-lg text-[11px] font-black uppercase tracking-widest transition"
-            data-testid={`dashboard-register-action-${label.toLowerCase().replace(/\s+/g, "-")}`}>
-      <i className={`fas ${icon} mr-1.5`}/>{label}
-    </button>
   );
 }
 

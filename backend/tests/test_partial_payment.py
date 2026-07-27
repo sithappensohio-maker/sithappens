@@ -29,7 +29,12 @@ def admin_headers():
                       json={"email": "admin@sithappens.com", "password": "admin123"},
                       timeout=15)
     assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['token']}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {r.json()['token']}", "Content-Type": "application/json"}
+    # Payment rebuild Phase 2 — cash checkout/top-ups now require today's
+    # cash drawer to actually be open. Idempotent to call even if already open.
+    requests.post(f"{BASE}/api/admin/register/open-drawer", headers=headers,
+                  json={"opening_cash": 100.0}, timeout=15)
+    return headers
 
 
 @pytest.fixture(scope="function")
@@ -59,7 +64,14 @@ def _create_and_checkin(admin_headers, client, dog, base_price=100.0):
     """Helper — create a daycare booking, check it in, return booking id."""
     br = requests.post(f"{BASE}/api/bookings", headers=admin_headers,
                        json={"client_id": client["id"], "dog_id": dog["id"],
-                             "date": TOMORROW, "service_type": "daycare"},
+                             "date": TOMORROW, "service_type": "daycare",
+                             # override_capacity: this shared, long-lived test DB
+                             # accumulates real daycare bookings from many other
+                             # test files using the same date offset convention,
+                             # so capacity can already be exhausted by unrelated
+                             # prior runs — test-data isolation, not a production
+                             # rule change.
+                             "override_capacity": True},
                        timeout=15)
     assert br.status_code == 200, br.text
     bid = br.json()["id"]
@@ -139,20 +151,37 @@ def test_ledger_shows_rows_newest_first(admin_headers, fresh_client_and_dog):
 
 
 def test_apply_tab_payment_reduces_balance(admin_headers, fresh_client_and_dog):
-    """POST /clients/{id}/payment reduces account_balance."""
+    """POST /clients/{id}/payment reduces account_balance for LEGACY/
+    non-invoice-backed AR. This checkout leaves an explicit amount_paid,
+    which (Payment rebuild Phase 2) posts the balance to an invoice-backed
+    AR entry — POST /clients/{id}/payment now deliberately refuses to
+    settle that (it would leave the invoice stale and double-collectible);
+    settling it goes through POST /invoices/{invoice_id}/payments instead.
+    See test_invoice_topup_payments.py::
+    test_apply_tab_payment_allowed_for_legacy_ar_with_non_ar_backed_invoice
+    for the still-supported legacy/non-invoice-backed AR case."""
     client, dog = fresh_client_and_dog
     bid = _create_and_checkin(admin_headers, client, dog)
     requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
                   json={"use_credits": False, "base_price": 100.0,
                         "amount_paid": 0.0, "payment_method": "cash"},
                   timeout=15)
-    # balance should be 100 owed
-    pr = requests.post(f"{BASE}/api/clients/{client['id']}/payment",
+    # balance should be 100 owed, and it's AR-backed (explicit amount_paid
+    # was sent at checkout) -> generic tab payment must refuse it.
+    blocked = requests.post(f"{BASE}/api/clients/{client['id']}/payment",
+                            headers=admin_headers,
+                            json={"amount": 60.0, "method": "cash", "tendered_amount": 60.0, "notes": "Settling tab"},
+                            timeout=15)
+    assert blocked.status_code == 409, blocked.text
+
+    invoice = requests.get(f"{BASE}/api/bookings/{bid}/invoice", headers=admin_headers, timeout=15).json()
+    pr = requests.post(f"{BASE}/api/invoices/{invoice['id']}/payments",
                        headers=admin_headers,
-                       json={"amount": 60.0, "method": "cash", "notes": "Settling tab"},
+                       json={"amount": 60.0, "method": "cash", "tendered_amount": 60.0,
+                             "notes": "Settling tab", "idempotency_key": uuid.uuid4().hex},
                        timeout=15)
     assert pr.status_code == 200, pr.text
-    assert abs(pr.json()["balance"] - 40.0) < 0.01
+    assert abs(pr.json()["invoice"]["balance"] - 40.0) < 0.01
 
 
 def test_apply_tab_adjustment_writeoff(admin_headers, fresh_client_and_dog):

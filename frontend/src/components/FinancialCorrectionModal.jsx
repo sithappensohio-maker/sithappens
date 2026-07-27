@@ -14,6 +14,13 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
   const [method, setMethod] = useState(booking?.payment_method || "clover");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Payment rebuild Phase 1 — one stable key per modal-open, so a double-
+  // click or network retry of the same refund resolves to the original
+  // result instead of creating a second real refund. Not regenerated on
+  // every submit attempt within this same modal session.
+  const [refundIdempotencyKey] = useState(() => (
+    window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  ));
 
   const paidCash = Number(booking?.amount_paid || 0) > 0
     ? Number(booking.amount_paid)
@@ -36,6 +43,7 @@ export default function FinancialCorrectionModal({ booking, onClose, onSaved }) 
       if (action === "refund") {
         response = await api.post(`/bookings/${booking.id}/refund`, {
           amount: Number(amount), payment_method: method, reason: reason.trim(),
+          refund_idempotency_key: refundIdempotencyKey,
         });
       } else if (action === "reopen") {
         response = await api.post(`/bookings/${booking.id}/reopen-checkout`, { reason: reason.trim() });
