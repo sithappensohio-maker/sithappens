@@ -238,15 +238,27 @@ def _write_device(data: bytes):
         f.flush()
 
 
+# Cloudflare (or similar edge WAFs) blocks Python's default urllib User-Agent
+# ("Python-urllib/3.x") as a known bot signature before the request ever
+# reaches the Sit Happens backend, producing a bare 403 with no JSON body —
+# this has nothing to do with token validity. A normal-looking User-Agent
+# is enough to pass through; confirmed against the real deployment (curl's
+# UA reaches the app fine, urllib's default does not).
+USER_AGENT = "SitHappensPOSAgent/1.0"
+
+
 def _http_get_json(url: str):
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(url, method="GET", headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
         return json.loads(resp.read().decode())
 
 
 def _http_post_json(url: str, body: dict):
     data = json.dumps(body).encode()
-    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(
+        url, data=data, method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+    )
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
         return json.loads(resp.read().decode())
 
