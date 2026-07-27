@@ -1601,6 +1601,7 @@ const PERM_META = [
   { key: "data_export",      label: "Export Data",         desc: "CSV / JSON exports for clients, dogs, finance." },
   { key: "delete_records",   label: "Delete Records",      desc: "Hard-delete clients, dogs, bookings (rarely used)." },
   { key: "messages",         label: "Send Messages",       desc: "Reply in client message threads, broadcast announcements." },
+  { key: "take_payments",    label: "Take Payments",       desc: "Collect payment at checkout and record top-up payments against an open invoice." },
 ];
 
 // Dependencies: granting the dependent permission auto-suggests enabling the base.

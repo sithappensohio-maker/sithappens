@@ -1,0 +1,20 @@
+[Unit]
+Description=Sit Happens front-desk POS hardware agent (printer + cash drawer)
+After=network.target
+
+[Service]
+Type=simple
+# Replace 'garrett' with the actual front-desk login if different.
+User=garrett
+ExecStart=/usr/bin/python3 /home/garrett/pos_agent/pos_agent.py
+Restart=on-failure
+RestartSec=3
+# No terminal window, no shell access, no elevated privileges required —
+# garrett is already in the 'lp' group, which is what grants /dev/usb/lp0
+# write access (confirmed during hardware proof).
+NoNewPrivileges=true
+StandardOutput=append:/home/garrett/pos_agent/pos_agent.log
+StandardError=append:/home/garrett/pos_agent/pos_agent.log
+
+[Install]
+WantedBy=multi-user.target

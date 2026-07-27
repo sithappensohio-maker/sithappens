@@ -30,6 +30,7 @@ const PERM_LABELS = {
   data_export: "Data export",
   delete_records: "Delete records",
   messages: "Client messages",
+  take_payments: "Take payments",
 };
 
 export default function RolesPanel() {

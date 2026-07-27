@@ -30,7 +30,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
-from pydantic import BaseModel, Field, EmailStr, ConfigDict
+from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
 
 from email_service import (
     notify_admin_new_booking,
@@ -799,6 +799,13 @@ class BookingOut(BaseModel):
     # label on the trainer's schedule.
     is_prepaid_program_session: Optional[bool] = None
     program_id: Optional[str] = None
+    # Front-desk POS hardware integration — present only when this checkout
+    # produced an invoice; the browser relays these opaque tokens to the
+    # local POS agent, which fetches the actual receipt content and performs
+    # the hardware action only after verifying them with this server.
+    pos_print_receipt_token: Optional[str] = None
+    pos_open_drawer_token: Optional[str] = None
+    pos_invoice_id: Optional[str] = None
     program_sale_session_index: Optional[int] = None
     program_sale_session_total: Optional[int] = None
     credit_lot_id: Optional[str] = None
@@ -862,6 +869,20 @@ class CheckoutIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
     accuracy_m: Optional[float] = None
+    # Payment rebuild Phase 2 — optional cash tendered/change audit for a
+    # single-booking checkout's cash component. Pricing is fully resolved
+    # before the booking is persisted, so this is validated strictly,
+    # pre-commit, in _check_out_locked: rejected if supplied against a
+    # non-cash tender, or if less than the resolved cash amount due.
+    tendered_amount: Optional[float] = Field(default=None, ge=0)
+    # Required, non-empty, whenever the resolved tender is "other" — gives
+    # a real audit trail for what "Other" meant (e.g. "Zelle").
+    payment_notes: Optional[str] = Field(default=None, max_length=500)
+    # Front-desk POS hardware integration — optional identifier for which
+    # physical workstation is checking out (e.g. "FRONT_DESK_1"). Purely a
+    # label on the issued hardware-action token; the token's own signature/
+    # expiry/single-use is what actually secures the hardware action.
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class CheckInIn(BaseModel):
@@ -901,10 +922,117 @@ class BookingRefundIn(BaseModel):
     amount: float = Field(gt=0, le=100000)
     payment_method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]
     reason: str = Field(min_length=3, max_length=500)
+    # Payment rebuild Phase 1 — optional so existing/legacy callers behave
+    # exactly as before. When supplied, `_booking_refund_locked` atomically
+    # claims this key BEFORE any mutation (see refund_idempotency_claims)
+    # so a genuine double-click/network-retry of the same refund can never
+    # create two real refunds, while a different key (a genuinely separate
+    # refund) is never blocked.
+    refund_idempotency_key: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
 
 class BookingReopenCheckoutIn(BaseModel):
     reason: str = Field(min_length=5, max_length=500)
+
+
+# ── Payment rebuild Phase 1 — Invoice / Payment ledger foundation ──────────
+# No pricing/credit logic lives here. This layer only RECORDS what
+# `_check_out_locked` already computed and persisted onto the booking
+# document (actual_price/amount_paid/balance_due/credit_value/payment_status)
+# — every Invoice total/balance/credit_applied field is a direct mirror of
+# those authoritative booking fields, never independently re-derived, so it
+# can never disagree with them or double-count a credit redemption.
+
+class InvoiceLineItem(BaseModel):
+    """One display/breakdown row on an invoice. Purely for readability —
+    never used to derive subtotal/total/balance, which are always mirrored
+    straight from the booking's own already-computed fields."""
+    kind: Literal["service", "add_on", "discount", "credit", "adjustment", "tax"]
+    description: str
+    booking_id: Optional[str] = None
+    service_id: Optional[str] = None
+    qty: float = 1
+    unit_price: float = 0.0
+    amount: float  # signed: negative for discount/credit lines
+    source: Optional[Dict[str, Any]] = None
+
+
+class InvoiceOut(BaseModel):
+    id: str
+    client_id: Optional[str] = None
+    client_name: str = ""
+    dog_ids: List[str] = []
+    dog_names: List[str] = []
+    booking_ids: List[str] = []
+    service_type: Optional[str] = None
+    date: str
+    currency: str = "USD"
+    line_items: List[InvoiceLineItem] = []
+    subtotal: float = 0.0
+    tax_amount: float = 0.0
+    total: float = 0.0
+    credit_applied: float = 0.0
+    amount_paid: float = 0.0
+    balance: float = 0.0
+    status: Literal[
+        "DRAFT", "OPEN", "PARTIALLY_PAID", "PAID",
+        "REFUNDED", "PARTIALLY_REFUNDED", "VOID",
+    ]
+    refunded_total: float = 0.0
+    checkout_group_id: Optional[str] = None
+    operation_id: Optional[str] = None
+    created_at: str
+    created_by: Optional[str] = None
+    updated_at: str
+
+
+class PaymentOut(BaseModel):
+    id: str
+    invoice_id: str
+    client_id: Optional[str] = None
+    amount: float  # positive = tendered/credited; negative = a refund row
+    method: Literal["stripe_terminal", "stripe_online", "cash", "check", "venmo", "paypal", "credits", "other"]
+    is_credit: bool = False
+    date: str
+    employee_id: Optional[str] = None
+    employee_name: Optional[str] = None
+    processor: Optional[str] = None  # always None in Phase 1 — no processor integrated yet
+    processor_payment_id: Optional[str] = None  # always None in Phase 1
+    status: Literal["completed", "refunded", "partially_refunded", "voided"] = "completed"
+    notes: Optional[str] = ""
+    refunded_amount: float = 0.0
+    source: Optional[Dict[str, Any]] = None
+    booking_id: Optional[str] = None
+    ledger_id: Optional[str] = None
+    idempotency_ref: Optional[str] = None
+    created_at: str
+    updated_at: str
+    # Payment rebuild Phase 2 — additive audit fields, populated only by
+    # checkout's cash component and by the new invoice top-up endpoint.
+    tendered_amount: Optional[float] = None
+    change_given: Optional[float] = None
+    business_date: Optional[str] = None
+    voided_at: Optional[str] = None
+
+
+class InvoicePaymentIn(BaseModel):
+    """Body for POST /invoices/{invoice_id}/payments — a manual TOP-UP
+    payment against an invoice that already has a balance (never used
+    during checkout itself)."""
+    amount: float = Field(gt=0, le=100000)
+    method: Literal["cash", "check", "venmo", "paypal", "other"]
+    notes: Optional[str] = Field(default=None, max_length=500)
+    tendered_amount: Optional[float] = Field(default=None, ge=0)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class PaymentVoidIn(BaseModel):
+    """Body for POST /payments/{payment_id}/void — reverses a manual
+    top-up payment while its business day is still open. Never usable on
+    checkout-time or refund Payment rows."""
+    reason: str = Field(min_length=3, max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=128)
 
 
 FINANCIAL_MONEY_FIELDS = {
@@ -6140,8 +6268,16 @@ async def _write_ledger_row(
     booking_id: Optional[str] = None,
     created_by: str = "system",
     ts: Optional[str] = None,
+    invoice_id: Optional[str] = None,
 ) -> dict:
-    """Append a ledger row. `amount` is signed (see header). Returns the row."""
+    """Append a ledger row. `amount` is signed (see header). Returns the row.
+
+    `invoice_id` (Payment rebuild Phase 2) — optional, additive. Set only by
+    the new invoice top-up/void flow (booking_id=None for those rows); every
+    other existing caller omits it, so this is a zero-behavior-change field
+    for all pre-existing writers. It's load-bearing for `_invoice_ar_status`,
+    which needs to keep tracking a specific invoice's outstanding AR across
+    any number of top-ups, not just the original booking-tagged charge."""
     row = {
         "id": str(uuid.uuid4()),
         "client_id": client_id,
@@ -6150,6 +6286,7 @@ async def _write_ledger_row(
         "method": _normalize_payment_method(method, store=True) if method else "",
         "notes": notes or "",
         "booking_id": booking_id,
+        "invoice_id": invoice_id,
         "created_by": created_by,
         "created_at": ts or now_iso(),
         "operation_id": _checkout_operation_id_ctx.get(),
@@ -6268,12 +6405,632 @@ async def _send_partial_payment_receipt(
         logger.warning("partial-pay receipt email failed: %s", exc)
 
 
+# ── Payment rebuild Phase 1 — Invoice / Payment creation helpers ───────────
+# These functions never touch pricing, credits, payment_ledger, retail_sales,
+# client.account_balance, or any credit_lots row — they only READ the
+# already-final booking fields and RECORD them into the new invoices/payments
+# collections. Every call site wraps these in try/except so a failure here
+# can never block or roll back the real checkout/refund.
+
+def _map_booking_method_to_payment_method(method: Optional[str]) -> str:
+    """Translate the existing register/reporting taxonomy (cash/check/venmo/
+    paypal/clover/other/credits) into the new, forward-looking Payment.method
+    enum. `clover` here is always the pre-existing MANUAL "Clover / Credit
+    Card" label (no processor integration exists) so it maps to "other" —
+    there is no Clover-specific Payment.method."""
+    m = _normalize_payment_method(method, store=True) if method else "other"
+    if m in ("cash", "check", "venmo", "paypal", "credits"):
+        return m
+    return "other"
+
+
+def _build_invoice_line_items_from_booking(booking: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Display/breakdown rows only — reconciles to booking.actual_price by
+    construction (base service line is the remainder), but is NEVER used to
+    derive the invoice's total/balance/credit_applied, which are always
+    mirrored straight from the booking's own fields. Credit/cash tenders are
+    intentionally NOT represented here — they are payments against this
+    charge, not a reduction of it (see _create_invoice_for_bookings)."""
+    booking_id = booking.get("id")
+    lines: List[Dict[str, Any]] = []
+    for a in (booking.get("add_ons") or []):
+        qty = float(a.get("qty") or 1)
+        price = float(a.get("price") or 0)
+        amt = float(a["line_total"]) if a.get("line_total") is not None else price * qty
+        lines.append({
+            "kind": "add_on", "description": a.get("name") or "Add-on", "booking_id": booking_id,
+            "service_id": a.get("service_id"), "qty": qty, "unit_price": price,
+            "amount": round(amt, 2), "source": a,
+        })
+    discount = booking.get("multi_dog_discount") or {}
+    if discount.get("amount"):
+        lines.append({
+            "kind": "discount", "description": discount.get("label") or "Multi-dog discount",
+            "booking_id": booking_id, "qty": 1, "unit_price": 0.0,
+            "amount": -round(abs(float(discount.get("amount") or 0)), 2), "source": discount,
+        })
+    tax_amount = float(booking.get("tax_amount") or 0)
+    if tax_amount > 0:
+        lines.append({
+            "kind": "tax", "description": f"Sales tax ({booking.get('tax_rate_pct') or 0}%)",
+            "booking_id": booking_id, "qty": 1, "unit_price": 0.0,
+            "amount": round(tax_amount, 2), "source": None,
+        })
+    others_total = round(sum(l["amount"] for l in lines), 2)
+    actual_price = round(float(booking.get("actual_price") or 0), 2)
+    base_amount = round(actual_price - others_total, 2)
+    service_line = {
+        "kind": "service",
+        "description": booking.get("service_name") or (booking.get("service_type") or "Service").title(),
+        "booking_id": booking_id, "service_id": booking.get("service_id"),
+        "qty": 1, "unit_price": base_amount, "amount": base_amount, "source": None,
+    }
+    return [service_line] + lines
+
+
+async def _insert_payment_row(payment: Dict[str, Any]) -> Dict[str, Any]:
+    """Check-before-insert-then-fallback-to-existing, keyed on
+    idempotency_ref — same pattern as _create_invoice_for_bookings below."""
+    ref = payment.get("idempotency_ref")
+    if ref:
+        existing = await db.payments.find_one({"idempotency_ref": ref}, {"_id": 0})
+        if existing:
+            return existing
+    try:
+        await db.payments.insert_one(payment.copy())
+        return payment
+    except DuplicateKeyError:
+        existing = await db.payments.find_one({"idempotency_ref": ref}, {"_id": 0})
+        return existing or payment
+
+
+async def _create_invoice_for_bookings(
+    booking_ids: List[str],
+    *,
+    user: dict,
+    ts: str,
+    checkout_group_id: Optional[str] = None,
+    tendered_amount: Optional[float] = None,
+    payment_notes: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """The single canonical entry point for Phase 1 invoice creation — used
+    by both a single-booking checkout (booking_ids of length 1) and a group
+    checkout (booking_ids covering every dog in the group). Never creates a
+    second invoice for a booking_id that's already on one (idempotent on
+    `booking_ids`, enforced by a unique index — see startup indexes).
+
+    Payment rebuild Phase 2 — `tendered_amount`/`payment_notes` are only
+    ever meaningful (and only ever passed by the caller) for a
+    single-booking checkout, where pricing/tender is fully known and
+    already pre-validated by `_check_out_locked` before this runs. Group
+    checkout's cash tender/change capture is explicitly deferred (see the
+    Phase 2 plan) — these params are simply unused when len(bookings) > 1."""
+    existing = await db.invoices.find_one({"booking_ids": {"$in": booking_ids}}, {"_id": 0})
+    if existing:
+        return existing
+
+    bookings = []
+    for bid in booking_ids:
+        b = await db.bookings.find_one({"id": bid}, {"_id": 0})
+        if b:
+            bookings.append(b)
+    if not bookings:
+        return None
+
+    total = round(sum(float(b.get("actual_price") or 0) for b in bookings), 2)
+    credit_applied = round(sum(float(b.get("credit_value") or 0) for b in bookings), 2)
+    if total <= 0.005 and credit_applied <= 0.005:
+        return None  # nothing to invoice (e.g. a $0 training visit)
+
+    amount_paid = round(sum(float(b.get("amount_paid") or 0) for b in bookings), 2)
+    balance = round(sum(float(b.get("balance_due") or 0) for b in bookings), 2)
+    refunded_total = round(sum(float(b.get("financial_refund_total") or 0) for b in bookings), 2)
+    line_items: List[Dict[str, Any]] = []
+    for b in bookings:
+        line_items.extend(_build_invoice_line_items_from_booking(b))
+    tax_amount = round(sum(li["amount"] for li in line_items if li["kind"] == "tax"), 2)
+    subtotal = round(total - tax_amount, 2)
+
+    if balance <= 0.005:
+        status = "PAID"
+    elif (amount_paid + credit_applied) > 0.005:
+        status = "PARTIALLY_PAID"
+    else:
+        status = "OPEN"
+
+    dog_ids = [b.get("dog_id") for b in bookings if b.get("dog_id")]
+    dog_names = [b.get("dog_name") for b in bookings if b.get("dog_name")]
+    service_types = {b.get("service_type") for b in bookings}
+    first = bookings[0]
+
+    invoice = {
+        "id": str(uuid.uuid4()),
+        "client_id": first.get("client_id"),
+        "client_name": first.get("client_name") or "",
+        "dog_ids": dog_ids,
+        "dog_names": dog_names,
+        "booking_ids": booking_ids,
+        "service_type": next(iter(service_types)) if len(service_types) == 1 else None,
+        "date": business_today().isoformat(),
+        "currency": "USD",
+        "line_items": line_items,
+        "subtotal": subtotal,
+        "tax_amount": tax_amount,
+        "total": total,
+        "credit_applied": credit_applied,
+        "amount_paid": amount_paid,
+        "balance": balance,
+        "status": status,
+        "refunded_total": refunded_total,
+        "checkout_group_id": checkout_group_id,
+        "operation_id": _checkout_operation_id_ctx.get(),
+        "created_at": ts,
+        "created_by": user.get("id") if user else None,
+        "updated_at": ts,
+    }
+    try:
+        await db.invoices.insert_one(invoice.copy())
+    except DuplicateKeyError:
+        return await db.invoices.find_one({"booking_ids": {"$in": booking_ids}}, {"_id": 0})
+
+    invoice_id = invoice["id"]
+    for b in bookings:
+        bid = b.get("id")
+        credit_value = float(b.get("credit_value") or 0)
+        if credit_value > 0.005:
+            await _insert_payment_row({
+                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
+                "amount": round(credit_value, 2), "method": "credits", "is_credit": True,
+                "date": invoice["date"], "employee_id": user.get("id") if user else None,
+                "employee_name": (user.get("name") or user.get("email")) if user else None,
+                "processor": None, "processor_payment_id": None, "status": "completed",
+                "notes": "", "refunded_amount": 0.0,
+                "source": {"redemptions": b.get("credit_lot_redemptions") or []},
+                "booking_id": bid, "ledger_id": None,
+                "idempotency_ref": f"{invoice_id}:{bid}:credit",
+                "created_at": ts, "updated_at": ts,
+            })
+        cash_amount = float(b.get("amount_paid") or 0)
+        if cash_amount > 0.005:
+            tender = b.get("cash_payment_method") if b.get("payment_method") == "credits" else b.get("payment_method")
+            mapped_method = _map_booking_method_to_payment_method(tender)
+            # Payment rebuild Phase 2 — tendered/change and the OTHER-method
+            # note are only stamped on THIS booking's cash row when this is
+            # a single-booking checkout (len(bookings)==1), the case where
+            # Payment.amount equals the total cash settled and the values
+            # reconcile exactly by construction. For a group, cash_amount
+            # here is one dog's own share of a combined tender that was
+            # never split per-dog by the customer, so stamping a group-wide
+            # tendered_amount onto any one row would not reconcile with
+            # that row's own amount — group tender capture is deferred.
+            is_single_booking = len(bookings) == 1
+            change_given = None
+            if is_single_booking and tendered_amount is not None and tendered_amount >= cash_amount - 0.005:
+                change_given = round(float(tendered_amount) - cash_amount, 2)
+            # The OTHER-method note is persisted for BOTH single and group
+            # checkout (a manual-payment-method rule, not a pricing rule) —
+            # only tendered_amount/change_given are single-booking-only.
+            row_notes = payment_notes.strip() if (mapped_method == "other" and payment_notes) else ""
+            await _insert_payment_row({
+                "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": b.get("client_id"),
+                "amount": round(cash_amount, 2), "method": mapped_method,
+                "is_credit": False, "date": invoice["date"], "employee_id": user.get("id") if user else None,
+                "employee_name": (user.get("name") or user.get("email")) if user else None,
+                "processor": None, "processor_payment_id": None, "status": "completed",
+                "notes": row_notes, "refunded_amount": 0.0, "source": None,
+                "booking_id": bid, "ledger_id": None,
+                "idempotency_ref": f"{invoice_id}:{bid}:cash",
+                "created_at": ts, "updated_at": ts,
+                "tendered_amount": round(float(tendered_amount), 2) if (is_single_booking and tendered_amount is not None and change_given is not None) else None,
+                "change_given": change_given,
+                "business_date": invoice["date"] if is_single_booking else None,
+            })
+    return invoice
+
+
+async def _apply_refund_to_invoice(
+    *, booking_id: str, amount: float, method: str, reason: str, event_id: str, user: dict, ts: str,
+) -> None:
+    """Called from _booking_refund_locked, inside its existing try/rollback.
+    Appends a negative Payment row keyed to the refund's own event_id (fresh
+    per genuine refund call — see refund_idempotency_claims — never shared
+    across separate refunds), and bumps the canonical invoice's
+    refunded_total/status. invoice.total/amount_paid/balance are left
+    untouched, mirroring how the booking's own fields already behave on
+    refund."""
+    invoice = await db.invoices.find_one({"booking_ids": booking_id}, {"_id": 0})
+    if not invoice:
+        return  # no Phase-1 invoice exists for this booking (e.g. pre-Phase-1 checkout)
+    invoice_id = invoice["id"]
+    ref = f"{invoice_id}:{event_id}"
+    await _insert_payment_row({
+        "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": invoice.get("client_id"),
+        "amount": -round(float(amount), 2), "method": _map_booking_method_to_payment_method(method),
+        "is_credit": False, "date": business_today().isoformat(),
+        "employee_id": user.get("id") if user else None,
+        "employee_name": (user.get("name") or user.get("email")) if user else None,
+        "processor": None, "processor_payment_id": None, "status": "completed",
+        "notes": reason, "refunded_amount": 0.0, "source": None,
+        "booking_id": booking_id, "ledger_id": None,
+        "idempotency_ref": ref, "created_at": ts, "updated_at": ts,
+    })
+    new_refunded_total = round(float(invoice.get("refunded_total") or 0) + float(amount), 2)
+    refund_snapshot = {**invoice, "refunded_total": new_refunded_total}
+    new_status = _derive_invoice_status(
+        refund_snapshot,
+        amount_paid=float(invoice.get("amount_paid") or 0),
+        balance=float(invoice.get("balance") or 0),
+        credit_applied=float(invoice.get("credit_applied") or 0),
+    )
+    await db.invoices.update_one(
+        {"id": invoice_id},
+        {"$set": {"refunded_total": new_refunded_total, "status": new_status, "updated_at": ts}},
+    )
+
+
+# ── Payment rebuild Phase 2 — Cash + manual payments + register ────────────
+# Shared helpers used by the invoice top-up endpoint, the void endpoint, the
+# apply_tab_payment guard, and (for status) the refund path above. No new
+# pricing/credit/reporting logic — these read/derive from data the existing
+# checkout/refund/ledger writers already produce.
+
+def _derive_invoice_status(invoice: dict, *, amount_paid: float, balance: float, credit_applied: float) -> str:
+    """One shared status-derivation rule, used everywhere an invoice's
+    status needs to be (re)computed, so refund-completeness can never
+    drift between Phase 1's original refund logic and Phase 2's top-up/void
+    paths. Refund state always takes precedence over balance-based status —
+    a top-up or void must never silently flip REFUNDED/PARTIALLY_REFUNDED
+    back to PARTIALLY_PAID/PAID just because balance/amount_paid changed."""
+    if invoice.get("status") == "VOID":
+        return "VOID"
+    refunded_total = float(invoice.get("refunded_total") or 0)
+    if refunded_total > 0.005:
+        # Matches Phase 1's exact original threshold: amount_paid ALONE —
+        # credits are never "refunded" through this cash mechanism, so they
+        # never count toward refund-completeness.
+        if refunded_total >= amount_paid - 0.005 and amount_paid > 0:
+            return "REFUNDED"
+        return "PARTIALLY_REFUNDED"
+    if balance <= 0.005:
+        return "PAID"
+    if (amount_paid + credit_applied) > 0.005:
+        return "PARTIALLY_PAID"
+    return "OPEN"
+
+
+async def _invoice_ar_status(invoice: dict) -> dict:
+    """Trace payment_ledger rows tagged to this invoice — both the original
+    checkout-time rows (booking_id in invoice.booking_ids) and any rows this
+    invoice's OWN top-ups/voids wrote (invoice_id == invoice.id, booking_id
+    None) — the only reliable, invoice-specific evidence of outstanding AR.
+    Aggregate client.account_balance alone cannot prove the requested amount
+    is still attributable to THIS invoice specifically."""
+    booking_ids = invoice.get("booking_ids") or []
+    rows = await db.payment_ledger.find(
+        {"$or": [
+            {"booking_id": {"$in": booking_ids}},
+            {"invoice_id": invoice.get("id")},
+        ]},
+        {"_id": 0},
+    ).to_list(200)
+    seen: set = set()
+    booking_net = 0.0
+    charge_row = None
+    for r in rows:
+        rid = r.get("id")
+        if rid in seen:
+            continue
+        seen.add(rid)
+        booking_net += float(r.get("amount") or 0)
+        if r.get("type") == "charge" and charge_row is None:
+            charge_row = r
+    booking_net = round(booking_net, 2)
+    ar_backed = charge_row is not None
+    balance_matches = abs(booking_net - float(invoice.get("balance") or 0)) <= 0.005
+
+    ambiguous = False
+    if ar_backed:
+        # A truly generic, untagged client-level ledger row (booking_id=None
+        # AND invoice_id=None — e.g. old-style apply_tab_payment activity
+        # from before this invoice's AR guard existed) occurring AFTER this
+        # invoice's own charge cannot be proven to have left this invoice's
+        # AR untouched, even when booking_net == invoice.balance holds —
+        # that row never touches booking_net at all, so this is a separate,
+        # independent check.
+        ambiguous_row = await db.payment_ledger.find_one({
+            "client_id": invoice.get("client_id"), "booking_id": None, "invoice_id": None,
+            "created_at": {"$gt": charge_row.get("created_at")},
+        })
+        ambiguous = ambiguous_row is not None
+
+    return {
+        "ar_backed": ar_backed,
+        "reconciled": ar_backed and balance_matches and not ambiguous,
+        "booking_net": booking_net,
+    }
+
+
+def _request_fingerprint(*fields: Any) -> str:
+    """Deterministic hash over canonical JSON — same SHA-256-over-canonical-
+    JSON convention already used throughout this codebase for idempotency/
+    dedup keys. Used so a reused idempotency_key against a DIFFERENT request
+    payload is a 409 conflict, never a silent replay of the wrong result."""
+    import json as _json_mod
+    canonical = _json_mod.dumps(list(fields), sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+async def _register_session_view(date_value: str) -> dict:
+    """Thin, read-only reshape over the EXISTING cash_drawer_sessions +
+    daily_closeouts system — no new physical register-session collection.
+    Distinguishes NOT_OPEN (never opened) / OPEN / CLOSED, correctly
+    treating a reopened day as OPEN again (_register_day_summary's own
+    `latest_closeout` is already the ACTIVE, non-reopened closeout —
+    confirmed by reading `_active_register_closeout`'s exclusion filter,
+    which `_register_day_summary` calls directly)."""
+    summary = await _register_day_summary(date_value)
+    session = summary.get("drawer_session")
+    active_closeout = summary.get("latest_closeout")
+    totals = summary.get("totals") or {}
+    status = "CLOSED" if active_closeout else ("OPEN" if session else "NOT_OPEN")
+    return {
+        "id": date_value,
+        "date": date_value,
+        "status": status,
+        "opened_at": (session or {}).get("opened_at"),
+        "opened_by": (session or {}).get("opened_by_name"),
+        "starting_cash": totals.get("opening_cash"),
+        "expected_cash": totals.get("expected_cash"),
+        "actual_cash": (active_closeout or {}).get("cash_counted"),
+        "over_short": totals.get("cash_over_short"),
+        "closed_at": (active_closeout or {}).get("created_at"),
+        "closed_by": (active_closeout or {}).get("created_by_name"),
+        "carry_forward_amount": (active_closeout or {}).get("rollover_cash"),
+        "notes": (session or {}).get("notes"),
+    }
+
+
+# ── Front-desk POS hardware integration ─────────────────────────────────────
+# Physical POS integration ONLY — no pricing/discount/credit/AR/refund/
+# register-math changes anywhere in this section. The front-desk Linux Mint
+# laptop runs a small local agent (127.0.0.1-only) that owns the actual
+# ESC/POS printer/drawer hardware; this backend never talks to hardware
+# directly. It only: (a) builds canonical receipt data from existing Invoice/
+# Payment/booking/client records, and (b) issues short-lived, signed,
+# single-use action tokens that authorize ONE specific hardware action for
+# ONE specific financial record, which the agent verifies with this server
+# before ever touching the printer/drawer. The browser can never forge or
+# alter receipt totals — it only ever relays an opaque token; the agent
+# always fetches the actual receipt content from here using that token.
+
+POS_TOKEN_TTL_SECONDS = 180  # long enough for a slow printer/network round trip; short enough to bound replay risk
+
+
+class POSOpenDrawerIn(BaseModel):
+    """Body for POST /admin/pos/open-drawer — a manual, admin-authorized
+    physical drawer open (making change, counting the drawer, etc.). This
+    never creates a Payment/revenue/expense/till adjustment by itself."""
+    reason: str = Field(min_length=3, max_length=500)
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
+
+
+def _pos_token_secret() -> str:
+    """The shared secret used to sign/verify POS action tokens. Falls back to
+    JWT_SECRET (already required for this app to run at all) if a dedicated
+    POS_TOKEN_SECRET isn't set, so this feature works out of the box without
+    a new required env var, while still allowing a dedicated secret later."""
+    return os.environ.get("POS_TOKEN_SECRET") or os.environ.get("JWT_SECRET") or "sithappens-pos-dev-secret"
+
+
+def _sign_pos_token(claims: dict) -> str:
+    import base64 as _b64, json as _json_mod, hmac as _hmac_mod
+    body = _b64.urlsafe_b64encode(_json_mod.dumps(claims, separators=(",", ":"), default=str).encode()).decode().rstrip("=")
+    sig = _hmac_mod.new(_pos_token_secret().encode(), body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+
+def _unsign_pos_token(token: str) -> dict:
+    import base64 as _b64, json as _json_mod, hmac as _hmac_mod
+    try:
+        body, sig = token.split(".", 1)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Malformed POS action token")
+    expected = _hmac_mod.new(_pos_token_secret().encode(), body.encode(), hashlib.sha256).hexdigest()
+    if not _hmac_mod.compare_digest(expected, sig):
+        raise HTTPException(status_code=401, detail="Invalid POS action token")
+    padded = body + "=" * (-len(body) % 4)
+    try:
+        return _json_mod.loads(_b64.urlsafe_b64decode(padded.encode()).decode())
+    except Exception:
+        raise HTTPException(status_code=401, detail="Malformed POS action token")
+
+
+async def _issue_pos_token(
+    *, action: str, workstation_id: Optional[str] = None, invoice_id: Optional[str] = None,
+    pos_sale_id: Optional[str] = None, ledger_id: Optional[str] = None,
+    payment_ids: Optional[List[str]] = None, reason: Optional[str] = None,
+    ttl_seconds: int = POS_TOKEN_TTL_SECONDS,
+) -> str:
+    """Issue a short-lived, signed, single-use hardware-action token, tracked
+    in payment_topup_claims-style fashion (a DB row per jti, consumed exactly
+    once). Called only AFTER the relevant financial action has already fully
+    committed — this function never gates or participates in that commit.
+
+    Exactly one of `invoice_id`/`pos_sale_id`/`ledger_id` is set for a
+    print_receipt token (which resource _build_receipt_payload should read);
+    none are required for an open_drawer token."""
+    jti = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    claims = {
+        "jti": jti, "action": action, "workstation_id": workstation_id,
+        "invoice_id": invoice_id, "pos_sale_id": pos_sale_id, "ledger_id": ledger_id,
+        "payment_ids": payment_ids or [],
+        "iat": now.isoformat(), "exp": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+    }
+    await db.pos_action_tokens.insert_one({
+        **claims, "reason": reason, "consumed_at": None, "created_at": now_iso(),
+    })
+    return _sign_pos_token(claims)
+
+
+async def _verify_and_consume_pos_token(token: str, expected_action: str, workstation_id: Optional[str] = None) -> dict:
+    """Verify signature, expiry, action match, optional workstation match,
+    then atomically consume (single-use). Raises HTTPException on any
+    failure. This is the ONLY gate a hardware action goes through — it never
+    touches or re-validates the underlying financial record."""
+    claims = _unsign_pos_token(token)
+    if claims.get("action") != expected_action:
+        raise HTTPException(status_code=403, detail="This token is not valid for the requested action")
+    try:
+        exp = datetime.fromisoformat(claims["exp"])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Malformed POS action token")
+    if datetime.now(timezone.utc) > exp:
+        raise HTTPException(status_code=401, detail="This POS action token has expired")
+    if workstation_id and claims.get("workstation_id") and claims.get("workstation_id") != workstation_id:
+        raise HTTPException(status_code=403, detail="This token was issued for a different workstation")
+    result = await db.pos_action_tokens.find_one_and_update(
+        {"jti": claims.get("jti"), "consumed_at": None},
+        {"$set": {"consumed_at": now_iso()}},
+    )
+    if result is None:
+        raise HTTPException(status_code=409, detail="This POS action token has already been used")
+    return claims
+
+
+async def _build_receipt_payload(invoice_id: str, payment_ids: Optional[List[str]] = None) -> dict:
+    """The ONE canonical receipt builder. Reads existing Invoice/Payment/
+    booking/client records only — never recomputes pricing, credits,
+    balances, or totals independently. `payment_ids`, when given, scopes the
+    receipt to specific payment event(s) (a single checkout's tender, a
+    group checkout's per-booking cash rows, or one top-up) — everything else
+    (line items, invoice total, credits, remaining balance) always reflects
+    the invoice's current, authoritative state."""
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    all_payments = await db.payments.find({"invoice_id": invoice_id}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    if payment_ids:
+        target_payments = [p for p in all_payments if p.get("id") in payment_ids]
+    else:
+        target_payments = [p for p in all_payments if not p.get("is_credit") and p.get("status") == "completed"]
+
+    payment_amount = round(sum(float(p.get("amount") or 0) for p in target_payments), 2)
+    methods = sorted({p.get("method") for p in target_payments if p.get("method")})
+    payment_method = methods[0] if len(methods) == 1 else (", ".join(methods) if methods else None)
+    # Tendered/change are only ever populated on single-checkout and top-up
+    # cash rows (Phase 2 deliberately never sets them on group-checkout cash
+    # rows) — only surface them here when EVERY payment in this receipt
+    # actually has them, so a group receipt never fabricates Cash Received/
+    # Change it was never given.
+    with_tender = [p for p in target_payments if p.get("tendered_amount") is not None]
+    if with_tender and len(with_tender) == len(target_payments):
+        tendered_amount = round(sum(float(p["tendered_amount"]) for p in with_tender), 2)
+        change_given = round(sum(float(p.get("change_given") or 0) for p in with_tender), 2)
+    else:
+        tendered_amount = None
+        change_given = None
+
+    receipt_number = (target_payments[-1]["id"] if target_payments else invoice_id)[:8].upper()
+    when = (target_payments[-1].get("created_at") if target_payments else invoice.get("created_at"))
+
+    return {
+        "kind": "invoice",
+        "business_name": "Sit Happens Dog Training",
+        "receipt_number": receipt_number,
+        "invoice_id": invoice_id,
+        "payment_id": target_payments[0]["id"] if len(target_payments) == 1 else None,
+        "payment_ids": [p["id"] for p in target_payments],
+        "date_time": when,
+        "client_name": invoice.get("client_name") or "",
+        "dogs": invoice.get("dog_names") or [],
+        "line_items": [
+            {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount")}
+            for li in (invoice.get("line_items") or [])
+        ],
+        "invoice_total": invoice.get("total"),
+        "credits_applied": invoice.get("credit_applied"),
+        "payment_amount": payment_amount,
+        "payment_method": payment_method,
+        "remaining_balance": invoice.get("balance"),
+        "tendered_amount": tendered_amount,
+        "change_given": change_given,
+    }
+
+
+async def _build_tab_payment_receipt_payload(ledger_id: str) -> dict:
+    """Canonical receipt builder for a generic account/tab payment (not tied
+    to a booking or invoice). Reads the payment_ledger row + client only."""
+    row = await db.payment_ledger.find_one({"id": ledger_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Ledger row not found")
+    client = await db.clients.find_one({"id": row.get("client_id")}, {"_id": 0, "name": 1})
+    amount = round(abs(float(row.get("amount") or 0)), 2)
+    return {
+        "kind": "tab_payment",
+        "business_name": "Sit Happens Dog Training",
+        "receipt_number": ledger_id[:8].upper(),
+        "date_time": row.get("created_at"),
+        "client_name": (client or {}).get("name") or "",
+        "line_items": [{"description": row.get("notes") or "Account payment", "qty": 1, "amount": amount}],
+        "payment_amount": amount,
+        "payment_method": row.get("method"),
+        "tendered_amount": row.get("tendered_amount"),
+        "change_given": row.get("change_given"),
+    }
+
+
+async def _build_pos_sale_receipt_payload(pos_sale_id: str) -> dict:
+    """Canonical receipt builder for a completed Front Desk POS retail sale.
+    Reads the pos_sales document only — never recomputes cart pricing. Kept
+    as a separate function from _build_receipt_payload (rather than
+    overloading it) since a retail sale's receipt shape (Subtotal/Discount/
+    Tax/Total, no Credits/Paid/Balance) is genuinely different from a
+    booking/invoice receipt's."""
+    sale = await db.pos_sales.find_one({"id": pos_sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="POS sale not found")
+    tenders = sale.get("tenders") or []
+    with_tender = [t for t in tenders if t.get("tendered_amount") is not None]
+    if with_tender and len(with_tender) == len(tenders):
+        tendered_amount = round(sum(float(t["tendered_amount"]) for t in with_tender), 2)
+        change_given = round(sum(float(t.get("change_given") or 0) for t in with_tender), 2)
+    else:
+        tendered_amount = None
+        change_given = None
+    methods = sorted({t.get("method") for t in tenders if t.get("method")})
+    payment_method = methods[0] if len(methods) == 1 else (", ".join(methods) if methods else None)
+    return {
+        "kind": "pos_sale",
+        "business_name": "Sit Happens Dog Training",
+        "receipt_number": sale.get("receipt_number") or pos_sale_id[:8].upper(),
+        "pos_sale_id": pos_sale_id,
+        "date_time": sale.get("created_at"),
+        "client_name": sale.get("client_name") or "",
+        "line_items": [
+            {"description": li.get("description"), "qty": li.get("qty"), "amount": li.get("amount")}
+            for li in (sale.get("line_items") or [])
+        ],
+        "subtotal": sale.get("subtotal"),
+        "discount_amount": sale.get("discount_amount"),
+        "tax_amount": sale.get("tax_amount"),
+        "total": sale.get("total"),
+        "payment_method": payment_method,
+        "tendered_amount": tendered_amount,
+        "change_given": change_given,
+    }
+
+
 class TabPaymentIn(BaseModel):
     """Apply a payment directly against a client's tab (NOT tied to a booking).
-    Used by the 'Pay tab' button on the client detail page."""
+    Used by the 'Pay tab' button on the client detail page. This CAN be
+    physical cash — see the cash-specific fields below — so it participates
+    in the exact same register/hardware rules as every other cash path."""
     amount: float = Field(gt=0)
     method: Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"] = "cash"
     notes: Optional[str] = ""
+    tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
 
 
 @api.get("/clients/{client_id}/ledger")
@@ -6308,11 +7065,48 @@ async def apply_tab_payment(
     on the day it's collected. We also insert a `retail_sales` row so the
     Income / P&L picks it up. The row is tagged `source_kind="tab_payment"`
     for clean audit + so it can be excluded from sales-tax math (tax was
-    already booked at the original sale)."""
+    already booked at the original sale).
+
+    Front Desk consolidation — a tab payment CAN be physical cash, so it
+    follows the exact same cash rules as every other cash-collecting path:
+    tendered_amount required for cash, register/drawer must be physically
+    open, and a hardware token issues post-commit (drawer only for cash)."""
+    if body.method == "cash":
+        if body.tendered_amount is None:
+            raise HTTPException(status_code=400, detail="Cash received (tendered_amount) is required for cash payments.")
+        if float(body.tendered_amount) < body.amount - 0.005:
+            raise HTTPException(status_code=400, detail="Cash received cannot be less than the amount due.")
+    elif body.tendered_amount is not None:
+        raise HTTPException(status_code=400, detail="tendered_amount only applies to cash payments.")
+
     await _require_register_day_open(business_today().isoformat())
+    if body.method == "cash":
+        drawer_open = await db.cash_drawer_sessions.find_one(
+            {"date": business_today().isoformat()}, {"_id": 0, "date": 1}
+        )
+        if not drawer_open:
+            raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
     client = await db.clients.find_one({"id": client_id}, {"_id": 0})
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    # Payment rebuild Phase 2 — a generic tab payment must never leave an
+    # AR-backed invoice stale (paid down here, but the invoice's own
+    # balance never updated, which could then be collected AGAIN through
+    # POST /invoices/{id}/payments). Block entirely whenever any AR-backed
+    # open invoice exists for this client — legacy/non-invoice AR is
+    # unaffected since it can only be reached once zero such invoices
+    # remain open.
+    open_invoices = await db.invoices.find(
+        {"client_id": client_id, "status": {"$ne": "VOID"}, "balance": {"$gt": 0.005}}, {"_id": 0}
+    ).to_list(50)
+    ar_backed_invoices = [inv for inv in open_invoices if (await _invoice_ar_status(inv))["ar_backed"]]
+    if ar_backed_invoices:
+        ids = ", ".join(i["id"] for i in ar_backed_invoices)
+        raise HTTPException(
+            status_code=409,
+            detail=f"This client has AR-backed open invoice balance(s) ({ids}) — pay the specific invoice via POST /invoices/{{id}}/payments instead.",
+        )
     ts = now_iso()
     row = await _write_ledger_row(
         client_id=client_id,
@@ -6324,6 +7118,15 @@ async def apply_tab_payment(
         created_by=user.get("email", "admin"),
     )
     new_balance = await _adjust_client_balance(client_id, -round(body.amount, 2))
+    change_given = None
+    if body.method == "cash":
+        change_given = round(float(body.tendered_amount) - body.amount, 2)
+        await db.payment_ledger.update_one(
+            {"id": row["id"]},
+            {"$set": {"tendered_amount": round(float(body.tendered_amount), 2), "change_given": change_given}},
+        )
+        row["tendered_amount"] = round(float(body.tendered_amount), 2)
+        row["change_given"] = change_given
     # Sprint 110di-61 — Cash-basis revenue recognition for the tab payment.
     # Insert a retail_sales row so the Income screen + P&L include it.
     try:
@@ -6351,7 +7154,28 @@ async def apply_tab_payment(
         ))
     except Exception as exc:
         logger.warning("tab-pay receipt spawn failed: %s", exc)
-    return {"ok": True, "balance": new_balance, "row": row}
+
+    # Front-desk POS hardware integration — best-effort, additive, issued
+    # only AFTER the AR/ledger mutation already committed above. A hardware
+    # failure here never affects the payment that already succeeded.
+    pos_print_receipt_token = None
+    pos_open_drawer_token = None
+    try:
+        pos_print_receipt_token = await _issue_pos_token(
+            action="print_receipt", workstation_id=body.workstation_id, ledger_id=row["id"],
+        )
+        if body.method == "cash":
+            pos_open_drawer_token = await _issue_pos_token(
+                action="open_drawer", workstation_id=body.workstation_id, ledger_id=row["id"],
+            )
+    except Exception as exc:
+        logger.warning("POS token issuance failed for tab payment %s: %s", row["id"], exc)
+
+    return {
+        "ok": True, "balance": new_balance, "row": row,
+        "pos_print_receipt_token": pos_print_receipt_token,
+        "pos_open_drawer_token": pos_open_drawer_token,
+    }
 
 
 async def _send_tab_payment_receipt(
@@ -6810,6 +7634,10 @@ async def check_out_group(
     writes a single grouped checkout receipt with the combined total.
     """
     body = body or CheckoutIn()
+    # Payment rebuild Phase 2 — same additive, layered take_payments check
+    # as single checkout (see check_out above).
+    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+        raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     anchor = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not anchor:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -6906,6 +7734,23 @@ async def check_out_group(
         if might_collect_money:
             await _require_register_day_open(business_today().isoformat())
 
+        # Payment rebuild Phase 2 — pre-loop, additive-only checks. Group
+        # cash tender/change capture is explicitly deferred (no safe way to
+        # validate a tendered amount before pricing is known for every dog
+        # in the loop — see the Phase 2 plan), but these two checks don't
+        # depend on the final price at all, so they run safely up front,
+        # before any row/client lock has been used for anything but the
+        # lock acquisition itself.
+        resolved_group_tender = _normalize_payment_method(body.payment_method, store=True) if body.payment_method else None
+        if resolved_group_tender == "other" and not (body.payment_notes or "").strip():
+            raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
+        if resolved_group_tender == "cash":
+            drawer_open = await db.cash_drawer_sessions.find_one(
+                {"date": business_today().isoformat()}, {"_id": 0, "date": 1}
+            )
+            if not drawer_open:
+                raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
         completed: List[Dict[str, Any]] = []
         for target in targets:
             payload = body.model_dump()
@@ -6921,7 +7766,10 @@ async def check_out_group(
             if bool(body.use_credits):
                 payload["amount_paid"] = None
             row_body = CheckoutIn(**payload)
-            row = await _check_out_locked(target["id"], row_body, user)
+            # Payment rebuild Phase 1 — invoice creation is suppressed per-dog
+            # here; exactly ONE canonical invoice covering every booking_id in
+            # the group is created once below, after the whole group succeeds.
+            row = await _check_out_locked(target["id"], row_body, user, create_invoice=False)
             completed.append(row)
 
         combined_total = round(sum(float(row.get("actual_price") or 0) for row in completed), 2)
@@ -6963,6 +7811,30 @@ async def check_out_group(
                 "checkout_group_cash_total": combined_cash,
                 "checkout_group_dog_count": len(completed),
             })
+        pos_print_receipt_token = None
+        pos_open_drawer_token = None
+        group_invoice = None
+        try:
+            group_invoice = await _create_invoice_for_bookings(
+                [row.get("id") for row in completed],
+                user=user, ts=now_iso(), checkout_group_id=checkout_group_id,
+                payment_notes=body.payment_notes,
+            )
+            # Front-desk POS hardware integration — best-effort, additive,
+            # issued only AFTER the group invoice already committed above.
+            if group_invoice:
+                try:
+                    pos_print_receipt_token = await _issue_pos_token(
+                        action="print_receipt", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
+                    )
+                    if resolved_group_tender == "cash" and combined_cash > 0:
+                        pos_open_drawer_token = await _issue_pos_token(
+                            action="open_drawer", workstation_id=body.workstation_id, invoice_id=group_invoice["id"],
+                        )
+                except Exception as exc:
+                    logger.warning("POS token issuance failed for checkout_group %s: %s", checkout_group_id, exc)
+        except Exception as exc:
+            logger.warning("group invoice creation failed for checkout_group %s: %s", checkout_group_id, exc)
         return {
             "checkout_group_id": checkout_group_id,
             "booking_group_id": group_id or checkout_group_id,
@@ -6973,6 +7845,9 @@ async def check_out_group(
             "cash_total": combined_cash,
             "discount_total": combined_discount,
             "payment_method": group_meta["payment_method"],
+            "pos_invoice_id": group_invoice["id"] if group_invoice else None,
+            "pos_print_receipt_token": pos_print_receipt_token,
+            "pos_open_drawer_token": pos_open_drawer_token,
         }
     except Exception:
         if originals:
@@ -7035,6 +7910,12 @@ async def check_out(
     # everyone else checks out at the normal computed price.
     if body.base_price is not None and user.get("role") != "admin" and not _perms_for(user).get("pricing"):
         raise HTTPException(status_code=403, detail="You don't have permission to override the checkout price.")
+    # Payment rebuild Phase 2 — additive, layered on top of the existing
+    # require_employee_or_admin gate (not a replacement for it), matching
+    # the "pricing" check just above. Defaults True for every staff role,
+    # so this is a no-op today until the owner explicitly disables it.
+    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+        raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
     operation_id = str(uuid.uuid4())
     lock_ts = now_iso()
     stale_lock_before = (datetime.now(timezone.utc) - timedelta(minutes=15)).isoformat()
@@ -7173,9 +8054,16 @@ async def _check_out_locked(
     booking_id: str,
     body: Optional[CheckoutIn] = None,
     user: dict = None,
+    create_invoice: bool = True,
 ):
     """Check the dog out, optionally adding services or switching the payment.
-    All body fields are optional — calling with no body keeps the prior behaviour."""
+    All body fields are optional — calling with no body keeps the prior behaviour.
+
+    `create_invoice` (Payment rebuild Phase 1): True for a normal single-
+    booking checkout, which creates its own canonical Invoice inline. False
+    when called from check_out_group's per-dog loop, which instead creates
+    exactly ONE Invoice covering every booking in the group after the whole
+    loop succeeds — never a per-booking invoice plus a separate group one."""
     booking = await db.bookings.find_one({"id": booking_id}, {"_id": 0})
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
@@ -7804,6 +8692,28 @@ async def _check_out_locked(
     if float(update.get("cash_revenue") or 0) > 0:
         await _require_register_day_open(business_today().isoformat())
 
+    # Payment rebuild Phase 2 — resolve the literal tender for whatever
+    # cash-equivalent amount is being collected right now (the mixed
+    # credits+cash case stores the real tender in cash_payment_method, not
+    # payment_method). All pricing is already fully resolved above, so this
+    # validation is strict and pre-commit — before the booking is persisted.
+    resolved_tender = update.get("cash_payment_method") if merged_money.get("payment_method") == "credits" else merged_money.get("payment_method")
+    amount_collected_now = round(float(update.get("amount_paid") or 0), 2)
+    if resolved_tender == "other" and amount_collected_now > 0:
+        if not (body.payment_notes or "").strip():
+            raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
+    if body.tendered_amount is not None:
+        if resolved_tender != "cash" or amount_collected_now <= 0:
+            raise HTTPException(status_code=400, detail="tendered_amount only applies to cash payments.")
+        if float(body.tendered_amount) < amount_collected_now - 0.005:
+            raise HTTPException(status_code=400, detail="Cash received cannot be less than the amount due.")
+    if resolved_tender == "cash" and amount_collected_now > 0:
+        drawer_open = await db.cash_drawer_sessions.find_one(
+            {"date": business_today().isoformat()}, {"_id": 0, "date": 1}
+        )
+        if not drawer_open:
+            raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
     await db.bookings.update_one({"id": booking_id}, {"$set": update})
     booking.update(update)
 
@@ -7824,6 +8734,35 @@ async def _check_out_locked(
                 status_code=500,
                 detail="Checkout could not safely update the client balance. No checkout changes were kept.",
             ) from exc
+
+    # Payment rebuild Phase 1 — additive, best-effort invoice/payment
+    # recording. Never touches pricing/credits/ledger/retail_sales; a
+    # failure here logs a warning and never blocks or rolls back the real
+    # checkout (which has already fully committed by this point).
+    if create_invoice:
+        try:
+            invoice = await _create_invoice_for_bookings(
+                [booking_id], user=user, ts=ts,
+                tendered_amount=body.tendered_amount, payment_notes=body.payment_notes,
+            )
+            # Front-desk POS hardware integration — best-effort, additive,
+            # issued only AFTER the invoice/payment already committed above.
+            # A failure here never affects the checkout that already
+            # succeeded; it only means no hardware token is available.
+            if invoice:
+                try:
+                    booking["pos_invoice_id"] = invoice["id"]
+                    booking["pos_print_receipt_token"] = await _issue_pos_token(
+                        action="print_receipt", workstation_id=body.workstation_id, invoice_id=invoice["id"],
+                    )
+                    if resolved_tender == "cash" and amount_collected_now > 0:
+                        booking["pos_open_drawer_token"] = await _issue_pos_token(
+                            action="open_drawer", workstation_id=body.workstation_id, invoice_id=invoice["id"],
+                        )
+                except Exception as exc:
+                    logger.warning("POS token issuance failed for booking %s: %s", booking_id, exc)
+        except Exception as exc:
+            logger.warning("invoice creation failed for booking %s: %s", booking_id, exc)
 
     # 🎁 Referral reward: when the referred client COMPLETES their first-ever
     # appointment (any service), credit the referrer one free daycare day.
@@ -9604,67 +10543,127 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
         raise HTTPException(status_code=404, detail="Booking not found")
     if not _booking_is_financially_locked(booking):
         raise HTTPException(status_code=409, detail="This booking has not been checked out.")
-    originally_paid = round(float(booking.get("amount_paid") or booking.get("cash_revenue") or 0), 2)
-    already_refunded = round(float(booking.get("financial_refund_total") or 0), 2)
-    refundable = round(max(0.0, originally_paid - already_refunded), 2)
-    amount = round(float(body.amount), 2)
-    if amount > refundable + 0.005:
-        raise HTTPException(status_code=409, detail=f"Refund cannot exceed the remaining refundable cash (${refundable:.2f}).")
-    await _require_register_day_open(business_today().isoformat())
 
-    # Preserve the original invoice and original payment exactly as checked out.
-    # The refund is a new negative cash event on today's books. Rewriting the
-    # old booking would move historical revenue and then the refund row would
-    # subtract it again, producing a double-counted loss.
-    old_total = round(float(booking.get("actual_price") or 0), 2)
-    old_due = round(float(booking.get("balance_due") or 0), 2)
-    old_tax = round(float(booking.get("tax_amount") or 0), 2)
-    tax_refund = round(old_tax * min(1.0, amount / originally_paid), 2) if originally_paid > 0 else 0.0
-    new_refund_total = round(already_refunded + amount, 2)
-    update = {
-        "financial_refund_total": new_refund_total,
-        "financial_refund_status": "full" if new_refund_total >= originally_paid - 0.005 else "partial",
-        "financial_last_refund_at": now_iso(),
-        "financial_revision": int(booking.get("financial_revision") or 0) + 1,
-        "financial_locked": True,
-    }
-    refund_row = {
-        "id": str(uuid.uuid4()), "date": business_today().isoformat(),
-        "description": f"Booking refund · {booking.get('dog_name') or ''} · {body.reason.strip()}",
-        "amount": -amount, "tax_amount": -tax_refund, "category": "Refund", "notes": body.reason.strip(),
-        "payment_method": _normalize_payment_method(body.payment_method, store=True),
-        "client_id": booking.get("client_id"), "client_name": booking.get("client_name"),
-        "booking_id": booking_id, "source_kind": "refund", "created_at": now_iso(),
-        "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
-    }
-    ledger_ids: List[str] = []
-    event_id = None
+    # Payment rebuild Phase 1 — claim the idempotency key BEFORE any
+    # mutation (and before the refundable-amount check below, so a genuine
+    # retry resolves to the ORIGINAL result rather than being re-validated
+    # against numbers that may have since changed). This is claim-before-
+    # mutate, not check-then-act: a "check first, mutate, then insert the
+    # unique key" sequence has a race window where two simultaneous
+    # requests both pass the check and both mutate before either insert
+    # resolves. Only the request that wins this insert may mutate anything.
+    claim_id = None
+    if body.refund_idempotency_key:
+        claim_id = str(uuid.uuid4())
+        try:
+            await db.refund_idempotency_claims.insert_one({
+                "id": claim_id, "refund_idempotency_key": body.refund_idempotency_key,
+                "booking_id": booking_id, "status": "processing", "event_id": None,
+                "created_at": now_iso(), "updated_at": now_iso(),
+            })
+        except DuplicateKeyError:
+            existing_claim = await db.refund_idempotency_claims.find_one(
+                {"refund_idempotency_key": body.refund_idempotency_key}, {"_id": 0},
+            )
+            if existing_claim and existing_claim.get("status") == "completed":
+                current = await booking_collection.find_one({"id": booking_id}, {"_id": 0})
+                return current or booking
+            raise HTTPException(status_code=409, detail="This refund is already being processed. Wait a moment and try again.")
+
     try:
-        await db.retail_sales.insert_one(refund_row.copy())
-        if booking.get("client_id"):
-            # The invoice reduction and cash return are separate append-only ledger
-            # entries with a net-zero client-tab effect.
-            row1 = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-amount, notes=f"Refund invoice adjustment · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
-            row2 = await _write_ledger_row(client_id=booking["client_id"], type_="refund", amount=amount, method=body.payment_method, notes=f"Cash returned · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
-            ledger_ids.extend([row1["id"], row2["id"]])
-        result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
-        if result.matched_count != 1:
-            raise RuntimeError("Booking disappeared during the refund")
-        before = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": already_refunded}
-        after = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": new_refund_total}
-        event = await _record_booking_financial_event(booking, kind="refund", amount=amount, reason=body.reason, user=user, before=before, after=after, payment_method=body.payment_method)
-        event_id = event.get("id")
-    except Exception as exc:
-        await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
-        await db.retail_sales.delete_one({"id": refund_row["id"]})
-        if ledger_ids:
-            await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
-        if event_id:
-            await db.booking_financial_events.delete_one({"id": event_id})
-        logger.exception("Booking refund rolled back for %s", booking_id)
-        raise HTTPException(status_code=500, detail="The refund could not be saved safely. No refund was recorded.") from exc
-    booking.update(update)
-    return booking
+        originally_paid = round(float(booking.get("amount_paid") or booking.get("cash_revenue") or 0), 2)
+        # Payment rebuild Phase 2 — the booking's own amount_paid is a
+        # frozen checkout-time snapshot; a later invoice top-up (Phase 2)
+        # never rewrites it, so a refund against post-closeout top-up money
+        # would otherwise be incorrectly capped at the original checkout
+        # amount. invoice.amount_paid stays authoritative through any
+        # number of top-ups/voids (a void applies the inverse delta, so a
+        # voided top-up already contributes nothing here — no separate
+        # bookkeeping needed). Only used for a SINGLE-booking invoice —
+        # never the combined total of a multi-booking group invoice, so one
+        # dog's refund can never be inflated by another dog's payment
+        # (safe today because a Phase-2 top-up against a group invoice can
+        # never occur — group invoices always have balance=0 at creation).
+        invoice_for_refund_ceiling = await db.invoices.find_one(
+            {"booking_ids": booking_id}, {"_id": 0, "id": 1, "booking_ids": 1, "amount_paid": 1}
+        )
+        if invoice_for_refund_ceiling and len(invoice_for_refund_ceiling.get("booking_ids") or []) == 1:
+            originally_paid = round(float(invoice_for_refund_ceiling.get("amount_paid") or 0), 2)
+        already_refunded = round(float(booking.get("financial_refund_total") or 0), 2)
+        refundable = round(max(0.0, originally_paid - already_refunded), 2)
+        amount = round(float(body.amount), 2)
+        if amount > refundable + 0.005:
+            raise HTTPException(status_code=409, detail=f"Refund cannot exceed the remaining refundable cash (${refundable:.2f}).")
+        await _require_register_day_open(business_today().isoformat())
+
+        # Preserve the original invoice and original payment exactly as checked out.
+        # The refund is a new negative cash event on today's books. Rewriting the
+        # old booking would move historical revenue and then the refund row would
+        # subtract it again, producing a double-counted loss.
+        old_total = round(float(booking.get("actual_price") or 0), 2)
+        old_due = round(float(booking.get("balance_due") or 0), 2)
+        old_tax = round(float(booking.get("tax_amount") or 0), 2)
+        tax_refund = round(old_tax * min(1.0, amount / originally_paid), 2) if originally_paid > 0 else 0.0
+        new_refund_total = round(already_refunded + amount, 2)
+        update = {
+            "financial_refund_total": new_refund_total,
+            "financial_refund_status": "full" if new_refund_total >= originally_paid - 0.005 else "partial",
+            "financial_last_refund_at": now_iso(),
+            "financial_revision": int(booking.get("financial_revision") or 0) + 1,
+            "financial_locked": True,
+        }
+        refund_row = {
+            "id": str(uuid.uuid4()), "date": business_today().isoformat(),
+            "description": f"Booking refund · {booking.get('dog_name') or ''} · {body.reason.strip()}",
+            "amount": -amount, "tax_amount": -tax_refund, "category": "Refund", "notes": body.reason.strip(),
+            "payment_method": _normalize_payment_method(body.payment_method, store=True),
+            "client_id": booking.get("client_id"), "client_name": booking.get("client_name"),
+            "booking_id": booking_id, "source_kind": "refund", "created_at": now_iso(),
+            "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
+        }
+        ledger_ids: List[str] = []
+        event_id = None
+        try:
+            await db.retail_sales.insert_one(refund_row.copy())
+            if booking.get("client_id"):
+                # The invoice reduction and cash return are separate append-only ledger
+                # entries with a net-zero client-tab effect.
+                row1 = await _write_ledger_row(client_id=booking["client_id"], type_="adjustment", amount=-amount, notes=f"Refund invoice adjustment · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+                row2 = await _write_ledger_row(client_id=booking["client_id"], type_="refund", amount=amount, method=body.payment_method, notes=f"Cash returned · {body.reason.strip()}", booking_id=booking_id, created_by=user.get("id") or "admin")
+                ledger_ids.extend([row1["id"], row2["id"]])
+            result = await booking_collection.update_one({"id": booking_id}, {"$set": update})
+            if result.matched_count != 1:
+                raise RuntimeError("Booking disappeared during the refund")
+            before = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": already_refunded}
+            after = {"actual_price": old_total, "amount_paid": originally_paid, "balance_due": old_due, "payment_status": booking.get("payment_status"), "refunded": new_refund_total}
+            event = await _record_booking_financial_event(booking, kind="refund", amount=amount, reason=body.reason, user=user, before=before, after=after, payment_method=body.payment_method)
+            event_id = event.get("id")
+            try:
+                await _apply_refund_to_invoice(
+                    booking_id=booking_id, amount=amount, method=body.payment_method,
+                    reason=body.reason, event_id=event_id, user=user, ts=now_iso(),
+                )
+            except Exception as exc:
+                logger.warning("invoice refund-payment recording failed for booking %s: %s", booking_id, exc)
+        except Exception as exc:
+            await booking_collection.replace_one({"id": booking_id}, booking, upsert=False)
+            await db.retail_sales.delete_one({"id": refund_row["id"]})
+            if ledger_ids:
+                await db.payment_ledger.delete_many({"id": {"$in": ledger_ids}})
+            if event_id:
+                await db.booking_financial_events.delete_one({"id": event_id})
+            logger.exception("Booking refund rolled back for %s", booking_id)
+            raise HTTPException(status_code=500, detail="The refund could not be saved safely. No refund was recorded.") from exc
+        if claim_id:
+            await db.refund_idempotency_claims.update_one(
+                {"id": claim_id}, {"$set": {"status": "completed", "event_id": event_id, "updated_at": now_iso()}},
+            )
+        booking.update(update)
+        return booking
+    except Exception:
+        if claim_id:
+            await db.refund_idempotency_claims.delete_one({"id": claim_id})
+        raise
 
 
 @api.post("/bookings/{booking_id}/reopen-checkout", response_model=BookingOut)
@@ -18627,6 +19626,50 @@ async def startup():
         # Sprint 110cn — new staff-portal collections.
         (db.punch_corrections, [("status", 1), ("created_at", -1)], {}),
         (db.punch_corrections, "user_id", {}),
+        # Payment rebuild Phase 1 — Invoice/Payment ledger foundation.
+        # Unique on booking_ids: a plain unique index on an array field
+        # enforces that no two documents share any common array element,
+        # i.e. a booking can belong to at most one invoice, ever — this IS
+        # the idempotency guard for _create_invoice_for_bookings.
+        (db.invoices, "booking_ids", {"unique": True}),
+        (db.invoices, "client_id", {}),
+        (db.invoices, "checkout_group_id", {}),
+        (db.invoices, "id", {"unique": True}),
+        (db.payments, "invoice_id", {}),
+        (db.payments, "client_id", {}),
+        (db.payments, "id", {"unique": True}),
+        (db.payments, "idempotency_ref", {"unique": True, "partialFilterExpression": {"idempotency_ref": {"$type": "string"}}}),
+        (db.payments, [("date", 1), ("is_credit", 1)], {}),
+        (db.refund_idempotency_claims, "refund_idempotency_key", {"unique": True}),
+        # Payment rebuild Phase 2 — Cash + manual payments + register.
+        (db.payment_topup_claims, "idempotency_key", {"unique": True}),
+        (db.payment_topup_claims, "invoice_id", {}),
+        (db.payment_void_claims, "idempotency_key", {"unique": True}),
+        # Structural one-void-per-payment invariant — payment_id unique
+        # means a second void attempt against the same payment (even under
+        # a brand-new idempotency_key) is rejected at the index level.
+        (db.payment_void_claims, "payment_id", {"unique": True}),
+        (db.payment_ledger, "invoice_id", {}),
+        (db.retail_sales, "payment_id", {}),
+        (db.retail_sales, "invoice_id", {}),
+        # Front-desk POS hardware integration.
+        (db.pos_action_tokens, "jti", {"unique": True}),
+        (db.pos_action_tokens, "invoice_id", {}),
+        (db.pos_action_tokens, "pos_sale_id", {}),
+        (db.pos_action_tokens, "ledger_id", {}),
+        (db.pos_drawer_audit, "created_at", {}),
+        # Front Desk POS — retail product catalog + sales register.
+        (db.pos_products, "category", {}),
+        (db.pos_products, "sku", {}),
+        (db.pos_sales, [("business_date", -1), ("created_at", -1)], {}),
+        (db.pos_sales, "client_id", {}),
+        (db.pos_sale_claims, "idempotency_key", {"unique": True}),
+        (db.pos_sale_void_claims, "idempotency_key", {"unique": True}),
+        (db.pos_sale_void_claims, "pos_sale_id", {"unique": True}),
+        # Simple retail stock tracking.
+        (db.pos_products, "track_inventory", {}),
+        (db.inventory_movements, "product_id", {}),
+        (db.inventory_movements, [("created_at", -1)], {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -21865,6 +22908,1239 @@ async def booking_history(booking_id: str, _: dict = Depends(require_admin)):
     financial_events = await db.booking_financial_events.find({"booking_id": booking_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return {"booking_id": booking_id, "audit": audits, "ledger": ledger, "financial_events": financial_events}
 
+
+# ── Payment rebuild Phase 1 — read-only Invoice/Payment endpoints ──────────
+# No writes here — invoices/payments are only ever created by the checkout/
+# refund hooks above. These exist purely to surface what was recorded.
+
+@api.get("/bookings/{booking_id}/invoice")
+async def get_booking_invoice(booking_id: str, _: dict = Depends(require_admin)):
+    """Resolves to the canonical invoice for this booking — since a group
+    invoice's booking_ids array contains every dog in the group, this
+    naturally resolves the same way regardless of which booking in the
+    group is queried. Returns None (not a 404) when no invoice exists yet
+    (e.g. a pre-Phase-1 booking, or a $0 visit that never got one)."""
+    invoice = await db.invoices.find_one({"booking_ids": booking_id}, {"_id": 0})
+    if not invoice:
+        return None
+    payments = await db.payments.find({"invoice_id": invoice["id"]}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    invoice["payments"] = payments
+    return invoice
+
+
+@api.get("/invoices/{invoice_id}")
+async def get_invoice(invoice_id: str, _: dict = Depends(require_admin)):
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    payments = await db.payments.find({"invoice_id": invoice_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    invoice["payments"] = payments
+    return invoice
+
+
+@api.get("/clients/{client_id}/invoices")
+async def list_client_invoices(client_id: str, _: dict = Depends(require_admin)):
+    invoices = await db.invoices.find({"client_id": client_id}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return invoices
+
+
+# ── Payment rebuild Phase 2 — Cash + manual payments + register ────────────
+
+@api.post("/invoices/{invoice_id}/payments")
+async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: dict = Depends(require_employee_or_admin)):
+    """Top-up payments ONLY — collects an ADDITIONAL manual payment against
+    an invoice that already has a balance. Never runs during checkout;
+    Phase 1's checkout-time Payment row(s) (created by
+    _create_invoice_for_bookings) are untouched by this endpoint."""
+    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+        raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
+
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.get("status") == "VOID":
+        raise HTTPException(status_code=400, detail="This invoice is void and cannot accept payments.")
+
+    # Refund-activity guard — checked before ANY mutation. Phase 1 never
+    # increases invoice.balance on a refund (amount_paid/balance stay as
+    # they were, only refunded_total/status move), so trusting a stale
+    # balance here could accept money that was already refunded.
+    refunded_total = float(invoice.get("refunded_total") or 0)
+    if refunded_total > 0.005 or invoice.get("status") in ("REFUNDED", "PARTIALLY_REFUNDED"):
+        raise HTTPException(
+            status_code=400,
+            detail="This invoice has refund activity and cannot accept additional payments through the standard payment flow. Reconcile the invoice before taking another payment.",
+        )
+
+    method = body.method
+    amount = round(float(body.amount), 2)
+    if method == "other" and not (body.notes or "").strip():
+        raise HTTPException(status_code=400, detail="A note is required when the payment method is Other.")
+    if method == "cash":
+        if body.tendered_amount is None:
+            raise HTTPException(status_code=400, detail="Cash received (tendered_amount) is required for cash payments.")
+        if float(body.tendered_amount) < amount - 0.005:
+            raise HTTPException(status_code=400, detail="Cash received cannot be less than the amount due.")
+    elif body.tendered_amount is not None:
+        raise HTTPException(status_code=400, detail="tendered_amount only applies to cash payments.")
+
+    business_date = business_today().isoformat()
+    await _require_register_day_open(business_date)
+    if method == "cash":
+        drawer_open = await db.cash_drawer_sessions.find_one({"date": business_date}, {"_id": 0, "date": 1})
+        if not drawer_open:
+            raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
+    # Idempotency — claim first, verify resource + payload match on replay
+    # (same key against a different invoice, or a different amount/method/
+    # tendered_amount/notes, is a 409 conflict, never a silent replay).
+    fingerprint = _request_fingerprint(invoice_id, amount, method, body.tendered_amount, (body.notes or "").strip())
+    claim_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.payment_topup_claims.insert_one({
+            "id": claim_id, "idempotency_key": body.idempotency_key, "invoice_id": invoice_id,
+            "status": "processing", "payment_id": None, "request_fingerprint": fingerprint,
+            "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        existing_claim = await db.payment_topup_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing_claim or existing_claim.get("invoice_id") != invoice_id or existing_claim.get("request_fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different payment request.")
+        if existing_claim.get("status") == "completed":
+            payment = await db.payments.find_one({"id": existing_claim.get("payment_id")}, {"_id": 0})
+            invoice_now = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+            return {"ok": True, "payment": payment, "invoice": invoice_now}
+        raise HTTPException(status_code=409, detail="This payment is already being processed. Wait a moment and try again.")
+
+    invoice_delta_applied = False
+    ledger_id: Optional[str] = None
+    adjust_balance_applied = False
+    payment_id: Optional[str] = None
+    retail_sales_id: Optional[str] = None
+    try:
+        # AR reconciliation — before the atomic invoice delta, so a
+        # rejection here mutates nothing at all.
+        ar_status = await _invoice_ar_status(invoice)
+        if ar_status["ar_backed"]:
+            if not ar_status["reconciled"]:
+                raise HTTPException(status_code=409, detail="This invoice's AR history needs reconciliation before a payment can be recorded here.")
+            client = await db.clients.find_one({"id": invoice.get("client_id")}, {"_id": 0, "account_balance": 1})
+            if float((client or {}).get("account_balance") or 0) < amount - 0.005:
+                raise HTTPException(status_code=409, detail="This invoice's AR balance needs reconciliation before this payment can be recorded.")
+
+        # Atomic invoice delta — the authoritative overpayment guard.
+        result = await db.invoices.find_one_and_update(
+            {"id": invoice_id, "status": {"$ne": "VOID"}, "balance": {"$gte": amount - 0.005}},
+            {"$inc": {"amount_paid": amount, "balance": -amount}, "$set": {"updated_at": ts}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            fresh = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "balance": 1})
+            bal = float((fresh or {}).get("balance") or 0)
+            raise HTTPException(status_code=409, detail=f"Payment exceeds remaining balance of ${bal:.2f}.")
+        invoice_delta_applied = True
+
+        if ar_status["ar_backed"]:
+            ledger_row = await _write_ledger_row(
+                client_id=invoice.get("client_id"), type_="payment", amount=-amount, method=method,
+                notes=f"Invoice payment · {invoice_id}", booking_id=None, invoice_id=invoice_id,
+                created_by=user.get("email") or user.get("id") or "admin", ts=ts,
+            )
+            ledger_id = ledger_row["id"]
+            await _adjust_client_balance(invoice.get("client_id"), -amount)
+            adjust_balance_applied = True
+
+        change_given = round(float(body.tendered_amount) - amount, 2) if method == "cash" else None
+        payment_row = {
+            "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": invoice.get("client_id"),
+            "amount": amount, "method": method, "is_credit": False, "date": business_date,
+            "employee_id": user.get("id"), "employee_name": user.get("name") or user.get("email"),
+            "processor": None, "processor_payment_id": None, "status": "completed",
+            "notes": (body.notes or "").strip(), "refunded_amount": 0.0,
+            "source": {"kind": "manual_topup"}, "booking_id": None, "ledger_id": ledger_id,
+            "idempotency_ref": f"invoice_payment:{invoice_id}:{body.idempotency_key}",
+            "created_at": ts, "updated_at": ts,
+            "tendered_amount": round(float(body.tendered_amount), 2) if method == "cash" else None,
+            "change_given": change_given, "business_date": business_date,
+        }
+        await db.payments.insert_one(payment_row.copy())
+        payment_id = payment_row["id"]
+
+        retail_row = {
+            "id": str(uuid.uuid4()), "date": business_date, "amount": amount, "payment_method": method,
+            "client_id": invoice.get("client_id"), "client_name": invoice.get("client_name"),
+            "invoice_id": invoice_id, "payment_id": payment_id,
+            "source_kind": "invoice_payment", "description": f"Invoice payment · {invoice_id}",
+            "created_at": ts, "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
+        }
+        await db.retail_sales.insert_one(retail_row.copy())
+        retail_sales_id = retail_row["id"]
+
+        new_balance = round(float(result.get("balance") or 0), 2)
+        if new_balance <= 0.005:
+            new_balance = 0.0
+        new_amount_paid = round(float(result.get("amount_paid") or 0), 2)
+        new_status = _derive_invoice_status(
+            result, amount_paid=new_amount_paid, balance=new_balance,
+            credit_applied=float(result.get("credit_applied") or 0),
+        )
+        await db.invoices.update_one(
+            {"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}},
+        )
+    except Exception:
+        # Compensating rollback, in reverse order — mirrors
+        # _booking_refund_locked's established discipline. The claim is
+        # only released/deleted AFTER rollback completes.
+        if retail_sales_id:
+            await db.retail_sales.delete_one({"id": retail_sales_id})
+        if payment_id:
+            await db.payments.delete_one({"id": payment_id})
+        if adjust_balance_applied:
+            await _adjust_client_balance(invoice.get("client_id"), amount)
+        if ledger_id:
+            await db.payment_ledger.delete_one({"id": ledger_id})
+        if invoice_delta_applied:
+            await db.invoices.update_one({"id": invoice_id}, {"$inc": {"amount_paid": -amount, "balance": amount}})
+        await db.payment_topup_claims.delete_one({"id": claim_id})
+        raise
+
+    await db.payment_topup_claims.update_one(
+        {"id": claim_id}, {"$set": {"status": "completed", "payment_id": payment_id, "updated_at": now_iso()}},
+    )
+    final_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    final_payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+
+    # Front-desk POS hardware integration — best-effort, additive, issued
+    # only AFTER the top-up already fully committed above. A failure here
+    # never affects the payment that already succeeded.
+    pos_print_receipt_token = None
+    pos_open_drawer_token = None
+    try:
+        pos_print_receipt_token = await _issue_pos_token(
+            action="print_receipt", workstation_id=body.workstation_id,
+            invoice_id=invoice_id, payment_ids=[payment_id],
+        )
+        if method == "cash":
+            pos_open_drawer_token = await _issue_pos_token(
+                action="open_drawer", workstation_id=body.workstation_id, invoice_id=invoice_id,
+            )
+    except Exception as exc:
+        logger.warning("POS token issuance failed for invoice payment %s: %s", payment_id, exc)
+
+    return {
+        "ok": True, "payment": final_payment, "invoice": final_invoice,
+        "pos_invoice_id": invoice_id,
+        "pos_print_receipt_token": pos_print_receipt_token,
+        "pos_open_drawer_token": pos_open_drawer_token,
+    }
+
+
+@api.post("/payments/{payment_id}/void")
+async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depends(require_admin)):
+    """Reverses a manual top-up payment — exactly once, and only while its
+    business day is still open. Never usable on checkout-time or refund
+    Payment rows (scope-guarded to source.kind=='manual_topup'). This is
+    NOT a general reversal engine: once refund activity exists on the
+    invoice, this endpoint refuses and directs the admin to the existing
+    financial-correction/reconciliation workflow instead."""
+    original = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not original:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if (original.get("source") or {}).get("kind") != "manual_topup":
+        raise HTTPException(status_code=400, detail="Only manual top-up payments can be voided here.")
+
+    invoice = await db.invoices.find_one({"id": original.get("invoice_id")}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    refunded_total = float(invoice.get("refunded_total") or 0)
+    if refunded_total > 0.005 or invoice.get("status") in ("REFUNDED", "PARTIALLY_REFUNDED"):
+        raise HTTPException(
+            status_code=409,
+            detail="This invoice has refund activity; voiding is not available. Use the financial-correction/reconciliation workflow instead.",
+        )
+
+    business_date = original.get("business_date") or original.get("date")
+    active_closeout = await _active_register_closeout(business_date) if business_date else None
+    if active_closeout:
+        raise HTTPException(
+            status_code=409,
+            detail="This payment's business day has been closed out. Use the refund/financial-correction workflow instead.",
+        )
+
+    # Structural one-void-per-payment invariant — payment_id is UNIQUE in
+    # payment_void_claims, so a second void attempt against the same
+    # payment (even with a different idempotency_key) hits DuplicateKeyError
+    # on THAT index, not just the idempotency_key one.
+    fingerprint = _request_fingerprint(payment_id, body.reason.strip())
+    claim_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.payment_void_claims.insert_one({
+            "id": claim_id, "idempotency_key": body.idempotency_key, "payment_id": payment_id,
+            "status": "processing", "reversal_payment_id": None, "request_fingerprint": fingerprint,
+            "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        # Two DIFFERENT unique indexes can fire here: idempotency_key (a
+        # genuine retry) or payment_id (a SECOND void attempt against an
+        # already-claimed payment, even under a brand-new key — the
+        # structural one-void-per-payment invariant). Only an exact match
+        # on key + payment_id + payload replays; anything else — including
+        # a different key against an already-claimed payment_id — is a 409
+        # conflict, never a silent replay.
+        by_key = await db.payment_void_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if by_key and by_key.get("payment_id") == payment_id and by_key.get("request_fingerprint") == fingerprint:
+            if by_key.get("status") == "completed":
+                payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+                invoice_now = await db.invoices.find_one({"id": original.get("invoice_id")}, {"_id": 0})
+                return {"ok": True, "payment": payment, "invoice": invoice_now}
+            raise HTTPException(status_code=409, detail="This void is already being processed. Wait a moment and try again.")
+        raise HTTPException(status_code=409, detail="This payment has already been voided, or this idempotency key was already used for a different request.")
+
+    status_transitioned = False
+    reversal_payment_id: Optional[str] = None
+    reversal_ledger_id: Optional[str] = None
+    balance_reversed = False
+    retail_reversed = False
+    invoice_delta_applied = False
+    try:
+        # Atomic status transition — the void may only begin when the
+        # original payment is still "completed". A race loses cleanly here.
+        flipped = await db.payments.find_one_and_update(
+            {"id": payment_id, "status": "completed", "source.kind": "manual_topup"},
+            {"$set": {"status": "voided", "voided_at": ts}},
+        )
+        if flipped is None:
+            raise HTTPException(status_code=409, detail="This payment has already been voided or is no longer eligible.")
+        status_transitioned = True
+
+        amount = float(original.get("amount") or 0)
+        client_id = original.get("client_id")
+        invoice_id = original.get("invoice_id")
+
+        if original.get("ledger_id"):
+            reversal_ledger_row = await _write_ledger_row(
+                client_id=client_id, type_="adjustment", amount=amount, method="",
+                notes=f"Void reversal of payment {payment_id} · {body.reason.strip()}",
+                booking_id=None, invoice_id=invoice_id,
+                created_by=user.get("email") or user.get("id") or "admin", ts=ts,
+            )
+            reversal_ledger_id = reversal_ledger_row["id"]
+            await _adjust_client_balance(client_id, amount)
+            balance_reversed = True
+
+        original_retail = await db.retail_sales.find_one({"payment_id": payment_id}, {"_id": 0})
+
+        reversal_row = {
+            "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": client_id,
+            "amount": -amount, "method": original.get("method"), "is_credit": False,
+            "date": business_date, "employee_id": user.get("id"), "employee_name": user.get("name") or user.get("email"),
+            "processor": None, "processor_payment_id": None, "status": "completed",
+            "notes": f"Void of payment {payment_id} · {body.reason.strip()}", "refunded_amount": 0.0,
+            "source": {"kind": "manual_topup_void", "voided_payment_id": payment_id},
+            "booking_id": None, "ledger_id": None,
+            "idempotency_ref": f"invoice_payment_void:{payment_id}:{body.idempotency_key}",
+            "created_at": ts, "updated_at": ts,
+            "tendered_amount": None, "change_given": None, "business_date": business_date,
+        }
+        await db.payments.insert_one(reversal_row.copy())
+        reversal_payment_id = reversal_row["id"]
+
+        if original_retail:
+            offset_row = {
+                "id": str(uuid.uuid4()), "date": business_date, "amount": -amount,
+                "payment_method": original.get("method"), "client_id": client_id,
+                "client_name": original_retail.get("client_name"), "invoice_id": invoice_id,
+                "payment_id": reversal_payment_id, "reversed_payment_id": payment_id,
+                "source_kind": "invoice_payment_void",
+                "description": f"Void of invoice payment · {payment_id}",
+                "created_at": ts, "created_by": user.get("id"), "logged_by": user.get("name") or user.get("email") or "admin",
+            }
+            await db.retail_sales.insert_one(offset_row.copy())
+            retail_reversed = True
+
+        await db.invoices.update_one({"id": invoice_id}, {"$inc": {"amount_paid": -amount, "balance": amount}})
+        invoice_delta_applied = True
+        fresh_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+        new_balance = round(float(fresh_invoice.get("balance") or 0), 2)
+        if new_balance <= 0.005:
+            new_balance = 0.0
+        new_amount_paid = round(float(fresh_invoice.get("amount_paid") or 0), 2)
+        new_status = _derive_invoice_status(
+            fresh_invoice, amount_paid=new_amount_paid, balance=new_balance,
+            credit_applied=float(fresh_invoice.get("credit_applied") or 0),
+        )
+        await db.invoices.update_one(
+            {"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}},
+        )
+    except Exception:
+        if invoice_delta_applied:
+            await db.invoices.update_one({"id": original.get("invoice_id")}, {"$inc": {"amount_paid": float(original.get("amount") or 0), "balance": -float(original.get("amount") or 0)}})
+        if retail_reversed:
+            await db.retail_sales.delete_one({"payment_id": reversal_payment_id})
+        if reversal_payment_id:
+            await db.payments.delete_one({"id": reversal_payment_id})
+        if balance_reversed:
+            await _adjust_client_balance(original.get("client_id"), -float(original.get("amount") or 0))
+        if reversal_ledger_id:
+            await db.payment_ledger.delete_one({"id": reversal_ledger_id})
+        if status_transitioned:
+            await db.payments.update_one({"id": payment_id}, {"$set": {"status": "completed"}, "$unset": {"voided_at": ""}})
+        await db.payment_void_claims.delete_one({"id": claim_id})
+        raise
+
+    await db.payment_void_claims.update_one(
+        {"id": claim_id}, {"$set": {"status": "completed", "reversal_payment_id": reversal_payment_id, "updated_at": now_iso()}},
+    )
+    final_invoice = await db.invoices.find_one({"id": original.get("invoice_id")}, {"_id": 0})
+    final_payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    return {"ok": True, "payment": final_payment, "invoice": final_invoice}
+
+
+@api.get("/admin/register/session")
+async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin)):
+    date_value = _validated_register_date(date, allow_future=False)
+    return await _register_session_view(date_value)
+
+
+# ── POS hardware authorization endpoints ────────────────────────────────────
+# Called by the front-desk local POS agent (never directly by the browser,
+# except to relay an opaque token) or, for the manual drawer action, by the
+# authenticated Sit Happens session. No pricing/accounting logic lives here.
+
+@api.get("/pos/receipt-payload")
+async def get_pos_receipt_payload(token: str):
+    """Called by the local POS agent to fetch the canonical receipt content
+    for a print action. The token itself is the credential — this is a
+    machine-to-machine call from the front-desk agent, not a logged-in
+    browser session. Single-use: a second call with the same token fails."""
+    claims = await _verify_and_consume_pos_token(token, expected_action="print_receipt")
+    pos_sale_id = claims.get("pos_sale_id")
+    if pos_sale_id:
+        return await _build_pos_sale_receipt_payload(pos_sale_id)
+    ledger_id = claims.get("ledger_id")
+    if ledger_id:
+        return await _build_tab_payment_receipt_payload(ledger_id)
+    invoice_id = claims.get("invoice_id")
+    if not invoice_id:
+        raise HTTPException(status_code=400, detail="Token has no associated invoice, POS sale, or ledger row")
+    payload = await _build_receipt_payload(invoice_id, payment_ids=claims.get("payment_ids") or None)
+    return payload
+
+
+@api.post("/pos/verify-drawer-token")
+async def verify_pos_drawer_token(body: Dict[str, Any]):
+    """Called by the local POS agent before it kicks the physical drawer.
+    Verifies + consumes a token issued for either an automatic post-cash-
+    payment drawer open or a manual admin-authorized drawer open."""
+    token = body.get("token")
+    workstation_id = body.get("workstation_id")
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing token")
+    claims = await _verify_and_consume_pos_token(token, expected_action="open_drawer", workstation_id=workstation_id)
+    return {"ok": True, "workstation_id": claims.get("workstation_id")}
+
+
+@api.post("/invoices/{invoice_id}/pos-tokens")
+async def issue_pos_tokens_for_invoice(invoice_id: str, body: Optional[Dict[str, Any]] = None, user: dict = Depends(require_employee_or_admin)):
+    """On-demand hardware-action token (re)issuance for an existing invoice —
+    used for reprints, and for retrying a failed hardware action right after
+    checkout (the original token was already single-use-consumed the moment
+    it was verified, even if the physical action then failed, so a genuine
+    retry needs a FRESH token, never the stale one). Issuing a token creates
+    NO financial mutation, no matter how many times it's called — it only
+    ever authorizes reading canonical data / kicking the drawer once."""
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "id": 1})
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    body = body or {}
+    workstation_id = body.get("workstation_id")
+    payment_ids = body.get("payment_ids")
+    actions = body.get("actions") or ["print_receipt"]
+    out = {}
+    if "print_receipt" in actions:
+        out["print_receipt_token"] = await _issue_pos_token(
+            action="print_receipt", workstation_id=workstation_id, invoice_id=invoice_id, payment_ids=payment_ids,
+        )
+    if "open_drawer" in actions:
+        out["open_drawer_token"] = await _issue_pos_token(
+            action="open_drawer", workstation_id=workstation_id, invoice_id=invoice_id,
+        )
+    return out
+
+
+@api.post("/admin/pos/open-drawer")
+async def admin_pos_open_drawer(body: POSOpenDrawerIn, user: dict = Depends(require_admin)):
+    """Manual, admin-authorized physical drawer open (making change,
+    counting the drawer, etc.). Writes the audit record FIRST, then issues
+    the token — never the other way around, so an audit trail always exists
+    even if token issuance or the hardware action itself later fails. This
+    never creates a Payment, revenue, expense, or till adjustment by itself."""
+    ts = now_iso()
+    await db.pos_drawer_audit.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user.get("id"), "user_name": user.get("name") or user.get("email"),
+        "reason": body.reason.strip(), "workstation_id": body.workstation_id,
+        "source": "manual_admin_open_drawer", "created_at": ts,
+    })
+    token = await _issue_pos_token(action="open_drawer", workstation_id=body.workstation_id, reason=body.reason.strip())
+    return {"open_drawer_token": token}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Front Desk POS — retail product catalog
+# ─────────────────────────────────────────────────────────────────────────────
+# A real product catalog for the front-desk register cart. This is NEW — the
+# only pre-existing "retail" system (retail_sales) is a manual accounting
+# ledger with no catalog/inventory concept at all. Historical POS sales
+# snapshot each line's description/price at sale time (see pos_sales below),
+# so editing or deleting a catalog product never rewrites history.
+#
+# Simple stock-on-hand tracking (added this phase) — deliberately NOT a
+# barcode/UPC/SKU-driven system: no scanning, no required product codes.
+# track_inventory is per-product and defaults False, so every product that
+# existed before this phase keeps selling exactly as before (unlimited,
+# untracked) until an admin opts it in. Movements are recorded in
+# inventory_movements (see _mutate_product_stock) — stock_on_hand itself is
+# never edited directly by the product edit form, only by a sale, a void, or
+# an explicit stock adjustment.
+
+class PosProductIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    sku: Optional[str] = Field(default=None, max_length=100)
+    category: Optional[str] = Field(default="", max_length=100)
+    description: Optional[str] = Field(default=None, max_length=1000)
+    price: float = Field(ge=0)
+    cost: Optional[float] = Field(default=None, ge=0)
+    low_stock_threshold: Optional[float] = Field(default=None, ge=0)
+    track_inventory: bool = False
+    active: bool = True
+
+
+class PosProductCreateIn(PosProductIn):
+    starting_stock: float = Field(default=0, ge=0)
+
+
+class PosProductOut(PosProductIn):
+    id: str
+    stock_on_hand: float
+    created_at: str
+    updated_at: Optional[str] = None
+
+
+def _require_take_payments(user: dict):
+    if user.get("role") != "admin" and not _perms_for(user).get("take_payments"):
+        raise HTTPException(status_code=403, detail="You don't have permission to take payments.")
+
+
+@api.get("/pos/products")
+async def list_pos_products(
+    include_inactive: bool = False,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Product tiles for the register screen. Front desk only ever sees
+    active products; the admin catalog-management view passes
+    include_inactive=true to also see (and reactivate) retired items."""
+    _require_take_payments(user)
+    q: Dict[str, Any] = {} if include_inactive else {"active": True}
+    cursor = db.pos_products.find(q, {"_id": 0}).sort([("category", 1), ("name", 1)])
+    return await cursor.to_list(5000)
+
+
+@api.post("/pos/products")
+async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin)):
+    doc = {
+        "id": str(uuid.uuid4()),
+        "name": body.name.strip(),
+        "sku": (body.sku or "").strip() or None,
+        "category": (body.category or "").strip(),
+        "description": (body.description or "").strip() or None,
+        "price": round(float(body.price), 2),
+        "cost": round(float(body.cost), 2) if body.cost is not None else None,
+        "low_stock_threshold": body.low_stock_threshold,
+        "track_inventory": body.track_inventory,
+        "active": body.active,
+        "stock_on_hand": round(float(body.starting_stock or 0), 3),
+        "created_at": now_iso(),
+    }
+    await db.pos_products.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.put("/pos/products/{product_id}")
+async def update_pos_product(product_id: str, body: PosProductIn, user: dict = Depends(require_admin)):
+    """Edits product info only. stock_on_hand is deliberately never part of
+    this patch — it can only change via a sale, a void, or the explicit
+    adjust-stock endpoint below, each of which leaves an audit trail."""
+    existing = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Product not found")
+    patch = {
+        "name": body.name.strip(),
+        "sku": (body.sku or "").strip() or None,
+        "category": (body.category or "").strip(),
+        "description": (body.description or "").strip() or None,
+        "price": round(float(body.price), 2),
+        "cost": round(float(body.cost), 2) if body.cost is not None else None,
+        "low_stock_threshold": body.low_stock_threshold,
+        "track_inventory": body.track_inventory,
+        "active": body.active,
+        "updated_at": now_iso(),
+    }
+    await db.pos_products.update_one({"id": product_id}, {"$set": patch})
+    return {**existing, **patch}
+
+
+@api.delete("/pos/products/{product_id}")
+async def delete_pos_product(product_id: str, user: dict = Depends(require_admin)):
+    """Hard delete from the catalog. Safe at any time — completed pos_sales
+    line items snapshot their own description/price and never reference this
+    document live, so removing a discontinued product never alters a past
+    receipt or revenue record."""
+    res = await db.pos_products.delete_one({"id": product_id})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return {"ok": True}
+
+
+@api.get("/pos/products/categories")
+async def pos_product_categories(user: dict = Depends(require_employee_or_admin)):
+    _require_take_payments(user)
+    cats = await db.pos_products.distinct("category", {"active": True})
+    return {"categories": sorted([c for c in cats if c])}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stock movements — one row per change to a tracked product's stock_on_hand
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _mutate_product_stock(
+    product_id: str, quantity_delta: float, movement_type: str, reason: str, *,
+    user: Optional[dict] = None, pos_sale_id: Optional[str] = None, allow_negative: bool = False,
+) -> dict:
+    """Atomically applies quantity_delta to a product's stock_on_hand and
+    writes exactly one inventory_movements row recording the change. Uses an
+    optimistic stock_before precondition on the update itself, so two
+    concurrent mutations against the same product (e.g. two simultaneous
+    sales of the last unit) can never silently clobber one another — the
+    loser rereads the fresh value and retries, never overselling. Raises
+    HTTPException(400) on insufficient stock (unless allow_negative, used
+    when restoring stock on a void, where going below zero can't happen) and
+    HTTPException(404) if the product no longer exists."""
+    for _ in range(5):
+        product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+        stock_before = float(product.get("stock_on_hand") or 0)
+        stock_after = round(stock_before + quantity_delta, 3)
+        if stock_after < -0.0005 and not allow_negative:
+            if stock_before <= 0.0005:
+                raise HTTPException(status_code=400, detail=f"{product.get('name')} is out of stock.")
+            raise HTTPException(status_code=400, detail=f"Only {stock_before:g} in stock for {product.get('name')}.")
+        stock_after = max(0.0, stock_after) if allow_negative else stock_after
+        ts = now_iso()
+        result = await db.pos_products.find_one_and_update(
+            {"id": product_id, "stock_on_hand": stock_before},
+            {"$set": {"stock_on_hand": stock_after, "updated_at": ts}},
+        )
+        if result is None:
+            continue  # lost the race — reread the fresh value and retry
+        movement = {
+            "id": str(uuid.uuid4()), "product_id": product_id, "type": movement_type,
+            "quantity_delta": round(quantity_delta, 3),
+            "stock_before": stock_before, "stock_after": stock_after,
+            "reason": reason, "pos_sale_id": pos_sale_id,
+            "user_id": (user or {}).get("id"), "user_name": (user or {}).get("name") or (user or {}).get("email"),
+            "created_at": ts,
+        }
+        await db.inventory_movements.insert_one(movement.copy())
+        return {"stock_on_hand": stock_after, "movement": movement}
+    raise HTTPException(status_code=409, detail="Stock changed too many times concurrently — try again.")
+
+
+class InventoryAdjustIn(BaseModel):
+    quantity_delta: float
+    reason: str = Field(min_length=3, max_length=300)
+    source: Literal["RESTOCK", "MANUAL_ADJUSTMENT", "RETURN"] = "MANUAL_ADJUSTMENT"
+
+    @field_validator("quantity_delta")
+    @classmethod
+    def _quantity_delta_nonzero(cls, v):
+        if v == 0:
+            raise ValueError("quantity_delta cannot be zero")
+        return v
+
+
+@api.post("/pos/products/{product_id}/adjust-stock")
+async def adjust_pos_product_stock(product_id: str, body: InventoryAdjustIn, user: dict = Depends(require_admin)):
+    """Manual stock correction — receiving a shipment, damage, loss, an
+    inventory-count correction, or an explicit refund-restock decision
+    (source=RETURN). Never silently edits stock_on_hand; always leaves an
+    inventory_movements row."""
+    product = await db.pos_products.find_one({"id": product_id}, {"_id": 0, "track_inventory": 1})
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    if not product.get("track_inventory"):
+        raise HTTPException(status_code=400, detail="This product does not track inventory.")
+    result = await _mutate_product_stock(
+        product_id, body.quantity_delta, body.source, body.reason.strip(), user=user,
+    )
+    return {"ok": True, **result}
+
+
+@api.get("/pos/products/{product_id}/movements")
+async def list_inventory_movements(product_id: str, limit: int = 100, user: dict = Depends(require_admin)):
+    cursor = db.inventory_movements.find({"product_id": product_id}, {"_id": 0}).sort("created_at", -1)
+    return await cursor.to_list(max(1, min(limit, 500)))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Front Desk POS — retail cart / sale (pos_sales)
+# ─────────────────────────────────────────────────────────────────────────────
+# The canonical container for one register transaction: a cart of retail
+# product lines (and optional admin-only custom lines), an optional
+# order-level discount, and one or more tenders. This does NOT replace or
+# duplicate booking/service pricing, invoices, or Payment rows — those keep
+# flowing through the existing checkout/top-up endpoints untouched. A
+# completed pos_sales document writes exactly ONE retail_sales row (via the
+# same tax-calculation path create_retail_sale already uses), so retail
+# revenue still has exactly one recognition path.
+
+class PosSaleLineIn(BaseModel):
+    kind: Literal["retail", "custom"] = "retail"
+    product_id: Optional[str] = None  # required when kind == "retail"
+    description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail
+    qty: float = Field(default=1, gt=0, le=999)
+    # Required when kind == "custom" — the line's total amount (custom lines
+    # are always qty-of-one conceptually, e.g. "Replacement leash $12.00").
+    custom_amount: Optional[float] = Field(default=None, gt=0)
+    custom_reason: Optional[str] = Field(default=None, max_length=300)
+
+
+class PosSaleDiscountIn(BaseModel):
+    kind: Literal["fixed", "percent"]
+    value: float = Field(gt=0)
+    reason: str = Field(min_length=3, max_length=300)
+
+
+class PosSaleTenderIn(BaseModel):
+    method: Literal["cash", "check", "venmo", "paypal", "other"]
+    amount: float = Field(gt=0)
+    tendered_amount: Optional[float] = Field(default=None, ge=0)  # cash only
+    notes: Optional[str] = Field(default=None, max_length=500)  # required when method == "other"
+    # Forward-compat placeholder only — unused today. When Stripe Card/
+    # Terminal is added later, "method" gains new literals and this field
+    # carries the provider's charge/transaction id. Nothing reads or writes
+    # this field yet.
+    provider_ref: Optional[str] = None
+
+
+class PosSalePreviewIn(BaseModel):
+    lines: List[PosSaleLineIn] = Field(min_length=1)
+    discount: Optional[PosSaleDiscountIn] = None
+
+
+class PosSaleIn(PosSalePreviewIn):
+    client_id: Optional[str] = None
+    tenders: List[PosSaleTenderIn] = Field(min_length=1)
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, is_admin: bool) -> tuple:
+    """Prices a POS cart. Retail line prices are ALWAYS resolved server-side
+    from the live product catalog (never trusted from the client) — only a
+    custom line's amount is caller-supplied, and only admins may include one.
+    Raises HTTPException on any invalid input; never partially prices.
+
+    Also enforces stock availability for track_inventory products, summed
+    across every line referencing the same product (so two cart lines for
+    the same item can't each individually pass a check that their combined
+    quantity would fail). This is a pre-commit convenience check shared by
+    preview and create — the actual sale commit still deducts atomically
+    (see _mutate_product_stock), so a race against another register can
+    never oversell even if this check briefly passed. Frontend stock
+    numbers are for display only; this is the real enforcement point.
+
+    Returns (priced_dict, product_cache) — product_cache maps product_id to
+    its full catalog doc as read at pricing time, reused by the caller so a
+    sale commit never has to re-query products it already fetched here."""
+    line_items = []
+    product_cache: Dict[str, dict] = {}
+    qty_by_product: Dict[str, float] = {}
+    for line in lines:
+        if line.kind == "custom":
+            if not is_admin:
+                raise HTTPException(status_code=403, detail="Only an admin can add a custom item.")
+            if line.custom_amount is None or line.custom_amount <= 0:
+                raise HTTPException(status_code=400, detail="Custom items require a positive amount.")
+            if not (line.custom_reason or "").strip():
+                raise HTTPException(status_code=400, detail="Custom items require a reason.")
+            amount = round(float(line.custom_amount), 2)
+            line_items.append({
+                "kind": "custom", "product_id": None,
+                "description": (line.description or "Custom item").strip(),
+                "qty": 1, "unit_price": amount, "amount": amount,
+                "reason": line.custom_reason.strip(),
+            })
+        else:
+            if not line.product_id:
+                raise HTTPException(status_code=400, detail="Retail line is missing a product.")
+            product = product_cache.get(line.product_id)
+            if product is None:
+                product = await db.pos_products.find_one({"id": line.product_id}, {"_id": 0})
+                if not product or not product.get("active", True):
+                    raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
+                product_cache[line.product_id] = product
+            qty = round(float(line.qty or 1), 3)
+            unit_price = round(float(product["price"]), 2)
+            amount = round(qty * unit_price, 2)
+            line_items.append({
+                "kind": "retail", "product_id": product["id"],
+                "description": (line.description or product["name"]).strip(),
+                "qty": qty, "unit_price": unit_price, "amount": amount,
+            })
+            qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
+
+    for product_id, total_qty in qty_by_product.items():
+        product = product_cache[product_id]
+        if not product.get("track_inventory"):
+            continue
+        stock = float(product.get("stock_on_hand") or 0)
+        if total_qty > stock + 0.0005:
+            if stock <= 0.0005:
+                raise HTTPException(status_code=400, detail=f"{product['name']} is out of stock.")
+            raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product['name']}.")
+
+    subtotal = round(sum(li["amount"] for li in line_items), 2)
+
+    discount_amount = 0.0
+    discount_kind = None
+    discount_reason = None
+    if discount is not None:
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Only an admin can apply a discount.")
+        if discount.kind == "percent":
+            if discount.value > 100:
+                raise HTTPException(status_code=400, detail="A percentage discount cannot exceed 100%.")
+            discount_amount = round(subtotal * (discount.value / 100.0), 2)
+        else:
+            discount_amount = round(min(discount.value, subtotal), 2)
+        discount_kind = discount.kind
+        discount_reason = discount.reason.strip()
+
+    taxable_base = round(max(0.0, subtotal - discount_amount), 2)
+    tax_amount = 0.0
+    tax_rate_pct = 0.0
+    try:
+        settings_tx = await get_settings()
+        tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
+            applies = (tx_cfg.get("applies_to") or {})
+            if applies.get("retail", True):
+                tax_rate_pct = float(tx_cfg["rate_pct"])
+                tax_amount = round(taxable_base * (tax_rate_pct / 100.0), 2)
+    except Exception as exc:
+        logger.warning("POS cart tax calc failed: %s", exc)
+
+    total = round(taxable_base + tax_amount, 2)
+
+    priced = {
+        "line_items": line_items, "subtotal": subtotal,
+        "discount_amount": discount_amount, "discount_kind": discount_kind, "discount_reason": discount_reason,
+        "tax_amount": tax_amount, "tax_rate_pct": tax_rate_pct, "total": total,
+    }
+    return priced, product_cache
+
+
+@api.post("/pos/sales/preview")
+async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_employee_or_admin)):
+    """Prices a cart without creating anything — pure read, safe to call on
+    every cart edit for live cart totals."""
+    _require_take_payments(user)
+    priced, _product_cache = await _price_pos_cart(body.lines, body.discount, is_admin=(user.get("role") == "admin"))
+    return priced
+
+
+@api.post("/pos/sales")
+async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
+    """Completes one Front Desk POS retail transaction: prices the cart
+    server-side, validates tenders sum EXACTLY to the total (a real register
+    only closes out a sale once it's fully settled — no retail-on-tab path
+    here), commits atomically with a compensating rollback on any failure,
+    writes exactly one retail_sales row for revenue recognition, then
+    (post-commit, best-effort) issues hardware tokens — a drawer token only
+    when real cash was actually part of the tender mix."""
+    _require_take_payments(user)
+    is_admin = user.get("role") == "admin"
+
+    priced, product_cache = await _price_pos_cart(body.lines, body.discount, is_admin=is_admin)
+    total = priced["total"]
+
+    client_name = ""
+    if body.client_id:
+        c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
+        if not c:
+            raise HTTPException(status_code=404, detail="Client not found")
+        client_name = c.get("name") or ""
+
+    tender_docs = []
+    cash_component = 0.0
+    for t in body.tenders:
+        amount = round(float(t.amount), 2)
+        if t.method == "other" and not (t.notes or "").strip():
+            raise HTTPException(status_code=400, detail="A note is required when a tender's method is Other.")
+        if t.method == "cash":
+            if t.tendered_amount is None:
+                raise HTTPException(status_code=400, detail="Cash received (tendered_amount) is required for a cash tender.")
+            if float(t.tendered_amount) < amount - 0.005:
+                raise HTTPException(status_code=400, detail="Cash received cannot be less than the amount applied.")
+            cash_component += amount
+        elif t.tendered_amount is not None:
+            raise HTTPException(status_code=400, detail="tendered_amount only applies to a cash tender.")
+        tender_docs.append({
+            "method": t.method, "amount": amount,
+            "tendered_amount": round(float(t.tendered_amount), 2) if t.method == "cash" else None,
+            "change_given": round(float(t.tendered_amount) - amount, 2) if t.method == "cash" else None,
+            "notes": (t.notes or "").strip() or None, "provider_ref": t.provider_ref,
+        })
+    cash_component = round(cash_component, 2)
+    tenders_sum = round(sum(td["amount"] for td in tender_docs), 2)
+    if abs(tenders_sum - total) > 0.005:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tenders must add up to exactly the total (${total:.2f}); got ${tenders_sum:.2f}.",
+        )
+
+    business_date = business_today().isoformat()
+    await _require_register_day_open(business_date)
+    if cash_component > 0:
+        drawer_open = await db.cash_drawer_sessions.find_one({"date": business_date}, {"_id": 0, "date": 1})
+        if not drawer_open:
+            raise HTTPException(status_code=400, detail="Open the register before taking cash payments.")
+
+    # Idempotency — same discipline as create_invoice_payment: claim first,
+    # replay only on an exact resource+payload match, 409 on any mismatch.
+    fingerprint = _request_fingerprint(
+        body.client_id,
+        [(li["kind"], li.get("product_id"), li["qty"], li["amount"]) for li in priced["line_items"]],
+        priced["discount_amount"], total,
+        [(td["method"], td["amount"], td["tendered_amount"]) for td in tender_docs],
+    )
+    claim_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.pos_sale_claims.insert_one({
+            "id": claim_id, "idempotency_key": body.idempotency_key,
+            "status": "processing", "pos_sale_id": None, "request_fingerprint": fingerprint,
+            "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        existing_claim = await db.pos_sale_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing_claim or existing_claim.get("request_fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different sale request.")
+        if existing_claim.get("status") == "completed":
+            sale = await db.pos_sales.find_one({"id": existing_claim.get("pos_sale_id")}, {"_id": 0})
+            return {"ok": True, "sale": sale, "pos_sale_id": sale["id"] if sale else None,
+                    "pos_print_receipt_token": None, "pos_open_drawer_token": None}
+        raise HTTPException(status_code=409, detail="This sale is already being processed. Wait a moment and try again.")
+
+    sale_id = str(uuid.uuid4())
+    retail_sales_id: Optional[str] = None
+    applied_stock_movements: List[tuple] = []  # (product_id, qty) already deducted — reversed on failure below
+    try:
+        item_count = len(priced["line_items"])
+        sale_doc = {
+            "id": sale_id, "receipt_number": sale_id[:8].upper(),
+            "client_id": body.client_id, "client_name": client_name,
+            "line_items": priced["line_items"], "subtotal": priced["subtotal"],
+            "discount_amount": priced["discount_amount"], "discount_kind": priced["discount_kind"],
+            "discount_reason": priced["discount_reason"],
+            "tax_amount": priced["tax_amount"], "tax_rate_pct": priced["tax_rate_pct"], "total": total,
+            "tenders": tender_docs, "cash_component": cash_component,
+            "status": "completed", "business_date": business_date,
+            "created_at": ts, "created_by": user.get("id"),
+            "created_by_name": user.get("name") or user.get("email"),
+            "workstation_id": body.workstation_id, "retail_sales_id": None,
+        }
+        await db.pos_sales.insert_one(sale_doc.copy())
+
+        methods = sorted({td["method"] for td in tender_docs})
+        payment_method_label = methods[0] if len(methods) == 1 else "split"
+        retail_row = await _build_retail_sale_doc(
+            date=business_date,
+            description=f"POS Sale #{sale_doc['receipt_number']} ({item_count} item{'s' if item_count != 1 else ''})",
+            amount=total, quantity=round(sum(li["qty"] for li in priced["line_items"]), 3) or 1,
+            category="POS", payment_method=payment_method_label,
+            client_id=body.client_id, client_name=client_name, created_by=user.get("id"),
+            precomputed_tax={
+                "tax_amount": priced["tax_amount"], "tax_rate_pct": priced["tax_rate_pct"],
+                "pre_tax_amount": round(total - priced["tax_amount"], 2),
+            },
+        )
+        retail_row["pos_sale_id"] = sale_id
+        await db.retail_sales.insert_one(retail_row.copy())
+        retail_sales_id = retail_row["id"]
+        await db.pos_sales.update_one({"id": sale_id}, {"$set": {"retail_sales_id": retail_sales_id}})
+
+        # Inventory deduction — only for retail lines whose product has
+        # track_inventory=True (custom lines and untracked products never
+        # touch stock). Quantities are summed per product first so a product
+        # appearing on two cart lines is deducted once, atomically. Each
+        # deduction is its own atomic, race-safe write (_mutate_product_stock)
+        # writing one "SALE" inventory_movements row; if any line fails
+        # (lost a race for the last unit against another register), every
+        # deduction already applied in this sale is restored before the sale
+        # itself is rolled back in the except block below.
+        qty_by_product: Dict[str, float] = {}
+        for li in priced["line_items"]:
+            if li["kind"] == "retail":
+                qty_by_product[li["product_id"]] = qty_by_product.get(li["product_id"], 0) + li["qty"]
+        for product_id, qty in qty_by_product.items():
+            if not product_cache.get(product_id, {}).get("track_inventory"):
+                continue
+            await _mutate_product_stock(
+                product_id, -qty, "SALE",
+                reason=f"POS Sale #{sale_doc['receipt_number']}",
+                user=user, pos_sale_id=sale_id,
+            )
+            applied_stock_movements.append((product_id, qty))
+    except Exception:
+        for product_id, qty in applied_stock_movements:
+            try:
+                await _mutate_product_stock(
+                    product_id, qty, "VOID", reason="Rollback — sale failed to commit",
+                    user=user, pos_sale_id=sale_id, allow_negative=True,
+                )
+            except Exception as exc:
+                logger.error("Failed to reverse stock deduction for product %s during sale rollback: %s", product_id, exc)
+        if retail_sales_id:
+            await db.retail_sales.delete_one({"id": retail_sales_id})
+        await db.pos_sales.delete_one({"id": sale_id})
+        await db.pos_sale_claims.delete_one({"id": claim_id})
+        raise
+
+    await db.pos_sale_claims.update_one(
+        {"id": claim_id}, {"$set": {"status": "completed", "pos_sale_id": sale_id, "updated_at": now_iso()}},
+    )
+
+    # Front-desk POS hardware integration — best-effort, additive, issued
+    # only AFTER the sale already fully committed above. A failure here
+    # never affects the sale that already succeeded.
+    pos_print_receipt_token = None
+    pos_open_drawer_token = None
+    try:
+        pos_print_receipt_token = await _issue_pos_token(
+            action="print_receipt", workstation_id=body.workstation_id, pos_sale_id=sale_id,
+        )
+        if cash_component > 0:
+            pos_open_drawer_token = await _issue_pos_token(
+                action="open_drawer", workstation_id=body.workstation_id, pos_sale_id=sale_id,
+            )
+    except Exception as exc:
+        logger.warning("POS token issuance failed for pos_sale %s: %s", sale_id, exc)
+
+    final_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    return {
+        "ok": True, "sale": final_sale, "pos_sale_id": sale_id,
+        "pos_print_receipt_token": pos_print_receipt_token,
+        "pos_open_drawer_token": pos_open_drawer_token,
+    }
+
+
+@api.get("/pos/sales")
+async def list_pos_sales(
+    date: Optional[str] = None, limit: int = 50,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """Recent Sales panel — defaults to today's business date. Newest first."""
+    _require_take_payments(user)
+    date_value = date or business_today().isoformat()
+    cursor = db.pos_sales.find({"business_date": date_value}, {"_id": 0}).sort("created_at", -1)
+    return await cursor.to_list(max(1, min(limit, 500)))
+
+
+@api.get("/pos/sales/{sale_id}")
+async def get_pos_sale(sale_id: str, user: dict = Depends(require_employee_or_admin)):
+    _require_take_payments(user)
+    sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not sale:
+        raise HTTPException(status_code=404, detail="POS sale not found")
+    return sale
+
+
+@api.post("/pos/sales/{sale_id}/pos-tokens")
+async def issue_pos_tokens_for_sale(
+    sale_id: str, body: Optional[Dict[str, Any]] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """On-demand hardware-action token (re)issuance for an existing POS sale
+    — used for reprints, and for retrying a failed hardware action right
+    after the sale completed (the original token is single-use-consumed the
+    moment it's verified, even if the physical action then fails). Creates
+    NO financial mutation no matter how many times it's called."""
+    _require_take_payments(user)
+    sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0, "id": 1, "cash_component": 1})
+    if not sale:
+        raise HTTPException(status_code=404, detail="POS sale not found")
+    body = body or {}
+    workstation_id = body.get("workstation_id")
+    actions = body.get("actions") or ["print_receipt"]
+    out = {}
+    if "print_receipt" in actions:
+        out["print_receipt_token"] = await _issue_pos_token(
+            action="print_receipt", workstation_id=workstation_id, pos_sale_id=sale_id,
+        )
+    if "open_drawer" in actions:
+        out["open_drawer_token"] = await _issue_pos_token(
+            action="open_drawer", workstation_id=workstation_id, pos_sale_id=sale_id,
+        )
+    return out
+
+
+@api.post("/clients/{client_id}/ledger/{ledger_id}/pos-tokens")
+async def issue_pos_tokens_for_ledger_row(
+    client_id: str, ledger_id: str, body: Optional[Dict[str, Any]] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
+    """On-demand hardware-action token (re)issuance for a tab/account
+    payment's ledger row — used for reprints and for retrying a failed
+    hardware action right after the payment completed. Creates NO financial
+    mutation no matter how many times it's called."""
+    row = await db.payment_ledger.find_one({"id": ledger_id, "client_id": client_id}, {"_id": 0, "id": 1})
+    if not row:
+        raise HTTPException(status_code=404, detail="Ledger row not found")
+    body = body or {}
+    workstation_id = body.get("workstation_id")
+    actions = body.get("actions") or ["print_receipt"]
+    out = {}
+    if "print_receipt" in actions:
+        out["print_receipt_token"] = await _issue_pos_token(
+            action="print_receipt", workstation_id=workstation_id, ledger_id=ledger_id,
+        )
+    if "open_drawer" in actions:
+        out["open_drawer_token"] = await _issue_pos_token(
+            action="open_drawer", workstation_id=workstation_id, ledger_id=ledger_id,
+        )
+    return out
+
+
+class PosSaleVoidIn(BaseModel):
+    reason: str = Field(min_length=3, max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    workstation_id: Optional[str] = Field(default=None, max_length=100)
+
+
+@api.post("/pos/sales/{sale_id}/void")
+async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin)):
+    """Reverses a completed retail POS sale — exactly once, and only while
+    its business day is still open. Mirrors void_payment's exact discipline:
+    structural one-void-per-sale invariant (pos_sale_id is UNIQUE in
+    pos_sale_void_claims), atomic status transition, an offsetting negative
+    retail_sales row (never deleting the original), and a drawer-open token
+    when the voided sale had a real cash component (giving cash back is a
+    physical drawer action too). After closeout, this refuses — use the
+    existing manual financial-correction workflow instead."""
+    original = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    if not original:
+        raise HTTPException(status_code=404, detail="POS sale not found")
+
+    business_date = original.get("business_date")
+    active_closeout = await _active_register_closeout(business_date) if business_date else None
+    if active_closeout:
+        raise HTTPException(
+            status_code=409,
+            detail="This sale's business day has been closed out. Use the financial-correction workflow instead.",
+        )
+
+    fingerprint = _request_fingerprint(sale_id, body.reason.strip())
+    claim_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.pos_sale_void_claims.insert_one({
+            "id": claim_id, "idempotency_key": body.idempotency_key, "pos_sale_id": sale_id,
+            "status": "processing", "request_fingerprint": fingerprint,
+            "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        by_key = await db.pos_sale_void_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if by_key and by_key.get("pos_sale_id") == sale_id and by_key.get("request_fingerprint") == fingerprint:
+            if by_key.get("status") == "completed":
+                sale_now = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+                return {"ok": True, "sale": sale_now}
+            raise HTTPException(status_code=409, detail="This void is already being processed. Wait a moment and try again.")
+        raise HTTPException(status_code=409, detail="This sale has already been voided, or this idempotency key was already used for a different request.")
+
+    status_transitioned = False
+    retail_reversed = False
+    try:
+        flipped = await db.pos_sales.find_one_and_update(
+            {"id": sale_id, "status": "completed"},
+            {"$set": {"status": "voided", "voided_at": ts, "void_reason": body.reason.strip()}},
+        )
+        if flipped is None:
+            raise HTTPException(status_code=409, detail="This sale has already been voided or is no longer eligible.")
+        status_transitioned = True
+
+        amount = float(original.get("total") or 0)
+        if original.get("retail_sales_id"):
+            offset_row = {
+                "id": str(uuid.uuid4()), "date": business_date, "amount": -amount,
+                "payment_method": "void", "client_id": original.get("client_id"),
+                "client_name": original.get("client_name"), "pos_sale_id": sale_id,
+                "reversed_retail_sales_id": original.get("retail_sales_id"),
+                "source_kind": "pos_sale_void",
+                "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
+                "created_at": ts, "created_by": user.get("id"),
+                "logged_by": user.get("name") or user.get("email") or "admin",
+            }
+            await db.retail_sales.insert_one(offset_row.copy())
+            retail_reversed = True
+    except Exception:
+        if retail_reversed:
+            await db.retail_sales.delete_one({"reversed_retail_sales_id": original.get("retail_sales_id"), "pos_sale_id": sale_id})
+        if status_transitioned:
+            await db.pos_sales.update_one({"id": sale_id}, {"$set": {"status": "completed"}, "$unset": {"voided_at": "", "void_reason": ""}})
+        await db.pos_sale_void_claims.delete_one({"id": claim_id})
+        raise
+
+    await db.pos_sale_void_claims.update_one(
+        {"id": claim_id}, {"$set": {"status": "completed", "updated_at": now_iso()}},
+    )
+
+    # Restore stock for any tracked-inventory retail lines. The claim above
+    # already guarantees this whole handler body can never run twice for the
+    # same sale_id (a second void attempt is rejected before reaching here),
+    # so restoration structurally cannot double-apply. Best-effort per line —
+    # a product that was since hard-deleted from the catalog logs a warning
+    # rather than blocking the (already-committed) financial void.
+    for li in original.get("line_items") or []:
+        if li.get("kind") != "retail" or not li.get("product_id"):
+            continue
+        try:
+            product = await db.pos_products.find_one({"id": li["product_id"]}, {"_id": 0, "track_inventory": 1})
+            if product and product.get("track_inventory"):
+                await _mutate_product_stock(
+                    li["product_id"], float(li.get("qty") or 0), "VOID",
+                    reason=f"Void of POS Sale #{original.get('receipt_number')}",
+                    user=user, pos_sale_id=sale_id, allow_negative=True,
+                )
+        except Exception as exc:
+            logger.warning("Stock restoration failed for product %s on void of pos_sale %s: %s", li.get("product_id"), sale_id, exc)
+
+    pos_open_drawer_token = None
+    try:
+        if float(original.get("cash_component") or 0) > 0:
+            pos_open_drawer_token = await _issue_pos_token(
+                action="open_drawer", workstation_id=body.workstation_id, pos_sale_id=sale_id,
+            )
+    except Exception as exc:
+        logger.warning("POS token issuance failed for pos_sale void %s: %s", sale_id, exc)
+
+    final_sale = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
+    return {"ok": True, "sale": final_sale, "pos_open_drawer_token": pos_open_drawer_token}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Quarterly Tax Estimate (Sole-Proprietor / Schedule C)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -24434,6 +26710,68 @@ async def list_retail_sales(
     return await cursor.to_list(2000)
 
 
+async def _build_retail_sale_doc(
+    *, date: str, description: str, amount: float, quantity: float = 1,
+    unit_price: Optional[float] = None, category: str = "", notes: str = "",
+    payment_method: str, client_id: Optional[str] = None, client_name: str = "",
+    created_by: Optional[str] = None, apply_tax: Optional[bool] = None,
+    precomputed_tax: Optional[dict] = None,
+) -> dict:
+    """Builds one retail_sales document — the single accounting entry point
+    for retail-style revenue, used by both the manual retail-sale form and
+    the Front Desk POS register (§ front-desk POS). Does NOT insert it.
+
+    `precomputed_tax`, when given (e.g. from _price_pos_cart, which computes
+    tax as an addition on top of pre-tax line prices — the normal register
+    convention), is trusted as-is. When omitted, falls back to the original
+    behavior: treat `amount` as tax-INCLUSIVE and back out the tax slice —
+    preserved byte-for-byte for the existing manual retail-sale form so nothing
+    about its accounting changes."""
+    doc = {
+        "id": str(uuid.uuid4()),
+        "date": date,
+        "description": description.strip(),
+        "amount": round(float(amount), 2),
+        "quantity": round(float(quantity or 1), 3),
+        "unit_price": round(float(unit_price), 2) if unit_price is not None else None,
+        "category": (category or "").strip(),
+        "notes": (notes or "").strip(),
+        "payment_method": payment_method,
+        "client_id": client_id or None,
+        "client_name": client_name,
+        "created_at": now_iso(),
+        "created_by": created_by,
+    }
+    if precomputed_tax is not None:
+        if float(precomputed_tax.get("tax_amount") or 0) > 0.005:
+            doc["tax_amount"] = round(float(precomputed_tax["tax_amount"]), 2)
+            doc["tax_rate_pct"] = float(precomputed_tax.get("tax_rate_pct") or 0)
+            doc["pre_tax_amount"] = round(
+                float(precomputed_tax.get("pre_tax_amount") if precomputed_tax.get("pre_tax_amount") is not None
+                      else doc["amount"] - doc["tax_amount"]), 2,
+            )
+    else:
+        # Sprint 110aw — Tax breakout. When sales_tax is enabled, retail is
+        # tax-applicable by default (unless the row explicitly says otherwise).
+        try:
+            settings_tx = await get_settings()
+            tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+            if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
+                applies = (tx_cfg.get("applies_to") or {})
+                should_tax = apply_tax if apply_tax is not None else applies.get("retail", True)
+                if should_tax:
+                    rate_pct = float(tx_cfg["rate_pct"])
+                    # Treat `amount` as TOTAL incl. tax (matches a typical POS receipt).
+                    total = doc["amount"]
+                    pre_tax = round(total / (1 + rate_pct / 100.0), 2)
+                    doc["tax_amount"] = round(total - pre_tax, 2)
+                    doc["tax_rate_pct"] = rate_pct
+                    doc["pre_tax_amount"] = pre_tax
+        except Exception as exc:
+            logger.warning("retail tax calc failed: %s", exc)
+    return doc
+
+
 @api.post("/retail-sales")
 async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_admin)):
     """Log a retail sale (treats, leash, food bag, etc.) from your external POS.
@@ -24444,39 +26782,13 @@ async def create_retail_sale(body: RetailSaleIn, user: dict = Depends(require_ad
         c = await db.clients.find_one({"id": body.client_id}, {"_id": 0, "name": 1})
         if c:
             client_name = c.get("name") or ""
-    doc = {
-        "id": str(uuid.uuid4()),
-        "date": body.date,
-        "description": body.description.strip(),
-        "amount": round(float(body.amount), 2),
-        "quantity": round(float(body.quantity or 1), 3),
-        "unit_price": round(float(body.unit_price), 2) if body.unit_price is not None else None,
-        "category": (body.category or "").strip(),
-        "notes": (body.notes or "").strip(),
-        "payment_method": _normalize_payment_method(body.payment_method, store=True),
-        "client_id": body.client_id or None,
-        "client_name": client_name,
-        "created_at": now_iso(),
-        "created_by": user.get("id"),
-    }
-    # Sprint 110aw — Tax breakout. When sales_tax is enabled, retail is tax-
-    # applicable by default (unless the row explicitly says otherwise).
-    try:
-        settings_tx = await get_settings()
-        tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
-            applies = (tx_cfg.get("applies_to") or {})
-            should_tax = body.apply_tax if body.apply_tax is not None else applies.get("retail", True)
-            if should_tax:
-                rate_pct = float(tx_cfg["rate_pct"])
-                # Treat `amount` as TOTAL incl. tax (matches a typical POS receipt).
-                total = doc["amount"]
-                pre_tax = round(total / (1 + rate_pct / 100.0), 2)
-                doc["tax_amount"] = round(total - pre_tax, 2)
-                doc["tax_rate_pct"] = rate_pct
-                doc["pre_tax_amount"] = pre_tax
-    except Exception as exc:
-        logger.warning("retail tax calc failed: %s", exc)
+    doc = await _build_retail_sale_doc(
+        date=body.date, description=body.description, amount=body.amount, quantity=body.quantity,
+        unit_price=body.unit_price, category=body.category, notes=body.notes,
+        payment_method=_normalize_payment_method(body.payment_method, store=True),
+        client_id=body.client_id, client_name=client_name, created_by=user.get("id"),
+        apply_tax=body.apply_tax,
+    )
     # Sprint 110di-61 — Partial-pay branch for retail (cash-basis option 1c).
     # When `amount_paid` is provided AND < the ticket amount AND we have a
     # client to attach the tab to, the unpaid remainder lands on the client's
@@ -29385,6 +31697,13 @@ PERMISSION_KEYS = (
     "incidents", "care_complete", "booking_edit",
     "payroll", "data_export", "delete_records",
     "messages",
+    "take_payments",  # Payment rebuild Phase 2 — governs BOTH checkout's
+                       # (single & group) money-collecting action and the
+                       # new invoice top-up endpoint. Defaults True for
+                       # every staff role except read_only (see below) —
+                       # a zero-behavior-change rollout matching today's
+                       # de-facto "any employee can already take checkout
+                       # money," while giving the owner a real toggle.
 )
 
 
@@ -29432,6 +31751,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "incidents": True, "care_complete": True,
         "booking_edit": True,
         "messages": True,
+        "take_payments": True,
     },
     "daycare_staff": {
         **_empty_perms(),
@@ -29440,6 +31760,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "incidents": True, "care_complete": True,
         "booking_edit": True,
         "messages": True,
+        "take_payments": True,
     },
     "boarding_staff": {
         **_empty_perms(),
@@ -29448,6 +31769,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "incidents": True, "care_complete": True,
         "booking_edit": True,
         "messages": True,
+        "take_payments": True,
     },
     "front_desk": {
         **_empty_perms(),
@@ -29455,6 +31777,7 @@ ROLE_PERMISSIONS: Dict[str, Dict[str, bool]] = {
         "dogs_view": True, "dogs_edit": True,
         "booking_edit": True,
         "messages": True,
+        "take_payments": True,
     },
     "read_only": {
         **_empty_perms(),

@@ -93,6 +93,15 @@ def test_weekly_summary_includes_retail(admin_headers, today_iso):
     base_retail = float(base.get("retail_total") or 0)
     base_count = int(base.get("retail_count") or 0)
     base_gross = float(base.get("gross_total") or base.get("completed_total") or 0)
+    # Delta-based, not a global equality — this shared, long-lived test DB
+    # accumulates real bookings/services from many other test files across
+    # the same calendar week, so service_total/completed_total are never
+    # expected to be identical in absolute terms here. What must hold is
+    # that adding ONE retail sale moves neither of them at all (retail is
+    # kept structurally separate) — checked as a before/after delta below,
+    # immune to whatever unrelated data already exists.
+    base_service_total = float(base.get("service_total") or 0)
+    base_completed_total = float(base.get("completed_total") or 0)
 
     # Add a $40 sale
     r = requests.post(
@@ -112,8 +121,15 @@ def test_weekly_summary_includes_retail(admin_headers, today_iso):
         assert round(float(s["retail_total"]) - base_retail, 2) == 40.0
         assert int(s["retail_count"]) == base_count + 1
         assert round(float(s["gross_total"]) - base_gross, 2) == 40.0
-        # Service-side completed_total must NOT include retail (kept separate)
-        assert s.get("service_total") == s.get("completed_total")
+        # service_total (service-only revenue) must NOT move — retail is
+        # kept structurally separate from service revenue. completed_total
+        # is the broader all-revenue aggregate and DOES include retail, so
+        # it moves by the same $40 as gross_total. Both checked as deltas
+        # (not global equality) so this is immune to whatever unrelated
+        # revenue already exists this week from other test files sharing
+        # this DB.
+        assert round(float(s.get("service_total") or 0) - base_service_total, 2) == 0.0
+        assert round(float(s.get("completed_total") or 0) - base_completed_total, 2) == 40.0
     finally:
         requests.delete(f"{BASE}/api/retail-sales/{sale_id}", headers=admin_headers)
 

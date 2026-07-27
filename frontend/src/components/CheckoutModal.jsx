@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useEditLock } from "../lib/useLiveRefresh";
+import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 
 /**
  * Shared check-out modal — used by the admin Dashboard AND the Employee
@@ -167,6 +168,47 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Front-desk POS hardware integration — once the checkout itself has
+  // already fully committed, this tracks the SEPARATE, purely physical
+  // outcome of printing/opening the drawer. A hardware failure here never
+  // reopens or retries the checkout itself — only these two actions retry.
+  const [hwResult, setHwResult] = useState(null); // null until checkout succeeds and a pos token exists
+  const [hwBusy, setHwBusy] = useState(false);
+  const [hwInvoiceId, setHwInvoiceId] = useState(null);
+
+  const runHardware = async (printToken, drawerToken) => {
+    setHwBusy(true);
+    const next = { printToken, drawerToken, print: null, drawer: null };
+    if (drawerToken) next.drawer = await posOpenDrawer(drawerToken);
+    if (printToken) next.print = await posPrintReceipt(printToken);
+    setHwResult(next);
+    setHwBusy(false);
+  };
+
+  // A hardware-action token is single-use — consumed the moment it's
+  // verified, even if the physical action then fails. A genuine retry
+  // needs a FRESH token from the server, never the already-spent one.
+  const retryHardware = async (action) => {
+    if (!hwInvoiceId) return;
+    setHwBusy(true);
+    try {
+      const { data } = await api.post(`/invoices/${hwInvoiceId}/pos-tokens`, { actions: [action] });
+      if (action === "open_drawer") {
+        const result = await posOpenDrawer(data.open_drawer_token);
+        setHwResult(prev => ({ ...prev, drawerToken: data.open_drawer_token, drawer: result }));
+      } else {
+        const result = await posPrintReceipt(data.print_receipt_token);
+        setHwResult(prev => ({ ...prev, printToken: data.print_receipt_token, print: result }));
+      }
+    } catch (e) {
+      const msg = e.response?.data?.detail || "Could not reissue the hardware token";
+      setHwResult(prev => ({
+        ...prev,
+        ...(action === "open_drawer" ? { drawer: { ok: false, error: msg } } : { print: { ok: false, error: msg } }),
+      }));
+    }
+    setHwBusy(false);
+  };
   // Sprint 110di-51 — Partial-payment / tab. When the customer hands over
   // LESS than the total, this captures what they paid; the difference goes
   // onto the client's running tab (account_balance). Mode toggle makes the
@@ -385,13 +427,81 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
       const checkoutPath = isGroupCheckout
         ? `/bookings/${booking.id}/check-out-group`
         : `/bookings/${booking.id}/check-out`;
-      await api.post(checkoutPath, body);
-      onClose();
+      const { data } = await api.post(checkoutPath, body);
+      // The checkout has ALREADY fully committed by this point — nothing
+      // below this line can affect that. Hardware actions are strictly
+      // best-effort and post-hoc; failures here never mean the payment failed.
+      const printToken = data?.pos_print_receipt_token;
+      const drawerToken = data?.pos_open_drawer_token;
+      setHwInvoiceId(data?.pos_invoice_id || null);
+      setBusy(false);
+      if (printToken || drawerToken) {
+        await runHardware(printToken, drawerToken);
+      } else {
+        onClose();
+      }
     } catch (e) {
       setErr(e.response?.data?.detail || "Check-out failed");
       setBusy(false);
     }
   };
+
+  // Payment already committed by the time this renders — this is a purely
+  // physical status screen. Hardware failure here never implies the
+  // payment failed; retry buttons only ever retry the hardware action.
+  if (hwBusy || hwResult) {
+    return (
+      <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-hw-status">
+        <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="bg-shGreen/20 text-shGreen w-11 h-11 rounded-full flex items-center justify-center text-xl">
+              <i className="fas fa-check"/>
+            </div>
+            <div>
+              <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Payment recorded successfully</h4>
+              <p className="text-[13px] text-gray-400">Checking front-desk hardware…</p>
+            </div>
+          </div>
+          {hwBusy ? (
+            <p className="text-[14px] text-gray-400" data-testid="hw-status-busy">Talking to the front-desk printer…</p>
+          ) : (
+            <div className="space-y-2">
+              {hwResult.drawerToken && (
+                <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.drawer?.ok ? "bg-shGreen/10 text-shGreen border border-shGreen/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-drawer-status">
+                  <i className={`fas ${hwResult.drawer?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
+                  {hwResult.drawer?.ok ? "Cash drawer opened." : `Cash drawer failed to open: ${hwResult.drawer?.error || "unknown error"}`}
+                </div>
+              )}
+              {hwResult.printToken && (
+                <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.print?.ok ? "bg-shGreen/10 text-shGreen border border-shGreen/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-print-status">
+                  <i className={`fas ${hwResult.print?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
+                  {hwResult.print?.ok ? "Receipt printed." : `Receipt printing failed: ${hwResult.print?.error || "unknown error"}`}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {!hwBusy && hwResult?.drawerToken && !hwResult.drawer?.ok && hwInvoiceId && (
+              <button onClick={() => retryHardware("open_drawer")} data-testid="hw-retry-drawer"
+                      className="text-shOrange font-black uppercase text-[12px] tracking-widest border border-shOrange/40 rounded px-3 py-2">
+                <i className="fas fa-rotate mr-1"/>Retry Open Drawer
+              </button>
+            )}
+            {!hwBusy && hwResult?.printToken && hwInvoiceId && (
+              <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
+                      className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                <i className="fas fa-print mr-1"/>{hwResult.print?.ok ? "Reprint Receipt" : "Retry Print"}
+              </button>
+            )}
+            <button onClick={onClose} disabled={hwBusy} data-testid="hw-done"
+                    className="ml-auto bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="checkout-modal">

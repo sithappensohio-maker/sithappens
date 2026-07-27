@@ -128,7 +128,7 @@ def test_apply_tab_payment_records_revenue(admin_headers, fresh_client):
     # Apply $30 payment
     r = requests.post(f"{BASE}/api/clients/{fresh_client['id']}/payment",
                       headers=admin_headers,
-                      json={"amount": 30.0, "method": "cash", "notes": "Settling up"},
+                      json={"amount": 30.0, "method": "cash", "tendered_amount": 30.0, "notes": "Settling up"},
                       timeout=15)
     assert r.status_code == 200, r.text
     assert abs(r.json()["balance"] - 20.0) < 0.01

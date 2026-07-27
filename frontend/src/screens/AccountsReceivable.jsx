@@ -1,4 +1,4 @@
-/* Sprint 110di-51 — Accounts Receivable tab inside the Income screen.
+﻿/* Sprint 110di-51 — Accounts Receivable tab inside the Income screen.
 
 Shows every client with a non-zero account_balance:
   • POSITIVE balance = client owes the business (tab / AR)
@@ -11,6 +11,7 @@ Operator actions per row:
 */
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import TakePaymentModal from "../components/TakePaymentModal";
 
 const fmt = (n) => `$${(Number(n) || 0).toFixed(2)}`;
 const fmtDateTime = (iso) => {
@@ -189,9 +190,14 @@ export default function AccountsReceivableTab() {
         </ul>
       </div>
 
+      {/* Money Hub consolidation — this used to be a separate ApplyPaymentModal
+          implementation calling POST /clients/{id}/payment directly (no
+          tendered/change capture, no hardware integration). Reuses the
+          shared TakePaymentModal now — one canonical "take a payment" UI,
+          with the same cash/hardware rules as everywhere else. */}
       {payOpen && (
-        <ApplyPaymentModal client={payOpen} onClose={() => setPayOpen(null)}
-                           onSuccess={() => { setPayOpen(null); load(); }} />
+        <TakePaymentModal presetClientId={payOpen.id} onClose={() => setPayOpen(null)}
+                          onSuccess={() => { setPayOpen(null); load(); }} />
       )}
       {adjOpen && (
         <AdjustmentModal client={adjOpen} onClose={() => setAdjOpen(null)}
@@ -255,60 +261,6 @@ function LedgerDrawer({ clientId, clientName }) {
           );
         })}
       </ul>
-    </div>
-  );
-}
-
-function ApplyPaymentModal({ client, onClose, onSuccess }) {
-  const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("cash");
-  const [notes, setNotes] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const submit = async () => {
-    setBusy(true); setErr("");
-    try {
-      await api.post(`/clients/${client.id}/payment`, {
-        amount: Number(amount), method, notes,
-      });
-      onSuccess();
-    } catch (e) {
-      setErr(e?.response?.data?.detail || "Payment failed");
-      setBusy(false);
-    }
-  };
-  return (
-    <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-         data-testid="ar-pay-modal" onMouseDown={(e)=>{ if(e.target===e.currentTarget) onClose(); }}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl">
-        <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
-          <i className="fas fa-cash-register text-shGreen mr-2"/>Apply Payment
-        </h3>
-        <p className="text-[13px] text-gray-400 mb-4">{client.name} · Owes {fmt(client.account_balance)}</p>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Amount</label>
-        <input type="number" step="0.01" min="0" value={amount} onChange={(e)=>setAmount(e.target.value)}
-               data-testid="ar-pay-amount" placeholder={fmt(Math.max(0, client.account_balance || 0))}
-               className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Method</label>
-        <select value={method} onChange={(e)=>setMethod(e.target.value)} data-testid="ar-pay-method"
-                className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-          <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option>
-          <option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option>
-          <option value="other">Other</option>
-        </select>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Notes (optional)</label>
-        <input value={notes} onChange={(e)=>setNotes(e.target.value)} data-testid="ar-pay-notes"
-               className="w-full mt-1 mb-4 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-        {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
-        <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-          <button onClick={submit} disabled={busy || !amount || Number(amount) <= 0}
-                  data-testid="ar-pay-submit"
-                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
-            {busy ? "Saving…" : "Apply payment"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

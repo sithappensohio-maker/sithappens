@@ -1,17 +1,24 @@
 /* Sprint 110di-61 — TakePaymentModal
  *
- * Lightweight "cash register" modal: pick a client, type an amount, choose
- * a method, hit submit. Calls POST /clients/{id}/payment which:
- *   - Reduces client.account_balance by amount
- *   - Writes a `payment` ledger row
- *   - Inserts a `tab_payment` retail_sales row so the cash hits today's P&L
- *   - Emails the client a receipt
+ * Lightweight "cash register" modal for registering a payment against a
+ * client. Two modes:
  *
- * Used wherever an operator needs to register a walk-in / standalone payment
- * (next to Sell Pack / Sell Program / Add Retail Sale buttons).
+ *   - PAY INVOICE (Payment rebuild Phase 2): when the selected client has
+ *     an open invoice (balance > 0, not void/refunded), the modal defaults
+ *     to paying that specific invoice via POST /invoices/{id}/payments —
+ *     this is the invoice-aware top-up flow, and keeps the invoice's own
+ *     balance/status accurate instead of leaving it stale.
+ *   - PAY TAB (original, unchanged): no open invoice — POST
+ *     /clients/{id}/payment exactly as before.
+ *
+ * Both modes share a single idempotency key generated ONCE when the modal
+ * opens (matching FinancialCorrectionModal.jsx's refund_idempotency_key
+ * pattern) so a double-click or network retry of the same attempt can
+ * never double-collect — never regenerated inside the submit handler.
  */
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { printReceipt as posPrintReceipt, openDrawer as posOpenDrawer } from "../lib/posAgent";
 
 export default function TakePaymentModal({ onClose, onSuccess, presetClientId }) {
   const [clients, setClients] = useState([]);
@@ -20,9 +27,64 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("cash");
   const [notes, setNotes] = useState("");
+  const [tenderedAmount, setTenderedAmount] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [balance, setBalance] = useState(null);
+  const [openInvoice, setOpenInvoice] = useState(null);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+
+  // Front-desk POS hardware integration — payment already committed by the
+  // time any of this runs; a hardware failure here never implies the
+  // payment failed. Populated for BOTH the invoice top-up path (hwInvoiceId)
+  // and the generic tab/account payment path (hwLedgerId) — exactly one of
+  // the two is ever set, since a given submit is one or the other.
+  const [hwResult, setHwResult] = useState(null);
+  const [hwBusy, setHwBusy] = useState(false);
+  const [hwInvoiceId, setHwInvoiceId] = useState(null);
+  const [hwLedgerId, setHwLedgerId] = useState(null);
+  const [hwSuccessData, setHwSuccessData] = useState(null);
+
+  const runHardware = async (printToken, drawerToken) => {
+    setHwBusy(true);
+    const next = { printToken, drawerToken, print: null, drawer: null };
+    if (drawerToken) next.drawer = await posOpenDrawer(drawerToken);
+    if (printToken) next.print = await posPrintReceipt(printToken);
+    setHwResult(next);
+    setHwBusy(false);
+  };
+
+  const retryHardware = async (action) => {
+    if (!hwInvoiceId && !hwLedgerId) return;
+    setHwBusy(true);
+    try {
+      const url = hwInvoiceId
+        ? `/invoices/${hwInvoiceId}/pos-tokens`
+        : `/clients/${clientId}/ledger/${hwLedgerId}/pos-tokens`;
+      const { data } = await api.post(url, { actions: [action] });
+      if (action === "open_drawer") {
+        const result = await posOpenDrawer(data.open_drawer_token);
+        setHwResult(prev => ({ ...prev, drawerToken: data.open_drawer_token, drawer: result }));
+      } else {
+        const result = await posPrintReceipt(data.print_receipt_token);
+        setHwResult(prev => ({ ...prev, printToken: data.print_receipt_token, print: result }));
+      }
+    } catch (e) {
+      const msg = e.response?.data?.detail || "Could not reissue the hardware token";
+      setHwResult(prev => ({
+        ...prev,
+        ...(action === "open_drawer" ? { drawer: { ok: false, error: msg } } : { print: { ok: false, error: msg } }),
+      }));
+    }
+    setHwBusy(false);
+  };
+
+  // One stable key for the whole life of this modal — reused for the
+  // initial submit, any network retry, and an accidental repeated submit
+  // of the same attempt. Never regenerated on click.
+  const [idempotencyKey] = useState(() => (
+    window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  ));
 
   useEffect(() => {
     api.get("/clients").then((r) => {
@@ -31,11 +93,21 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
     }).catch(() => setClients([]));
   }, []);
 
-  // Look up current balance whenever a client is picked.
+  // Look up current balance + any open invoice whenever a client is picked.
   useEffect(() => {
-    if (!clientId) { setBalance(null); return; }
+    if (!clientId) { setBalance(null); setOpenInvoice(null); return; }
     const c = clients.find((x) => x.id === clientId);
     setBalance(c ? Number(c.account_balance || 0) : null);
+    setInvoicesLoading(true);
+    api.get(`/clients/${clientId}/invoices`).then(({ data }) => {
+      const invoices = Array.isArray(data) ? data : [];
+      const open = invoices.find((inv) =>
+        Number(inv.balance || 0) > 0.005 &&
+        !["VOID", "REFUNDED", "PARTIALLY_REFUNDED"].includes(inv.status)
+      );
+      setOpenInvoice(open || null);
+      if (open) setAmount(String(Number(open.balance).toFixed(2)));
+    }).catch(() => setOpenInvoice(null)).finally(() => setInvoicesLoading(false));
   }, [clientId, clients]);
 
   const selected = clients.find((c) => c.id === clientId);
@@ -45,20 +117,123 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
       ).slice(0, 8)
     : [];
 
+  const isInvoiceMode = !!openInvoice;
+  const amountNum = Number(amount || 0);
+  const tenderedNum = Number(tenderedAmount || 0);
+  const changeDue = method === "cash" && tenderedAmount ? Math.max(0, tenderedNum - amountNum) : null;
+
   const submit = async () => {
     if (!clientId) { setErr("Pick a client first"); return; }
-    if (!amount || Number(amount) <= 0) { setErr("Amount must be greater than 0"); return; }
+    if (!amount || amountNum <= 0) { setErr("Amount must be greater than 0"); return; }
+    if (method === "other" && !notes.trim()) { setErr("A note is required when the method is Other"); return; }
+    if (method === "cash" && (!tenderedAmount || tenderedNum < amountNum - 0.005)) {
+      setErr("Cash received must be at least the amount due");
+      return;
+    }
     setBusy(true); setErr("");
     try {
-      const { data } = await api.post(`/clients/${clientId}/payment`, {
-        amount: Number(amount), method, notes,
-      });
-      onSuccess?.(data);
+      if (isInvoiceMode) {
+        const { data } = await api.post(`/invoices/${openInvoice.id}/payments`, {
+          amount: amountNum,
+          method,
+          notes: notes || null,
+          tendered_amount: method === "cash" ? tenderedNum : null,
+          idempotency_key: idempotencyKey,
+        });
+        // The top-up has ALREADY fully committed by this point — nothing
+        // below can affect that. Hardware actions are strictly best-effort
+        // and post-hoc.
+        const printToken = data?.pos_print_receipt_token;
+        const drawerToken = data?.pos_open_drawer_token;
+        setHwInvoiceId(data?.pos_invoice_id || null);
+        setHwSuccessData(data);
+        setBusy(false);
+        if (printToken || drawerToken) {
+          await runHardware(printToken, drawerToken);
+        } else {
+          onSuccess?.(data);
+        }
+        return;
+      } else {
+        const { data } = await api.post(`/clients/${clientId}/payment`, {
+          amount: amountNum, method, notes,
+          tendered_amount: method === "cash" ? tenderedNum : null,
+        });
+        // Already fully committed by this point — hardware is best-effort
+        // and strictly post-hoc, exactly like the invoice top-up path above.
+        const printToken = data?.pos_print_receipt_token;
+        const drawerToken = data?.pos_open_drawer_token;
+        setHwLedgerId(data?.row?.id || null);
+        setHwSuccessData(data);
+        setBusy(false);
+        if (printToken || drawerToken) {
+          await runHardware(printToken, drawerToken);
+        } else {
+          onSuccess?.(data);
+        }
+        return;
+      }
     } catch (e) {
       setErr(e?.response?.data?.detail || "Payment failed");
       setBusy(false);
     }
   };
+
+  // Payment already committed by the time this renders — purely physical
+  // status. Hardware failure here never implies the payment failed.
+  if (hwBusy || hwResult) {
+    return (
+      <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-4" data-testid="take-payment-hw-status">
+        <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="bg-shGreen/20 text-shGreen w-11 h-11 rounded-full flex items-center justify-center text-xl">
+              <i className="fas fa-check"/>
+            </div>
+            <div>
+              <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Payment recorded successfully</h4>
+              <p className="text-[13px] text-gray-400">Checking front-desk hardware…</p>
+            </div>
+          </div>
+          {hwBusy ? (
+            <p className="text-[14px] text-gray-400" data-testid="hw-status-busy">Talking to the front-desk printer…</p>
+          ) : (
+            <div className="space-y-2">
+              {hwResult.drawerToken && (
+                <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.drawer?.ok ? "bg-shGreen/10 text-shGreen border border-shGreen/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-drawer-status">
+                  <i className={`fas ${hwResult.drawer?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
+                  {hwResult.drawer?.ok ? "Cash drawer opened." : `Cash drawer failed to open: ${hwResult.drawer?.error || "unknown error"}`}
+                </div>
+              )}
+              {hwResult.printToken && (
+                <div className={`rounded p-2.5 text-[13px] font-black ${hwResult.print?.ok ? "bg-shGreen/10 text-shGreen border border-shGreen/30" : "bg-red-500/10 text-red-400 border border-red-500/30"}`} data-testid="hw-print-status">
+                  <i className={`fas ${hwResult.print?.ok ? "fa-check" : "fa-triangle-exclamation"} mr-1.5`}/>
+                  {hwResult.print?.ok ? "Receipt printed." : `Receipt printing failed: ${hwResult.print?.error || "unknown error"}`}
+                </div>
+              )}
+            </div>
+          )}
+          <div className="flex flex-wrap gap-2 mt-4">
+            {!hwBusy && hwResult?.drawerToken && !hwResult.drawer?.ok && (hwInvoiceId || hwLedgerId) && (
+              <button onClick={() => retryHardware("open_drawer")} data-testid="hw-retry-drawer"
+                      className="text-shOrange font-black uppercase text-[12px] tracking-widest border border-shOrange/40 rounded px-3 py-2">
+                <i className="fas fa-rotate mr-1"/>Retry Open Drawer
+              </button>
+            )}
+            {!hwBusy && hwResult?.printToken && (hwInvoiceId || hwLedgerId) && (
+              <button onClick={() => retryHardware("print_receipt")} data-testid="hw-reprint"
+                      className="text-shBlue font-black uppercase text-[12px] tracking-widest border border-shBlue/40 rounded px-3 py-2">
+                <i className="fas fa-print mr-1"/>{hwResult.print?.ok ? "Reprint Receipt" : "Retry Print"}
+              </button>
+            )}
+            <button onClick={() => onSuccess?.(hwSuccessData)} disabled={hwBusy} data-testid="hw-done"
+                    className="ml-auto bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/80 z-[80] flex items-center justify-center p-4"
@@ -66,10 +241,12 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
          data-testid="take-payment-modal">
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto card-payment">
         <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
-          <i className="fas fa-cash-register text-shGreen mr-2"/>Take Payment
+          <i className="fas fa-cash-register text-shGreen mr-2"/>{isInvoiceMode ? "Pay Invoice" : "Take Payment"}
         </h3>
         <p className="text-[13px] text-gray-400 mb-4">
-          Register a payment from a client (settle a tab, prepay credit, etc.)
+          {isInvoiceMode
+            ? `Applies to open invoice #${openInvoice.id.slice(0, 8)} — balance $${Number(openInvoice.balance).toFixed(2)}.`
+            : "Register a payment from a client (settle a tab, prepay credit, etc.)"}
         </p>
 
         {/* Client picker */}
@@ -79,13 +256,17 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
                data-testid="take-payment-client-selected">
             <div>
               <p className="text-white font-black">{selected.name}</p>
-              {balance !== null && Math.abs(balance) > 0.005 && (
+              {invoicesLoading && <p className="text-[12px] text-gray-500">Checking open invoices…</p>}
+              {!invoicesLoading && isInvoiceMode && (
+                <p className="text-[12px] font-black text-shOrange">Open invoice — ${Number(openInvoice.balance).toFixed(2)} due</p>
+              )}
+              {!invoicesLoading && !isInvoiceMode && balance !== null && Math.abs(balance) > 0.005 && (
                 <p className={`text-[12px] font-black ${balance > 0 ? "text-shOrange" : "text-shGreen"}`}>
                   {balance > 0 ? `Owes $${balance.toFixed(2)}` : `Pre-paid $${(-balance).toFixed(2)}`}
                 </p>
               )}
             </div>
-            <button onClick={() => { setClientId(""); setClientQuery(""); setBalance(null); }}
+            <button onClick={() => { setClientId(""); setClientQuery(""); setBalance(null); setOpenInvoice(null); }}
                     data-testid="take-payment-client-clear"
                     className="text-gray-400 hover:text-white text-[12px] uppercase tracking-widest font-black">Change</button>
           </div>
@@ -111,31 +292,55 @@ export default function TakePaymentModal({ onClose, onSuccess, presetClientId })
 
         <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Amount</label>
         <input type="number" step="0.01" min="0" value={amount} onChange={(e)=>setAmount(e.target.value)}
+               max={isInvoiceMode ? openInvoice.balance : undefined}
                data-testid="take-payment-amount"
                placeholder={balance !== null && balance > 0 ? `$${balance.toFixed(2)}` : "$0.00"}
                className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-lg font-black"/>
 
         <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Method</label>
-        <select value={method} onChange={(e)=>setMethod(e.target.value)} data-testid="take-payment-method"
+        <select value={method} onChange={(e)=>{ setMethod(e.target.value); setTenderedAmount(""); }} data-testid="take-payment-method"
                 className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
-          <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option>
+          <option value="cash">Cash</option>
+          {isInvoiceMode ? null : <option value="clover">Clover / Credit Card</option>}
           <option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option>
           <option value="other">Other</option>
         </select>
 
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Notes (optional)</label>
+        {method === "cash" && (
+          <div className="mb-3 grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Amount Due</label>
+              <div className="mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-black">${amountNum.toFixed(2)}</div>
+            </div>
+            <div>
+              <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Cash Received</label>
+              <input type="number" step="0.01" min="0" value={tenderedAmount} onChange={(e)=>setTenderedAmount(e.target.value)}
+                     data-testid="take-payment-tendered"
+                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-black"/>
+            </div>
+            {changeDue !== null && (
+              <div className="col-span-2 text-[13px] font-black text-shGreen" data-testid="take-payment-change-due">
+                Change due: ${changeDue.toFixed(2)}
+              </div>
+            )}
+          </div>
+        )}
+
+        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">
+          Notes {method === "other" ? "(required)" : "(optional)"}
+        </label>
         <input value={notes} onChange={(e)=>setNotes(e.target.value)} data-testid="take-payment-notes"
-               placeholder="What's this payment for?"
+               placeholder={method === "other" ? "e.g. Zelle, gift certificate…" : "What's this payment for?"}
                className="w-full mt-1 mb-4 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
 
         {err && <p className="text-red-400 text-[13px] mb-3" data-testid="take-payment-error">{err}</p>}
 
         <div className="flex justify-end gap-2">
           <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
-          <button onClick={submit} disabled={busy || !clientId || !amount || Number(amount) <= 0}
+          <button onClick={submit} disabled={busy || !clientId || !amount || amountNum <= 0}
                   data-testid="take-payment-submit"
                   className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
-            {busy ? "Saving…" : "Take payment"}
+            {busy ? "Saving…" : (isInvoiceMode ? "Pay invoice" : "Take payment")}
           </button>
         </div>
       </div>

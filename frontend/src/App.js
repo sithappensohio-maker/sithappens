@@ -21,7 +21,7 @@ import Trophies from "./screens/Trophies";
 import Rewards from "./screens/Rewards";
 import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
-import Register from "./screens/Register";
+import Pos from "./screens/Pos";
 import CreditReconciliation from "./screens/CreditReconciliation";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
@@ -122,6 +122,7 @@ function AdminShell() {
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: "fa-chart-line" },
+    { id: "pos", label: "Front Desk", icon: "fa-cash-register", perm: "take_payments" },
     { id: "action_center", label: "Action Center", icon: "fa-list-check" },
     { id: "schedule", label: "Schedule", icon: "fa-calendar-alt" },
     { id: "runsheet", label: "Run Sheet", icon: "fa-clipboard-list" },
@@ -137,8 +138,7 @@ function AdminShell() {
     { id: "homework", label: "Homework", icon: "fa-graduation-cap", feature: "homework" },
     { id: "rewards_center", label: "Rewards", icon: "fa-gift", feature: "rewards" },
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
-    { id: "income", label: "Income", icon: "fa-dollar-sign", perm: "finance_reports" },
-    { id: "register", label: "Register", icon: "fa-cash-register", perm: "finance_reports" },
+    { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
     { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
@@ -316,8 +316,12 @@ function AdminShell() {
           {tab === "homework" && featureOn("homework") && <Homework />}
           {tab === "rewards_center" && featureOn("rewards") && <Rewards />}
           {tab === "trophies" && featureOn("rewards") && <Trophies />}
+          {/* The old standalone Register screen is gone — Front Desk now owns
+              all of that functionality. Redirect any stale nav call
+              (bookmarked sidebar state, old localStorage flag, etc.) that
+              still targets "register" here instead of rendering nothing. */}
+          {(tab === "pos" || tab === "register") && <Pos />}
           {tab === "income" && <Income />}
-          {tab === "register" && <Register />}
           {tab === "credit_reconciliation" && <CreditReconciliation />}
           {tab === "staff" && featureOn("staff_portal") && <Staff />}
           {tab === "incidents" && <Incidents />}
