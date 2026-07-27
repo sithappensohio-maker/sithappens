@@ -28,6 +28,13 @@ async function _call(path, options) {
     if (!res.ok) {
       return { ok: false, error: (data && (data.error || data.detail)) || `POS agent returned ${res.status}` };
     }
+    // The agent always responds HTTP 200, even for an application-level
+    // failure (token rejected, printer offline, write failed) — the real
+    // outcome lives in the JSON body's "ok" field, never the HTTP status
+    // alone. /health has no "ok" field, so it falls through unaffected.
+    if (data && data.ok === false) {
+      return { ok: false, error: data.error || "POS agent reported failure" };
+    }
     return { ok: true, data };
   } catch (e) {
     clearTimeout(timer);
