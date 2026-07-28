@@ -247,7 +247,8 @@ def _count_retail_rows_for_payment(payment_id):
     return _mongo_run(_fetch)
 
 
-def _seed_stripe_collected_payment(invoice_id, client_id, amount, bump_invoice=True):
+def _seed_stripe_collected_payment(invoice_id, client_id, amount, bump_invoice=True,
+                                    card_brand=None, card_last4=None):
     """Simulates a Payment row exactly as _apply_stripe_payment would have
     written it, for tests that only need "a Stripe payment already
     happened" as a precondition (legacy-refund exclusion tests)."""
@@ -262,7 +263,8 @@ def _seed_stripe_collected_payment(invoice_id, client_id, amount, bump_invoice=T
             "processor_payment_id": f"pi_test_{uuid.uuid4().hex[:12]}", "status": "completed",
             "notes": "", "refunded_amount": 0.0,
             "source": {"kind": "stripe_online_payment", "stripe_attempt_id": str(uuid.uuid4()),
-                       "stripe_payment_intent_id": f"pi_test_{uuid.uuid4().hex[:12]}"},
+                       "stripe_payment_intent_id": f"pi_test_{uuid.uuid4().hex[:12]}",
+                       "card_brand": card_brand, "card_last4": card_last4},
             "booking_id": None, "ledger_id": None, "idempotency_ref": f"test:{payment_id}",
             "created_at": ts, "updated_at": ts,
         })
@@ -1073,3 +1075,144 @@ def test_stripe_refund_synchronous_and_webhook_race_applies_exactly_once(admin_h
     assert len(reversals) == 1, "concurrent finalize calls must produce exactly ONE reversal, never two"
     assert abs(payment["refunded_amount"] - 20.0) < 0.01
     assert attempt["applied_refund_payment_id"] == reversals[0]["id"]
+
+
+# ---------------------------------------------------------------------------
+# 12. Front Desk "Online Payments" read endpoint — GET /admin/stripe-online-payments
+# ---------------------------------------------------------------------------
+
+def test_online_payments_lists_stripe_payment_with_safe_fields(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=75.0)
+    payment_id = _seed_stripe_collected_payment(
+        invoice["id"], client["id"], 75.0, card_brand="visa", card_last4="4242",
+    )
+    r = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers,
+                      params={"q": client["name"]}, timeout=15)
+    assert r.status_code == 200, r.text
+    rows = [p for p in r.json()["payments"] if p["payment_id"] == payment_id]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["invoice_id"] == invoice["id"]
+    assert row["client_name"] == client["name"]
+    assert abs(row["amount"] - 75.0) < 0.01
+    assert abs(row["refunded_amount"] - 0.0) < 0.01
+    assert abs(row["remaining_refundable"] - 75.0) < 0.01
+    assert row["card_brand"] == "visa"
+    assert row["card_last4"] == "4242"
+    assert row["refund_in_progress"] is False
+    assert row["refund_status"] is None
+    # Safe-fields contract — no PaymentIntent id, no Stripe secret/webhook
+    # data, no raw stripe_refund_attempts document anywhere in the row.
+    assert "stripe_payment_intent_id" not in row
+    assert "processor_payment_id" not in row
+    assert "source" not in row
+    assert "idempotency_ref" not in row
+
+
+def test_online_payments_excludes_non_stripe_methods(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _partial_paid_invoice(admin_headers, client, dog, total=200.0, paid=75.0)
+    r = requests.post(f"{API}/invoices/{invoice['id']}/payments", headers=admin_headers, json={
+        "amount": 125.0, "method": "cash", "tendered_amount": 125.0, "idempotency_key": uuid.uuid4().hex,
+    }, timeout=15)
+    cash_payment_id = r.json()["payment"]["id"]
+    r2 = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+    assert r2.status_code == 200, r2.text
+    ids = {p["payment_id"] for p in r2.json()["payments"]}
+    assert cash_payment_id not in ids
+
+
+def test_online_payments_excludes_refund_reversal_rows(admin_headers, fresh_client_and_dog):
+    """A stripe_refund reversal row (source.kind=="stripe_refund", negative
+    amount) must never be listed as if it were a separate original payment —
+    same exclusion convention _booking_refund_locked already uses."""
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=60.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 60.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 20.0)
+    r = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r.status_code == 200, r.text
+
+    r2 = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+    assert r2.status_code == 200, r2.text
+    rows = [p for p in r2.json()["payments"] if p["invoice_id"] == invoice["id"]]
+    # Exactly the original payment — never a second row for the reversal.
+    assert len(rows) == 1
+    assert rows[0]["payment_id"] == payment_id
+    assert abs(rows[0]["refunded_amount"] - 20.0) < 0.01
+    assert abs(rows[0]["remaining_refundable"] - 40.0) < 0.01
+
+
+def test_online_payments_refund_in_progress_while_attempt_pending(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=50.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 50.0)
+    _seed_refund_attempt(payment_id, invoice["id"], 15.0)  # defaults to status="pending"
+
+    r = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    row = next(p for p in r.json()["payments"] if p["payment_id"] == payment_id)
+    assert row["refund_in_progress"] is True
+    assert row["refund_status"] == "pending"
+    # Nothing refunded yet — the local reversal only applies once Stripe
+    # actually reports "succeeded".
+    assert abs(row["refunded_amount"] - 0.0) < 0.01
+    assert abs(row["remaining_refundable"] - 50.0) < 0.01
+
+
+def test_online_payments_refund_in_progress_clears_once_succeeded(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=50.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 50.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 15.0)
+
+    r = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r.status_code == 200, r.text
+
+    r2 = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+    row = next(p for p in r2.json()["payments"] if p["payment_id"] == payment_id)
+    assert row["refund_in_progress"] is False
+    assert row["refund_status"] is None
+    assert abs(row["refunded_amount"] - 15.0) < 0.01
+    assert abs(row["remaining_refundable"] - 35.0) < 0.01
+
+
+def test_online_payments_multiple_sequential_partial_refunds(admin_headers, fresh_client_and_dog):
+    """Original $100, refund #1 $25 (remaining $75), later refund #2 $10
+    (remaining $65) — the read endpoint must reflect canonical
+    Payment.refunded_amount after EACH refund, never a locally-summed
+    refund history."""
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=100.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 100.0)
+
+    _refund_attempt_id_1, stripe_refund_id_1 = _seed_refund_attempt(payment_id, invoice["id"], 25.0)
+    assert _post_stripe_webhook("refund.updated", {"id": stripe_refund_id_1, "status": "succeeded"}).status_code == 200
+    row = next(p for p in requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+               .json()["payments"] if p["payment_id"] == payment_id)
+    assert abs(row["refunded_amount"] - 25.0) < 0.01
+    assert abs(row["remaining_refundable"] - 75.0) < 0.01
+
+    _refund_attempt_id_2, stripe_refund_id_2 = _seed_refund_attempt(payment_id, invoice["id"], 10.0)
+    assert _post_stripe_webhook("refund.updated", {"id": stripe_refund_id_2, "status": "succeeded"}).status_code == 200
+    row2 = next(p for p in requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers, timeout=15)
+                .json()["payments"] if p["payment_id"] == payment_id)
+    assert abs(row2["refunded_amount"] - 35.0) < 0.01
+    assert abs(row2["remaining_refundable"] - 65.0) < 0.01
+
+
+def test_online_payments_limit_param_respected(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=10.0)
+    _seed_stripe_collected_payment(invoice["id"], client["id"], 10.0)
+    r = requests.get(f"{API}/admin/stripe-online-payments", headers=admin_headers,
+                      params={"limit": 1}, timeout=15)
+    assert r.status_code == 200, r.text
+    assert len(r.json()["payments"]) <= 1
+
+
+def test_online_payments_requires_admin(fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    r = requests.get(f"{API}/admin/stripe-online-payments", timeout=15)
+    assert r.status_code in (401, 403)
