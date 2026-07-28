@@ -87,14 +87,27 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
     setFormOpen(true);
   };
 
-  // Closing without saving — if a new (not-yet-saved) image was uploaded
-  // this session, clean it up; the original persisted image (if any) is
-  // untouched since nothing about the product actually changed.
-  const closeFormWithoutSaving = () => {
+  // Shared cleanup: if a new (not-yet-saved) image was uploaded this
+  // session, delete it; the original persisted image (if any) is left
+  // alone since nothing about the product actually changed.
+  const cleanupUnsavedImageIfAny = () => {
     if (form.image_id && form.image_id !== originalImageId) {
       api.delete(`/shop/media/${form.image_id}`).catch(() => {});
     }
+  };
+
+  const closeFormWithoutSaving = () => {
+    cleanupUnsavedImageIfAny();
     setFormOpen(false);
+  };
+
+  // The panel's own top-level X closes the WHOLE Manage Products modal —
+  // including the add/edit form if it happened to be open underneath.
+  // That exit path must get the identical cleanup as Cancel; otherwise
+  // closing the panel with the form open leaks the same temp upload.
+  const handlePanelClose = () => {
+    if (formOpen) cleanupUnsavedImageIfAny();
+    onClose();
   };
 
   const saveForm = async () => {
@@ -174,7 +187,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
           <p className="text-white text-xl font-black uppercase tracking-widest">Manage Products</p>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-lg" /></button>
+          <button onClick={handlePanelClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-lg" /></button>
         </div>
 
         {formOpen ? (

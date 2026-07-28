@@ -299,12 +299,14 @@ def test_shop_media_upload_and_fetch_roundtrip(admin_headers, fresh_client):
                        json={"data": TINY_PNG_DATA_URL, "filename": "tiny.png"}, timeout=15)
     assert r.status_code == 200, r.text
     media_id = r.json()["media_id"]
-
-    # Any authenticated user (staff or client) can read it back.
-    client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
-    r2 = requests.get(f"{API}/shop/media/{media_id}", headers=client_hdrs, timeout=15)
-    assert r2.status_code == 200, r2.text
-    assert r2.json()["data"] == TINY_PNG_DATA_URL
+    try:
+        # Any authenticated user (staff or client) can read it back.
+        client_hdrs = _client_headers(fresh_client["id"], fresh_client["email"])
+        r2 = requests.get(f"{API}/shop/media/{media_id}", headers=client_hdrs, timeout=15)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["data"] == TINY_PNG_DATA_URL
+    finally:
+        requests.delete(f"{API}/shop/media/{media_id}", headers=admin_headers, timeout=15)
 
 
 def test_catalog_never_embeds_image_bytes(admin_headers, fresh_client):
@@ -320,6 +322,9 @@ def test_catalog_never_embeds_image_bytes(admin_headers, fresh_client):
         assert "data" not in item  # never embed base64 bytes in the catalog list
     finally:
         _delete_product(admin_headers, product["id"])
+        # Product is gone (and with it the only reference), so the media
+        # row is now safely deletable — mirrors the real cleanup sequencing.
+        requests.delete(f"{API}/shop/media/{media_id}", headers=admin_headers, timeout=15)
 
 
 # ---------------------------------------------------------------------------
