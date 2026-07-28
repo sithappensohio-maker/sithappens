@@ -1034,6 +1034,10 @@ class InvoiceOut(BaseModel):
     stripe_active_attempt_id: Optional[str] = None
     stripe_reserved_amount_cents: Optional[int] = None
     stripe_last_applied_attempt_id: Optional[str] = None
+    # Which stripe_refund_attempt ids have already had their amount applied
+    # to refunded_total — gates _finalize_stripe_refund's $inc so a crash-
+    # and-retry can never double-count the same refund attempt.
+    refund_attempts_applied: List[str] = []
 
 
 class PaymentOut(BaseModel):
@@ -1063,6 +1067,10 @@ class PaymentOut(BaseModel):
     change_given: Optional[float] = None
     business_date: Optional[str] = None
     voided_at: Optional[str] = None
+    # Which stripe_refund_attempt ids have already had their amount applied
+    # to refunded_amount — gates _finalize_stripe_refund's $inc so a crash-
+    # and-retry can never double-count the same refund attempt.
+    refund_attempts_applied: List[str] = []
 
 
 class InvoicePaymentIn(BaseModel):
@@ -24096,18 +24104,37 @@ async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict
 
 
 async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
-    """Applies the canonical local reversal EXACTLY once, via an atomic
-    monotonic status guard — safe whether called from the synchronous
-    Refund.create response or the later refund.updated webhook (whichever
-    observes status==succeeded first wins; the other is a clean no-op),
-    and safe against duplicate/out-of-order webhook redelivery."""
+    """Applies the canonical local reversal, safe whether called from the
+    synchronous Refund.create response or the later refund.updated webhook
+    (whichever observes status==succeeded first wins), and safe against
+    duplicate/out-of-order webhook redelivery.
+
+    IMPORTANT: Stripe's own refund status and LOCAL APPLICATION COMPLETENESS
+    are two different things. The attempt's status flips to "succeeded"
+    first (below), but the several local writes that follow (reversal
+    Payment, original Payment.refunded_amount, retail_sales reversal,
+    invoice refund state) are separate operations — a crash between any of
+    them must NOT be mistaken for "nothing left to do" just because the
+    attempt is already terminal. `applied_refund_payment_id` is the actual
+    completeness marker, not `status`. So: re-entry is allowed whenever
+    status=="succeeded" but applied_refund_payment_id is still unset, and
+    EVERY step below is independently idempotent (its own stable key/marker),
+    so re-running the whole tail on a resumed call is always safe — no
+    step needs to remember whether an earlier step in THIS invocation ran."""
     attempt = await db.stripe_refund_attempts.find_one_and_update(
         {"id": refund_attempt_id, "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
         {"$set": {"status": "succeeded", "updated_at": now_iso()}},
         return_document=ReturnDocument.AFTER,
     )
     if attempt is None:
-        return  # already terminal — no-op, never regress
+        # Already terminal by status alone — but "terminal" no longer
+        # means "nothing left to do." Only a genuinely-finished attempt
+        # (applied_refund_payment_id set) is a true no-op; a "succeeded"
+        # attempt with local application still incomplete must resume.
+        existing = await db.stripe_refund_attempts.find_one({"id": refund_attempt_id}, {"_id": 0})
+        if not existing or existing.get("status") != "succeeded" or existing.get("applied_refund_payment_id"):
+            return  # never succeeded, or already fully applied — true no-op
+        attempt = existing
 
     payment = await db.payments.find_one({"id": attempt["payment_id"]}, {"_id": 0})
     if not payment:
@@ -24116,6 +24143,9 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
     ts = now_iso()
     invoice_id = attempt.get("invoice_id")
 
+    # Step A — reversal Payment. Idempotent via idempotency_ref
+    # (_insert_payment_row checks-before-inserting), so this always
+    # resolves to the SAME row across any number of retries.
     reversal = await _insert_payment_row({
         "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": payment.get("client_id"),
         "amount": -amount, "method": "stripe_online", "is_credit": False,
@@ -24129,22 +24159,72 @@ async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
         "created_at": ts, "updated_at": ts,
     })
 
-    await db.payments.update_one({"id": payment["id"]}, {"$inc": {"refunded_amount": amount}, "$set": {"updated_at": ts}})
+    # Step B — original Payment.refunded_amount. Gated on a per-attempt
+    # marker in the SAME atomic update as the $inc, so a retry can never
+    # double-increment (same pattern as _apply_stripe_payment Step B2's
+    # stripe_ar_adjustments_applied marker).
+    await db.payments.update_one(
+        {"id": payment["id"], "refund_attempts_applied": {"$ne": attempt["id"]}},
+        {"$inc": {"refunded_amount": amount},
+         "$addToSet": {"refund_attempts_applied": attempt["id"]},
+         "$set": {"updated_at": ts}},
+    )
 
+    # Step C — invoice.refunded_total, when this refund belongs to an
+    # invoice-backed payment. Same marker-gated-$inc idiom as Step B, so a
+    # retry never double-increments; status is then recomputed fresh from
+    # the just-updated document (always safe to rerun — a pure function of
+    # current fields, no marker needed, matching Step B5's existing comment
+    # style in _apply_stripe_payment).
     if invoice_id:
-        invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-        if invoice:
-            new_refunded_total = round(float(invoice.get("refunded_total") or 0) + amount, 2)
+        updated_invoice = await db.invoices.find_one_and_update(
+            {"id": invoice_id, "refund_attempts_applied": {"$ne": attempt["id"]}},
+            {"$inc": {"refunded_total": amount},
+             "$addToSet": {"refund_attempts_applied": attempt["id"]},
+             "$set": {"updated_at": ts}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if updated_invoice:
             new_status = _derive_invoice_status(
-                {**invoice, "refunded_total": new_refunded_total},
-                amount_paid=float(invoice.get("amount_paid") or 0),
-                balance=float(invoice.get("balance") or 0),
-                credit_applied=float(invoice.get("credit_applied") or 0),
+                updated_invoice,
+                amount_paid=float(updated_invoice.get("amount_paid") or 0),
+                balance=float(updated_invoice.get("balance") or 0),
+                credit_applied=float(updated_invoice.get("credit_applied") or 0),
             )
-            await db.invoices.update_one(
-                {"id": invoice_id}, {"$set": {"refunded_total": new_refunded_total, "status": new_status, "updated_at": ts}},
-            )
+            await db.invoices.update_one({"id": invoice_id}, {"$set": {"status": new_status, "updated_at": ts}})
+        # else: marker already present (already applied on a prior pass) or
+        # invoice not found — either way, nothing further to do here.
 
+    # Step D — offsetting retail_sales reversal row. The ORIGINAL row is
+    # NEVER edited/deleted; this inserts a new negative row referencing it.
+    # Idempotency reuses the reversal Payment's own already-stable id
+    # (Step A) against retail_sales' EXISTING unique-partial index on
+    # payment_id — no new index needed. Same "insert an offsetting negative
+    # row, never touch the original" convention already used by
+    # void_pos_sale and void_payment's invoice_payment_void reversal.
+    # Fixes a real, pre-existing gap: Stripe refunds previously left the
+    # original positive retail_sales row completely unreversed, so
+    # Finance/Income/Register reporting overstated revenue after a refund.
+    existing_retail_reversal = await db.retail_sales.find_one({"payment_id": reversal["id"]}, {"_id": 0})
+    if not existing_retail_reversal:
+        original_retail = await db.retail_sales.find_one({"payment_id": payment["id"]}, {"_id": 0})
+        if original_retail:
+            try:
+                await db.retail_sales.insert_one({
+                    "id": str(uuid.uuid4()), "date": business_today().isoformat(), "amount": -amount,
+                    "payment_method": "stripe_online", "client_id": payment.get("client_id"),
+                    "client_name": original_retail.get("client_name"), "invoice_id": invoice_id,
+                    "payment_id": reversal["id"], "reversed_payment_id": payment["id"],
+                    "source_kind": "stripe_refund", "description": f"Stripe refund · {payment['id']}",
+                    "created_at": ts, "created_by": "stripe_refund", "logged_by": "Stripe",
+                })
+            except DuplicateKeyError:
+                pass  # already applied by a concurrent/prior run
+
+    # Only after every applicable step above is independently confirmed
+    # complete (each is safe to re-run, so simply having executed them
+    # again here IS that confirmation) do we mark local application done.
+    # This $set is itself idempotent — always writes the same reversal id.
     await db.stripe_refund_attempts.update_one(
         {"id": attempt["id"]}, {"$set": {"applied_refund_payment_id": reversal["id"], "updated_at": now_iso()}},
     )
@@ -24157,7 +24237,14 @@ async def _handle_refund_event(refund_obj: dict) -> None:
     if not attempt:
         return  # unknown refund — e.g. issued directly from the Stripe Dashboard, out of scope this phase
     if attempt.get("status") in STRIPE_REFUND_TERMINAL_STATUSES:
-        return  # already terminal — monotonic, never regress regardless of what this (possibly stale/out-of-order) event says
+        # Terminal status alone does not mean local application finished —
+        # see _finalize_stripe_refund's own docstring. A redelivered webhook
+        # for an attempt stuck at "succeeded" with local application still
+        # incomplete must still be allowed to resume it; only a genuinely
+        # complete attempt (or a real failed/canceled one) is a true no-op.
+        if attempt.get("status") == "succeeded" and not attempt.get("applied_refund_payment_id"):
+            await _finalize_stripe_refund(attempt["id"])
+        return
     if status == "succeeded":
         await _finalize_stripe_refund(attempt["id"])
     else:
