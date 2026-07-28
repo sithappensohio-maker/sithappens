@@ -130,6 +130,129 @@ def test_overpayment_creates_credit(admin_headers, fresh_client_and_dog):
     assert abs(cr.json()["account_balance"] + 50.0) < 0.01  # -50
 
 
+# ---------------------------------------------------------------------------
+# Dashboard "Partial / on tab" blank-amount bug — regression coverage.
+#
+# Real bug: CheckoutModal's "Partial / on tab" pill used to send
+# payment_status="paid" unconditionally and only attached amount_paid when
+# the operator typed a non-blank number. Selecting "Partial / on tab" and
+# leaving the amount blank (the natural way to mean "collect nothing today")
+# reached the backend indistinguishable from a full payment: false completed
+# Payment row, no AR ledger charge, client.account_balance never moved,
+# invoice marked PAID with balance $0. Fixed by (a) the frontend always
+# sending an explicit numeric amount_paid (blank → 0) plus an explicit
+# payment_status="paid_partial" tab-intent assertion, and (b) a backend
+# belt-and-suspenders guard so payment_status="paid_partial" can never
+# collapse into a full payment merely because amount_paid was omitted.
+# ---------------------------------------------------------------------------
+
+def _get_invoice(admin_headers, booking_id):
+    r = requests.get(f"{BASE}/api/bookings/{booking_id}/invoice", headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_tab_checkout_blank_amount_creates_full_ar_not_a_payment(admin_headers, fresh_client_and_dog):
+    """The exact reported scenario: $1 total, 'Partial / on tab', amount
+    field left blank. Must produce $0 paid / full $1 to AR — never a false
+    completed Payment, never a PAID invoice."""
+    client, dog = fresh_client_and_dog
+    bid = _create_and_checkin(admin_headers, client, dog, base_price=1.0)
+    r = requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
+                      json={"use_credits": False, "base_price": 1.0,
+                            "payment_method": "cash", "payment_status": "paid_partial"},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["payment_status"] == "paid_partial"
+    assert abs(b["actual_price"] - 1.0) < 0.01
+    assert abs(b["amount_paid"] - 0.0) < 0.01
+    assert abs(b["balance_due"] - 1.0) < 0.01
+
+    cr = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15)
+    assert abs(cr.json()["account_balance"] - 1.0) < 0.01, "AR must land on the client tab"
+
+    inv = _get_invoice(admin_headers, bid)
+    assert abs(inv["total"] - 1.0) < 0.01
+    assert abs(inv["amount_paid"] - 0.0) < 0.01
+    assert abs(inv["balance"] - 1.0) < 0.01
+    assert inv["status"] == "OPEN"
+    # No false completed cash/card Payment row for money never collected.
+    cash_payments = [p for p in inv["payments"] if not p.get("is_credit")]
+    assert cash_payments == [], f"expected zero cash Payment rows, got {cash_payments}"
+
+
+def test_tab_checkout_explicit_zero_amount_same_as_blank(admin_headers, fresh_client_and_dog):
+    """payment_status='paid_partial' + amount_paid=0 explicit must behave
+    identically to the blank-amount case above."""
+    client, dog = fresh_client_and_dog
+    bid = _create_and_checkin(admin_headers, client, dog, base_price=1.0)
+    r = requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
+                      json={"use_credits": False, "base_price": 1.0, "amount_paid": 0,
+                            "payment_method": "cash", "payment_status": "paid_partial"},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["payment_status"] == "paid_partial"
+    assert abs(b["amount_paid"] - 0.0) < 0.01
+    assert abs(b["balance_due"] - 1.0) < 0.01
+    cr = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15)
+    assert abs(cr.json()["account_balance"] - 1.0) < 0.01
+    inv = _get_invoice(admin_headers, bid)
+    assert inv["status"] == "OPEN"
+    assert [p for p in inv["payments"] if not p.get("is_credit")] == []
+
+
+def test_tab_checkout_partial_amount_splits_correctly(admin_headers, fresh_client_and_dog):
+    """$0.25 paid on a $1.00 ticket, tab mode → amount_paid=.25, balance=.75,
+    AR/account balance reflects exactly the unpaid remainder, and the ONE
+    real Payment row is for the $0.25 actually collected — never the full $1."""
+    client, dog = fresh_client_and_dog
+    bid = _create_and_checkin(admin_headers, client, dog, base_price=1.0)
+    r = requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
+                      json={"use_credits": False, "base_price": 1.0, "amount_paid": 0.25,
+                            "payment_method": "cash", "payment_status": "paid_partial"},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["payment_status"] == "paid_partial"
+    assert abs(b["amount_paid"] - 0.25) < 0.01
+    assert abs(b["balance_due"] - 0.75) < 0.01
+    cr = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15)
+    assert abs(cr.json()["account_balance"] - 0.75) < 0.01
+    inv = _get_invoice(admin_headers, bid)
+    assert abs(inv["amount_paid"] - 0.25) < 0.01
+    assert abs(inv["balance"] - 0.75) < 0.01
+    assert inv["status"] == "PARTIALLY_PAID"
+    cash_payments = [p for p in inv["payments"] if not p.get("is_credit")]
+    assert len(cash_payments) == 1
+    assert abs(cash_payments[0]["amount"] - 0.25) < 0.01
+
+
+def test_full_payment_behavior_unchanged(admin_headers, fresh_client_and_dog):
+    """Plain 'Paid in full' (payment_status='paid', no amount_paid sent) —
+    the legacy default — must be completely unaffected by this fix."""
+    client, dog = fresh_client_and_dog
+    bid = _create_and_checkin(admin_headers, client, dog, base_price=1.0)
+    r = requests.post(f"{BASE}/api/bookings/{bid}/check-out", headers=admin_headers,
+                      json={"use_credits": False, "base_price": 1.0,
+                            "payment_method": "cash", "payment_status": "paid"},
+                      timeout=15)
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["payment_status"] == "paid"
+    assert abs(b["amount_paid"] - 1.0) < 0.01
+    assert abs(b["balance_due"] - 0.0) < 0.01
+    cr = requests.get(f"{BASE}/api/clients/{client['id']}", headers=admin_headers, timeout=15)
+    assert abs(cr.json()["account_balance"] - 0.0) < 0.01
+    inv = _get_invoice(admin_headers, bid)
+    assert inv["status"] == "PAID"
+    assert abs(inv["amount_paid"] - 1.0) < 0.01
+    cash_payments = [p for p in inv["payments"] if not p.get("is_credit")]
+    assert len(cash_payments) == 1
+    assert abs(cash_payments[0]["amount"] - 1.0) < 0.01
+
+
 def test_ledger_shows_rows_newest_first(admin_headers, fresh_client_and_dog):
     """Ledger endpoint returns charge + payment rows for the partial-pay."""
     client, dog = fresh_client_and_dog
