@@ -48,6 +48,12 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       ACCESS_TOKEN_EXPIRE_DAYS: "${ACCESS_TOKEN_EXPIRE_DAYS:-7}"
       BACKUP_ROOT: "/app/backups"
+      # Stripe Online (hosted Checkout) — off unless explicitly turned on.
+      # Leave STRIPE_ONLINE_ENABLED unset/false in .env until the secret key
+      # and webhook secret below are both configured and verified.
+      STRIPE_ONLINE_ENABLED: "${STRIPE_ONLINE_ENABLED:-}"
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
     volumes:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
       - ./backups:/app/backups

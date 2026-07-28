@@ -31,6 +31,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, Field, EmailStr, ConfigDict, field_validator
+import stripe
 
 from email_service import (
     notify_admin_new_booking,
@@ -70,6 +71,20 @@ JWT_ALG = "HS256"
 ACCESS_TOKEN_EXPIRE_DAYS = max(1, int(os.environ.get("ACCESS_TOKEN_EXPIRE_DAYS", "7")))
 DAYCARE_CAPACITY = int(os.environ.get("DAYCARE_CAPACITY", "30"))
 
+# -------- Stripe Online (Phase 3A) --------
+# Hosted Checkout Sessions only — no Stripe Terminal, no saved cards, no
+# frontend Stripe SDK. Same plain-env-var convention as every other external
+# integration in this codebase (see RESEND_API_KEY). Absent/blank secret key
+# means Stripe Online is simply unreachable — every Stripe-calling endpoint
+# checks STRIPE_ONLINE_ENABLED explicitly rather than inferring availability
+# from key presence, so it can be switched off without unsetting secrets.
+STRIPE_ONLINE_ENABLED = (os.environ.get("STRIPE_ONLINE_ENABLED", "") or "").strip().lower() in ("1", "true", "yes")
+STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_CHECKOUT_EXPIRES_SECONDS = 30 * 60  # ~30 minutes, per the approved reservation-window design
+if STRIPE_SECRET_KEY:
+    stripe.api_key = STRIPE_SECRET_KEY
+
 mongo_url = os.environ["MONGO_URL"]
 mongo_client = AsyncIOMotorClient(mongo_url)
 db = mongo_client[os.environ["DB_NAME"]]
@@ -95,7 +110,7 @@ _capacity_lock_ctx = contextvars.ContextVar("capacity_lock_context", default=Non
 # Canonical methods for the new POS-style register. Legacy values are still
 # accepted so old clients, old frontend builds, and historical records do not
 # break; reports group them into the clean labels Garrett actually uses.
-REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "clover", "venmo_paypal", "other"]
+REGISTER_METHOD_ORDER = ["cash", "check", "venmo", "paypal", "clover", "venmo_paypal", "stripe_online", "other"]
 REGISTER_METHOD_LABELS = {
     "cash": "Cash",
     "check": "Check",
@@ -103,6 +118,7 @@ REGISTER_METHOD_LABELS = {
     "paypal": "PayPal",
     "clover": "Clover / Credit Card",
     "venmo_paypal": "Venmo / PayPal (legacy transfer)",
+    "stripe_online": "Online Card (Stripe)",
     "credits": "Credits",
     "other": "Other",
 }
@@ -115,6 +131,8 @@ def _normalize_payment_method(method: Optional[str], *, store: bool = False) -> 
     separate so old Venmo/PayPal rows are not falsely assigned to one app.
     """
     m = (method or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if m in ("stripe_online", "stripe"):
+        return "stripe_online"
     if m in ("credit", "credit_card", "cc", "clover", "card", "cards"):
         return "clover"
     if m in ("venmo",):
@@ -514,6 +532,22 @@ class ClientIn(BaseModel):
     # business (accounts receivable). NEGATIVE = client has pre-paid credit
     # on file. Moved by checkout partial-pay + manual ledger adjustments.
     account_balance: float = 0.0
+    # Stripe Online (Phase 3A) — stripe_customer_id (stable mapping to a
+    # lazily-created Stripe Customer) and stripe_ar_adjustments_applied (the
+    # internal idempotency marker preventing a crash-and-retry from
+    # double-applying an AR $inc) are DELIBERATELY NOT fields on ClientIn.
+    # This is the admin create/edit INPUT model — every admin/employee client
+    # edit does `db.clients.update_one(..., {"$set": body.model_dump()})|`,
+    # so if these lived here, submitting an ordinary profile edit (e.g.
+    # changing a phone number) would silently reset them to None/[] every
+    # time, both losing the Stripe Customer cache AND (far worse) re-opening
+    # the idempotency guard so a redelivered webhook could double-apply an
+    # AR adjustment. Every real reader/writer of these two fields (Stripe
+    # checkout-session creation, _apply_stripe_payment's Step B2) already
+    # goes through raw db.clients.find_one/update_one — never through this
+    # model — so they don't need to be here for the app to function, and
+    # keeping them off ClientIn/ClientOut is also what keeps them out of
+    # every admin/portal API response by construction.
 
 class ClientOut(ClientIn):
     id: str
@@ -984,6 +1018,17 @@ class InvoiceOut(BaseModel):
     created_at: str
     created_by: Optional[str] = None
     updated_at: str
+    # Stripe Online (Phase 3A) — the atomic Invoice-pointer reservation. See
+    # _acquire_stripe_reservation/_release_stripe_reservation_if_owned.
+    # stripe_active_attempt_id: which stripe_payment_attempts row currently
+    # holds this invoice (blocks every other payment path while set).
+    # stripe_reserved_amount_cents: the amount that attempt reserved.
+    # stripe_last_applied_attempt_id: which attempt has already performed
+    # ITS OWN invoice-level money mutation — set once and never cleared for
+    # that attempt, so a crash-and-retry can never decrement balance twice.
+    stripe_active_attempt_id: Optional[str] = None
+    stripe_reserved_amount_cents: Optional[int] = None
+    stripe_last_applied_attempt_id: Optional[str] = None
 
 
 class PaymentOut(BaseModel):
@@ -5132,19 +5177,26 @@ async def get_booking(booking_id: str, user: dict = Depends(get_current_user)):
 
 
 
+# Every client-facing endpoint that returns a client document must project
+# through this — never a raw db.clients.find_one({"_id": 0}) result. Keeps
+# internal Stripe/AR bookkeeping fields (and anything else added here later)
+# out of portal responses without needing a parallel client-facing model.
+PORTAL_CLIENT_PROJECTION = {"_id": 0, "stripe_ar_adjustments_applied": 0, "stripe_customer_id": 0}
+
+
 @api.get("/portal/me")
 async def portal_me(user: dict = Depends(get_current_user)):
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     cid = user.get("client_id")
-    client = await db.clients.find_one({"id": cid}, {"_id": 0}) if cid else None
+    client = await db.clients.find_one({"id": cid}, PORTAL_CLIENT_PROJECTION) if cid else None
     if not client:
         return {"client": {"id": "", "name": user.get("name"), "credits": 0}, "visit_counts": {}, "referral_code": None}
 
     # Ensure the client has a referral code minted (one-time, server-generated).
     if not client.get("referral_code"):
         await _ensure_client_referral_code(cid)
-        client = await db.clients.find_one({"id": cid}, {"_id": 0}) or client
+        client = await db.clients.find_one({"id": cid}, PORTAL_CLIENT_PROJECTION) or client
 
     # Visit counts per dog (status=completed counts as a real visit).
     dog_ids = [d["id"] async for d in db.dogs.find({"owner_id": cid}, {"_id": 0, "id": 1})]
@@ -5611,7 +5663,7 @@ async def update_portal_me(body: PortalProfileIn, user: dict = Depends(get_curre
     await db.clients.update_one({"id": cid}, {"$set": update})
     # also keep user.name in sync
     await db.users.update_one({"id": user["id"]}, {"$set": {"name": body.name}})
-    client = await db.clients.find_one({"id": cid}, {"_id": 0})
+    client = await db.clients.find_one({"id": cid}, PORTAL_CLIENT_PROJECTION)
     return {"client": client}
 
 @api.post("/portal/gallery/mark-seen")
@@ -10588,7 +10640,24 @@ async def _booking_refund_locked(booking_id: str, body: BookingRefundIn, user: d
             {"booking_ids": booking_id}, {"_id": 0, "id": 1, "booking_ids": 1, "amount_paid": 1}
         )
         if invoice_for_refund_ceiling and len(invoice_for_refund_ceiling.get("booking_ids") or []) == 1:
-            originally_paid = round(float(invoice_for_refund_ceiling.get("amount_paid") or 0), 2)
+            invoice_amount_paid = round(float(invoice_for_refund_ceiling.get("amount_paid") or 0), 2)
+            # Stripe Online (Phase 3A) — original Stripe-collected dollars can
+            # NEVER be refunded through this local-only mechanism; they stay
+            # permanently in the Stripe refund lane (POST /payments/{id}/
+            # stripe-refund), regardless of whether any of them have already
+            # been refunded there. Sum only ORIGINAL positive stripe_online
+            # collection Payment rows, explicitly excluding reversal rows by
+            # their canonical source.kind — never inferred from sign alone.
+            stripe_gross = 0.0
+            async for p in db.payments.find(
+                {
+                    "invoice_id": invoice_for_refund_ceiling["id"], "method": "stripe_online",
+                    "status": "completed", "amount": {"$gt": 0}, "source.kind": {"$ne": "stripe_refund"},
+                },
+                {"_id": 0, "amount": 1},
+            ):
+                stripe_gross += float(p.get("amount") or 0)
+            originally_paid = round(invoice_amount_paid - round(stripe_gross, 2), 2)
         already_refunded = round(float(booking.get("financial_refund_total") or 0), 2)
         refundable = round(max(0.0, originally_paid - already_refunded), 2)
         amount = round(float(body.amount), 2)
@@ -19559,6 +19628,71 @@ async def trophies_leaderboard(_: dict = Depends(require_admin), limit: int = 5)
 
 
 
+RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME = "payment_id_unique_partial"
+
+
+async def _ensure_retail_sales_payment_id_unique_index() -> None:
+    """Makes retail_sales.payment_id uniqueness GENUINELY database-enforced,
+    without ever blindly dropping a pre-existing index and without ever
+    silently continuing on conflict.
+
+    Historically this collection may already carry a plain (non-unique)
+    index literally named "payment_id_1" (Mongo's auto-generated default
+    name for a single-field ascending index) — creating our unique-partial
+    index under that SAME auto-generated name collides purely on the NAME,
+    not on genuine incompatibility (verified directly against this Mongo
+    version: two indexes on the identical key pattern coexist fine once
+    they have distinct explicit names). So this uses an explicit, permanent
+    name and never touches whatever index (if any) already exists — the
+    safest option, since it requires no destructive step at all.
+
+    Order: check whether an equivalent unique-partial index already exists
+    (idempotent no-op if so) -> duplicate preflight against the ACTUAL data
+    -> create the named index -> re-read index_information() and log a
+    clear PASS/FAIL, so "genuinely active" is verified, not assumed.
+    """
+    existing = await db.retail_sales.index_information()
+    for spec in existing.values():
+        key = spec.get("key")
+        if key in ([("payment_id", 1)], [("payment_id", 1.0)]) and spec.get("unique") and spec.get("partialFilterExpression"):
+            logger.info("retail_sales.payment_id unique-partial index already active (%s) — skipping.", spec)
+            return
+
+    duplicates = await db.retail_sales.aggregate([
+        {"$match": {"payment_id": {"$type": "string"}}},
+        {"$group": {"_id": "$payment_id", "count": {"$sum": 1}}},
+        {"$match": {"count": {"$gt": 1}}},
+        {"$limit": 5},
+    ]).to_list(5)
+    if duplicates:
+        logger.error(
+            "STOP: retail_sales has duplicate non-null payment_id values — "
+            "refusing to create the unique index automatically. This must "
+            "be investigated and resolved manually; historical financial "
+            "rows are never auto-fixed. Sample duplicates: %s", duplicates,
+        )
+        return
+
+    try:
+        await db.retail_sales.create_index(
+            "payment_id", unique=True,
+            partialFilterExpression={"payment_id": {"$type": "string"}},
+            name=RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME,
+        )
+    except Exception as e:
+        logger.error("Failed to create retail_sales.%s: %s — payment_id uniqueness is NOT enforced.",
+                     RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME, e)
+        return
+
+    verify = await db.retail_sales.index_information()
+    active = verify.get(RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME)
+    if active and active.get("unique") and active.get("partialFilterExpression"):
+        logger.info("retail_sales.payment_id unique-partial index CONFIRMED active: %s", active)
+    else:
+        logger.error("retail_sales.%s did not verify as unique-partial after creation: %s",
+                     RETAIL_SALES_PAYMENT_ID_UNIQUE_INDEX_NAME, active)
+
+
 # -------- Startup --------
 @app.on_event("startup")
 async def startup():
@@ -19650,8 +19784,24 @@ async def startup():
         # a brand-new idempotency_key) is rejected at the index level.
         (db.payment_void_claims, "payment_id", {"unique": True}),
         (db.payment_ledger, "invoice_id", {}),
-        (db.retail_sales, "payment_id", {}),
+        # retail_sales.payment_id's unique-partial index is handled by
+        # _ensure_retail_sales_payment_id_unique_index() below instead of
+        # this generic best-effort loop — it needs a real duplicate
+        # preflight and post-creation verification, not a swallowed warning.
         (db.retail_sales, "invoice_id", {}),
+        # Stripe Online (Phase 3A) — payment_ledger.stripe_attempt_id is a
+        # brand-new field (no historical rows ever set it), so this partial
+        # unique index carries zero preflight risk. Real duplicate protection
+        # for the AR ledger write in _apply_stripe_payment.
+        (db.payment_ledger, "stripe_attempt_id", {"unique": True, "partialFilterExpression": {"stripe_attempt_id": {"$type": "string"}}}),
+        (db.stripe_payment_attempts, "idempotency_key", {"unique": True}),
+        (db.stripe_payment_attempts, "stripe_checkout_session_id", {}),
+        (db.stripe_payment_attempts, "invoice_id", {}),
+        (db.stripe_payment_attempts, "client_id", {}),
+        (db.stripe_refund_attempts, "idempotency_key", {"unique": True}),
+        (db.stripe_refund_attempts, "stripe_refund_id", {}),
+        (db.stripe_refund_attempts, "payment_id", {}),
+        (db.stripe_webhook_events, "id", {"unique": True}),
         # Front-desk POS hardware integration.
         (db.pos_action_tokens, "jti", {"unique": True}),
         (db.pos_action_tokens, "invoice_id", {}),
@@ -19676,6 +19826,7 @@ async def startup():
             await coll.create_index(key, **opts)
         except Exception as e:
             logger.warning(f"Could not create index {key} on {coll.name}: {e}")
+    await _ensure_retail_sales_payment_id_unique_index()
     # Seed admin — Sprint 110di-46 (security hardening):
     #  - On FIRST run (no admin user yet) we seed with ADMIN_PASSWORD if set,
     #    falling back to the dev default "admin123" only when nothing is
@@ -23029,14 +23180,25 @@ async def create_invoice_payment(invoice_id: str, body: InvoicePaymentIn, user: 
             if float((client or {}).get("account_balance") or 0) < amount - 0.005:
                 raise HTTPException(status_code=409, detail="This invoice's AR balance needs reconciliation before this payment can be recorded.")
 
-        # Atomic invoice delta — the authoritative overpayment guard.
+        # Atomic invoice delta — the authoritative overpayment guard. Stripe
+        # Online (Phase 3A) — stripe_active_attempt_id absent/null is REQUIRED
+        # in this SAME filter (never a separate precheck): whichever side
+        # (this manual payment, or a Stripe reservation acquisition) reaches
+        # this atomic condition first wins; the other's write simply doesn't
+        # match. No TOCTOU window between "check" and "mutate" because there
+        # is no separate check — the invoice document itself is the lock.
         result = await db.invoices.find_one_and_update(
-            {"id": invoice_id, "status": {"$ne": "VOID"}, "balance": {"$gte": amount - 0.005}},
+            {
+                "id": invoice_id, "status": {"$ne": "VOID"}, "balance": {"$gte": amount - 0.005},
+                "stripe_active_attempt_id": None,
+            },
             {"$inc": {"amount_paid": amount, "balance": -amount}, "$set": {"updated_at": ts}},
             return_document=ReturnDocument.AFTER,
         )
         if result is None:
-            fresh = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "balance": 1})
+            fresh = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "balance": 1, "stripe_active_attempt_id": 1})
+            if fresh and fresh.get("stripe_active_attempt_id"):
+                raise HTTPException(status_code=409, detail="This invoice has an online Stripe payment in progress or unresolved — it cannot accept a manual payment until that resolves.")
             bal = float((fresh or {}).get("balance") or 0)
             raise HTTPException(status_code=409, detail=f"Payment exceeds remaining balance of ${bal:.2f}.")
         invoice_delta_applied = True
@@ -23296,6 +23458,697 @@ async def void_payment(payment_id: str, body: PaymentVoidIn, user: dict = Depend
     final_invoice = await db.invoices.find_one({"id": original.get("invoice_id")}, {"_id": 0})
     final_payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
     return {"ok": True, "payment": final_payment, "invoice": final_invoice}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stripe Online Payments (Phase 3A) — hosted Checkout Sessions only. NO
+# Stripe Terminal, NO saved cards / off-session charging, NO frontend Stripe
+# SDK — the browser only ever navigates to session.url and later polls our
+# own status endpoint. The browser is NEVER financial authority: only a
+# verified webhook (or the on-demand Stripe-side verification below) ever
+# applies money. Every write here reuses the existing Invoice/Payment/
+# payment_ledger/account_balance/retail_sales architecture exactly the way
+# the manual top-up path (create_invoice_payment, above) already does —
+# this is additive, not a second accounting engine.
+#
+# Concurrency safety (the accepted design, after several review passes):
+#   - stripe_active_attempt_id / stripe_reserved_amount_cents /
+#     stripe_last_applied_attempt_id live directly ON the Invoice document,
+#     so the SAME atomic find_one_and_update that already guards balance can
+#     also guard Stripe exclusivity — no separate reservation collection,
+#     no read-then-write gap, no Mongo multi-document transaction.
+#   - Every downstream write (ledger, client.account_balance, Payment,
+#     retail_sales) carries its own independent, database-enforced
+#     duplicate-protection marker, so a crash-and-retry anywhere in the
+#     sequence can resume without ever double-applying a single write.
+#   - No TTL index anywhere in this section — time alone never proves money
+#     didn't move; a stale-looking pending attempt is actively re-verified
+#     against Stripe before anything is released.
+# ─────────────────────────────────────────────────────────────────────────────
+
+STRIPE_ATTEMPT_BLOCKING_STATUSES = ("pending", "reconciliation_required")
+STRIPE_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "canceled")
+STRIPE_REFUND_TERMINAL_STATUSES = ("succeeded", "failed", "canceled")
+
+
+def _require_stripe_online_enabled():
+    if not STRIPE_ONLINE_ENABLED or not STRIPE_SECRET_KEY:
+        raise HTTPException(status_code=400, detail="Online card payments are not enabled.")
+
+
+def _stripe_amount_cents(amount: float) -> int:
+    return int(round(float(amount) * 100))
+
+
+def _app_public_url() -> str:
+    return (os.environ.get("APP_PUBLIC_URL") or "http://localhost:3000").rstrip("/")
+
+
+class StripeCheckoutSessionIn(BaseModel):
+    """Body for POST /portal/invoices/{invoice_id}/stripe-checkout-session.
+    `amount` omitted means PAY FULL BALANCE; a value means PAY OTHER AMOUNT —
+    either way it is only ever a ceiling suggestion from the client. The
+    authoritative amount actually charged is re-validated server-side
+    against the invoice's live `balance` at the moment this runs, never
+    trusted beyond that ceiling."""
+    amount: Optional[float] = Field(default=None, gt=0, le=100000)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+class StripeRefundIn(BaseModel):
+    amount: float = Field(gt=0, le=100000)
+    reason: Optional[str] = Field(default=None, max_length=500)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+# ── Atomic Invoice-pointer reservation ──────────────────────────────────────
+
+async def _acquire_stripe_reservation(invoice_id: str, attempt_id: str, amount_cents: int) -> Optional[dict]:
+    """Atomically acquires the Invoice-pointer reservation — the ONLY
+    exclusivity mechanism (never a separate find-then-insert). Returns the
+    updated invoice on success; None if another attempt already holds this
+    invoice, the invoice is VOID, or balance is insufficient. Never touches
+    `balance` itself — only the pointer fields."""
+    amount = round(amount_cents / 100.0, 2)
+    return await db.invoices.find_one_and_update(
+        {
+            "id": invoice_id,
+            "status": {"$ne": "VOID"},
+            "balance": {"$gte": amount - 0.005},
+            "stripe_active_attempt_id": None,
+        },
+        {"$set": {
+            "stripe_active_attempt_id": attempt_id,
+            "stripe_reserved_amount_cents": amount_cents,
+            "updated_at": now_iso(),
+        }},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+async def _release_stripe_reservation_if_owned(invoice_id: str, attempt_id: str) -> None:
+    """Conditionally clears the reservation ONLY if it still names this exact
+    attempt — safe to call any number of times, can never clear a different,
+    newer reservation. Used for failed/expired/canceled attempts (no money
+    ever moved) and, separately, as the FINAL step after every downstream
+    write of a successful apply has been independently confirmed complete —
+    never merely because the invoice balance mutation succeeded."""
+    await db.invoices.update_one(
+        {"id": invoice_id, "stripe_active_attempt_id": attempt_id},
+        {"$unset": {"stripe_active_attempt_id": "", "stripe_reserved_amount_cents": ""},
+         "$set": {"updated_at": now_iso()}},
+    )
+
+
+# ── Resumable, crash-safe local application ─────────────────────────────────
+
+async def _apply_stripe_payment(attempt: dict) -> dict:
+    """The ONE local-application sequence for a Stripe-confirmed payment.
+    Safe to call any number of times for the SAME attempt — every step is
+    independently idempotent via its own durable marker, so a crash between
+    any two steps is recoverable by simply calling this again; no step's
+    completion is ever inferred from a different step's outcome. Mirrors
+    create_invoice_payment's existing AR/ledger/balance/Payment/retail_sales
+    pattern — reuses the same helpers, not a second accounting engine.
+
+    Raises HTTPException (never swallowed) if the invoice's AR history isn't
+    reconciled, or if the reservation was lost to something other than this
+    attempt — both cases leave the caller's attempt in reconciliation_required
+    with the reservation still held, per the approved design."""
+    attempt_id = attempt["id"]
+    invoice_id = attempt["invoice_id"]
+    amount = round(attempt["amount_cents"] / 100.0, 2)
+    ts = now_iso()
+    business_date = business_today().isoformat()
+
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not invoice:
+        raise HTTPException(status_code=500, detail="Invoice missing during Stripe apply")
+
+    # AR reconciliation — reused exactly as create_invoice_payment already
+    # computes it, checked BEFORE any mutation (zero mutation on rejection).
+    # Skipped when Step A already committed for THIS attempt (a crash-retry
+    # resuming Step B): by then the invoice's balance already reflects this
+    # attempt's own decrement with no matching ledger row yet, so re-running
+    # this check against the post-Step-A invoice would always — incorrectly
+    # — read as unreconciled. The gate only needs to hold once, before the
+    # first mutation ever happens.
+    already_applied_this_attempt = invoice.get("stripe_last_applied_attempt_id") == attempt_id
+    ar_status = await _invoice_ar_status(invoice)
+    if not already_applied_this_attempt and ar_status["ar_backed"] and not ar_status["reconciled"]:
+        raise HTTPException(status_code=409, detail="This invoice's AR history needs reconciliation before this Stripe payment can be applied.")
+
+    # ── Step A — invoice money mutation, idempotent via
+    # stripe_last_applied_attempt_id. Never cleared for this attempt once set —
+    # that is the durable proof "this attempt's decrement already happened." ──
+    if invoice.get("stripe_last_applied_attempt_id") != attempt_id:
+        result = await db.invoices.find_one_and_update(
+            {
+                "id": invoice_id,
+                "status": {"$ne": "VOID"},
+                "stripe_active_attempt_id": attempt_id,
+                "stripe_last_applied_attempt_id": {"$ne": attempt_id},
+                "balance": {"$gte": amount - 0.005},
+            },
+            {
+                "$inc": {"amount_paid": amount, "balance": -amount},
+                "$set": {"stripe_last_applied_attempt_id": attempt_id, "updated_at": ts},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            fresh = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+            if not fresh or fresh.get("stripe_last_applied_attempt_id") != attempt_id:
+                # Genuinely wrong — reservation lost/invoice voided/balance
+                # moved out from under us. Never silently proceed.
+                raise HTTPException(status_code=409, detail="Stripe invoice reservation was lost before the payment could be applied — reconciliation required.")
+            invoice = fresh  # already applied by an earlier (crashed) run — resume below
+        else:
+            invoice = result
+
+    # ── Step B1 — AR ledger row, independently idempotent via a unique
+    # partial index on stripe_attempt_id (never inferred from another write) ──
+    ledger_id: Optional[str] = None
+    if ar_status["ar_backed"]:
+        existing_ledger = await db.payment_ledger.find_one({"stripe_attempt_id": attempt_id}, {"_id": 0})
+        if existing_ledger:
+            ledger_id = existing_ledger["id"]
+        else:
+            ledger_row = {
+                "id": str(uuid.uuid4()), "client_id": invoice.get("client_id"), "type": "payment",
+                "amount": -amount, "method": "stripe_online",
+                "notes": f"Stripe online payment · {invoice_id}", "booking_id": None,
+                "invoice_id": invoice_id, "stripe_attempt_id": attempt_id,
+                "created_by": "stripe_webhook", "created_at": ts,
+                "operation_id": _checkout_operation_id_ctx.get(),
+            }
+            try:
+                await db.payment_ledger.insert_one(ledger_row.copy())
+                ledger_id = ledger_row["id"]
+            except DuplicateKeyError:
+                existing_ledger = await db.payment_ledger.find_one({"stripe_attempt_id": attempt_id}, {"_id": 0})
+                ledger_id = existing_ledger["id"] if existing_ledger else None
+
+        # ── Step B2 — client.account_balance, independently idempotent via
+        # its OWN attempt marker, mutated in the SAME atomic update as the
+        # $inc. Never gated on whether the ledger insert was fresh. ──
+        await db.clients.find_one_and_update(
+            {"id": invoice.get("client_id"), "stripe_ar_adjustments_applied": {"$ne": attempt_id}},
+            {"$inc": {"account_balance": -amount}, "$addToSet": {"stripe_ar_adjustments_applied": attempt_id}},
+        )
+
+    # ── Step B3 — canonical Payment row, reusing the EXISTING, already
+    # unique-index-backed _insert_payment_row check-before-insert helper ──
+    payment_row = await _insert_payment_row({
+        "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": invoice.get("client_id"),
+        "amount": amount, "method": "stripe_online", "is_credit": False, "date": business_date,
+        "employee_id": None, "employee_name": None,
+        "processor": "stripe", "processor_payment_id": attempt.get("stripe_payment_intent_id"),
+        "status": "completed", "notes": "", "refunded_amount": 0.0,
+        "source": {
+            "kind": "stripe_online_payment",
+            "stripe_attempt_id": attempt_id,
+            "stripe_checkout_session_id": attempt.get("stripe_checkout_session_id"),
+            "stripe_payment_intent_id": attempt.get("stripe_payment_intent_id"),
+            "stripe_customer_id": attempt.get("stripe_customer_id"),
+            "card_brand": attempt.get("card_brand"), "card_last4": attempt.get("card_last4"),
+        },
+        "booking_id": None, "ledger_id": ledger_id,
+        "idempotency_ref": f"stripe_attempt:{attempt_id}",
+        "created_at": ts, "updated_at": ts,
+        "tendered_amount": None, "change_given": None, "business_date": business_date,
+    })
+    payment_id = payment_row["id"]
+
+    # ── Step B4 — retail_sales revenue row, independently resumable by the
+    # canonical Payment id (unique partial index) — never gated on whether
+    # THIS invocation was the one that inserted the Payment row. ──
+    existing_retail = await db.retail_sales.find_one({"payment_id": payment_id}, {"_id": 0})
+    if not existing_retail:
+        retail_row = {
+            "id": str(uuid.uuid4()), "date": business_date, "amount": amount, "payment_method": "stripe_online",
+            "client_id": invoice.get("client_id"), "client_name": invoice.get("client_name"),
+            "invoice_id": invoice_id, "payment_id": payment_id,
+            "source_kind": "stripe_online_payment", "description": f"Stripe online payment · {invoice_id}",
+            "created_at": ts, "created_by": "stripe_webhook", "logged_by": "Stripe",
+        }
+        try:
+            await db.retail_sales.insert_one(retail_row.copy())
+        except DuplicateKeyError:
+            pass  # already inserted by a concurrent/prior run
+
+    # ── Step B5 — invoice status recompute. Always safe to rerun — a pure
+    # function of the invoice's current fields, no marker needed. ──
+    fresh_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    new_balance = round(float(fresh_invoice.get("balance") or 0), 2)
+    if new_balance <= 0.005:
+        new_balance = 0.0
+    new_status = _derive_invoice_status(
+        fresh_invoice, amount_paid=round(float(fresh_invoice.get("amount_paid") or 0), 2),
+        balance=new_balance, credit_applied=float(fresh_invoice.get("credit_applied") or 0),
+    )
+    await db.invoices.update_one({"id": invoice_id}, {"$set": {"status": new_status, "balance": new_balance, "updated_at": ts}})
+
+    # ── Every Step B write independently confirmed complete — mark applied,
+    # THEN (only then) release the reservation. Never the reverse order. ──
+    await db.stripe_payment_attempts.update_one(
+        {"id": attempt_id}, {"$set": {"status": "applied", "applied_payment_id": payment_id, "updated_at": now_iso()}},
+    )
+    await _release_stripe_reservation_if_owned(invoice_id, attempt_id)
+
+    return await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+
+
+async def _verify_and_reconcile_stripe_session(attempt: dict) -> dict:
+    """No-TTL replacement for time-based release: called instead of ever
+    releasing a 'pending' reservation just because expires_at has passed.
+    Actively retrieves the real Checkout Session state from Stripe before
+    deciding anything. Only ever meaningful for `pending` — paid_unapplied/
+    reconciliation_required never expire by clock, so this is a no-op for
+    those (checked by the caller too, but re-checked here defensively)."""
+    if attempt.get("status") != "pending":
+        return attempt
+    # .to_dict(): StripeObject doesn't support .get() (see stripe_webhook).
+    session = stripe.checkout.Session.retrieve(attempt["stripe_checkout_session_id"]).to_dict()
+    if session.get("payment_status") == "paid":
+        try:
+            await _apply_stripe_payment(attempt)
+        except HTTPException:
+            await db.stripe_payment_attempts.find_one_and_update(
+                {"id": attempt["id"], "status": {"$nin": list(STRIPE_ATTEMPT_TERMINAL_STATUSES)}},
+                {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
+            )
+    else:
+        # Stripe itself confirms no successful payment occurred — safe to expire.
+        result = await db.stripe_payment_attempts.find_one_and_update(
+            {"id": attempt["id"], "status": "pending"},
+            {"$set": {"status": "expired", "updated_at": now_iso()}},
+        )
+        if result is not None:
+            await _release_stripe_reservation_if_owned(attempt["invoice_id"], attempt["id"])
+    return await db.stripe_payment_attempts.find_one({"id": attempt["id"]}, {"_id": 0})
+
+
+# ── Client portal endpoints ─────────────────────────────────────────────────
+
+@api.get("/portal/invoices")
+async def portal_invoices(user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    invoices = []
+    if cid:
+        rows = await db.invoices.find(
+            {"client_id": cid, "status": {"$ne": "VOID"}}, {"_id": 0},
+        ).sort("created_at", -1).to_list(200)
+        # Hand-picked fields only — never the raw invoice document, so
+        # internal Stripe reservation-pointer fields can never leak here.
+        for inv in rows:
+            invoices.append({
+                "id": inv["id"],
+                "invoice_number": inv["id"][:8].upper(),
+                "date": inv.get("date"),
+                "total": inv.get("total"),
+                "credit_applied": inv.get("credit_applied"),
+                "amount_paid": inv.get("amount_paid"),
+                "balance": inv.get("balance"),
+                "status": inv.get("status"),
+            })
+    return {"invoices": invoices, "stripe_online_enabled": bool(STRIPE_ONLINE_ENABLED and STRIPE_SECRET_KEY)}
+
+
+@api.post("/portal/invoices/{invoice_id}/stripe-checkout-session")
+async def create_stripe_checkout_session(invoice_id: str, body: StripeCheckoutSessionIn, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    _require_stripe_online_enabled()
+    cid = user.get("client_id")
+    invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not invoice or invoice.get("client_id") != cid:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if invoice.get("status") == "VOID":
+        raise HTTPException(status_code=400, detail="This invoice is void.")
+
+    balance = round(float(invoice.get("balance") or 0), 2)
+    amount = round(float(body.amount), 2) if body.amount is not None else balance
+    if amount <= 0.005 or balance <= 0.005:
+        raise HTTPException(status_code=400, detail="Nothing is due on this invoice.")
+    if amount > balance + 0.005:
+        raise HTTPException(status_code=400, detail=f"Amount cannot exceed the current balance of ${balance:.2f}.")
+    amount_cents = _stripe_amount_cents(amount)
+
+    # Claim-first, exactly like every other idempotent endpoint in this codebase.
+    fingerprint = _request_fingerprint(invoice_id, cid, amount_cents)
+    attempt_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.stripe_payment_attempts.insert_one({
+            "id": attempt_id, "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
+            "invoice_id": invoice_id, "client_id": cid, "amount_cents": amount_cents,
+            "status": "pending",
+            "stripe_checkout_session_id": None, "stripe_checkout_session_url": None,
+            "stripe_payment_intent_id": None, "stripe_customer_id": None,
+            "card_brand": None, "card_last4": None, "applied_payment_id": None,
+            "created_at": ts, "updated_at": ts, "expires_at": None,
+        })
+    except DuplicateKeyError:
+        existing = await db.stripe_payment_attempts.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing or existing.get("invoice_id") != invoice_id or existing.get("request_fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
+        if existing.get("stripe_checkout_session_url"):
+            return {"url": existing["stripe_checkout_session_url"], "attempt_id": existing["id"]}
+        if existing.get("status") in STRIPE_ATTEMPT_TERMINAL_STATUSES:
+            raise HTTPException(status_code=409, detail="This payment attempt has already been resolved.")
+        # A genuine retry interrupted before a session existed — resume
+        # using this SAME attempt_id rather than creating a second one.
+        attempt_id = existing["id"]
+
+    reserved_invoice = await _acquire_stripe_reservation(invoice_id, attempt_id, amount_cents)
+    if reserved_invoice is None:
+        current_invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0, "stripe_active_attempt_id": 1})
+        if not (current_invoice and current_invoice.get("stripe_active_attempt_id") == attempt_id):
+            # Not already ours — a genuine conflict. Clean up our own
+            # never-used claim row (only if it never got a session either).
+            await db.stripe_payment_attempts.delete_one({"id": attempt_id, "stripe_checkout_session_id": None})
+            raise HTTPException(status_code=409, detail="This invoice already has an active online payment or unresolved Stripe charge in progress.")
+        # else: already ours from a prior partial run — proceed using it.
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=STRIPE_CHECKOUT_EXPIRES_SECONDS)
+    client = await db.clients.find_one({"id": cid}, {"_id": 0, "id": 1, "name": 1, "email": 1, "stripe_customer_id": 1})
+    stripe_customer_id = (client or {}).get("stripe_customer_id")
+    try:
+        if not stripe_customer_id:
+            customer = stripe.Customer.create(
+                name=(client or {}).get("name") or None,
+                email=(client or {}).get("email") or None,
+                metadata={"sithappens_client_id": cid},
+            )
+            stripe_customer_id = customer["id"]
+            await db.clients.update_one({"id": cid}, {"$set": {"stripe_customer_id": stripe_customer_id}})
+
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            customer=stripe_customer_id,
+            line_items=[{
+                "price_data": {
+                    "currency": "usd",
+                    "product_data": {"name": f"Sit Happens invoice #{invoice_id[:8].upper()}"},
+                    "unit_amount": amount_cents,
+                },
+                "quantity": 1,
+            }],
+            success_url=f"{_app_public_url()}/portal?stripe_attempt={attempt_id}&stripe=success",
+            cancel_url=f"{_app_public_url()}/portal?stripe_attempt={attempt_id}&stripe=cancel",
+            expires_at=int(expires_at.timestamp()),
+            metadata={
+                "sithappens_attempt_id": attempt_id, "sithappens_invoice_id": invoice_id,
+                "sithappens_client_id": cid,
+            },
+            idempotency_key=f"stripe_attempt_create:{attempt_id}",
+        )
+    except Exception as exc:
+        # Session-creation itself failed — mark the attempt failed FIRST,
+        # then conditionally release the reservation. Never the reverse.
+        await db.stripe_payment_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
+        await _release_stripe_reservation_if_owned(invoice_id, attempt_id)
+        logger.warning("Stripe Checkout Session creation failed for attempt %s: %s", attempt_id, exc)
+        raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
+
+    await db.stripe_payment_attempts.update_one(
+        {"id": attempt_id},
+        {"$set": {
+            "stripe_checkout_session_id": session["id"], "stripe_checkout_session_url": session["url"],
+            "stripe_customer_id": stripe_customer_id, "expires_at": expires_at.isoformat(), "updated_at": now_iso(),
+        }},
+    )
+    return {"url": session["url"], "attempt_id": attempt_id}
+
+
+@api.get("/portal/stripe-payment-attempts/{attempt_id}")
+async def portal_stripe_attempt_status(attempt_id: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    attempt = await db.stripe_payment_attempts.find_one({"id": attempt_id}, {"_id": 0})
+    if not attempt or attempt.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=404, detail="Payment attempt not found")
+
+    # No-TTL active verification — never release/trust a stale-looking
+    # pending attempt on elapsed time alone; ask Stripe directly.
+    if attempt.get("status") == "pending" and attempt.get("expires_at"):
+        try:
+            if datetime.now(timezone.utc) > datetime.fromisoformat(attempt["expires_at"]):
+                attempt = await _verify_and_reconcile_stripe_session(attempt)
+        except HTTPException:
+            pass  # verification attempt itself failed — client just sees "processing" and can poll again
+
+    return {"status": attempt.get("status"), "invoice_id": attempt.get("invoice_id"), "amount_cents": attempt.get("amount_cents")}
+
+
+# ── Stripe webhook — the ONLY place that ever applies money ─────────────────
+
+@api.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    """Uses the RAW request body for signature verification — never a
+    Pydantic-typed body, never request.json() beforehand, since either would
+    reserialize the bytes Stripe actually signed. Browser success is NEVER
+    financial authority; only a verified event here (or the on-demand
+    verification path above) ever applies money."""
+    raw_body = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Stripe webhook not configured")
+    try:
+        event = stripe.Webhook.construct_event(raw_body, sig_header, STRIPE_WEBHOOK_SECRET)
+    except (ValueError, stripe.error.SignatureVerificationError):
+        raise HTTPException(status_code=400, detail="Invalid Stripe signature")
+
+    event_id = event["id"]
+    event_type = event["type"]
+    # Event-ID dedup — an observability/efficiency layer only. The actual
+    # money-safety guarantee is the attempt/invoice idempotency markers
+    # below, which stay correct even if this insert is skipped or races.
+    try:
+        await db.stripe_webhook_events.insert_one({"id": event_id, "type": event_type, "received_at": now_iso()})
+    except DuplicateKeyError:
+        pass
+
+    # .to_dict() is required here: stripe-python's StripeObject no longer
+    # subclasses dict, so it supports subscript access but NOT .get() —
+    # every downstream handler below relies on plain-dict .get() semantics.
+    obj = event["data"]["object"].to_dict()
+    if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        await _handle_checkout_session_paid_event(obj)
+    elif event_type == "checkout.session.async_payment_failed":
+        await _handle_checkout_session_failed_event(obj)
+    elif event_type == "checkout.session.expired":
+        await _handle_checkout_session_expired_event(obj)
+    elif event_type in ("refund.created", "refund.updated", "refund.failed"):
+        await _handle_refund_event(obj)
+    return {"ok": True}
+
+
+async def _handle_checkout_session_paid_event(session_obj: dict) -> None:
+    session_id = session_obj.get("id")
+    attempt = await db.stripe_payment_attempts.find_one({"stripe_checkout_session_id": session_id}, {"_id": 0})
+    if not attempt:
+        return  # unknown session — defensive, should not normally happen
+    if session_obj.get("payment_status") != "paid":
+        return  # completed but not yet actually paid (async method pending) — wait for a later event
+    payment_intent_id = session_obj.get("payment_intent")
+    if payment_intent_id and not attempt.get("stripe_payment_intent_id"):
+        await db.stripe_payment_attempts.update_one({"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": payment_intent_id}})
+        attempt["stripe_payment_intent_id"] = payment_intent_id
+    if attempt.get("status") in STRIPE_ATTEMPT_TERMINAL_STATUSES:
+        return  # already resolved — monotonic, never regress
+    try:
+        await _apply_stripe_payment(attempt)
+    except HTTPException:
+        await db.stripe_payment_attempts.find_one_and_update(
+            {"id": attempt["id"], "status": {"$nin": list(STRIPE_ATTEMPT_TERMINAL_STATUSES)}},
+            {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
+        )
+        raise  # non-2xx so Stripe retries delivery — safe, apply is idempotent
+
+
+async def _handle_checkout_session_failed_event(session_obj: dict) -> None:
+    attempt = await db.stripe_payment_attempts.find_one({"stripe_checkout_session_id": session_obj.get("id")}, {"_id": 0})
+    if not attempt or attempt.get("status") != "pending":
+        return
+    result = await db.stripe_payment_attempts.find_one_and_update(
+        {"id": attempt["id"], "status": "pending"}, {"$set": {"status": "failed", "updated_at": now_iso()}},
+    )
+    if result is not None:
+        await _release_stripe_reservation_if_owned(attempt["invoice_id"], attempt["id"])
+
+
+async def _handle_checkout_session_expired_event(session_obj: dict) -> None:
+    attempt = await db.stripe_payment_attempts.find_one({"stripe_checkout_session_id": session_obj.get("id")}, {"_id": 0})
+    if not attempt or attempt.get("status") != "pending":
+        return
+    result = await db.stripe_payment_attempts.find_one_and_update(
+        {"id": attempt["id"], "status": "pending"}, {"$set": {"status": "expired", "updated_at": now_iso()}},
+    )
+    if result is not None:
+        await _release_stripe_reservation_if_owned(attempt["invoice_id"], attempt["id"])
+
+
+# ── Stripe refunds — a separate, per-attempt lifecycle (multi-partial-safe) ──
+
+@api.post("/payments/{payment_id}/stripe-refund")
+async def create_stripe_refund(payment_id: str, body: StripeRefundIn, user: dict = Depends(require_admin)):
+    """Admin-only. Validates locally first, claims a dedicated refund
+    attempt, then calls Stripe with a stable idempotency key. Local refund
+    accounting is finalized ONLY when a status==succeeded is actually
+    observed (here, synchronously, or later via the refund webhook) — never
+    merely because Refund.create returned without throwing."""
+    _require_stripe_online_enabled()
+    payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if payment.get("method") != "stripe_online" or (payment.get("source") or {}).get("kind") != "stripe_online_payment":
+        raise HTTPException(status_code=400, detail="Only a Stripe online payment can be refunded through this endpoint.")
+    payment_intent_id = (payment.get("source") or {}).get("stripe_payment_intent_id")
+    if not payment_intent_id:
+        raise HTTPException(status_code=400, detail="This payment has no associated Stripe charge to refund.")
+
+    already_refunded = round(float(payment.get("refunded_amount") or 0), 2)
+    remaining = round(float(payment["amount"]) - already_refunded, 2)
+    amount = round(float(body.amount), 2)
+    if amount <= 0.005 or amount > remaining + 0.005:
+        raise HTTPException(status_code=400, detail=f"Refund cannot exceed the remaining refundable amount of ${remaining:.2f}.")
+    amount_cents = _stripe_amount_cents(amount)
+
+    fingerprint = _request_fingerprint(payment_id, amount_cents, (body.reason or "").strip())
+    refund_attempt_id = str(uuid.uuid4())
+    ts = now_iso()
+    try:
+        await db.stripe_refund_attempts.insert_one({
+            "id": refund_attempt_id, "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
+            "payment_id": payment_id, "invoice_id": payment.get("invoice_id"), "amount_cents": amount_cents,
+            "reason": (body.reason or "").strip(), "status": "pending",
+            "stripe_refund_id": None, "stripe_payment_intent_id": payment_intent_id,
+            "applied_refund_payment_id": None, "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        existing = await db.stripe_refund_attempts.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing or existing.get("payment_id") != payment_id or existing.get("request_fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different refund request.")
+        return {"ok": True, "refund_attempt": existing}
+
+    try:
+        # .to_dict(): StripeObject doesn't support .get() (see stripe_webhook).
+        refund = stripe.Refund.create(
+            payment_intent=payment_intent_id, amount=amount_cents,
+            metadata={"sithappens_refund_attempt_id": refund_attempt_id, "sithappens_payment_id": payment_id,
+                      "sithappens_reason": (body.reason or "").strip()},
+            idempotency_key=f"stripe_refund_attempt_create:{refund_attempt_id}",
+        ).to_dict()
+    except Exception as exc:
+        await db.stripe_refund_attempts.update_one({"id": refund_attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
+        logger.warning("Stripe Refund.create failed for attempt %s: %s", refund_attempt_id, exc)
+        raise HTTPException(status_code=502, detail="Could not create the Stripe refund — please try again.")
+
+    stripe_status = refund.get("status") or "pending"
+    # stripe_refund_id is always safe to record directly. status is NOT —
+    # if stripe_status is already "succeeded" here, that status write must
+    # happen INSIDE _finalize_stripe_refund's own atomic monotonic guard
+    # (find_one_and_update({"status": {"$nin": TERMINAL}}, ...)), never
+    # before it. A real live-mode bug: setting status="succeeded" via this
+    # plain update_one FIRST made the attempt look already-terminal to
+    # _finalize_stripe_refund's own claim, which then no-op'd — Stripe had
+    # genuinely refunded the money, but the local reversal (Payment row,
+    # ledger, invoice.refunded_total) never ran. Never allow this update to
+    # write a terminal status ahead of the function that performs the
+    # accompanying money movement.
+    await db.stripe_refund_attempts.update_one(
+        {"id": refund_attempt_id}, {"$set": {"stripe_refund_id": refund["id"], "updated_at": now_iso()}},
+    )
+    if stripe_status == "succeeded":
+        # Trusted here ONLY because we are reading Stripe's own status field
+        # directly — never inferred from the call merely not throwing.
+        await _finalize_stripe_refund(refund_attempt_id)
+    else:
+        await db.stripe_refund_attempts.update_one(
+            {"id": refund_attempt_id, "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
+            {"$set": {"status": stripe_status, "updated_at": now_iso()}},
+        )
+
+    final = await db.stripe_refund_attempts.find_one({"id": refund_attempt_id}, {"_id": 0})
+    return {"ok": True, "refund_attempt": final}
+
+
+async def _finalize_stripe_refund(refund_attempt_id: str) -> None:
+    """Applies the canonical local reversal EXACTLY once, via an atomic
+    monotonic status guard — safe whether called from the synchronous
+    Refund.create response or the later refund.updated webhook (whichever
+    observes status==succeeded first wins; the other is a clean no-op),
+    and safe against duplicate/out-of-order webhook redelivery."""
+    attempt = await db.stripe_refund_attempts.find_one_and_update(
+        {"id": refund_attempt_id, "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
+        {"$set": {"status": "succeeded", "updated_at": now_iso()}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if attempt is None:
+        return  # already terminal — no-op, never regress
+
+    payment = await db.payments.find_one({"id": attempt["payment_id"]}, {"_id": 0})
+    if not payment:
+        return
+    amount = round(attempt["amount_cents"] / 100.0, 2)
+    ts = now_iso()
+    invoice_id = attempt.get("invoice_id")
+
+    reversal = await _insert_payment_row({
+        "id": str(uuid.uuid4()), "invoice_id": invoice_id, "client_id": payment.get("client_id"),
+        "amount": -amount, "method": "stripe_online", "is_credit": False,
+        "date": business_today().isoformat(),
+        "employee_id": None, "employee_name": "Stripe",
+        "processor": "stripe", "processor_payment_id": attempt.get("stripe_refund_id"),
+        "status": "completed", "notes": attempt.get("reason") or "Stripe refund", "refunded_amount": 0.0,
+        "source": {"kind": "stripe_refund", "stripe_refund_attempt_id": attempt["id"], "stripe_refund_id": attempt.get("stripe_refund_id")},
+        "booking_id": None, "ledger_id": None,
+        "idempotency_ref": f"stripe_refund_attempt:{attempt['id']}",
+        "created_at": ts, "updated_at": ts,
+    })
+
+    await db.payments.update_one({"id": payment["id"]}, {"$inc": {"refunded_amount": amount}, "$set": {"updated_at": ts}})
+
+    if invoice_id:
+        invoice = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+        if invoice:
+            new_refunded_total = round(float(invoice.get("refunded_total") or 0) + amount, 2)
+            new_status = _derive_invoice_status(
+                {**invoice, "refunded_total": new_refunded_total},
+                amount_paid=float(invoice.get("amount_paid") or 0),
+                balance=float(invoice.get("balance") or 0),
+                credit_applied=float(invoice.get("credit_applied") or 0),
+            )
+            await db.invoices.update_one(
+                {"id": invoice_id}, {"$set": {"refunded_total": new_refunded_total, "status": new_status, "updated_at": ts}},
+            )
+
+    await db.stripe_refund_attempts.update_one(
+        {"id": attempt["id"]}, {"$set": {"applied_refund_payment_id": reversal["id"], "updated_at": now_iso()}},
+    )
+
+
+async def _handle_refund_event(refund_obj: dict) -> None:
+    refund_id = refund_obj.get("id")
+    status = refund_obj.get("status")
+    attempt = await db.stripe_refund_attempts.find_one({"stripe_refund_id": refund_id}, {"_id": 0})
+    if not attempt:
+        return  # unknown refund — e.g. issued directly from the Stripe Dashboard, out of scope this phase
+    if attempt.get("status") in STRIPE_REFUND_TERMINAL_STATUSES:
+        return  # already terminal — monotonic, never regress regardless of what this (possibly stale/out-of-order) event says
+    if status == "succeeded":
+        await _finalize_stripe_refund(attempt["id"])
+    else:
+        # pending / requires_action / failed / canceled — record status,
+        # never touch accounting unless/until succeeded is actually observed.
+        await db.stripe_refund_attempts.find_one_and_update(
+            {"id": attempt["id"], "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
+            {"$set": {"status": status, "updated_at": now_iso()}},
+        )
 
 
 @api.get("/admin/register/session")

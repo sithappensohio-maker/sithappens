@@ -29,6 +29,7 @@ import PortalMessages from "../components/PortalMessages";
 import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSetupChecklist";
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
+import PortalInvoices from "../components/PortalInvoices";
 import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
@@ -1253,6 +1254,11 @@ export default function Portal() {
             </div>
           ))
         )}
+
+        {/* Stripe Online Payments (Phase 3A) — client-facing invoice list +
+            Pay Online. Self-hides while loading/empty; independently checks
+            whether online payments are enabled server-side. */}
+        <PortalInvoices />
 
         {/* Phase 10A — Fun extras remain available without competing with the
             client's real tasks. The drawer is closed by default so the home
