@@ -13412,6 +13412,11 @@ class ProgramIn(BaseModel):
     # Sprint 110di-62 — Auto-fire email template slug on program sale.
     # Pick any system or custom slug from the email-templates panel.
     welcome_email_template_slug: Optional[str] = None
+    # Client Shop Phase 1 — additive online-visibility fields. price/format
+    # remain the one authoritative program pricing definition either way.
+    available_online: bool = False
+    online_description: Optional[str] = None
+    image_id: Optional[str] = None
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -24407,6 +24412,195 @@ async def admin_pos_open_drawer(body: POSOpenDrawerIn, user: dict = Depends(requ
     return {"open_drawer_token": token}
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Client Shop Phase 1 — shared media (product/credit-pack/training-program
+# photos). One small mechanism reused by all three catalog types, mirroring
+# the existing /homework/resource-upload validation approach (MIME allow-
+# list + byte-accurate size cap) but images-only and in its own collection,
+# since "shop_media" is the correct name for this — reusing homework_media
+# would be semantically wrong even though the code shape is the same.
+# ─────────────────────────────────────────────────────────────────────────────
+SHOP_MEDIA_ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+MAX_SHOP_MEDIA_BYTES = 5 * 1024 * 1024  # 5 MB — plenty for a product/pack photo
+
+
+class ShopMediaUploadIn(BaseModel):
+    """`data` is a base64 data-URL (e.g. `data:image/jpeg;base64,...`)."""
+    data: str = Field(min_length=10)
+    filename: str = Field(min_length=1, max_length=140)
+
+
+@api.post("/shop/media")
+async def upload_shop_media(body: ShopMediaUploadIn, user: dict = Depends(require_admin)):
+    """Admin-only image upload for Shop product/credit-pack/training-program
+    photos. Images only (no PDF); 5 MB ceiling computed from actual base64
+    byte length, never trusted from the client. Returns a media_id decoupled
+    from any specific product/pack/program — callers just store the id on
+    their own `image_id` field."""
+    raw = body.data
+    if not raw.startswith("data:"):
+        raise HTTPException(status_code=400, detail="Expected base64 data URL")
+    try:
+        header, b64 = raw.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").lower().strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed data URL")
+    if mime not in SHOP_MEDIA_ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type ({mime}). Allowed: JPEG, PNG, WEBP.")
+    approx_bytes = (len(b64) * 3) // 4
+    if approx_bytes > MAX_SHOP_MEDIA_BYTES:
+        raise HTTPException(status_code=400, detail=f"Image too large ({approx_bytes // (1024 * 1024)} MB). Max is 5 MB.")
+    media_id = str(uuid.uuid4())
+    await db.shop_media.insert_one({
+        "id": media_id, "mime": mime, "data": raw,
+        "filename": (body.filename or "image")[:140],
+        "size_bytes": approx_bytes,
+        "uploaded_at": now_iso(), "uploaded_by": user.get("id"),
+    })
+    return {"media_id": media_id, "mime": mime, "filename": body.filename, "size_bytes": approx_bytes}
+
+
+@api.get("/shop/media/{media_id}")
+async def get_shop_media(media_id: str, _: dict = Depends(get_current_user)):
+    """Any authenticated user (staff or client) can read a Shop image — these
+    are product/pack/program photos meant to be seen in the client-facing
+    catalog, not sensitive data. Returns the base64 data URL embedded in the
+    JSON response, same convention as every other media endpoint in this
+    app (no static file route/CDN exists anywhere in this codebase)."""
+    m = await db.shop_media.find_one({"id": media_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Image not found")
+    return {"id": m["id"], "mime": m["mime"], "data": m["data"], "filename": m.get("filename")}
+
+
+async def _shop_media_referenced_by(media_id: str) -> Optional[str]:
+    """Checks the three catalog sources for a still-live reference to this
+    media_id. Returns a short description of what's referencing it, or None
+    if nothing is. Deliberately simple — three point lookups, no generic
+    "find all referrers" framework."""
+    if await db.pos_products.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
+        return "a product"
+    if await db.credit_packs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
+        return "a credit pack"
+    if await db.programs.find_one({"image_id": media_id}, {"_id": 0, "id": 1}):
+        return "a training program"
+    return None
+
+
+@api.delete("/shop/media/{media_id}")
+async def delete_shop_media(media_id: str, _: dict = Depends(require_admin)):
+    """Admin-only. Deletes a Shop image, but only once nothing still points
+    at it — callers (the admin panels) are responsible for sequencing this
+    AFTER their own parent save/removal succeeds, never before, so a failed
+    parent save never leaves a dangling image_id pointing at nothing. This
+    endpoint's own job is just to refuse deleting anything still referenced,
+    as the last line of defense regardless of caller ordering."""
+    m = await db.shop_media.find_one({"id": media_id}, {"_id": 0})
+    if not m:
+        return {"ok": True, "deleted": 0}  # already gone — idempotent no-op
+    referenced_by = await _shop_media_referenced_by(media_id)
+    if referenced_by:
+        raise HTTPException(status_code=409, detail=f"This image is still in use by {referenced_by} and cannot be deleted.")
+    await db.shop_media.delete_one({"id": media_id})
+    return {"ok": True, "deleted": 1}
+
+
+# IMPORTANT — FUTURE MONEY RULE, for whoever builds shop checkout/refunds:
+# For a taxed physical line with quantity > 1, do NOT independently compute
+# each partial refund as round(line_total / qty) — repeated partial refunds
+# computed that way can drift from the frozen line_total via rounding, and
+# could in principle let cumulative refunds exceed what was actually paid.
+# The immutable shop_order line must track, per line: the frozen
+# `line_total` (already itself an allocated, penny-exact slice of the
+# order's authoritative tax total — see the tax-allocation design agreed for
+# this feature), `quantity`, `quantity_refunded`, and `amount_refunded`. A
+# partial-quantity refund computes a deterministic per-unit amount for every
+# unit EXCEPT the last one being refunded in that line; the LAST unit
+# refunded receives whatever remains: `line_total - amount_refunded_so_far`
+# for that final unit's share. This guarantees, by construction:
+#   (a) SUM of all refunds against one line can never exceed its line_total.
+#   (b) Fully refunding every unit of a line always totals EXACTLY the
+#       frozen line_total, no stray pennies left over or over-refunded.
+# Credit-pack/training-program lines are untaxed today (confirmed — no tax
+# calculation exists anywhere in sell_credit_pack/sell_credit_packs_bulk/
+# sell_training_program) and are refunded as a whole line, not partially by
+# quantity, so this specific rounding concern is scoped to physical product
+# lines only.
+
+@api.get("/shop/catalog")
+async def get_shop_catalog(user: dict = Depends(get_current_user)):
+    """Client Shop Phase 1 — read-only catalog aggregation. Does NOT create a
+    new catalog collection; queries the three existing authoritative sources
+    (pos_products, credit_packs, programs) directly and tags each result with
+    a `kind` discriminator. Excludes anything inactive or not explicitly
+    marked online-visible. Returns only safe, client-facing fields — no
+    cost, no inventory_movements history, no Stripe/idempotency internals,
+    no admin notes. image_id only (never embedded image bytes) — the
+    frontend fetches GET /shop/media/{id} separately per image."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+
+    items = []
+
+    products = await db.pos_products.find(
+        {"show_online": True, "active": True}, {"_id": 0},
+    ).sort("online_sort_order", 1).to_list(500)
+    for p in products:
+        track = bool(p.get("track_inventory"))
+        stock = float(p.get("stock_on_hand") or 0)
+        items.append({
+            "kind": "product",
+            "id": p["id"],
+            "name": p.get("name"),
+            "description": p.get("online_description") or p.get("description") or "",
+            "category": p.get("category") or "",
+            "price": round(float(p.get("price") or 0), 2),
+            "image_id": p.get("image_id"),
+            "sort_order": p.get("online_sort_order"),
+            "track_inventory": track,
+            "in_stock": (not track) or (stock > 0.0005),
+            "stock_on_hand": round(stock, 2) if track else None,
+        })
+
+    packs = await db.credit_packs.find(
+        {"available_online": True, "active": True}, {"_id": 0},
+    ).to_list(500)
+    for pk in packs:
+        qty = int(pk.get("qty") or 0)
+        price = round(float(pk.get("price") or 0), 2)
+        items.append({
+            "kind": "credit_pack",
+            "id": pk["id"],
+            "name": pk.get("name"),
+            "description": pk.get("online_description") or "",
+            "service_type": pk.get("service_type"),
+            "qty": qty,
+            "price": price,
+            "value_each": round(price / max(qty, 1), 2),
+            "image_id": pk.get("image_id"),
+        })
+
+    programs = await db.programs.find(
+        {"available_online": True, "active": True}, {"_id": 0},
+    ).to_list(500)
+    for prog in programs:
+        fmt = prog.get("format") or {}
+        items.append({
+            "kind": "training_program",
+            "id": prog["id"],
+            "name": prog.get("name"),
+            "description": prog.get("online_description") or prog.get("description") or "",
+            "focus": prog.get("focus") or "",
+            "program_type": prog.get("type"),
+            "format_count": fmt.get("count"),
+            "format_unit": fmt.get("unit"),
+            "price": round(float(prog.get("price") or 0), 2),
+            "image_id": prog.get("image_id"),
+        })
+
+    return {"items": items}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Front Desk POS — retail product catalog
 # ─────────────────────────────────────────────────────────────────────────────
 # A real product catalog for the front-desk register cart. This is NEW — the
@@ -24434,6 +24628,13 @@ class PosProductIn(BaseModel):
     low_stock_threshold: Optional[float] = Field(default=None, ge=0)
     track_inventory: bool = False
     active: bool = True
+    # Client Shop Phase 1 — additive online-visibility fields. `name` stays
+    # the one authoritative product name shown everywhere (POS and Shop);
+    # only the description may differ per-context.
+    show_online: bool = False
+    online_description: Optional[str] = Field(default=None, max_length=1000)
+    image_id: Optional[str] = None
+    online_sort_order: Optional[int] = None
 
 
 class PosProductCreateIn(PosProductIn):
@@ -24481,6 +24682,10 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "active": body.active,
         "stock_on_hand": round(float(body.starting_stock or 0), 3),
         "created_at": now_iso(),
+        "show_online": body.show_online,
+        "online_description": (body.online_description or "").strip() or None,
+        "image_id": body.image_id,
+        "online_sort_order": body.online_sort_order,
     }
     await db.pos_products.insert_one(doc)
     doc.pop("_id", None)
@@ -24506,6 +24711,10 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "track_inventory": body.track_inventory,
         "active": body.active,
         "updated_at": now_iso(),
+        "show_online": body.show_online,
+        "online_description": (body.online_description or "").strip() or None,
+        "image_id": body.image_id,
+        "online_sort_order": body.online_sort_order,
     }
     await db.pos_products.update_one({"id": product_id}, {"$set": patch})
     return {**existing, **patch}
@@ -28178,6 +28387,11 @@ class CreditPackIn(BaseModel):
     active: bool = True
     # Sprint 110di-62 — Auto-fire email template slug on pack sale.
     welcome_email_template_slug: Optional[str] = None
+    # Client Shop Phase 1 — additive online-visibility fields. qty/price/
+    # service_type remain the one authoritative pack definition either way.
+    available_online: bool = False
+    online_description: Optional[str] = None
+    image_id: Optional[str] = None
 
 
 class SellCreditPackIn(BaseModel):

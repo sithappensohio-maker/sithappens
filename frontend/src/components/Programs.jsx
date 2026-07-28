@@ -3,6 +3,7 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
+import ShopImageUpload from "./ShopImageUpload";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
@@ -13,6 +14,11 @@ export function ProgramsPanel() {
   const [meta, setMeta] = useState(null);
   const [edit, setEdit] = useState(null);
   const [err, setErr] = useState("");
+  // Client Shop Phase 1 media lifecycle — the image_id this program had
+  // BEFORE this form opened (null for a new program). Only deleted after a
+  // successful save that actually replaced/removed it, or on close if it
+  // was never saved.
+  const [originalImageId, setOriginalImageId] = useState(null);
 
   const load = async () => {
     try {
@@ -22,11 +28,23 @@ export function ProgramsPanel() {
   };
   useEffect(() => { load(); }, []);
 
-  const startNew = (type = "private_lessons") => setEdit({
-    name: "", slug: "", type, description: "", focus: "",
-    format: { count: 1, unit: "sessions" }, min_age_months: 0,
-    prereq_slugs: [], modules: [], price: 0, active: true,
-  });
+  const startNew = (type = "private_lessons") => {
+    setOriginalImageId(null);
+    setEdit({
+      name: "", slug: "", type, description: "", focus: "",
+      format: { count: 1, unit: "sessions" }, min_age_months: 0,
+      prereq_slugs: [], modules: [], price: 0, active: true,
+      available_online: false, online_description: "", image_id: null,
+    });
+  };
+  const openEditProgram = (p) => { setOriginalImageId(p.image_id || null); setEdit({ ...p }); };
+  const closeEditor = () => {
+    // Closing without saving — drop any not-yet-saved upload from this session.
+    if (edit?.image_id && edit.image_id !== originalImageId) {
+      api.delete(`/shop/media/${edit.image_id}`).catch(() => {});
+    }
+    setEdit(null);
+  };
 
   const save = async () => {
     setErr("");
@@ -53,6 +71,10 @@ export function ProgramsPanel() {
         await api.put(url, payload);
       } else {
         await api.post("/programs", payload);
+      }
+      // Save succeeded — now safe to drop the old image, if replaced/removed.
+      if (originalImageId && originalImageId !== payload.image_id) {
+        api.delete(`/shop/media/${originalImageId}`).catch(() => {});
       }
       setEdit(null); load();
     } catch (e) { setErr(formatErr(e.response?.data?.detail) || "Save failed"); }
@@ -93,7 +115,7 @@ export function ProgramsPanel() {
                   <p className="text-[15px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
                 </div>
                 <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
-                <button onClick={()=>setEdit({...p})} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
+                <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
                 <button onClick={()=>remove(p.id)} className="text-red-400 hover:text-red-300 text-sm px-2"><i className="fas fa-trash"/></button>
               </div>
             ))}
@@ -101,7 +123,7 @@ export function ProgramsPanel() {
         </div>
       ))}
 
-      {edit && <ProgramEditor program={edit} setProgram={setEdit} meta={meta} allPrograms={programs} onSave={save} onClose={()=>setEdit(null)} />}
+      {edit && <ProgramEditor program={edit} setProgram={setEdit} meta={meta} allPrograms={programs} onSave={save} onClose={closeEditor} originalImageId={originalImageId} />}
     </div>
   );
 }
@@ -109,7 +131,7 @@ export function ProgramsPanel() {
 /* ============================================================
  *  Program editor modal — used for both standard and custom programs
  * ============================================================ */
-export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "" }) {
+export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onSave, onClose, hideTypePicker = false, extraError = "", originalImageId = null }) {
   // Sprint 110bx — load homework templates so we can pick which one auto-sends
   // on enrollment (welcome) and after a module is mastered.
   const [hwTemplates, setHwTemplates] = useState([]);
@@ -181,6 +203,30 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
             <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
           </Field>
+
+          {/* Client Shop Phase 1 — additive online-visibility controls. */}
+          <div className="border-t border-bgHover pt-3 space-y-3">
+            <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Client Shop</p>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={!!program.available_online}
+                     onChange={(e)=>set({available_online: e.target.checked})}
+                     data-testid="prog-available-online" />
+              <span className="text-white text-sm">Available Online (client Shop)</span>
+            </label>
+            {program.available_online && (
+              <div className="space-y-3">
+                <Field label="Online Description (optional — falls back to Description)">
+                  <input value={program.online_description||""} onChange={(e)=>set({online_description: e.target.value})}
+                         data-testid="prog-online-description"
+                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                </Field>
+                <Field label="Program Photo">
+                  <ShopImageUpload imageId={program.image_id} originalImageId={originalImageId}
+                                   onChange={(id)=>set({image_id: id})} />
+                </Field>
+              </div>
+            )}
+          </div>
 
           {/* Sprint 110bx — Welcome homework: auto-sent the moment the dog is enrolled */}
           <Field label="Welcome homework (auto-sent on enrollment)">

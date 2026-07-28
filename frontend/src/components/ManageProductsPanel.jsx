@@ -11,12 +11,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import ShopImageUpload from "./ShopImageUpload";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 const BLANK_FORM = {
   name: "", category: "", description: "", price: "", cost: "",
   starting_stock: "0", low_stock_threshold: "", track_inventory: false, active: true,
+  show_online: false, online_description: "", image_id: null, online_sort_order: "",
 };
 
 function stockStatus(p) {
@@ -62,18 +64,37 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
   const [saving, setSaving] = useState(false);
+  // Client Shop Phase 1 media lifecycle — the image_id this product had
+  // BEFORE this form opened (null for a brand-new product). Never deleted
+  // by ShopImageUpload itself; only this panel deletes it, and only after
+  // a successful save that actually replaced/removed it.
+  const [originalImageId, setOriginalImageId] = useState(null);
 
-  const openAdd = () => { setEditingId(null); setForm(BLANK_FORM); setFormOpen(true); };
+  const openAdd = () => { setEditingId(null); setForm(BLANK_FORM); setOriginalImageId(null); setFormOpen(true); };
   const openEdit = (p) => {
     setEditingId(p.id);
+    setOriginalImageId(p.image_id || null);
     setForm({
       name: p.name || "", category: p.category || "", description: p.description || "",
       price: String(p.price ?? ""), cost: p.cost != null ? String(p.cost) : "",
       starting_stock: String(p.stock_on_hand ?? 0),
       low_stock_threshold: p.low_stock_threshold != null ? String(p.low_stock_threshold) : "",
       track_inventory: !!p.track_inventory, active: p.active !== false,
+      show_online: !!p.show_online, online_description: p.online_description || "",
+      image_id: p.image_id || null,
+      online_sort_order: p.online_sort_order != null ? String(p.online_sort_order) : "",
     });
     setFormOpen(true);
+  };
+
+  // Closing without saving — if a new (not-yet-saved) image was uploaded
+  // this session, clean it up; the original persisted image (if any) is
+  // untouched since nothing about the product actually changed.
+  const closeFormWithoutSaving = () => {
+    if (form.image_id && form.image_id !== originalImageId) {
+      api.delete(`/shop/media/${form.image_id}`).catch(() => {});
+    }
+    setFormOpen(false);
   };
 
   const saveForm = async () => {
@@ -84,6 +105,9 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       price: Number(form.price), cost: form.cost !== "" ? Number(form.cost) : null,
       low_stock_threshold: form.low_stock_threshold !== "" ? Number(form.low_stock_threshold) : null,
       track_inventory: form.track_inventory, active: form.active,
+      show_online: form.show_online, online_description: form.online_description.trim() || null,
+      image_id: form.image_id || null,
+      online_sort_order: form.online_sort_order !== "" ? parseInt(form.online_sort_order, 10) : null,
     };
     setSaving(true);
     try {
@@ -93,6 +117,10 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       } else {
         await api.post("/pos/products", { ...body, starting_stock: Number(form.starting_stock || 0) });
         toast.success("Product added");
+      }
+      // Save succeeded — NOW it's safe to drop the old image, if replaced/removed.
+      if (originalImageId && originalImageId !== form.image_id) {
+        api.delete(`/shop/media/${originalImageId}`).catch(() => {});
       }
       setFormOpen(false);
       load();
@@ -205,8 +233,40 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                 <label htmlFor="active" className="text-white text-sm">Active</label>
               </div>
             </div>
+
+            {/* Client Shop Phase 1 — additive online-visibility controls. */}
+            <div className="border-t border-bgHover pt-3 mt-1 space-y-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Client Shop</p>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="show-online" checked={form.show_online}
+                       onChange={(e) => setForm((f) => ({ ...f, show_online: e.target.checked }))}
+                       data-testid="product-show-online" />
+                <label htmlFor="show-online" className="text-white text-sm">Show Online (client Shop)</label>
+              </div>
+              {form.show_online && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="text-[11px] text-gray-500 uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
+                    <input value={form.online_description} onChange={(e) => setForm((f) => ({ ...f, online_description: e.target.value }))}
+                           data-testid="product-online-description"
+                           className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-gray-500 uppercase tracking-widest">Sort Order (optional)</label>
+                    <input type="number" value={form.online_sort_order}
+                           onChange={(e) => setForm((f) => ({ ...f, online_sort_order: e.target.value }))}
+                           className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[11px] text-gray-500 uppercase tracking-widest mb-1 block">Product Photo</label>
+                    <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                                     onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
+                  </div>
+                </div>
+              )}
+            </div>
             <div className="flex gap-3 pt-2">
-              <button onClick={() => setFormOpen(false)} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
+              <button onClick={closeFormWithoutSaving} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
                 Cancel
               </button>
               <button onClick={saveForm} disabled={saving}
