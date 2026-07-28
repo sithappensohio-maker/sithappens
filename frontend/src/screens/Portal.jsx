@@ -1209,7 +1209,7 @@ export default function Portal() {
                     ${Number(client.account_balance).toFixed(2)}
                   </p>
                   <p className="text-[13px] text-gray-300 mt-1">
-                    A previous visit was paid only in part. Settle up next time you stop in, or reach out — we&apos;ll send you a payment link.
+                    You have an outstanding balance. You can pay an open invoice below or settle up next time you stop in.
                   </p>
                 </div>
               </div>

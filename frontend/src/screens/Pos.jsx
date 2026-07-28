@@ -24,6 +24,7 @@ import PageHero from "../components/PageHero";
 import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
 import ManageProductsPanel from "../components/ManageProductsPanel";
+import StripeRefundModal from "../components/StripeRefundModal";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
@@ -325,6 +326,18 @@ export default function Pos() {
   useEffect(() => { if (recentOpen) loadRecent(); }, [recentOpen]);
   useEffect(() => { if (saleResult) loadRecent(); }, [saleResult]);
 
+  // ── Online payments (Stripe) — deliberately separate from Recent Sales.
+  // Recent Sales is backed by pos_sales (the POS Register's own retail
+  // history); stripe_online booking payments live in a different collection
+  // (payments/invoices) entirely, so they get their own panel here rather
+  // than being forced into that list. ──
+  const [onlinePayments, setOnlinePayments] = useState([]);
+  const [onlinePaymentsOpen, setOnlinePaymentsOpen] = useState(false);
+  const loadOnlinePayments = () => api.get("/admin/stripe-online-payments", { params: { limit: 50 } })
+    .then(({ data }) => setOnlinePayments(data.payments || [])).catch(() => {});
+  useEffect(() => { if (onlinePaymentsOpen) loadOnlinePayments(); }, [onlinePaymentsOpen]);
+  const [refundingPayment, setRefundingPayment] = useState(null);
+
   const reprintSale = async (sale) => {
     try {
       const { data } = await api.post(`/pos/sales/${sale.id}/pos-tokens`, { actions: ["print_receipt"] });
@@ -526,6 +539,12 @@ export default function Pos() {
                   className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
             Register Tools
           </button>
+          {isAdmin && (
+            <button onClick={() => setOnlinePaymentsOpen((o) => !o)} data-testid="pos-online-payments-toggle"
+                    className="bg-bgBase border border-bgHover hover:border-shBlue/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+              Online Payments
+            </button>
+          )}
         </div>
       </div>
 
@@ -594,6 +613,56 @@ export default function Pos() {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {onlinePaymentsOpen && (
+        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4" data-testid="pos-online-payments-panel">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
+            <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-gray-400 hover:text-shBlue">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {onlinePayments.length === 0 && <p className="text-gray-500 text-sm">No Stripe Online payments yet.</p>}
+            {onlinePayments.map((p) => {
+              const fullyRefunded = p.remaining_refundable <= 0.005;
+              const card = p.card_brand ? `${p.card_brand[0].toUpperCase()}${p.card_brand.slice(1)}${p.card_last4 ? ` •••• ${p.card_last4}` : ""}` : null;
+              return (
+                <div key={p.payment_id} className="border border-bgHover rounded-lg p-3" data-testid={`online-payment-${p.payment_id}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <p className="text-white font-bold text-sm">{p.client_name || "Unknown client"}</p>
+                      <p className="text-gray-500 text-[12px]">
+                        Invoice #{(p.invoice_id || "").slice(0, 8)} · {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                        {card ? ` · ${card}` : ""}
+                      </p>
+                    </div>
+                    <div className="text-right text-[12px] text-gray-400">
+                      <p>Paid: <span className="text-white font-bold">{money(p.amount)}</span></p>
+                      <p>Refunded: <span className="text-white font-bold">{money(p.refunded_amount)}</span></p>
+                      <p>Refundable: <span className="text-shGreen font-bold">{money(p.remaining_refundable)}</span></p>
+                    </div>
+                    <div>
+                      {fullyRefunded ? (
+                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
+                      ) : p.refund_in_progress ? (
+                        <button disabled className="bg-bgBase border border-bgHover text-shOrange px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
+                          <i className="fas fa-circle-notch fa-spin mr-1" />Refund Processing
+                        </button>
+                      ) : (
+                        <button onClick={() => setRefundingPayment(p)} data-testid={`refund-via-stripe-${p.payment_id}`}
+                                className="bg-shBlue/15 border border-shBlue/40 text-shBlue px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shBlue/25 transition">
+                          Refund via Stripe
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -819,6 +888,14 @@ export default function Pos() {
         <ManageProductsPanel
           onClose={() => setManageProductsOpen(false)}
           onChanged={loadProducts}
+        />
+      )}
+
+      {refundingPayment && (
+        <StripeRefundModal
+          payment={refundingPayment}
+          onClose={() => setRefundingPayment(null)}
+          onDone={loadOnlinePayments}
         />
       )}
     </div>

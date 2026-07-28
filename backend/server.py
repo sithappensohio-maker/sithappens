@@ -24169,6 +24169,67 @@ async def _handle_refund_event(refund_obj: dict) -> None:
         )
 
 
+@api.get("/admin/stripe-online-payments")
+async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, _: dict = Depends(require_admin)):
+    """Staff-facing read model for the Front Desk 'Online Payments' panel —
+    the ONLY place stripe_online booking Payment rows are listed for staff.
+    Deliberately separate from Recent Sales (pos_sales, unrelated collection).
+    Returns only fields the refund UI needs: no PaymentIntent id, no
+    Stripe secret/webhook data, no internal stripe_refund_attempts document.
+    Filters to source.kind=="stripe_online_payment" so refund reversal rows
+    (source.kind=="stripe_refund", negative amount) are never listed as if
+    they were a separate original payment — same exclusion convention as
+    _booking_refund_locked's stripe_gross calculation."""
+    limit = max(1, min(int(limit or 50), 200))
+    fetch_cap = max(limit * 4, 200)  # headroom for the trivial client/invoice-id filter below
+    payments = await db.payments.find(
+        {"method": "stripe_online", "source.kind": "stripe_online_payment"}, {"_id": 0},
+    ).sort("created_at", -1).to_list(fetch_cap)
+
+    invoice_ids = list({p["invoice_id"] for p in payments if p.get("invoice_id")})
+    invoices = await db.invoices.find(
+        {"id": {"$in": invoice_ids}}, {"_id": 0, "id": 1, "client_name": 1},
+    ).to_list(len(invoice_ids) or 1) if invoice_ids else []
+    client_name_by_invoice = {inv["id"]: inv.get("client_name") or "" for inv in invoices}
+
+    payment_ids = [p["id"] for p in payments]
+    active_attempts = await db.stripe_refund_attempts.find(
+        {"payment_id": {"$in": payment_ids}, "status": {"$nin": list(STRIPE_REFUND_TERMINAL_STATUSES)}},
+        {"_id": 0, "payment_id": 1, "status": 1},
+    ).to_list(len(payment_ids) or 1) if payment_ids else []
+    active_status_by_payment = {a["payment_id"]: a["status"] for a in active_attempts}
+
+    q_norm = (q or "").strip().lower()
+    rows = []
+    for p in payments:
+        invoice_id = p.get("invoice_id")
+        client_name = client_name_by_invoice.get(invoice_id, "")
+        if q_norm and q_norm not in client_name.lower() and q_norm not in (invoice_id or "").lower():
+            continue
+        amount = round(float(p.get("amount") or 0), 2)
+        refunded_amount = round(float(p.get("refunded_amount") or 0), 2)
+        remaining_refundable = round(max(0.0, amount - refunded_amount), 2)
+        source = p.get("source") or {}
+        refund_status = active_status_by_payment.get(p["id"])
+        rows.append({
+            "payment_id": p["id"],
+            "invoice_id": invoice_id,
+            "client_name": client_name,
+            "created_at": p.get("created_at"),
+            "amount": amount,
+            "refunded_amount": refunded_amount,
+            "remaining_refundable": remaining_refundable,
+            "status": p.get("status"),
+            "card_brand": source.get("card_brand"),
+            "card_last4": source.get("card_last4"),
+            "refund_in_progress": refund_status is not None,
+            "refund_status": refund_status,
+        })
+        if len(rows) >= limit:
+            break
+    return {"payments": rows}
+
+
 @api.get("/admin/register/session")
 async def get_register_session(date: Optional[str] = None, _: dict = Depends(require_admin)):
     date_value = _validated_register_date(date, allow_future=False)
