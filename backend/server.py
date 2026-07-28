@@ -882,7 +882,12 @@ class CheckoutIn(BaseModel):
     use any pre-deducted credits, no add-ons, no payment-method override."""
     use_credits: Optional[bool] = True  # False → refund pre-deducted credits, charge instead
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
-    payment_status: Optional[Literal["unpaid", "paid"]] = None  # defaults inferred below
+    # "paid_partial" is an explicit CALLER-asserted tab/partial intent (e.g.
+    # the Dashboard checkout modal's "Partial / on tab" pill) — belt-and-
+    # suspenders so a partial/tab checkout can never silently collapse into
+    # a full payment merely because amount_paid was left off the request;
+    # see the amount_paid-normalization guard below.
+    payment_status: Optional[Literal["unpaid", "paid", "paid_partial"]] = None  # defaults inferred below
     base_price: Optional[float] = None  # override the auto-tally amount for the base service
     additional_cash_charge: float = Field(default=0, ge=0, le=100000)
     add_ons: List[CheckoutAddOn] = []
@@ -8681,18 +8686,31 @@ async def _check_out_locked(
         if update.get("payment_status") == "paid":
             update["paid_at"] = ts
 
-    # Sprint 110di-51 — Partial-payment / tab. When `amount_paid` was passed
-    # in the request body AND there's a cash side to settle (not pure-credits
-    # checkout), record the actual payment, mark the booking accordingly,
-    # and push the delta onto the client's running tab via the ledger.
+    # Sprint 110di-51 — Partial-payment / tab. Fires when EITHER `amount_paid`
+    # was passed in the request body OR the caller explicitly asserted
+    # payment_status="paid_partial" (tab intent) — and there's a cash side
+    # to settle (not pure-credits checkout). Records the actual payment,
+    # marks the booking accordingly, and pushes the delta onto the client's
+    # running tab via the ledger.
     #   amount_paid <  total → paid_partial, tab += (total - paid)
     #   amount_paid == total → paid (existing behaviour)
     #   amount_paid >  total → paid + credit, tab -= (paid - total) (negative tab = prepaid)
+    #
+    # Belt-and-suspenders: an explicit payment_status="paid_partial" is a
+    # caller assertion of tab intent that must NEVER silently collapse into
+    # a full payment just because amount_paid was omitted — a real bug hit
+    # exactly this (Dashboard "Partial / on tab" with a blank amount field
+    # sent payment_status="paid" with no amount_paid, which the generic
+    # "payment_status == paid" branch below then read as fully paid). When
+    # payment_status=="paid_partial" is asserted, a missing amount_paid
+    # normalizes to 0 (pay nothing today, all of it goes to AR) rather than
+    # falling through to that branch.
     partial_balance_delta = 0.0
     partial_actual_paid = None
-    if body.amount_paid is not None and not is_paid_today and (update.get("actual_price") or 0) > 0:
+    _tab_intent_asserted = body.payment_status == "paid_partial"
+    if (body.amount_paid is not None or _tab_intent_asserted) and not is_paid_today and (update.get("actual_price") or 0) > 0:
         total_owed = float(update.get("actual_price") or 0)
-        paid_now = float(body.amount_paid)
+        paid_now = float(body.amount_paid) if body.amount_paid is not None else 0.0
         partial_balance_delta = round(total_owed - paid_now, 2)
         partial_actual_paid = round(paid_now, 2)
         update["amount_paid"] = partial_actual_paid

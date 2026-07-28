@@ -389,14 +389,21 @@ export function CheckoutModal({ booking, services, onClose, onRequestCancel }) {
 
       if (!useCredits) {
         body.payment_method = payMethod;
-        body.payment_status = "paid";
         if (basePrice !== "") body.base_price = Number(basePrice);
-        // Sprint 110di-51 — Partial pay. Only meaningful when the operator
-        // explicitly toggled the "Partial / on tab" pill (payMode==="partial").
-        // Default is full pay; the backend treats absence of amount_paid as
-        // "client paid the whole ticket" (legacy behaviour preserved).
-        if (payMode === "partial" && amountPaid !== "") {
-          body.amount_paid = Number(amountPaid);
+        // Sprint 110di-51 — Partial pay / tab. A real bug: this used to send
+        // payment_status="paid" unconditionally and only attached amount_paid
+        // when the operator typed a non-blank number, so "Partial / on tab"
+        // with the amount field left blank (the natural way to mean "collect
+        // nothing today") silently reached the backend as a full payment —
+        // false completed Payment, no AR, invoice marked PAID. Now: partial/
+        // tab mode ALWAYS sends an explicit numeric amount_paid (blank → 0)
+        // and asserts payment_status="paid_partial" as an explicit tab-intent
+        // signal the backend never lets collapse into "paid" on its own.
+        if (payMode === "partial") {
+          body.amount_paid = amountPaid === "" ? 0 : Number(amountPaid);
+          body.payment_status = "paid_partial";
+        } else {
+          body.payment_status = "paid";
         }
       } else if (extraNightsCharge > 0 || baseCashDueOnCredits > 0 || existingAddonTotal > 0 || addOnTotal > 0) {
         body.payment_method = payMethod;
