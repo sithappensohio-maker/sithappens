@@ -3,12 +3,16 @@ import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import IconPicker from "./IconPicker";
 import ColorSwatchRow from "./ColorSwatchRow";
+import ShopImageUpload from "./ShopImageUpload";
 
 /**
  * Admin-managed catalog of credit packs (bulk daycare day discounts).
  * Each pack stores qty + price; per-credit value is computed on the fly.
  */
-const empty = { name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null };
+const empty = {
+  name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null,
+  available_online: false, online_description: "", image_id: null,
+};
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
 const DEFAULT_COLOR_BY_POOL = { daycare: "#8cc63f", training: "#a855f7", boarding: "#f26522" };
@@ -23,6 +27,10 @@ export default function CreditPacksSettings() {
   // Sprint 110di-62 — load all client-audience email templates so packs can
   // bind a custom welcome email that fires the moment the pack is sold.
   const [emailTemplates, setEmailTemplates] = useState([]);
+  // Client Shop Phase 1 media lifecycle — the image_id this pack had BEFORE
+  // this form opened (null for a new pack). Only deleted after a successful
+  // save that actually replaced/removed it, or on cancel if it was never saved.
+  const [originalImageId, setOriginalImageId] = useState(null);
 
   const load = async () => {
     // include_inactive=false (default) so soft-deleted default packs disappear from the list.
@@ -36,9 +44,15 @@ export default function CreditPacksSettings() {
       .catch(() => setEmailTemplates([]));
   }, []);
 
-  const openNew = () => { setEditing(null); setForm(empty); setErr(""); setOpen(true); };
-  const openEdit = (p) => { setEditing(p); setForm({ ...empty, ...p }); setErr(""); setOpen(true); };
-  const closeModal = () => { setOpen(false); setEditing(null); setForm(empty); setErr(""); };
+  const openNew = () => { setEditing(null); setForm(empty); setOriginalImageId(null); setErr(""); setOpen(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ ...empty, ...p }); setOriginalImageId(p.image_id || null); setErr(""); setOpen(true); };
+  const closeModal = () => {
+    // Closing without saving — drop any not-yet-saved upload from this session.
+    if (form.image_id && form.image_id !== originalImageId) {
+      api.delete(`/shop/media/${form.image_id}`).catch(() => {});
+    }
+    setOpen(false); setEditing(null); setForm(empty); setErr("");
+  };
 
   const save = async () => {
     setErr("");
@@ -50,7 +64,11 @@ export default function CreditPacksSettings() {
     try {
       if (editing) await api.put(`/credit-packs/${editing.id}`, form);
       else await api.post("/credit-packs", form);
-      closeModal();
+      // Save succeeded — now safe to drop the old image, if replaced/removed.
+      if (originalImageId && originalImageId !== form.image_id) {
+        api.delete(`/shop/media/${originalImageId}`).catch(() => {});
+      }
+      setOpen(false); setEditing(null); setForm(empty); setErr("");
       load();
     } catch (e) {
       // FastAPI 422 detail can be an array of error objects — formatErr
@@ -216,6 +234,32 @@ export default function CreditPacksSettings() {
                   <i className="fas fa-paper-plane mr-1 text-shBlue"/>Sends this template the moment a client buys this pack. Create new templates from Settings → Email Designer.
                 </p>
               </div>
+              {/* Client Shop Phase 1 — additive online-visibility controls. */}
+              <div className="mt-4 border-t border-bgHover pt-4">
+                <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-2">Client Shop</p>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={form.available_online}
+                         onChange={(e)=>setForm({...form, available_online: e.target.checked})}
+                         data-testid="pack-available-online" />
+                  <span className="text-white text-sm">Available Online (client Shop)</span>
+                </label>
+                {form.available_online && (
+                  <div className="mt-3 space-y-3">
+                    <div>
+                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Online Description (optional)</label>
+                      <input value={form.online_description || ""} onChange={(e)=>setForm({...form, online_description: e.target.value})}
+                             data-testid="pack-online-description"
+                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Pack Photo</label>
+                      <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                                       onChange={(id)=>setForm({...form, image_id: id})} />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Live preview — exactly how this pack will render in the catalog list. */}
               <div className="mt-4">
                 <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>

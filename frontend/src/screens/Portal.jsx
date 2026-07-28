@@ -30,6 +30,7 @@ import PortalSetupChecklist, { PortalSetupSuccess } from "../components/PortalSe
 import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import PortalInvoices from "../components/PortalInvoices";
+import PortalShop from "../components/PortalShop";
 import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
@@ -639,6 +640,7 @@ function ServiceInfoModal({ type, onClose, customDescriptions }) {
 export default function Portal() {
   const confirm = useConfirm();
   const { user, logout, reloadUser } = useAuth();
+  const [shopInitialTab, setShopInitialTab] = useState("all");
   const [dogs, setDogs] = useState([]);
   const [client, setClient] = useState(null);
   const [bookings, setBookings] = useState([]);
@@ -1366,6 +1368,15 @@ export default function Portal() {
                 <i className="fas fa-user-pen mr-2"/>My Profile
               </button>
               <button onClick={()=>{
+                         setShopInitialTab("credit_pack");
+                         const el = document.getElementById("portal-shop-anchor");
+                         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                       }}
+                      data-testid="buy-more-credits"
+                      className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
+                <i className="fas fa-cart-plus mr-2"/>Buy More Credits
+              </button>
+              <button onClick={()=>{
                          const el = document.getElementById("portal-bookings-anchor");
                          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                        }}
@@ -1379,6 +1390,8 @@ export default function Portal() {
             </div>
           </div>
           )}
+
+          <PortalShop initialTab={shopInitialTab} />
 
           {sectionOn("waiver_documents") && (
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40 card-danger":"bg-shGreen/5 border-shGreen/30 card-success"}`} data-testid="waiver-status-card">
