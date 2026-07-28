@@ -641,6 +641,17 @@ export default function Portal() {
   const confirm = useConfirm();
   const { user, logout, reloadUser } = useAuth();
   const [shopInitialTab, setShopInitialTab] = useState("all");
+  // Client Shop Phase 2 UX — the Shop is a dedicated full-screen view, not
+  // an embedded dashboard card. Lazy-initialized from the URL so a Stripe
+  // return (?shop_order=...&stripe=...) lands the client directly back in
+  // the Shop view instead of an arbitrary spot on the dashboard — PortalShop
+  // itself still reads/clears those same params for its own return-status
+  // polling, this only decides which top-level view is showing.
+  const [shopOpen, setShopOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const params = new URLSearchParams(window.location.search);
+    return params.has("shop_order");
+  });
   const [dogs, setDogs] = useState([]);
   const [client, setClient] = useState(null);
   const [bookings, setBookings] = useState([]);
@@ -992,6 +1003,30 @@ export default function Portal() {
   // gating now lives in `PortalSetupChecklist`. Kept the `Hi <name>! Welcome`
   // header. No need to track per-step state here anymore.
 
+  // Client Shop Phase 2 UX — dedicated full-screen Shop view. Placed after
+  // every hook above has already run (React rules-of-hooks), before the
+  // normal dashboard JSX. Cart/component state lives inside PortalShop
+  // itself and is untouched by switching in/out of this view, since
+  // PortalShop stays mounted continuously whenever shopOpen is true — this
+  // is a real navigation swap, not a duplicated Shop implementation.
+  if (shopOpen) {
+    return (
+      <div className="app-shell h-full min-h-0 flex flex-col bg-bgBase" data-testid="client-portal-shop-page">
+        <header className="shrink-0 bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3">
+          <button onClick={() => setShopOpen(false)} data-testid="portal-shop-back-button"
+                  className="text-[13px] sm:text-xs bg-bgBase border border-bgHover text-gray-300 px-3 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:border-shGreen/50 hover:text-shGreen transition flex items-center gap-2">
+            <i className="fas fa-arrow-left"/>
+            <span>Back to Portal</span>
+          </button>
+          <img src="/logo.png" alt="Sit Happens" className="h-9 sm:h-12 shrink-0" />
+        </header>
+        <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
+          <PortalShop initialTab={shopInitialTab} fullScreen />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell h-full min-h-0 flex flex-col bg-bgBase" data-testid="client-portal">
       <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
@@ -1015,6 +1050,11 @@ export default function Portal() {
           </div>
         </div>
         <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <button onClick={() => { setShopInitialTab("all"); setShopOpen(true); }} data-testid="portal-shop-nav-button"
+                  className="text-[13px] sm:text-xs bg-shGreen text-bgHeader px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:opacity-90 transition flex items-center gap-2">
+            <i className="fas fa-bag-shopping"/>
+            <span className="hidden sm:inline">Shop</span>
+          </button>
           {sectionOn("help_button") && (
             <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
                     className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
@@ -1369,8 +1409,7 @@ export default function Portal() {
               </button>
               <button onClick={()=>{
                          setShopInitialTab("credit_pack");
-                         const el = document.getElementById("portal-shop-anchor");
-                         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                         setShopOpen(true);
                        }}
                       data-testid="buy-more-credits"
                       className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
@@ -1391,7 +1430,22 @@ export default function Portal() {
           </div>
           )}
 
-          <PortalShop initialTab={shopInitialTab} />
+          {/* Client Shop Phase 2 UX — the dashboard only ever shows a small
+              launcher now; the actual storefront lives in the dedicated
+              full-screen Shop view (see shopOpen above). */}
+          <div className="bg-bgPanel card-pop p-5 rounded-2xl border border-bgHover shadow-2xl flex items-center justify-between gap-4 flex-wrap"
+               data-testid="portal-shop-launcher">
+            <div>
+              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+                <i className="fas fa-bag-shopping mr-1" />Shop
+              </p>
+              <p className="text-gray-400 text-sm">Merch, credit packs &amp; training packages</p>
+            </div>
+            <button onClick={() => { setShopInitialTab("all"); setShopOpen(true); }} data-testid="portal-shop-launcher-button"
+                    className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:opacity-90 transition">
+              Shop Now
+            </button>
+          </div>
 
           {sectionOn("waiver_documents") && (
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40 card-danger":"bg-shGreen/5 border-shGreen/30 card-success"}`} data-testid="waiver-status-card">

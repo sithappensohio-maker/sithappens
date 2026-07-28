@@ -1042,7 +1042,13 @@ class InvoiceOut(BaseModel):
 
 class PaymentOut(BaseModel):
     id: str
-    invoice_id: str
+    # Client Shop Phase 2 — a shop-order payment has no invoice at all
+    # (invoice_id=None, shop_order_id set instead). No response_model
+    # enforcement exists anywhere on this model and the only Mongo index on
+    # invoice_id is non-unique, so widening this is safe — confirmed by
+    # direct trace of every consumer before this change.
+    invoice_id: Optional[str] = None
+    shop_order_id: Optional[str] = None
     client_id: Optional[str] = None
     amount: float  # positive = tendered/credited; negative = a refund row
     method: Literal["stripe_terminal", "stripe_online", "cash", "check", "venmo", "paypal", "credits", "other"]
@@ -19851,6 +19857,27 @@ async def startup():
         (db.pos_products, "track_inventory", {}),
         (db.inventory_movements, "product_id", {}),
         (db.inventory_movements, [("created_at", -1)], {}),
+        # Client Shop Phase 2 — cart/checkout/Stripe payment/fulfillment.
+        # inventory_movements.source_ref is the real COMMIT idempotency
+        # guard for _commit_shop_inventory_line — brand-new field, no
+        # historical rows ever set it, so this partial unique index carries
+        # zero preflight risk (same reasoning as payment_ledger.stripe_
+        # attempt_id above).
+        (db.inventory_movements, "source_ref", {"unique": True, "partialFilterExpression": {"source_ref": {"$type": "string"}}}),
+        # credit_lots.fulfillment_ref — the per-unit credit/program grant
+        # idempotency guard. Same zero-preflight-risk reasoning: brand-new
+        # field, no historical row has ever set it.
+        (db.credit_lots, "fulfillment_ref", {"unique": True, "partialFilterExpression": {"fulfillment_ref": {"$type": "string"}}}),
+        (db.shop_orders, "id", {"unique": True}),
+        (db.shop_orders, "client_id", {}),
+        (db.shop_orders, [("status", 1), ("fulfillment_status", 1)], {}),
+        (db.shop_checkout_claims, "idempotency_key", {"unique": True}),
+        (db.shop_payment_attempts, "idempotency_key", {"unique": True}),
+        (db.shop_payment_attempts, "stripe_checkout_session_id", {}),
+        (db.shop_payment_attempts, "shop_order_id", {}),
+        (db.shop_payment_attempts, "client_id", {}),
+        (db.payments, "shop_order_id", {}),
+        (db.retail_sales, "shop_order_id", {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -23967,12 +23994,27 @@ async def stripe_webhook(request: Request):
     # subclasses dict, so it supports subscript access but NOT .get() —
     # every downstream handler below relies on plain-dict .get() semantics.
     obj = event["data"]["object"].to_dict()
+    # Client Shop Phase 2 — same webhook endpoint, routed by metadata: an
+    # invoice payment carries sithappens_invoice_id, a shop order carries
+    # sithappens_shop_order_id. Never alters the existing invoice-Stripe
+    # payment architecture below — a shop-order event takes a completely
+    # separate branch into its own handlers.
+    is_shop_order = bool((obj.get("metadata") or {}).get("sithappens_shop_order_id"))
     if event_type in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
-        await _handle_checkout_session_paid_event(obj)
+        if is_shop_order:
+            await _handle_shop_checkout_session_paid_event(obj)
+        else:
+            await _handle_checkout_session_paid_event(obj)
     elif event_type == "checkout.session.async_payment_failed":
-        await _handle_checkout_session_failed_event(obj)
+        if is_shop_order:
+            await _handle_shop_checkout_session_failed_event(obj)
+        else:
+            await _handle_checkout_session_failed_event(obj)
     elif event_type == "checkout.session.expired":
-        await _handle_checkout_session_expired_event(obj)
+        if is_shop_order:
+            await _handle_shop_checkout_session_expired_event(obj)
+        else:
+            await _handle_checkout_session_expired_event(obj)
     elif event_type in ("refund.created", "refund.updated", "refund.failed"):
         await _handle_refund_event(obj)
     return {"ok": True}
@@ -24021,6 +24063,82 @@ async def _handle_checkout_session_expired_event(session_obj: dict) -> None:
     )
     if result is not None:
         await _release_stripe_reservation_if_owned(attempt["invoice_id"], attempt["id"])
+
+
+# ── Client Shop Phase 2 — shop-order equivalents of the three handlers
+# above. Same event semantics, routed to shop_payment_attempts/shop_orders
+# instead of stripe_payment_attempts/invoices. ──────────────────────────────
+
+async def _handle_shop_checkout_session_paid_event(session_obj: dict) -> None:
+    session_id = session_obj.get("id")
+    attempt = await db.shop_payment_attempts.find_one({"stripe_checkout_session_id": session_id}, {"_id": 0})
+    if not attempt:
+        return  # unknown session — defensive, should not normally happen
+    if session_obj.get("payment_status") != "paid":
+        return  # completed but not yet actually paid (async method pending) — wait for a later event
+    payment_intent_id = session_obj.get("payment_intent")
+    if payment_intent_id and not attempt.get("stripe_payment_intent_id"):
+        await db.shop_payment_attempts.update_one({"id": attempt["id"]}, {"$set": {"stripe_payment_intent_id": payment_intent_id}})
+        attempt["stripe_payment_intent_id"] = payment_intent_id
+    if attempt.get("status") in SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES:
+        return  # already resolved — monotonic, never regress
+    try:
+        await _apply_shop_payment(attempt, session_obj)
+    except HTTPException:
+        await db.shop_payment_attempts.find_one_and_update(
+            {"id": attempt["id"], "status": {"$nin": list(SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES)}},
+            {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
+        )
+        raise  # non-2xx so Stripe retries delivery — safe, apply is idempotent
+
+
+async def _shop_order_already_paid(order_id: str) -> bool:
+    """Out-of-order guard: a stale failure/expiry event can arrive AFTER a
+    'checkout.session.completed' event already succeeded (Stripe does not
+    guarantee webhook delivery order). Once the order is paid, NOTHING may
+    regress it — never restore stock, never decrement stock_reserved again,
+    never mark it unpaid, never touch fulfillment. Checked as its own read
+    (not inferred from the attempt's own status) so it holds even if the
+    attempt's status hasn't been flipped to 'applied' yet at the moment
+    this races against the paid-event handler."""
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0, "status": 1})
+    return bool(order and order.get("status") == "paid")
+
+
+async def _handle_shop_checkout_session_failed_event(session_obj: dict) -> None:
+    attempt = await db.shop_payment_attempts.find_one({"stripe_checkout_session_id": session_obj.get("id")}, {"_id": 0})
+    if not attempt or attempt.get("status") != "pending":
+        return
+    if await _shop_order_already_paid(attempt["shop_order_id"]):
+        return  # monotonic — payment already succeeded, this stale event is a no-op
+    result = await db.shop_payment_attempts.find_one_and_update(
+        {"id": attempt["id"], "status": "pending"}, {"$set": {"status": "failed", "updated_at": now_iso()}},
+    )
+    if result is not None:
+        await _release_shop_order_reservation_if_owned(attempt["shop_order_id"], attempt["id"])
+        await _release_shop_order_inventory(attempt["shop_order_id"])
+        await db.shop_orders.update_one(
+            {"id": attempt["shop_order_id"], "status": {"$ne": "paid"}},
+            {"$set": {"status": "payment_failed", "updated_at": now_iso()}},
+        )
+
+
+async def _handle_shop_checkout_session_expired_event(session_obj: dict) -> None:
+    attempt = await db.shop_payment_attempts.find_one({"stripe_checkout_session_id": session_obj.get("id")}, {"_id": 0})
+    if not attempt or attempt.get("status") != "pending":
+        return
+    if await _shop_order_already_paid(attempt["shop_order_id"]):
+        return  # monotonic — payment already succeeded, this stale event is a no-op
+    result = await db.shop_payment_attempts.find_one_and_update(
+        {"id": attempt["id"], "status": "pending"}, {"$set": {"status": "expired", "updated_at": now_iso()}},
+    )
+    if result is not None:
+        await _release_shop_order_reservation_if_owned(attempt["shop_order_id"], attempt["id"])
+        await _release_shop_order_inventory(attempt["shop_order_id"])
+        await db.shop_orders.update_one(
+            {"id": attempt["shop_order_id"], "status": {"$ne": "paid"}},
+            {"$set": {"status": "canceled", "updated_at": now_iso()}},
+        )
 
 
 # ── Stripe refunds — a separate, per-attempt lifecycle (multi-partial-safe) ──
@@ -24274,8 +24392,16 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
     _booking_refund_locked's stripe_gross calculation."""
     limit = max(1, min(int(limit or 50), 200))
     fetch_cap = max(limit * 4, 200)  # headroom for the trivial client/invoice-id filter below
+    # Client Shop Phase 2 — a shop-order payment has source.kind==
+    # "shop_order_payment" instead of "stripe_online_payment" (never a
+    # refund reversal row either way — same exclusion convention as
+    # _booking_refund_locked's stripe_gross calculation). Included here so
+    # staff see ALL online card payments — invoice AND shop order — in one
+    # list, display-only; refunds against a shop_order_payment row are NOT
+    # available yet (Phase 3), so remaining_refundable is reported but the
+    # refund action itself stays invoice-only in the frontend.
     payments = await db.payments.find(
-        {"method": "stripe_online", "source.kind": "stripe_online_payment"}, {"_id": 0},
+        {"method": "stripe_online", "source.kind": {"$in": ["stripe_online_payment", "shop_order_payment"]}}, {"_id": 0},
     ).sort("created_at", -1).to_list(fetch_cap)
 
     invoice_ids = list({p["invoice_id"] for p in payments if p.get("invoice_id")})
@@ -24283,6 +24409,12 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
         {"id": {"$in": invoice_ids}}, {"_id": 0, "id": 1, "client_name": 1},
     ).to_list(len(invoice_ids) or 1) if invoice_ids else []
     client_name_by_invoice = {inv["id"]: inv.get("client_name") or "" for inv in invoices}
+
+    shop_order_ids = list({p["shop_order_id"] for p in payments if p.get("shop_order_id")})
+    shop_orders = await db.shop_orders.find(
+        {"id": {"$in": shop_order_ids}}, {"_id": 0, "id": 1, "client_name": 1},
+    ).to_list(len(shop_order_ids) or 1) if shop_order_ids else []
+    client_name_by_order = {o["id"]: o.get("client_name") or "" for o in shop_orders}
 
     payment_ids = [p["id"] for p in payments]
     active_attempts = await db.stripe_refund_attempts.find(
@@ -24295,8 +24427,10 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
     rows = []
     for p in payments:
         invoice_id = p.get("invoice_id")
-        client_name = client_name_by_invoice.get(invoice_id, "")
-        if q_norm and q_norm not in client_name.lower() and q_norm not in (invoice_id or "").lower():
+        shop_order_id = p.get("shop_order_id")
+        client_name = client_name_by_invoice.get(invoice_id, "") if invoice_id else client_name_by_order.get(shop_order_id, "")
+        ref_id = invoice_id or shop_order_id or ""
+        if q_norm and q_norm not in client_name.lower() and q_norm not in ref_id.lower():
             continue
         amount = round(float(p.get("amount") or 0), 2)
         refunded_amount = round(float(p.get("refunded_amount") or 0), 2)
@@ -24306,6 +24440,7 @@ async def list_stripe_online_payments(limit: int = 50, q: Optional[str] = None, 
         rows.append({
             "payment_id": p["id"],
             "invoice_id": invoice_id,
+            "shop_order_id": shop_order_id,
             "client_name": client_name,
             "created_at": p.get("created_at"),
             "amount": amount,
@@ -24598,6 +24733,887 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
         })
 
     return {"items": items}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Client Shop Phase 2 — cart, checkout, Stripe payment, fulfillment
+# ─────────────────────────────────────────────────────────────────────────────
+# Builds on Phase 1's read-only catalog above. A shop_orders document is the
+# checkout-time snapshot of a client's cart (mirrors invoices' "snapshot,
+# never rewrite" philosophy) — physical product lines, credit-pack lines,
+# and training-program lines can all coexist in one order. Money only ever
+# moves through the EXISTING /webhooks/stripe endpoint and the existing
+# canonical payments/retail_sales/credit_lots machinery (_insert_payment_row,
+# the retail_sales.payment_id partial unique index, credit_lots' own shape)
+# — this section adds a shop-specific checkout/reservation/fulfillment layer
+# on top of that, it does not duplicate the invoice-Stripe payment
+# architecture or the credit/program grant math.
+
+SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "canceled")
+
+
+class ShopCartItemIn(BaseModel):
+    kind: Literal["product", "credit_pack", "training_program"]
+    ref_id: str = Field(min_length=1)
+    quantity: int = Field(ge=1, le=50)
+
+
+class ShopCheckoutIn(BaseModel):
+    items: List[ShopCartItemIn] = Field(min_length=1, max_length=40)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+
+
+async def _price_shop_cart(items: List[ShopCartItemIn]) -> dict:
+    """Prices a Shop cart entirely server-side — never trusts a client-
+    supplied price. Only `product` lines are physical/taxable; credit_pack
+    and training_program lines are never taxed (confirmed: no tax
+    computation exists anywhere for either today, so allocated_tax=0 for
+    both, always). Order-level tax is computed over the taxable (physical-
+    only) subtotal using the SAME retail sales-tax config _price_pos_cart
+    already uses, then allocated across physical lines proportional to each
+    line's own subtotal, with the LAST taxable line absorbing the rounding
+    remainder — guarantees the per-line sum always exactly equals the
+    order-level tax total, by construction.
+
+    This is a pre-commit PRICING check only — real stock enforcement happens
+    atomically at reservation time (_reserve_shop_inventory_line), exactly
+    like _price_pos_cart's own stock check is a convenience, not the final
+    word."""
+    lines = []
+    product_cache: Dict[str, dict] = {}
+    for cart_item in items:
+        qty = int(cart_item.quantity)
+        if cart_item.kind == "product":
+            product = product_cache.get(cart_item.ref_id)
+            if product is None:
+                product = await db.pos_products.find_one(
+                    {"id": cart_item.ref_id, "show_online": True, "active": True}, {"_id": 0},
+                )
+                if not product:
+                    raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
+                product_cache[cart_item.ref_id] = product
+            unit_price = round(float(product.get("price") or 0), 2)
+            name = product.get("name") or "Product"
+        elif cart_item.kind == "credit_pack":
+            pack = await db.credit_packs.find_one(
+                {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
+            )
+            if not pack:
+                raise HTTPException(status_code=400, detail="One of the credit packs in this cart is no longer available.")
+            unit_price = round(float(pack.get("price") or 0), 2)
+            name = pack.get("name") or "Credit Pack"
+        else:
+            program = await db.programs.find_one(
+                {"id": cart_item.ref_id, "available_online": True, "active": True}, {"_id": 0},
+            )
+            if not program:
+                raise HTTPException(status_code=400, detail="One of the training programs in this cart is no longer available.")
+            fmt = program.get("format") or {}
+            if int(fmt.get("count") or 0) <= 0:
+                raise HTTPException(status_code=400, detail="This training program isn't set up for online purchase yet.")
+            unit_price = round(float(program.get("price") or 0), 2)
+            name = program.get("name") or "Training Program"
+
+        line_subtotal = round(unit_price * qty, 2)
+        lines.append({
+            "item_id": str(uuid.uuid4()), "kind": cart_item.kind, "ref_id": cart_item.ref_id,
+            "name": name, "unit_price": unit_price, "quantity": qty,
+            "line_subtotal": line_subtotal, "allocated_tax": 0.0,
+            "line_total": line_subtotal, "fulfillment_status": "pending",
+        })
+
+    if not lines:
+        raise HTTPException(status_code=400, detail="Cart is empty.")
+
+    # Same summed-qty-per-product stock check _price_pos_cart uses, so two
+    # cart lines referencing the same product can't each individually pass a
+    # check that their combined quantity would fail.
+    qty_by_product: Dict[str, float] = {}
+    for line in lines:
+        if line["kind"] == "product":
+            qty_by_product[line["ref_id"]] = qty_by_product.get(line["ref_id"], 0) + line["quantity"]
+    for product_id, total_qty in qty_by_product.items():
+        product = product_cache[product_id]
+        if not product.get("track_inventory"):
+            continue
+        stock = float(product.get("stock_on_hand") or 0)
+        if total_qty > stock + 0.0005:
+            if stock <= 0.0005:
+                raise HTTPException(status_code=400, detail=f"{product.get('name')} is out of stock.")
+            raise HTTPException(status_code=400, detail=f"Only {stock:g} in stock for {product.get('name')}.")
+
+    subtotal = round(sum(l["line_subtotal"] for l in lines), 2)
+    taxable_lines = [l for l in lines if l["kind"] == "product"]
+    taxable_subtotal = round(sum(l["line_subtotal"] for l in taxable_lines), 2)
+
+    tax_amount = 0.0
+    tax_rate_pct = 0.0
+    if taxable_subtotal > 0:
+        try:
+            settings_tx = await get_settings()
+            tx_cfg = (settings_tx or {}).get("sales_tax") or {}
+            if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
+                applies = (tx_cfg.get("applies_to") or {})
+                if applies.get("retail", True):
+                    tax_rate_pct = float(tx_cfg["rate_pct"])
+                    tax_amount = round(taxable_subtotal * (tax_rate_pct / 100.0), 2)
+        except Exception as exc:
+            logger.warning("Shop cart tax calc failed: %s", exc)
+
+    if tax_amount > 0 and taxable_lines:
+        allocated_so_far = 0.0
+        for i, line in enumerate(taxable_lines):
+            if i == len(taxable_lines) - 1:
+                line_tax = round(tax_amount - allocated_so_far, 2)
+            else:
+                line_tax = round(tax_amount * (line["line_subtotal"] / taxable_subtotal), 2)
+                allocated_so_far = round(allocated_so_far + line_tax, 2)
+            line["allocated_tax"] = line_tax
+            line["line_total"] = round(line["line_subtotal"] + line_tax, 2)
+
+    total = round(subtotal + tax_amount, 2)
+    return {
+        "lines": lines, "subtotal": subtotal, "tax_amount": tax_amount,
+        "tax_rate_pct": tax_rate_pct, "total": total,
+    }
+
+
+# ── Inventory reservation state machine (RESERVE/COMMIT/RELEASE) ───────────
+# Layered on top of pos_products/_mutate_product_stock, never altering that
+# function's own behavior for POS register sales. A physical Shop cart line
+# reserves a claim on stock (via `stock_reserved` + a `shop_reservations`
+# array entry on the product doc) at checkout time, BEFORE Stripe is ever
+# involved, so two concurrent Shop checkouts can never oversell the same
+# unit even though money hasn't moved yet. `stock_on_hand` itself is only
+# ever decremented at COMMIT (i.e. once payment is confirmed) — mirrors
+# real stock only leaving the shelf once the sale is real.
+
+def _shop_inventory_ref(order_id: str, item_id: str) -> str:
+    return f"shop_order:{order_id}:item:{item_id}"
+
+
+def _shop_order_line_terminal_release(order: dict, item_id: str) -> bool:
+    """Durable, order-owned proof that this line's reservation was already
+    released before any payment occurred — never inferred from clock time.
+    True once the whole order is payment_failed/canceled, or once this
+    line's own fulfillment_status has already been marked 'released'."""
+    if order.get("status") in ("payment_failed", "canceled"):
+        return True
+    line = next((l for l in (order.get("lines") or []) if l.get("item_id") == item_id), None)
+    return bool(line and line.get("fulfillment_status") == "released")
+
+
+async def _reserve_shop_inventory_line(order: dict, line: dict) -> str:
+    """Reserves stock for one physical-product cart line, following the
+    exact retry precedence: (1) an inventory_movements row already exists
+    for this ref — durable proof of COMMITTED, never re-reserve; (2) the
+    owning order/line already proves a terminal pre-payment release —
+    RELEASED, never re-reserve; (3) an active reservation already exists on
+    the product doc — return its current state as-is, never double-count;
+    (4) otherwise, a fresh atomic reservation attempt (optimistic retry, up
+    to 5x, mirroring _mutate_product_stock's own idiom). Returns
+    'reserved'|'committed'|'released'|'skipped' ('skipped' covers both
+    non-product lines and untracked products, neither of which needs a
+    reservation at all)."""
+    if line["kind"] != "product":
+        return "skipped"
+    order_id = order["id"]
+    item_id = line["item_id"]
+    ref = _shop_inventory_ref(order_id, item_id)
+    product_id = line["ref_id"]
+    qty = float(line["quantity"])
+
+    if await db.inventory_movements.find_one({"source_ref": ref}, {"_id": 0, "id": 1}):
+        return "committed"
+    if _shop_order_line_terminal_release(order, item_id):
+        return "released"
+
+    for _ in range(5):
+        product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+        if not product:
+            raise HTTPException(status_code=400, detail=f"{line.get('name') or 'A product'} is no longer available.")
+        if not product.get("track_inventory"):
+            return "skipped"
+        for entry in (product.get("shop_reservations") or []):
+            if entry.get("ref") == ref:
+                return entry.get("state", "reserved")
+        reserved = float(product.get("stock_reserved") or 0)
+        stock = float(product.get("stock_on_hand") or 0)
+        available = stock - reserved
+        if qty > available + 0.0005:
+            raise HTTPException(status_code=400, detail=f"Only {max(available, 0):g} in stock for {product.get('name')}.")
+        ts = now_iso()
+        result = await db.pos_products.find_one_and_update(
+            {"id": product_id, "stock_reserved": reserved, "shop_reservations.ref": {"$ne": ref}},
+            {
+                "$inc": {"stock_reserved": qty},
+                "$push": {"shop_reservations": {
+                    "ref": ref, "order_id": order_id, "item_id": item_id, "quantity": qty,
+                    "state": "reserved", "created_at": ts, "updated_at": ts,
+                }},
+                "$set": {"updated_at": ts},
+            },
+        )
+        if result is not None:
+            return "reserved"
+        # Lost the optimistic race (or a concurrent retry already inserted a
+        # reservation for this exact ref) — loop back and re-resolve via the
+        # same precedence rather than assuming failure.
+    raise HTTPException(status_code=409, detail="Stock changed too many times concurrently — try again.")
+
+
+async def _commit_shop_inventory_line(order_id: str, line: dict) -> None:
+    """Idempotent RESERVED -> COMMITTED transition, called only after
+    payment is confirmed. Decrements real stock_on_hand exactly once —
+    proven by an inventory_movements row keyed on this line's own ref
+    (never inferred from whether the reservation array entry was freshly
+    matched) — and writes exactly one inventory_movements row. Safe to call
+    any number of times for the same line."""
+    if line["kind"] != "product":
+        return
+    item_id = line["item_id"]
+    ref = _shop_inventory_ref(order_id, item_id)
+    product_id = line["ref_id"]
+    qty = float(line["quantity"])
+
+    if await db.inventory_movements.find_one({"source_ref": ref}, {"_id": 0, "id": 1}):
+        return  # already committed by an earlier (crashed) run
+
+    product = await db.pos_products.find_one({"id": product_id}, {"_id": 0})
+    if not product or not product.get("track_inventory"):
+        return  # untracked (or since-deleted) product never had a reservation to commit
+
+    ts = now_iso()
+    stock_before = float(product.get("stock_on_hand") or 0)
+    movement = {
+        "id": str(uuid.uuid4()), "product_id": product_id, "type": "shop_sale",
+        "quantity_delta": round(-qty, 3),
+        "stock_before": stock_before, "stock_after": round(stock_before - qty, 3),
+        "reason": f"Online Shop order {order_id}", "pos_sale_id": None, "source_ref": ref,
+        "user_id": None, "user_name": "Online Shop", "created_at": ts,
+    }
+    try:
+        await db.inventory_movements.insert_one(movement.copy())
+    except DuplicateKeyError:
+        return  # a concurrent/prior run committed this exact line first
+    await db.pos_products.update_one(
+        {"id": product_id, "shop_reservations.ref": ref},
+        {
+            "$inc": {"stock_on_hand": -qty, "stock_reserved": -qty},
+            "$set": {"shop_reservations.$.state": "committed", "shop_reservations.$.updated_at": ts, "updated_at": ts},
+        },
+    )
+
+
+async def _release_shop_inventory_line(order_id: str, line: dict) -> None:
+    """Idempotent RESERVED -> RELEASED transition for a cart line whose
+    checkout never completed payment (failed/expired/canceled). Never
+    releases a line that's already been committed — checked first, so a
+    stale release event racing behind a just-applied payment can never
+    resurrect stock that's already been sold."""
+    if line["kind"] != "product":
+        return
+    item_id = line["item_id"]
+    ref = _shop_inventory_ref(order_id, item_id)
+    product_id = line["ref_id"]
+    qty = float(line["quantity"])
+    if await db.inventory_movements.find_one({"source_ref": ref}, {"_id": 0, "id": 1}):
+        return  # already committed — never release money-committed stock
+    ts = now_iso()
+    await db.pos_products.update_one(
+        {"id": product_id, "shop_reservations": {"$elemMatch": {"ref": ref, "state": "reserved"}}},
+        {
+            "$inc": {"stock_reserved": -qty},
+            "$set": {"shop_reservations.$.state": "released", "shop_reservations.$.updated_at": ts, "updated_at": ts},
+        },
+    )
+
+
+async def _release_shop_order_inventory(order_id: str) -> None:
+    """Releases every still-reserved physical line on an order whose
+    payment did not succeed. Marks each line 'released' on the shop_orders
+    document FIRST, then releases the product-level reservation — that
+    ordering is load-bearing: _shop_order_line_terminal_release reads the
+    order doc's own line status as its precedence-#2 proof."""
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        return
+    for line in order.get("lines") or []:
+        if line["kind"] != "product" or line.get("fulfillment_status") == "fulfilled":
+            continue
+        await db.shop_orders.update_one(
+            {"id": order_id, "lines.item_id": line["item_id"], "lines.fulfillment_status": {"$ne": "fulfilled"}},
+            {"$set": {"lines.$.fulfillment_status": "released"}},
+        )
+        await _release_shop_inventory_line(order_id, line)
+
+
+# ── Credit-pack / training-program fulfillment — reuses the EXISTING grant
+# math (sell_credit_packs_bulk / sell_training_program), looped per unit so
+# each individual unit purchased gets its own durable fulfillment_ref. Never
+# duplicates the pricing/grant computation itself. ──────────────────────────
+
+async def _fulfill_shop_credit_pack_line(order: dict, line: dict) -> None:
+    """Grants N independent credit_lots (N = line quantity), each keyed by
+    its own fulfillment_ref (`shop_order:{order}:item:{item}:unit:{n}`) so a
+    crash-and-retry can never double-grant a single unit — reuses
+    sell_credit_packs_bulk's exact lot shape. The client's aggregate balance
+    $inc is gated by ITS OWN independent atomic marker on the client
+    document (shop_credit_grants_applied), never inferred from whether the
+    credit_lots insert above was fresh — mirrors _apply_stripe_payment's
+    stripe_ar_adjustments_applied pattern."""
+    client_id = order["client_id"]
+    pack = await db.credit_packs.find_one({"id": line["ref_id"]}, {"_id": 0})
+    if not pack:
+        raise HTTPException(status_code=500, detail="Credit pack missing during shop fulfillment")
+    qty_per_unit = int(pack["qty"])
+    unit_price = round(float(line["unit_price"]), 2)
+    value_each = round(unit_price / max(qty_per_unit, 1), 2)
+    svc_type = pack.get("service_type") or "daycare"
+    pool_field = {"daycare": "credits", "training": "training_credits", "boarding": "boarding_credits"}.get(svc_type, "credits")
+
+    for n in range(int(line["quantity"])):
+        fulfillment_ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
+        existing_lot = await db.credit_lots.find_one({"fulfillment_ref": fulfillment_ref}, {"_id": 0, "id": 1})
+        if not existing_lot:
+            lot = {
+                "id": str(uuid.uuid4()), "client_id": client_id,
+                "pack_id": pack["id"], "pack_name": pack["name"], "service_type": svc_type,
+                "qty_total": qty_per_unit, "qty_remaining": qty_per_unit,
+                "price_paid": unit_price, "list_price": float(pack["price"]),
+                "value_each": value_each, "payment_method": "stripe_online",
+                "note": f"Online Shop order {order['id'][:8].upper()}",
+                "sold_by": "Online Shop", "purchased_at": now_iso(),
+                "recognize_at_sale": True, "fulfillment_ref": fulfillment_ref,
+                "shop_order_id": order["id"],
+            }
+            try:
+                await db.credit_lots.insert_one(lot.copy())
+            except DuplicateKeyError:
+                pass  # a concurrent/prior run already granted this exact unit
+
+        await db.clients.find_one_and_update(
+            {"id": client_id, "shop_credit_grants_applied": {"$ne": fulfillment_ref}},
+            {"$inc": {pool_field: qty_per_unit}, "$addToSet": {"shop_credit_grants_applied": fulfillment_ref}},
+        )
+
+
+async def _fulfill_shop_training_program_line(order: dict, line: dict) -> None:
+    """Grants N independent training-credit lots (N = line quantity, almost
+    always 1) reusing sell_training_program's exact credit_lot grant shape —
+    deliberately WITHOUT its dog-enrollment/session-scheduling features,
+    which have no equivalent input in a Shop cart and are an admin-only
+    concern. A client who buys a program online still receives their
+    training_credits and can be enrolled by staff exactly as any other
+    training-credit purchase would be. Same two-independent-idempotency-
+    guarantee shape as the credit-pack path above."""
+    client_id = order["client_id"]
+    program = await db.programs.find_one({"id": line["ref_id"]}, {"_id": 0})
+    if not program:
+        raise HTTPException(status_code=500, detail="Training program missing during shop fulfillment")
+    fmt = program.get("format") or {}
+    qty_per_unit = int(fmt.get("count") or 0)
+    unit = fmt.get("unit") or "sessions"
+    unit_price = round(float(line["unit_price"]), 2)
+    value_each = round(unit_price / max(qty_per_unit, 1), 2)
+
+    for n in range(int(line["quantity"])):
+        fulfillment_ref = f"{_shop_inventory_ref(order['id'], line['item_id'])}:unit:{n}"
+        existing_lot = await db.credit_lots.find_one({"fulfillment_ref": fulfillment_ref}, {"_id": 0, "id": 1})
+        if not existing_lot:
+            lot = {
+                "id": str(uuid.uuid4()), "client_id": client_id,
+                "pack_kind": "training_program", "pack_id": program["id"], "pack_name": program["name"],
+                "program_id": program["id"], "program_name": program["name"], "service_type": "training",
+                "qty_total": qty_per_unit, "qty_remaining": qty_per_unit, "unit": unit,
+                "price_paid": unit_price, "list_price": round(float(program.get("price") or 0), 2),
+                "value_each": value_each, "payment_method": "stripe_online",
+                "note": f"Online Shop order {order['id'][:8].upper()}",
+                "sold_by": "Online Shop", "purchased_at": now_iso(),
+                "fulfillment_ref": fulfillment_ref, "shop_order_id": order["id"],
+            }
+            try:
+                await db.credit_lots.insert_one(lot.copy())
+            except DuplicateKeyError:
+                pass
+
+        await db.clients.find_one_and_update(
+            {"id": client_id, "shop_credit_grants_applied": {"$ne": fulfillment_ref}},
+            {"$inc": {"training_credits": qty_per_unit}, "$addToSet": {"shop_credit_grants_applied": fulfillment_ref}},
+        )
+
+
+# ── Atomic shop_order-pointer reservation — the Invoice-pointer pattern,
+# reimplemented against shop_orders (can't reuse the invoice helpers
+# verbatim, they're hardcoded to db.invoices). ──────────────────────────────
+
+async def _acquire_shop_order_reservation(order_id: str, attempt_id: str, amount_cents: int) -> Optional[dict]:
+    return await db.shop_orders.find_one_and_update(
+        {"id": order_id, "status": "pending_payment", "stripe_active_attempt_id": None},
+        {"$set": {
+            "stripe_active_attempt_id": attempt_id, "stripe_reserved_amount_cents": amount_cents,
+            "updated_at": now_iso(),
+        }},
+        return_document=ReturnDocument.AFTER,
+    )
+
+
+async def _release_shop_order_reservation_if_owned(order_id: str, attempt_id: str) -> None:
+    await db.shop_orders.update_one(
+        {"id": order_id, "stripe_active_attempt_id": attempt_id},
+        {"$unset": {"stripe_active_attempt_id": "", "stripe_reserved_amount_cents": ""},
+         "$set": {"updated_at": now_iso()}},
+    )
+
+
+# ── Resumable, crash-safe local application — mirrors _apply_stripe_payment's
+# exact Step A/B1-B5 idiom. ──────────────────────────────────────────────────
+
+def _verify_shop_stripe_session_authoritative(session_obj: dict, attempt: dict, order: dict) -> None:
+    """Independently proves the Stripe payment actually belongs to and
+    exactly matches this shop order, BEFORE any fulfillment, inventory
+    commit, credit/program grant, or local-paid state occurs. Every value
+    checked here comes from Stripe itself — either the signature-verified
+    webhook payload (construct_event already proved it's genuinely from
+    Stripe before this ever runs) or a direct stripe.checkout.Session.
+    retrieve() call — never from metadata alone, never from a browser-
+    return query parameter, never from a client-submitted total.
+
+    Raises HTTPException(409) on ANY mismatch. The caller is responsible
+    for landing the attempt in reconciliation_required and performing NO
+    financial or fulfillment mutation — never auto-refund or auto-recharge
+    just because reconciliation is required."""
+    if session_obj.get("id") != attempt.get("stripe_checkout_session_id"):
+        raise HTTPException(status_code=409, detail="Stripe session id does not match the stored payment attempt — reconciliation required.")
+    metadata = session_obj.get("metadata") or {}
+    if metadata.get("sithappens_shop_order_id") != order.get("id"):
+        raise HTTPException(status_code=409, detail="Stripe session metadata does not match the expected shop order — reconciliation required.")
+    if metadata.get("sithappens_attempt_id") != attempt.get("id"):
+        raise HTTPException(status_code=409, detail="Stripe session metadata does not match the expected payment attempt — reconciliation required.")
+    if (session_obj.get("currency") or "").lower() != "usd":
+        raise HTTPException(status_code=409, detail="Stripe session currency does not match the expected currency — reconciliation required.")
+    if session_obj.get("payment_status") != "paid":
+        raise HTTPException(status_code=409, detail="Stripe session does not represent a completed payment — reconciliation required.")
+    # Never trust attempt.amount_cents alone — recompute the expected charge
+    # from the order's own frozen total (the one number nothing here ever
+    # lets a client influence) and require BOTH Stripe's own amount_total
+    # AND our stored attempt amount to agree with it exactly, in cents.
+    expected_cents = _stripe_amount_cents(order.get("total") or 0)
+    stripe_amount = session_obj.get("amount_total")
+    if stripe_amount is None or int(stripe_amount) != expected_cents:
+        raise HTTPException(status_code=409, detail="Stripe paid amount does not match the order total — reconciliation required.")
+    if int(attempt.get("amount_cents") or -1) != expected_cents:
+        raise HTTPException(status_code=409, detail="Stored payment attempt amount does not match the order total — reconciliation required.")
+
+
+async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None) -> dict:
+    """The ONE local-application sequence for a Stripe-confirmed Shop order
+    payment. Safe to call any number of times for the SAME attempt — every
+    step is independently idempotent via its own durable marker, so a crash
+    between any two steps is recoverable by simply calling this again.
+    Reuses the EXISTING canonical Payment/retail_sales/credit_lots/inventory
+    machinery — this is not a second accounting engine. Per-line
+    fulfillment is independent: one line failing never blocks, rolls back,
+    or re-processes a sibling line that already succeeded.
+
+    `session_obj` is the authoritative Stripe Checkout Session payload
+    (from the signature-verified webhook, or a direct Session.retrieve()
+    call) — REQUIRED the first time this attempt ever transitions the
+    order to paid (see _verify_shop_stripe_session_authoritative), so that
+    verification can never be skipped by construction. Not required on a
+    resumed/retry call once the order is already past that transition —
+    e.g. the Front Desk "Retry Fulfillment" action, which only re-drives
+    Step B for an order already verified paid, and never re-charges."""
+    attempt_id = attempt["id"]
+    order_id = attempt["shop_order_id"]
+    amount = round(attempt["amount_cents"] / 100.0, 2)
+    ts = now_iso()
+    business_date = business_today().isoformat()
+
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=500, detail="Shop order missing during Stripe apply")
+
+    # ── Step A — order status transition, idempotent via
+    # shop_last_applied_attempt_id (never cleared for this attempt once set) ──
+    if order.get("shop_last_applied_attempt_id") != attempt_id:
+        # ── Step 0 — authoritative Stripe verification, gated INSIDE this
+        # same "first transition" branch so it can never be bypassed by a
+        # caller that forgets to pass session_obj: without it, we refuse
+        # outright rather than silently trusting our own stored attempt. ──
+        if session_obj is None:
+            raise HTTPException(status_code=409, detail="Missing authoritative Stripe session data — reconciliation required.")
+        _verify_shop_stripe_session_authoritative(session_obj, attempt, order)
+        result = await db.shop_orders.find_one_and_update(
+            {
+                "id": order_id, "status": {"$ne": "canceled"},
+                "shop_last_applied_attempt_id": {"$ne": attempt_id},
+            },
+            {"$set": {"status": "paid", "shop_last_applied_attempt_id": attempt_id, "updated_at": ts}},
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            fresh = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+            if not fresh or fresh.get("shop_last_applied_attempt_id") != attempt_id:
+                raise HTTPException(status_code=409, detail="Shop order reservation was lost before payment could be applied — reconciliation required.")
+            order = fresh
+        else:
+            order = result
+
+    # ── Step B1 — canonical Payment row, reusing the EXISTING check-before-
+    # insert idempotency helper. invoice_id=None, shop_order_id set. ──
+    payment_row = await _insert_payment_row({
+        "id": str(uuid.uuid4()), "invoice_id": None, "shop_order_id": order_id,
+        "client_id": order.get("client_id"),
+        "amount": amount, "method": "stripe_online", "is_credit": False, "date": business_date,
+        "employee_id": None, "employee_name": None,
+        "processor": "stripe", "processor_payment_id": attempt.get("stripe_payment_intent_id"),
+        "status": "completed", "notes": "", "refunded_amount": 0.0,
+        "source": {
+            "kind": "shop_order_payment", "stripe_attempt_id": attempt_id,
+            "stripe_checkout_session_id": attempt.get("stripe_checkout_session_id"),
+            "stripe_payment_intent_id": attempt.get("stripe_payment_intent_id"),
+            "stripe_customer_id": attempt.get("stripe_customer_id"),
+            "card_brand": attempt.get("card_brand"), "card_last4": attempt.get("card_last4"),
+        },
+        "booking_id": None, "ledger_id": None,
+        "idempotency_ref": f"shop_attempt:{attempt_id}",
+        "created_at": ts, "updated_at": ts,
+        "tendered_amount": None, "change_given": None, "business_date": business_date,
+    })
+    payment_id = payment_row["id"]
+
+    # ── Step B2 — ONE retail_sales revenue row for the whole order,
+    # independently resumable by the canonical Payment id — reuses the SAME
+    # existing unique partial index on retail_sales.payment_id, no new
+    # index needed. ──
+    existing_retail = await db.retail_sales.find_one({"payment_id": payment_id}, {"_id": 0})
+    if not existing_retail:
+        retail_row = {
+            "id": str(uuid.uuid4()), "date": business_date, "amount": amount,
+            "payment_method": "stripe_online",
+            "client_id": order.get("client_id"), "client_name": order.get("client_name"),
+            "payment_id": payment_id, "shop_order_id": order_id,
+            "source_kind": "shop_order", "description": f"Online Shop order #{order_id[:8].upper()}",
+            "tax_amount": round(float(order.get("tax_amount") or 0), 2),
+            "tax_rate_pct": float(order.get("tax_rate_pct") or 0),
+            "pre_tax_amount": round(float(order.get("subtotal") or 0), 2),
+            "created_at": ts, "created_by": "stripe_webhook", "logged_by": "Stripe",
+        }
+        try:
+            await db.retail_sales.insert_one(retail_row.copy())
+        except DuplicateKeyError:
+            pass  # already inserted by a concurrent/prior run
+
+    # ── Step B3 — per-line independent fulfillment. ──
+    for line in order.get("lines") or []:
+        if line.get("fulfillment_status") == "fulfilled":
+            continue
+        try:
+            if line["kind"] == "product":
+                await _commit_shop_inventory_line(order_id, line)
+            elif line["kind"] == "credit_pack":
+                await _fulfill_shop_credit_pack_line(order, line)
+            else:
+                await _fulfill_shop_training_program_line(order, line)
+            await db.shop_orders.update_one(
+                {"id": order_id, "lines.item_id": line["item_id"]},
+                {"$set": {"lines.$.fulfillment_status": "fulfilled", "updated_at": now_iso()}},
+            )
+        except Exception as exc:
+            logger.warning("Shop order %s line %s fulfillment failed: %s", order_id, line["item_id"], exc)
+            await db.shop_orders.update_one(
+                {"id": order_id, "lines.item_id": line["item_id"]},
+                {"$set": {"lines.$.fulfillment_status": "failed", "updated_at": now_iso()}},
+            )
+
+    # ── Step B4 — order-level fulfillment status, always safe to rerun (a
+    # pure function of the order's current line states). ──
+    fresh_order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    fresh_lines = fresh_order.get("lines") or []
+    order_fulfillment = "fulfilled" if all(l.get("fulfillment_status") == "fulfilled" for l in fresh_lines) else "needs_attention"
+    await db.shop_orders.update_one({"id": order_id}, {"$set": {"fulfillment_status": order_fulfillment, "updated_at": now_iso()}})
+
+    # ── Every Step B write independently confirmed complete — mark applied,
+    # THEN (only then) release the reservation. Never the reverse order. ──
+    await db.shop_payment_attempts.update_one(
+        {"id": attempt_id}, {"$set": {"status": "applied", "applied_payment_id": payment_id, "updated_at": now_iso()}},
+    )
+    await _release_shop_order_reservation_if_owned(order_id, attempt_id)
+
+    return await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+
+
+async def _verify_and_reconcile_shop_session(attempt: dict) -> dict:
+    """No-TTL replacement for time-based release — mirrors
+    _verify_and_reconcile_stripe_session exactly. Never releases a 'pending'
+    shop payment attempt just because expires_at has passed; always asks
+    Stripe for the real Checkout Session state first."""
+    if attempt.get("status") != "pending":
+        return attempt
+    session = stripe.checkout.Session.retrieve(attempt["stripe_checkout_session_id"]).to_dict()
+    if session.get("payment_status") == "paid":
+        try:
+            await _apply_shop_payment(attempt, session)
+        except HTTPException:
+            await db.shop_payment_attempts.find_one_and_update(
+                {"id": attempt["id"], "status": {"$nin": list(SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES)}},
+                {"$set": {"status": "reconciliation_required", "updated_at": now_iso()}},
+            )
+    elif not await _shop_order_already_paid(attempt["shop_order_id"]):
+        result = await db.shop_payment_attempts.find_one_and_update(
+            {"id": attempt["id"], "status": "pending"},
+            {"$set": {"status": "expired", "updated_at": now_iso()}},
+        )
+        if result is not None:
+            await _release_shop_order_reservation_if_owned(attempt["shop_order_id"], attempt["id"])
+            await _release_shop_order_inventory(attempt["shop_order_id"])
+            await db.shop_orders.update_one(
+                {"id": attempt["shop_order_id"], "status": {"$ne": "paid"}},
+                {"$set": {"status": "canceled", "updated_at": now_iso()}},
+            )
+    return await db.shop_payment_attempts.find_one({"id": attempt["id"]}, {"_id": 0})
+
+
+@api.post("/shop/checkout")
+async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_current_user)):
+    """Client Shop Phase 2 — the ONE checkout entry point. Claim-first
+    idempotency preassigns a shop_order_id so a retried request always
+    resumes the SAME order/reservation/Stripe session rather than pricing,
+    reserving, or charging a second time."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    _require_stripe_online_enabled()
+    client_id = user.get("client_id")
+    client = await db.clients.find_one({"id": client_id}, {"_id": 0})
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    cart_fingerprint_items = [{"kind": it.kind, "ref_id": it.ref_id, "quantity": it.quantity} for it in body.items]
+    fingerprint = _request_fingerprint(client_id, cart_fingerprint_items)
+    order_id = str(uuid.uuid4())
+    ts = now_iso()
+
+    try:
+        await db.shop_checkout_claims.insert_one({
+            "id": str(uuid.uuid4()), "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
+            "client_id": client_id, "shop_order_id": order_id, "created_at": ts, "updated_at": ts,
+        })
+    except DuplicateKeyError:
+        existing_claim = await db.shop_checkout_claims.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing_claim or existing_claim.get("client_id") != client_id or existing_claim.get("request_fingerprint") != fingerprint:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
+        order_id = existing_claim["shop_order_id"]  # resume the SAME order this key already claimed
+
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        priced = await _price_shop_cart(body.items)
+        if priced["total"] <= 0.005:
+            raise HTTPException(status_code=400, detail="Cart total must be greater than zero.")
+        order_doc = {
+            "id": order_id, "client_id": client_id, "client_name": client.get("name") or "",
+            "status": "pending_payment", "fulfillment_status": "pending", "pickup_status": None,
+            "lines": priced["lines"], "subtotal": priced["subtotal"], "tax_amount": priced["tax_amount"],
+            "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
+            "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
+            "shop_last_applied_attempt_id": None,
+            "created_at": ts, "updated_at": ts,
+        }
+        try:
+            await db.shop_orders.insert_one(order_doc)
+            order = order_doc
+        except DuplicateKeyError:
+            order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+
+    if order.get("status") in ("payment_failed", "canceled"):
+        raise HTTPException(status_code=409, detail="This order can no longer be paid — please start a new checkout.")
+
+    # Reserve inventory for every physical line — per-line independent, using
+    # the exact retry precedence documented on _reserve_shop_inventory_line.
+    for line in order["lines"]:
+        await _reserve_shop_inventory_line(order, line)
+
+    amount_cents = _stripe_amount_cents(order["total"])
+    attempt_id = str(uuid.uuid4())
+    try:
+        await db.shop_payment_attempts.insert_one({
+            "id": attempt_id, "idempotency_key": body.idempotency_key, "request_fingerprint": fingerprint,
+            "shop_order_id": order_id, "client_id": client_id, "amount_cents": amount_cents,
+            "status": "pending",
+            "stripe_checkout_session_id": None, "stripe_checkout_session_url": None,
+            "stripe_payment_intent_id": None, "stripe_customer_id": None,
+            "card_brand": None, "card_last4": None, "applied_payment_id": None,
+            "created_at": ts, "updated_at": ts, "expires_at": None,
+        })
+    except DuplicateKeyError:
+        existing = await db.shop_payment_attempts.find_one({"idempotency_key": body.idempotency_key}, {"_id": 0})
+        if not existing or existing.get("shop_order_id") != order_id:
+            raise HTTPException(status_code=409, detail="This idempotency key was already used for a different request.")
+        if existing.get("stripe_checkout_session_url"):
+            return {"url": existing["stripe_checkout_session_url"], "order_id": order_id}
+        if existing.get("status") in SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES:
+            raise HTTPException(status_code=409, detail="This payment attempt has already been resolved.")
+        attempt_id = existing["id"]
+
+    reserved_order = await _acquire_shop_order_reservation(order_id, attempt_id, amount_cents)
+    if reserved_order is None:
+        current_order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0, "stripe_active_attempt_id": 1})
+        if not (current_order and current_order.get("stripe_active_attempt_id") == attempt_id):
+            await db.shop_payment_attempts.delete_one({"id": attempt_id, "stripe_checkout_session_id": None})
+            raise HTTPException(status_code=409, detail="This order already has an active online payment in progress.")
+
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=STRIPE_CHECKOUT_EXPIRES_SECONDS)
+    stripe_customer_id = client.get("stripe_customer_id")
+    try:
+        if not stripe_customer_id:
+            customer = stripe.Customer.create(
+                name=client.get("name") or None, email=client.get("email") or None,
+                metadata={"sithappens_client_id": client_id},
+            )
+            stripe_customer_id = customer["id"]
+            await db.clients.update_one({"id": client_id}, {"$set": {"stripe_customer_id": stripe_customer_id}})
+
+        line_items = [{
+            "price_data": {
+                "currency": "usd", "product_data": {"name": l["name"]},
+                "unit_amount": _stripe_amount_cents(l["unit_price"]),
+            },
+            "quantity": l["quantity"],
+        } for l in order["lines"]]
+        if order.get("tax_amount"):
+            line_items.append({
+                "price_data": {
+                    "currency": "usd", "product_data": {"name": "Sales tax"},
+                    "unit_amount": _stripe_amount_cents(order["tax_amount"]),
+                },
+                "quantity": 1,
+            })
+
+        session = stripe.checkout.Session.create(
+            mode="payment",
+            customer=stripe_customer_id,
+            line_items=line_items,
+            success_url=f"{_app_public_url()}/portal?shop_order={order_id}&stripe=success",
+            cancel_url=f"{_app_public_url()}/portal?shop_order={order_id}&stripe=cancel",
+            expires_at=int(expires_at.timestamp()),
+            metadata={
+                "sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                "sithappens_client_id": client_id,
+            },
+            idempotency_key=f"shop_attempt_create:{attempt_id}",
+        )
+    except Exception as exc:
+        await db.shop_payment_attempts.update_one({"id": attempt_id}, {"$set": {"status": "failed", "updated_at": now_iso()}})
+        await _release_shop_order_reservation_if_owned(order_id, attempt_id)
+        # Unlike an invoice (no separate inventory concept), a shop order may
+        # already hold real stock reservations at this point — those must
+        # never be left dangling just because Stripe itself was unreachable.
+        # Mark the order failed and release every physical line's claim.
+        await db.shop_orders.update_one(
+            {"id": order_id, "status": {"$ne": "paid"}},
+            {"$set": {"status": "payment_failed", "updated_at": now_iso()}},
+        )
+        await _release_shop_order_inventory(order_id)
+        logger.warning("Stripe Checkout Session creation failed for shop attempt %s: %s", attempt_id, exc)
+        raise HTTPException(status_code=502, detail="Could not start the online payment — please try again.")
+
+    await db.shop_payment_attempts.update_one(
+        {"id": attempt_id},
+        {"$set": {
+            "stripe_checkout_session_id": session["id"], "stripe_checkout_session_url": session["url"],
+            "stripe_customer_id": stripe_customer_id, "expires_at": expires_at.isoformat(), "updated_at": now_iso(),
+        }},
+    )
+    return {"url": session["url"], "order_id": order_id}
+
+
+@api.get("/portal/shop-orders")
+async def portal_shop_orders(user: dict = Depends(get_current_user)):
+    """Client's own Shop order history — hand-picked safe fields only, same
+    convention as portal_invoices. Ownership is enforced by construction:
+    the query is scoped to user['client_id'] from the authenticated
+    session, never a client-submitted id."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    cid = user.get("client_id")
+    orders = []
+    if cid:
+        rows = await db.shop_orders.find({"client_id": cid}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        for o in rows:
+            orders.append({
+                "order_id": o["id"], "created_at": o.get("created_at"),
+                "status": o.get("status"), "fulfillment_status": o.get("fulfillment_status"),
+                "pickup_status": o.get("pickup_status"), "total": o.get("total"),
+                "lines": [
+                    {"kind": l["kind"], "name": l["name"], "quantity": l["quantity"], "fulfillment_status": l.get("fulfillment_status")}
+                    for l in (o.get("lines") or [])
+                ],
+            })
+    return {"orders": orders}
+
+
+@api.get("/portal/shop-orders/{order_id}")
+async def portal_shop_order_status(order_id: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order or order.get("client_id") != user.get("client_id"):
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    attempt = await db.shop_payment_attempts.find_one({"shop_order_id": order_id}, {"_id": 0})
+    if attempt and attempt.get("status") == "pending" and attempt.get("expires_at"):
+        try:
+            if datetime.now(timezone.utc) > datetime.fromisoformat(attempt["expires_at"]):
+                await _verify_and_reconcile_shop_session(attempt)
+                order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+        except HTTPException:
+            pass  # verification itself failed — client just sees the current state and can poll again
+
+    return {
+        "order_id": order_id, "status": order.get("status"), "fulfillment_status": order.get("fulfillment_status"),
+        "pickup_status": order.get("pickup_status"), "total": order.get("total"),
+        "lines": [
+            {"kind": l["kind"], "name": l["name"], "quantity": l["quantity"], "fulfillment_status": l.get("fulfillment_status")}
+            for l in (order.get("lines") or [])
+        ],
+    }
+
+
+# ── Front Desk — Online Orders surface ──────────────────────────────────────
+
+@api.get("/admin/shop-orders")
+async def list_shop_orders(fulfillment_status: Optional[str] = None, user: dict = Depends(require_employee_or_admin)):
+    _require_take_payments(user)
+    q: Dict[str, Any] = {"status": "paid"}
+    if fulfillment_status:
+        q["fulfillment_status"] = fulfillment_status
+    cursor = db.shop_orders.find(q, {"_id": 0}).sort("created_at", -1)
+    return {"orders": await cursor.to_list(500)}
+
+
+class ShopOrderFulfillmentActionIn(BaseModel):
+    action: Literal["mark_ready", "mark_picked_up", "retry_fulfillment"]
+
+
+@api.post("/admin/shop-orders/{order_id}/fulfillment")
+async def update_shop_order_fulfillment(order_id: str, body: ShopOrderFulfillmentActionIn, user: dict = Depends(require_employee_or_admin)):
+    _require_take_payments(user)
+    order = await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order.get("status") != "paid":
+        raise HTTPException(status_code=400, detail="This order has not been paid yet.")
+
+    if body.action == "retry_fulfillment":
+        attempt = await db.shop_payment_attempts.find_one({"shop_order_id": order_id}, {"_id": 0})
+        if not attempt:
+            raise HTTPException(status_code=400, detail="No payment attempt found for this order.")
+        await _apply_shop_payment(attempt)
+        return await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+
+    new_pickup_status = {"mark_ready": "ready_for_pickup", "mark_picked_up": "picked_up"}[body.action]
+    await db.shop_orders.update_one({"id": order_id}, {"$set": {"pickup_status": new_pickup_status, "updated_at": now_iso()}})
+    return await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
 
 
 # ─────────────────────────────────────────────────────────────────────────────

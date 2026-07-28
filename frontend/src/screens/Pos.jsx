@@ -338,6 +338,29 @@ export default function Pos() {
   useEffect(() => { if (onlinePaymentsOpen) loadOnlinePayments(); }, [onlinePaymentsOpen]);
   const [refundingPayment, setRefundingPayment] = useState(null);
 
+  // ── Online Orders (Client Shop Phase 2) — paid shop_orders awaiting
+  // pickup/fulfillment follow-up. Separate from both Recent Sales (pos_sales)
+  // and Online Payments (the raw Stripe payment ledger) — this is the
+  // operational "what do I hand the client" view. ──
+  const [onlineOrders, setOnlineOrders] = useState([]);
+  const [onlineOrdersOpen, setOnlineOrdersOpen] = useState(false);
+  const [orderActionBusyId, setOrderActionBusyId] = useState(null);
+  const loadOnlineOrders = () => api.get("/admin/shop-orders")
+    .then(({ data }) => setOnlineOrders(data.orders || [])).catch(() => {});
+  useEffect(() => { if (onlineOrdersOpen) loadOnlineOrders(); }, [onlineOrdersOpen]);
+
+  const runOrderAction = async (orderId, action) => {
+    setOrderActionBusyId(orderId);
+    try {
+      await api.post(`/admin/shop-orders/${orderId}/fulfillment`, { action });
+      await loadOnlineOrders();
+      toast.success(action === "retry_fulfillment" ? "Fulfillment retried" : "Order updated");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update this order");
+    }
+    setOrderActionBusyId(null);
+  };
+
   const reprintSale = async (sale) => {
     try {
       const { data } = await api.post(`/pos/sales/${sale.id}/pos-tokens`, { actions: ["print_receipt"] });
@@ -545,6 +568,10 @@ export default function Pos() {
               Online Payments
             </button>
           )}
+          <button onClick={() => setOnlineOrdersOpen((o) => !o)} data-testid="pos-online-orders-toggle"
+                  className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+            Online Orders
+          </button>
         </div>
       </div>
 
@@ -636,7 +663,8 @@ export default function Pos() {
                     <div>
                       <p className="text-white font-bold text-sm">{p.client_name || "Unknown client"}</p>
                       <p className="text-gray-500 text-[12px]">
-                        Invoice #{(p.invoice_id || "").slice(0, 8)} · {p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
+                        {p.shop_order_id ? `Order #${p.shop_order_id.slice(0, 8)}` : `Invoice #${(p.invoice_id || "").slice(0, 8)}`}
+                        {" · "}{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
                         {card ? ` · ${card}` : ""}
                       </p>
                     </div>
@@ -646,7 +674,11 @@ export default function Pos() {
                       <p>Refundable: <span className="text-shGreen font-bold">{money(p.remaining_refundable)}</span></p>
                     </div>
                     <div>
-                      {fullyRefunded ? (
+                      {p.shop_order_id ? (
+                        // Client Shop Phase 2 — refunds for Shop orders aren't
+                        // built yet (Phase 3). Display-only for now.
+                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Shop Order</span>
+                      ) : fullyRefunded ? (
                         <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
                       ) : p.refund_in_progress ? (
                         <button disabled className="bg-bgBase border border-bgHover text-shOrange px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
@@ -659,6 +691,73 @@ export default function Pos() {
                         </button>
                       )}
                     </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {onlineOrdersOpen && (
+        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4" data-testid="pos-online-orders-panel">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
+            <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-gray-400 hover:text-shGreen">
+              <i className="fas fa-rotate-right mr-1" />Refresh
+            </button>
+          </div>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
+            {onlineOrders.length === 0 && <p className="text-gray-500 text-sm">No paid Shop orders yet.</p>}
+            {onlineOrders.map((o) => {
+              const busy = orderActionBusyId === o.id;
+              return (
+                <div key={o.id} className="border border-bgHover rounded-lg p-3" data-testid={`online-order-${o.id}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div>
+                      <p className="text-white font-bold text-sm">Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}</p>
+                      <p className="text-gray-500 text-[12px]">
+                        {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
+                      </p>
+                      <p className="text-[11px] text-gray-500 mt-1">
+                        {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      {o.fulfillment_status === "fulfilled" ? (
+                        <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
+                      ) : o.fulfillment_status === "needs_attention" ? (
+                        <span className="text-shOrange text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
+                      ) : (
+                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Processing</span>
+                      )}
+                      <p className="text-[11px] text-gray-500 mt-1 uppercase tracking-widest">
+                        {o.pickup_status === "picked_up" ? "Picked Up" : o.pickup_status === "ready_for_pickup" ? "Ready for Pickup" : "Not Ready"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2 flex-wrap">
+                    {o.fulfillment_status === "needs_attention" && (
+                      <button onClick={() => runOrderAction(o.id, "retry_fulfillment")} disabled={busy}
+                              data-testid={`online-order-retry-${o.id}`}
+                              className="bg-shOrange/15 border border-shOrange/40 text-shOrange px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shOrange/25 transition disabled:opacity-50">
+                        {busy ? "Retrying…" : "Retry Fulfillment"}
+                      </button>
+                    )}
+                    {o.pickup_status !== "ready_for_pickup" && o.pickup_status !== "picked_up" && (
+                      <button onClick={() => runOrderAction(o.id, "mark_ready")} disabled={busy}
+                              data-testid={`online-order-mark-ready-${o.id}`}
+                              className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                        Mark Ready
+                      </button>
+                    )}
+                    {o.pickup_status !== "picked_up" && (
+                      <button onClick={() => runOrderAction(o.id, "mark_picked_up")} disabled={busy}
+                              data-testid={`online-order-mark-picked-up-${o.id}`}
+                              className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                        Mark Picked Up
+                      </button>
+                    )}
                   </div>
                 </div>
               );
