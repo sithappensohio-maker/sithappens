@@ -1216,3 +1216,233 @@ def test_online_payments_requires_admin(fresh_client_and_dog):
     client, dog = fresh_client_and_dog
     r = requests.get(f"{API}/admin/stripe-online-payments", timeout=15)
     assert r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
+# 13. Generic Stripe-refund retail_sales reversal + crash-resumable
+#     _finalize_stripe_refund. Fixes a real, pre-existing gap: refunds never
+#     wrote an offsetting retail_sales row, so Finance/Income/Register
+#     reporting overstated revenue after ANY stripe_online refund.
+# ---------------------------------------------------------------------------
+
+def _seed_original_retail_sales_row(payment_id, client_id, client_name, invoice_id, amount):
+    """Simulates the retail_sales row _apply_stripe_payment's Step B4 would
+    have written for the original (pre-refund) Stripe payment."""
+    ts = datetime.now(timezone.utc).isoformat()
+
+    async def _seed(db):
+        await db.retail_sales.insert_one({
+            "id": str(uuid.uuid4()), "date": date.today().isoformat(), "amount": amount,
+            "payment_method": "stripe_online", "client_id": client_id, "client_name": client_name,
+            "invoice_id": invoice_id, "payment_id": payment_id,
+            "source_kind": "stripe_online_payment", "description": f"Stripe online payment · {invoice_id}",
+            "created_at": ts, "created_by": "stripe_webhook", "logged_by": "Stripe",
+        })
+    _mongo_run(_seed)
+
+
+def _fetch_retail_sales_reversals(payment_id):
+    async def _fetch(db):
+        return await db.retail_sales.find({"reversed_payment_id": payment_id}, {"_id": 0}).to_list(10)
+    return _mongo_run(_fetch)
+
+
+def _get_refund_attempt(refund_attempt_id):
+    """NOTE: the existing _get_attempt helper (above) queries
+    stripe_payment_attempts (the checkout-session attempt collection) — a
+    different collection entirely. Refund attempts live in
+    stripe_refund_attempts, so this dedicated helper is needed here."""
+    async def _fetch(db):
+        return await db.stripe_refund_attempts.find_one({"id": refund_attempt_id}, {"_id": 0})
+    return _mongo_run(_fetch)
+
+
+def test_stripe_refund_writes_offsetting_retail_sales_row(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=60.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 60.0)
+    _seed_original_retail_sales_row(payment_id, client["id"], client["name"], invoice["id"], 60.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 25.0)
+
+    r = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r.status_code == 200, r.text
+
+    reversals = _fetch_retail_sales_reversals(payment_id)
+    assert len(reversals) == 1, "exactly one offsetting retail_sales row must be written"
+    rev = reversals[0]
+    assert abs(rev["amount"] - (-25.0)) < 0.01
+    assert rev["source_kind"] == "stripe_refund"
+    assert rev["payment_method"] == "stripe_online"
+    assert rev["client_name"] == client["name"]
+
+    # Original row must be untouched — never edited/deleted.
+    async def _fetch_original(db):
+        return await db.retail_sales.find_one({"payment_id": payment_id}, {"_id": 0})
+    original = _mongo_run(_fetch_original)
+    assert abs(original["amount"] - 60.0) < 0.01
+
+
+def test_stripe_refund_retail_sales_reversal_idempotent_on_webhook_replay(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=40.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 40.0)
+    _seed_original_retail_sales_row(payment_id, client["id"], client["name"], invoice["id"], 40.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 15.0)
+
+    r1 = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r1.status_code == 200, r1.text
+    r2 = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r2.status_code == 200, r2.text
+
+    reversals = _fetch_retail_sales_reversals(payment_id)
+    assert len(reversals) == 1, "duplicate webhook delivery must never create a second reversal row"
+
+    async def _fetch_payment(db):
+        return await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    payment = _mongo_run(_fetch_payment)
+    assert abs(payment["refunded_amount"] - 15.0) < 0.01, "refunded_amount must not double-count on replay"
+
+
+def test_stripe_refund_skips_retail_sales_reversal_when_no_original_row(admin_headers, fresh_client_and_dog):
+    """No original retail_sales row exists for this payment (e.g. pre-dates
+    this fix) — finalize must not crash and must not fabricate a reversal."""
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=30.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 30.0)
+    # Deliberately NOT seeding an original retail_sales row.
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 10.0)
+
+    r = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r.status_code == 200, r.text
+
+    assert _fetch_retail_sales_reversals(payment_id) == []
+
+    async def _fetch_payment(db):
+        return await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    payment = _mongo_run(_fetch_payment)
+    assert abs(payment["refunded_amount"] - 10.0) < 0.01, "refunded_amount still applies even with no retail_sales row"
+
+
+def test_finalize_stripe_refund_resumes_after_succeeded_but_incomplete(admin_headers, fresh_client_and_dog):
+    """Reproduces the exact crash scenario: the refund attempt's status was
+    already flipped to "succeeded" but every downstream local write (reversal
+    Payment, refunded_amount, retail_sales reversal, invoice refund state,
+    applied_refund_payment_id) never ran — simulating a process interruption
+    right after the status guard. A redelivered webhook (the real-world
+    recovery path) must complete every missing write exactly once."""
+    client, dog = fresh_client_and_dog
+    bid, invoice = _partial_paid_invoice(admin_headers, client, dog, total=200.0, paid=75.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 75.0, bump_invoice=False)
+    _seed_original_retail_sales_row(payment_id, client["id"], client["name"], invoice["id"], 75.0)
+    invoice_before = _get_invoice_raw(invoice["id"])
+    refunded_total_before = float(invoice_before.get("refunded_total") or 0)
+
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 30.0)
+    # Simulate the crash point: status already "succeeded", nothing else done.
+    async def _simulate_crash(db):
+        await db.stripe_refund_attempts.update_one(
+            {"id": refund_attempt_id}, {"$set": {"status": "succeeded"}},
+        )
+    _mongo_run(_simulate_crash)
+
+    # Recovery: a redelivered webhook must reach _finalize_stripe_refund even
+    # though _handle_refund_event sees a terminal status — this exercises the
+    # fix to _handle_refund_event's own guard, not just _finalize_stripe_refund.
+    r = _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"})
+    assert r.status_code == 200, r.text
+
+    attempt = _get_refund_attempt(refund_attempt_id)
+    assert attempt["applied_refund_payment_id"], "local application must complete on resume"
+
+    async def _fetch_payment(db):
+        return await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    payment = _mongo_run(_fetch_payment)
+    assert abs(payment["refunded_amount"] - 30.0) < 0.01
+
+    reversals = _fetch_retail_sales_reversals(payment_id)
+    assert len(reversals) == 1
+    assert reversals[0]["id"] != payment_id
+
+    async def _fetch_reversal_payment(db):
+        return await db.payments.find_one({"id": attempt["applied_refund_payment_id"]}, {"_id": 0})
+    reversal_payment = _mongo_run(_fetch_reversal_payment)
+    assert reversal_payment is not None
+    assert abs(reversal_payment["amount"] - (-30.0)) < 0.01
+
+    invoice_after = _get_invoice_raw(invoice["id"])
+    assert abs(float(invoice_after["refunded_total"]) - (refunded_total_before + 30.0)) < 0.01
+
+
+def test_finalize_stripe_refund_fully_applied_attempt_is_true_noop(admin_headers, fresh_client_and_dog):
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=50.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 50.0)
+    _seed_original_retail_sales_row(payment_id, client["id"], client["name"], invoice["id"], 50.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 20.0)
+
+    # First delivery — fully applies.
+    assert _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"}).status_code == 200
+    attempt_after_first = _get_refund_attempt(refund_attempt_id)
+    assert attempt_after_first["applied_refund_payment_id"]
+
+    # Second delivery — must be a true no-op (already fully applied).
+    assert _post_stripe_webhook("refund.updated", {"id": stripe_refund_id, "status": "succeeded"}).status_code == 200
+
+    async def _fetch_payment(db):
+        return await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    payment = _mongo_run(_fetch_payment)
+    assert abs(payment["refunded_amount"] - 20.0) < 0.01, "must not double-apply once already fully applied"
+    assert len(_fetch_retail_sales_reversals(payment_id)) == 1
+
+    attempt_after_second = _get_refund_attempt(refund_attempt_id)
+    assert attempt_after_second["applied_refund_payment_id"] == attempt_after_first["applied_refund_payment_id"]
+
+
+def test_finalize_stripe_refund_concurrent_resume_applies_exactly_once(admin_headers, fresh_client_and_dog):
+    """Two concurrent calls both resuming the SAME "succeeded but
+    incomplete" attempt (e.g. a synchronous caller and a racing webhook)
+    must still produce exactly one reversal Payment, one retail_sales
+    reversal, and exactly one refunded_amount increment."""
+    client, dog = fresh_client_and_dog
+    bid, invoice = _fully_paid_invoice_non_ar(admin_headers, client, dog, total=80.0)
+    payment_id = _seed_stripe_collected_payment(invoice["id"], client["id"], 80.0)
+    _seed_original_retail_sales_row(payment_id, client["id"], client["name"], invoice["id"], 80.0)
+    refund_attempt_id, stripe_refund_id = _seed_refund_attempt(payment_id, invoice["id"], 35.0)
+
+    async def _simulate_crash(db):
+        await db.stripe_refund_attempts.update_one(
+            {"id": refund_attempt_id}, {"$set": {"status": "succeeded"}},
+        )
+    _mongo_run(_simulate_crash)
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    import server as server_module
+    real_db = server_module.db
+
+    async def _race():
+        fresh_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        server_module.db = fresh_client[os.environ.get("DB_NAME", "sit_happens")]
+        try:
+            await asyncio.gather(
+                server_module._finalize_stripe_refund(refund_attempt_id),
+                server_module._finalize_stripe_refund(refund_attempt_id),
+            )
+        finally:
+            fresh_client.close()
+
+    try:
+        asyncio.run(_race())
+    finally:
+        server_module.db = real_db
+
+    async def _fetch(db):
+        payment = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+        reversals = await db.payments.find(
+            {"invoice_id": invoice["id"], "source.kind": "stripe_refund"}, {"_id": 0},
+        ).to_list(10)
+        retail_reversals = await db.retail_sales.find({"reversed_payment_id": payment_id}, {"_id": 0}).to_list(10)
+        return payment, reversals, retail_reversals
+    payment, reversals, retail_reversals = _mongo_run(_fetch)
+    assert abs(payment["refunded_amount"] - 35.0) < 0.01, "concurrent resume must not double-apply"
+    assert len(reversals) == 1
+    assert len(retail_reversals) == 1
