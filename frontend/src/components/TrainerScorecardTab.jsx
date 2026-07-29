@@ -47,15 +47,15 @@ export default function TrainerScorecardTab() {
   return (
     <div className="space-y-4" data-testid="trainer-scorecard">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen">
+        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
           <i className="fas fa-clipboard-user mr-1.5"/>Trainer Scorecard
         </p>
-        <div className="flex items-center gap-1 bg-bgPanel border border-bgHover rounded p-0.5">
+        <div className="flex items-center gap-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-0.5">
           {RANGES.map(r => (
             <button key={r.value} onClick={() => setDays(r.value)}
                     data-testid={`scorecard-range-${r.value}`}
                     className={`px-3 py-1.5 text-[11px] font-black uppercase tracking-widest rounded transition ${
-                      days === r.value ? "bg-shGreen text-bgHeader" : "text-gray-400 hover:text-white"
+                      days === r.value ? "bg-shPrimary text-bgHeader" : "text-shTextMuted hover:text-shText"
                     }`}>
               {r.label}
             </button>
@@ -64,7 +64,7 @@ export default function TrainerScorecardTab() {
       </div>
 
       {loading && (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-6 text-center text-gray-400">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-6 text-center text-shTextMuted">
           <i className="fas fa-spinner fa-spin mr-2"/>Loading scorecard…
         </div>
       )}
@@ -79,22 +79,22 @@ export default function TrainerScorecardTab() {
         <>
           {/* Totals strip */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Tile label="Trainers" value={data.totals.trainers} icon="fa-user-tie" color="text-shBlue" testId="scorecard-total-trainers"/>
-            <Tile label="Sessions" value={data.totals.sessions} icon="fa-clipboard-list" color="text-shGreen" testId="scorecard-total-sessions"/>
-            <Tile label="Skills mastered" value={data.totals.skills_mastered} icon="fa-star" color="text-shOrange" testId="scorecard-total-mastered"/>
+            <Tile label="Trainers" value={data.totals.trainers} icon="fa-user-tie" color="text-shSecondary" testId="scorecard-total-trainers"/>
+            <Tile label="Sessions" value={data.totals.sessions} icon="fa-clipboard-list" color="text-shPrimary" testId="scorecard-total-sessions"/>
+            <Tile label="Skills mastered" value={data.totals.skills_mastered} icon="fa-star" color="text-shAccent" testId="scorecard-total-mastered"/>
             <Tile label="Modules advanced" value={data.totals.modules_advanced} icon="fa-forward" color="text-pink-400" testId="scorecard-total-advanced"/>
           </div>
 
           {/* Trainer rows */}
           {data.trainers.length === 0 ? (
-            <div className="bg-bgPanel border border-bgHover rounded-xl p-8 text-center text-gray-500" data-testid="scorecard-empty">
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-8 text-center text-shTextMuted" data-testid="scorecard-empty">
               <i className="fas fa-clipboard text-3xl mb-2 opacity-40"/>
               <p className="text-sm">No training sessions logged in the last {data.days} days.</p>
               <p className="text-[12px] mt-1">Trainers will appear here after their first logged session via the Training Tracker.</p>
             </div>
           ) : (
-            <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden card-table" data-testid="scorecard-table">
-              <div className="hidden sm:grid grid-cols-12 gap-3 px-4 py-2 bg-bgBase/50 border-b border-bgHover text-[10px] font-black uppercase tracking-[0.25em] text-gray-500">
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden card-table" data-testid="scorecard-table">
+              <div className="hidden sm:grid grid-cols-12 gap-3 px-4 py-2 bg-[var(--sh-card-base)]/50 border-b border-shBorder text-[10px] font-black uppercase tracking-[0.25em] text-shTextMuted">
                 <div className="col-span-4">Trainer</div>
                 <div className="col-span-2 text-right">Sessions</div>
                 <div className="col-span-2 text-right">Dogs</div>
@@ -104,74 +104,74 @@ export default function TrainerScorecardTab() {
               </div>
               {data.trainers.map(t => (
                 <div key={t.trainer_key} data-testid={`scorecard-row-${t.trainer_key}`}
-                     className="border-b border-bgHover/60 last:border-b-0">
+                     className="border-b border-shBorder/60 last:border-b-0">
                   <button onClick={() => setExpanded(e => ({ ...e, [t.trainer_key]: !e[t.trainer_key] }))}
                           data-testid={`scorecard-row-toggle-${t.trainer_key}`}
-                          className="w-full grid grid-cols-12 gap-3 px-4 py-3 items-center hover:bg-bgBase/40 transition text-left">
+                          className="w-full grid grid-cols-12 gap-3 px-4 py-3 items-center hover:bg-[var(--sh-card-base)]/40 transition text-left">
                     <div className="col-span-12 sm:col-span-4 flex items-center gap-2">
-                      <i className={`fas ${expanded[t.trainer_key] ? "fa-chevron-down" : "fa-chevron-right"} text-gray-500 text-[10px]`}/>
+                      <i className={`fas ${expanded[t.trainer_key] ? "fa-chevron-down" : "fa-chevron-right"} text-shTextMuted text-[10px]`}/>
                       <div className="min-w-0">
-                        <p className="text-white font-black text-[14px] truncate">{t.trainer_name}</p>
+                        <p className="text-shText font-black text-[14px] truncate">{t.trainer_name}</p>
                         {t.trainer_email && t.trainer_email !== t.trainer_name && (
-                          <p className="text-gray-500 text-[11px] truncate">{t.trainer_email}</p>
+                          <p className="text-shTextMuted text-[11px] truncate">{t.trainer_email}</p>
                         )}
                       </div>
                     </div>
                     <div className="col-span-3 sm:col-span-2 sm:text-right">
-                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Sessions</p>
-                      <p className="text-shGreen font-black text-[16px]">{t.session_count}</p>
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-shTextMuted">Sessions</p>
+                      <p className="text-shPrimary font-black text-[16px]">{t.session_count}</p>
                     </div>
                     <div className="col-span-3 sm:col-span-2 sm:text-right">
-                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Dogs</p>
-                      <p className="text-shBlue font-black text-[16px]">{t.unique_dogs}</p>
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-shTextMuted">Dogs</p>
+                      <p className="text-shSecondary font-black text-[16px]">{t.unique_dogs}</p>
                     </div>
                     <div className="col-span-3 sm:col-span-2 sm:text-right">
-                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Mastered</p>
-                      <p className="text-shOrange font-black text-[16px]">{t.skills_mastered}</p>
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-shTextMuted">Mastered</p>
+                      <p className="text-shAccent font-black text-[16px]">{t.skills_mastered}</p>
                     </div>
                     <div className="col-span-3 sm:col-span-1 sm:text-right">
-                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Adv</p>
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-shTextMuted">Adv</p>
                       <p className="text-pink-400 font-black text-[16px]">{t.modules_advanced}</p>
                     </div>
                     <div className="col-span-12 sm:col-span-1 sm:text-right">
-                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-gray-500">Last session</p>
-                      <p className="text-gray-400 text-[11px] font-black uppercase tracking-widest">{fmtRelative(t.last_session_at)}</p>
+                      <p className="sm:hidden text-[10px] font-black uppercase tracking-widest text-shTextMuted">Last session</p>
+                      <p className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">{fmtRelative(t.last_session_at)}</p>
                     </div>
                   </button>
                   {expanded[t.trainer_key] && (
-                    <div className="bg-bgBase/40 border-t border-bgHover/60 px-4 py-3 space-y-2"
+                    <div className="bg-[var(--sh-card-base)]/40 border-t border-shBorder/60 px-4 py-3 space-y-2"
                          data-testid={`scorecard-expansion-${t.trainer_key}`}>
                       {(t.dogs || []).length === 0 ? (
-                        <p className="text-gray-500 text-[12px]">No per-dog breakdown available.</p>
+                        <p className="text-shTextMuted text-[12px]">No per-dog breakdown available.</p>
                       ) : (t.dogs || []).map(d => (
                         <div key={d.dog_id || d.enrollment_id} data-testid={`scorecard-dog-${d.dog_id}`}
-                             className="bg-bgPanel/60 border border-bgHover rounded p-3">
+                             className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-3">
                           <div className="flex items-center justify-between flex-wrap gap-2">
                             <div>
-                              <p className="text-white font-black text-[13px]">
-                                <i className="fas fa-dog text-shBlue mr-1.5"/>{d.dog_name}
-                                {d.client_name && <span className="text-gray-500 text-[11px] font-normal ml-2">· {d.client_name}</span>}
+                              <p className="text-shText font-black text-[13px]">
+                                <i className="fas fa-dog text-shSecondary mr-1.5"/>{d.dog_name}
+                                {d.client_name && <span className="text-shTextMuted text-[11px] font-normal ml-2">· {d.client_name}</span>}
                               </p>
-                              {d.program_name && <p className="text-gray-500 text-[11px]">{d.program_name}</p>}
+                              {d.program_name && <p className="text-shTextMuted text-[11px]">{d.program_name}</p>}
                             </div>
-                            <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">{fmtRelative(d.last_session_at)}</p>
+                            <p className="text-[11px] text-shTextMuted font-black uppercase tracking-widest">{fmtRelative(d.last_session_at)}</p>
                           </div>
                           <div className="grid grid-cols-4 gap-2 mt-2 text-[12px] font-black uppercase tracking-widest">
-                            <Mini label="Sessions" value={d.session_count} color="text-shGreen"/>
-                            <Mini label="Moved" value={d.skills_moved} color="text-shBlue"/>
-                            <Mini label="Mastered" value={d.skills_mastered} color="text-shOrange"/>
+                            <Mini label="Sessions" value={d.session_count} color="text-shPrimary"/>
+                            <Mini label="Moved" value={d.skills_moved} color="text-shSecondary"/>
+                            <Mini label="Mastered" value={d.skills_mastered} color="text-shAccent"/>
                             <Mini label="Adv" value={d.modules_advanced} color="text-pink-400"/>
                           </div>
                           {(d.recent_diffs || []).length > 0 && (
-                            <ul className="mt-2 space-y-0.5 text-[12px] text-gray-400">
+                            <ul className="mt-2 space-y-0.5 text-[12px] text-shTextMuted">
                               {d.recent_diffs.slice(0, 3).map((diff, i) => (
                                 <li key={i} className="flex items-center gap-1.5">
-                                  <i className={`fas ${diff.new_status === "mastered" ? "fa-star text-shGreen" : "fa-arrow-right text-shBlue"} text-[10px]`}/>
-                                  <span className="text-white">
+                                  <i className={`fas ${diff.new_status === "mastered" ? "fa-star text-shPrimary" : "fa-arrow-right text-shSecondary"} text-[10px]`}/>
+                                  <span className="text-shText">
                                     {(diff.prior_status || "—") + " → " + (diff.new_status || "—")}
                                   </span>
                                   {(diff.new_score ?? 0) !== (diff.prior_score ?? 0) && (
-                                    <span className="text-gray-500">(score {diff.prior_score ?? 0} → {diff.new_score ?? 0})</span>
+                                    <span className="text-shTextMuted">(score {diff.prior_score ?? 0} → {diff.new_score ?? 0})</span>
                                   )}
                                 </li>
                               ))}
@@ -185,7 +185,7 @@ export default function TrainerScorecardTab() {
               ))}
             </div>
           )}
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[11px] text-shTextMuted">
             <i className="fas fa-circle-info mr-1"/>&ldquo;Skills mastered&rdquo; counts goal transitions to mastered (status flip or score crossing into 4-5) within the window.
             &ldquo;Modules advanced&rdquo; counts the trainer&apos;s use of the &ldquo;Save + Advance week&rdquo; button.
           </p>
@@ -197,8 +197,8 @@ export default function TrainerScorecardTab() {
 
 function Tile({ label, value, icon, color, testId }) {
   return (
-    <div data-testid={testId} className="bg-bgPanel border border-bgHover rounded-xl p-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.25em] text-gray-500">
+    <div data-testid={testId} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3">
+      <p className="text-[10px] font-black uppercase tracking-[0.25em] text-shTextMuted">
         <i className={`fas ${icon} mr-1 ${color}`}/>{label}
       </p>
       <p className={`text-2xl font-black ${color}`}>{value}</p>
@@ -209,7 +209,7 @@ function Tile({ label, value, icon, color, testId }) {
 function Mini({ label, value, color }) {
   return (
     <div className="text-center">
-      <p className="text-gray-500 text-[10px]">{label}</p>
+      <p className="text-shTextMuted text-[10px]">{label}</p>
       <p className={`${color} text-[14px]`}>{value || 0}</p>
     </div>
   );

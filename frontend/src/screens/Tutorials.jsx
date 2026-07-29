@@ -1,401 +1,323 @@
 import { useState } from "react";
 
 /**
- * Sprint 110ej — Operator tutorial center.
+ * Operator + client tutorial center.
  *
- * The screen is role-aware: admins see the 11-step operator playbook,
- * clients see the 9-step portal walkthrough. Card schema now includes
+ * The screen is role-aware: admins see the current Admin Portal playbook,
+ * clients see the current Client Portal walkthrough. Card schema:
  *   - badges[]            ← Beginner / Daily Use / Admin Only / Client-Facing / Setup Only / Coming Soon
- *   - path (optional)     ← "Where to find it" breadcrumb-style string
+ *   - path (optional)     ← "Where to find it" breadcrumb-style string, using CURRENT nav labels
  *   - steps[]
  *   - tip (optional)      ← Pro tip box
  *   - mistake (optional)  ← Common mistake / pitfall box
  *   - related[] (optional)← Links to related tutorials or app pages
  *
+ * Content audited against the live app (redesigned Client Portal + Admin
+ * Portal, dedicated Shop, Stripe Online payments, Shop pickup workflow,
+ * full-page Photography, updated nav) — not against old documentation.
  * Coming-soon features are explicitly labeled — no fake functionality.
  * Search filters across titles, steps, tips, mistakes, and paths.
  */
 
 const ADMIN_QUICK_ACTIONS = [
-  { id: "_qa_setup",    label: "First-Time Setup",        icon: "fa-rocket",          target: "start-here" },
-  { id: "_qa_runsheet", label: "Daily Run Sheet",         icon: "fa-list-check",      target: "daily-workflow" },
-  { id: "_qa_addclient",label: "Add Client & Dog",        icon: "fa-user-plus",       target: "clients-dogs" },
-  { id: "_qa_booking",  label: "Create Booking",          icon: "fa-calendar-plus",   target: "bookings-schedule" },
-  { id: "_qa_homework", label: "Assign Homework",         icon: "fa-pen-to-square",   target: "homework" },
-  { id: "_qa_vaccines", label: "Check Vaccines",          icon: "fa-shield-virus",    target: "compliance" },
-  { id: "_qa_pricing",  label: "Update Services & Pricing", icon: "fa-dollar-sign",   target: "payments" },
-  { id: "_qa_portal",   label: "Client Portal Setup",     icon: "fa-mobile",          target: "branding" },
-  { id: "_qa_backup",   label: "Backup Data",             icon: "fa-database",        target: "system" },
-  { id: "_qa_export",   label: "Export CSVs",             icon: "fa-cloud-arrow-down", target: "system" },
-  { id: "_qa_bulkemail",label: "Send Bulk Email",         icon: "fa-paper-plane",     target: "bulkemail" },
-  { id: "_qa_messages", label: "Client Messages",         icon: "fa-comments",        target: "messages" },
+  { id: "_qa_setup",     label: "First-Time Setup",     icon: "fa-rocket",           target: "getting-started" },
+  { id: "_qa_frontdesk", label: "Front Desk Basics",    icon: "fa-cash-register",    target: "front-desk" },
+  { id: "_qa_addclient", label: "Add Client & Dog",     icon: "fa-user-plus",        target: "clients-dogs" },
+  { id: "_qa_booking",   label: "Create Booking",       icon: "fa-calendar-plus",    target: "bookings-schedule" },
+  { id: "_qa_shop",      label: "Manage Shop",          icon: "fa-bag-shopping",     target: "shop-orders" },
+  { id: "_qa_photo",     label: "Photography Page",     icon: "fa-camera-retro",     target: "photography-admin" },
+  { id: "_qa_finance",   label: "Finance & Payments",   icon: "fa-dollar-sign",      target: "finance" },
+  { id: "_qa_vaccines",  label: "Check Vaccines",       icon: "fa-shield-virus",     target: "clients-dogs" },
+  { id: "_qa_messages",  label: "Client Messages",      icon: "fa-comments",         target: "messages-admin" },
+  { id: "_qa_settings",  label: "Settings Map",         icon: "fa-cog",              target: "settings-help" },
+  { id: "_qa_mobile",    label: "Admin on a Phone",     icon: "fa-mobile",           target: "mobile-admin" },
+  { id: "_qa_backup",    label: "Backup Data",          icon: "fa-database",         target: "troubleshooting-admin" },
 ];
 
 const ADMIN_SECTIONS = [
   {
-    id: "communications",
-    title: "Communication Tools",
-    icon: "fa-comments",
-    color: "text-shGreen",
-    overview: "Two tools for keeping clients in the loop: Bulk Email for one-to-many announcements, and Client Messages for one-to-one back-and-forth. Both feed the existing per-client communication timeline so nothing falls through the cracks.",
-    cards: [
-      {
-        title: "Bulk Client Email",
-        badges: ["Live", "Admin Only"],
-        path: "Sidebar → Bulk Email",
-        steps: [
-          "Pick a recipient slice using filter chips: Active clients, Daycare/Boarding/Training clients, Has upcoming bookings, Has missing vaccines, Has NOT switched to the new app, or any combination (filters are AND-combined).",
-          "Watch the live recipient counter on the right — it updates the moment you change a chip, and shows the first 50 names so you can sanity-check before hitting send.",
-          "Pick a starter template from the Templates tab (Welcome to New App / Switch Reminder / Vaccine / Booking / Policy Update / General) or write your own from scratch.",
-          "Use merge tags {{client_first_name}} and {{dog_names}} for personalisation — the live preview shows what your first recipient will actually see.",
-          "Hit Send Test to fire a single email to the first matching client and confirm formatting end-to-end before doing the full blast.",
-          "Hit Send to {N} clients — a confirmation modal shows the count + subject before anything goes out.",
-          "Save any composition as a custom Template for reuse. System templates cannot be deleted; custom ones can.",
-          "Every successful send is logged once per recipient in that client's Communications timeline (Type = email · Summary = [Bulk] <subject>) so you have a full audit trail.",
-          "The History tab shows every blast: subject, sender, date/time, total recipients, success and failure counts.",
-        ],
-        tip: "Use the 'Has not switched to the new app' filter to gently nudge old-system clients without spamming the ones who already migrated.",
-      },
-      {
-        title: "Client Messages (Direct Inbox)",
-        badges: ["Live", "Permission-gated"],
-        path: "Sidebar → Client Messages",
-        steps: [
-          "A unified inbox of every conversation started by a client from their portal — filter by Status (All / Open / Pending / Resolved) and toggle 'Unread only' to focus.",
-          "Search by client name, dog name, or subject from the search box at the top.",
-          "Click any thread to open the conversation. Each message bubble shows sender, role and timestamp.",
-          "Type your reply and hit Reply — by default it also fires a transactional email to the client (uncheck 'Also email the client' to keep it in-app only).",
-          "Change a thread's status (Open / Pending / Resolved) from the top-right of the conversation. Resolved threads automatically reopen if the client replies again.",
-          "Internal Notes (bottom of every thread) are visible to all staff with the messages permission but NEVER to the client. Use them for handoff context like 'told her to bring vaccine paperwork on Tuesday'.",
-          "Sidebar shows an orange unread badge so you always know when something needs attention. The badge refreshes every 60 seconds.",
-          "Every visible message and reply is also logged on the client's Communications timeline (Type = message) so the full history lives in one place.",
-        ],
-        tip: "Set 'Pending' when you're waiting on info from the client — it gets it out of your Open list without resolving it prematurely.",
-      },
-      {
-        title: "Single-client email (one-off)",
-        badges: ["Live", "Admin Only"],
-        path: "Clients screen → Hover a client card → Paper-plane icon",
-        steps: [
-          "Open the Clients screen and hover (or tap on mobile) any client card.",
-          "Tap the green paper-plane icon next to Edit/Delete — only shown when the client has an email on file.",
-          "Pick a template (optional), write your subject + body, hit Send.",
-          "Merge tags {{client_first_name}} and {{dog_names}} work exactly like the bulk tool, with a live preview right in the modal.",
-          "The send is logged on the client's Communications timeline and listed in Bulk Email → History (recipient_count = 1, manual_selection = true) so you have one place to audit every email leaving the system.",
-        ],
-        tip: "Use this for one-off follow-ups (a quick thank-you, a custom quote, a missed-call recap). For groups of clients, stick with Bulk Email so the filter chips do the heavy lifting.",
-      },
-      {
-        title: "Roles & permissions for messaging",
-        badges: ["Live", "Reference"],
-        steps: [
-          "Permission key: messages.",
-          "Granted automatically to: Owner (admin), Manager, Trainer, Daycare staff, Boarding staff, Front desk.",
-          "Read-only role does NOT get messages access by default — flip them up to Front Desk if they need to reply.",
-          "Internal Notes are visible to anyone with the messages permission, so brief staff that the notes are private from clients but visible to teammates.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "ops-command-center",
-    title: "Operations Command Center — The New Stack",
-    icon: "fa-tower-broadcast",
-    color: "text-shOrange",
-    overview: "These nine tools turn the app from a booking tracker into a full ops command center. Each one is live and wired into the existing data — open the sidebar to find them.",
-    cards: [
-      {
-        title: "Intake Forms",
-        badges: ["Live", "Admin/Manager/Front Desk"],
-        path: "Sidebar → Intake Forms",
-        steps: [
-          "Eleven starter templates ship out of the box (new client, new dog, daycare temperament, boarding, feeding, medication, training eval, service-dog, behavior history, bite disclosure, emergency/vet).",
-          "Hit New Form to build your own — short text, long text, dropdown, multi-select, yes/no, file-upload placeholder, plus internal-only staff fields that never reach the client.",
-          "From any client or dog card, hit '+ Send' on the Intake Forms section to assign a template — the client sees it in their portal next time they log in.",
-          "Submissions arrive with statuses: Sent / Submitted / Reviewed / Needs Follow-up / Archived. Click any submission to read the answers and leave admin review notes.",
-        ],
-      },
-      {
-        title: "Care Board (Feeding & Medication)",
-        badges: ["Live", "All staff"],
-        path: "Sidebar → Care Board",
-        steps: [
-          "Auto-pulls today's feeding + meds for every on-site dog and sorts by time.",
-          "Each card shows status pills: Not due / Due now / Completed / Missed / Skipped, with a live overdue timer.",
-          "Tap Complete to log staff initials + optional note; tap Skip with one of six preset reasons.",
-          "The schedule auto-seeds from each dog's default feeding/medication plan on the dog profile — edit the dog to update defaults.",
-          "Auto-refreshes every 60 seconds so 'Due now' rolls into 'Missed' without you hitting refresh.",
-        ],
-      },
-      {
-        title: "Waitlist + Capacity Guardrail",
-        badges: ["Live", "All staff"],
-        path: "Sidebar → Waitlist",
-        steps: [
-          "When daycare or boarding is at capacity, drop the client on the waitlist instead of bouncing them off a booking error.",
-          "Each entry carries priority (Low / Normal / High), service type, requested date range, and notes.",
-          "Status flow: Waiting → Offered → Booked / Declined / Expired / Removed.",
-          "Hit Convert on a waiting entry to create the real booking — this bypasses the daily cap (admin override) but still runs every other check (vaccines, waiver, conflicts).",
-          "The Add modal shows a live 'X of Y slots open today' check so staff can decide on the spot whether to book or queue.",
-        ],
-      },
-      {
-        title: "Kennel Board",
-        badges: ["Live", "Care/Dog perms"],
-        path: "Sidebar → Kennel Board",
-        steps: [
-          "One card per on-site dog grouped by service: Daycare / Boarding / Training / Grooming / Photography.",
-          "Each card has 5 assignment slots (Kennel / Room / Crate / Yard group / Training group) — click the card to edit.",
-          "Edit the dropdown options anywhere via the Labels button — one label per line, e.g. 'Kennel A, Kennel B, Suite 1'.",
-          "Warning badges fire automatically: vaccine lapsed, overdue medication, do-not-group flag, open incident, has feeding plan, has med plan.",
-          "Auto-refreshes every 60s.",
-        ],
-      },
-      {
-        title: "Incidents + Safety Flags (with auto-suggest)",
-        badges: ["Live", "Admin/Manager/Trainer/Staff"],
-        path: "Sidebar → Incidents · Per-dog flags on Dogs cards",
-        steps: [
-          "Incidents now support four severity tiers (Low / Medium / High / Critical) and 11 types (Bite, Fight, Injury, Illness, Escape attempt, Resource guarding, Reactivity, Human/Dog aggression, Property damage, Other).",
-          "Each incident captures staff involved, witnesses, action taken, Manager Reviewed and Client Notified toggles, plus internal-only notes that never appear on client-facing surfaces.",
-          "Safety Flags live on every dog card. Suggestions appear in an orange callout based on incident history + intake form answers (e.g. a logged bite auto-suggests Muzzle required + Staff only).",
-          "Click any suggested flag to apply it instantly. Custom flags can also be added manually.",
-        ],
-      },
-      {
-        title: "Audit Log",
-        badges: ["Live", "Admin/Manager"],
-        path: "Sidebar → Audit Log",
-        steps: [
-          "Every staff/admin write (POST/PUT/PATCH/DELETE) is captured automatically — no manual logging required.",
-          "Filter by group (Bookings, Dogs, Clients, Incidents, Intake, Waitlist, Money, Settings, Waivers), user, or free-text search.",
-          "Click any row to expand the payload — passwords, tokens, and card numbers are auto-redacted.",
-          "Date-grouped timeline so you can see exactly what happened on a given day.",
-        ],
-      },
-      {
-        title: "Roles & Permissions",
-        badges: ["Live", "Admin only"],
-        path: "Sidebar → Staff (Roles panel at top)",
-        steps: [
-          "Seven roles: Owner / Manager / Trainer / Daycare Staff / Boarding Staff / Front Desk / Read-only.",
-          "Each role unlocks a specific slice of 13 permissions (Settings, Finance, Pricing, Clients view/edit, Dogs view/edit, Incidents, Care logging, Booking edits, Payroll, Data export, Delete records).",
-          "New staff default to Read-only so a brand-new account can't accidentally do anything destructive — Owner upgrades them in one dropdown.",
-          "The sidebar nav auto-hides items a staffer doesn't have permission to use, so the UI is never confusing.",
-          "Click 'Show permission matrix' inside the Staff Roles panel for the full grid.",
-        ],
-      },
-      {
-        title: "Communication Log",
-        badges: ["Live", "All staff"],
-        path: "Per client card · Per dog card",
-        steps: [
-          "Log every phone call, voicemail, text, email, in-person chat, behavior conversation, schedule change, payment discussion, complaint, follow-up, or general note.",
-          "Each entry stamps the staff member + timestamp automatically.",
-          "Mark 'Follow-up needed' to surface the entry with an orange ring until someone resolves it.",
-          "Filter pills appear once you have more than 3 entries — by type or 'Open follow-ups' only.",
-          "Review requests get auto-logged here too, so the contact history stays cohesive.",
-        ],
-      },
-      {
-        title: "Review Requests",
-        badges: ["Live", "All staff"],
-        path: "Per client/dog card · Pipeline completed · Report Card modal",
-        steps: [
-          "First, drop your Google + Facebook (+ optional Yelp) review URLs into Settings → Marketing → Review Links along with your default request message.",
-          "On every client or dog card, hit Request Review to open a modal with one-click Google / Facebook buttons — clicking opens the link in a new tab AND logs the request.",
-          "Or pick Text / Email / In-person / Other to log a non-link request.",
-          "Copy Message uses your template with {first_name} and {dog_name} substituted in.",
-          "The button also appears in the Pipeline screen on completed training programs and on report cards that have been sent — the natural 'they're happy, ask now' moments.",
-          "Every request auto-logs an entry on the client's communication timeline with a back-link.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "start-here",
-    title: "Start Here — First-Time Setup",
+    id: "getting-started",
+    title: "Getting Started — First-Time Setup",
     icon: "fa-rocket",
-    color: "text-shGreen",
-    overview: "Do these in order. Each step unlocks the next part of the app — by the end your business is ready for its first booking.",
+    color: "text-shPrimary",
+    overview: "Do these in order the first time you log in. Each step unlocks the next part of the app.",
     cards: [
       {
-        title: "Step 1 — Set your business hours",
+        title: "Step 1 — Set your business hours & capacity",
         badges: ["Setup Only", "Admin Only"],
-        path: "Settings → Business Operations → Hours & Closures",
+        path: "Settings → Business Operations → Hours & Closures / Capacity & Kennels",
         steps: [
-          "Open the Settings tab.",
+          "Open Settings in the sidebar (System group).",
           "Click the Business Operations category.",
-          "Open Hours & Closures.",
-          "For each service (Daycare, Boarding, Grooming, Training), set the open and close time for every day you're open.",
-          "Add any planned closure dates (holidays, vet visits, conference days).",
-          "Hit Save Changes.",
+          "Open Hours & Closures — set open/close time per day for each service, plus any planned closures.",
+          "Open Capacity & Kennels — set your daily daycare cap and add every kennel/boarding suite with a label.",
+          "Save Changes on each subsection.",
         ],
-        tip: "Daycare and boarding can have different hours — daycare ends at 6pm but boarding pickup runs until 8pm, for example.",
-        mistake: "Forgetting to set Saturday/Sunday hours means clients can't book weekends online even if you're open.",
+        mistake: "Forgetting weekend hours means clients can't book Saturday/Sunday online even if you're open.",
       },
       {
-        title: "Step 2 — Define your services and prices",
+        title: "Step 2 — Define services, programs & pricing",
         badges: ["Setup Only"],
         path: "Settings → Services & Pricing → Services & Programs",
         steps: [
           "Open Settings → Services & Pricing → Services & Programs.",
-          "Review the default Daycare / Boarding / Grooming / Training services.",
-          "Edit each one's base price, duration, and description.",
-          "Add any specialty services you offer (private training, bath only, nail trim, photography).",
-          "Toggle Active on/off to control which services appear to clients.",
+          "Review the default Daycare / Boarding / Grooming / Training services and edit base price, duration, description.",
+          "Add specialty services if you offer them (private training, bath-only, nail trim, photography sessions).",
+          "Toggle Active on/off to control what clients can see and book.",
+          "Photography's Sessions & Packages on the client Photography page pull directly from this same catalog — there is no separate photography price list to maintain.",
         ],
         related: ["Settings → Services & Pricing → Credit Packs", "Settings → Services & Pricing → Payment Plans"],
       },
       {
-        title: "Step 3 — Set capacity and add kennels",
-        badges: ["Setup Only", "Admin Only"],
-        path: "Settings → Business Operations → Capacity & Kennels",
-        steps: [
-          "Open Capacity & Kennels.",
-          "Set your max daycare dogs per day (e.g. 30).",
-          "Add every kennel/boarding suite — give each a label (Suite 1, Outdoor Run, etc.).",
-          "Mark which kennels are small/medium/large if you size-match.",
-        ],
-        mistake: "Setting capacity higher than you can actually staff. Pick a number you'd be calm with on a bad-weather Monday.",
-      },
-      {
-        title: "Step 4 — Lock down vaccine requirements",
+        title: "Step 3 — Lock down vaccines and the waiver",
         badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Clients, Dogs & Compliance → Vaccine Requirements",
+        path: "Settings → Clients, Dogs & Compliance",
         steps: [
-          "Toggle ON every vaccine you require (Rabies is on by default).",
-          "Common required: Rabies, DHPP, Bordetella. Optional: Lepto, Influenza.",
-          "Set a warning lead-time (default 30 days) so the system flags expiring vaccines.",
+          "Open Vaccine Requirements — toggle each vaccine you require (Rabies is on by default) and set a warning lead time.",
+          "Open Waiver — paste your waiver text and tick Require for booking.",
+          "Open Compliance Rules (Operator Quick Controls card) to decide hard-block vs warn-only per vaccine.",
         ],
-        tip: "Open the Compliance Rules card next to control what happens when a vaccine is missing — block bookings, warn only, or grace period.",
+        tip: "Recommended: hard block for Rabies, warn-only for everything else.",
       },
       {
-        title: "Step 5 — Add your waiver",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Clients, Dogs & Compliance → Waiver",
-        steps: [
-          "Paste your waiver text into the editor.",
-          "Tick Require for booking so new clients can't book without accepting.",
-          "Optional: set Re-sign frequency (yearly is common).",
-        ],
-      },
-      {
-        title: "Step 6 — Configure email and notifications",
+        title: "Step 4 — Set up email & notifications",
         badges: ["Setup Only"],
         path: "Settings → Email & Notifications",
         steps: [
-          "Open Email Designer — set your sender name, signature, and tweak any template wording.",
-          "Open Email Timing & Quiet Hours — set reminder lead-time (24h is normal) and quiet hours (e.g. 8pm–8am).",
+          "Open Email Designer — set sender name, signature, and tweak wording on any of the email templates.",
+          "Open Email Timing & Quiet Hours — set reminder lead time and quiet hours.",
           "Open Email Automation — toggle which automations fire (booking confirmations, reminders, review requests).",
         ],
-        mistake: "Skipping the Email Health pill check. If SPF/DKIM isn't configured at Resend, no emails will reach your clients.",
+        mistake: "Skip the Email Health check at your own risk — if the sending domain isn't verified, none of your emails reach clients.",
       },
       {
-        title: "Step 7 — Change your admin password",
+        title: "Step 5 — Turn on the payment methods you accept",
+        badges: ["Setup Only", "Admin Only"],
+        path: "Settings → Finance & Bookkeeping → Payment Options",
+        steps: [
+          "Open Payment Options.",
+          "Toggle which methods clients see on booking confirmations and in the portal (Cash, Check, Venmo, PayPal).",
+          "Stripe Online payments (card, via the client portal) and the in-house Front Desk register are always available to staff regardless of this toggle — this setting only controls what's shown to clients as informal payment options.",
+        ],
+      },
+      {
+        title: "Step 6 — Change your admin password",
         badges: ["Setup Only", "Admin Only"],
         path: "Settings → System & Data → My Account",
         steps: [
           "Open My Account.",
-          "Enter the seeded admin password (you got it on first login).",
-          "Choose a strong new password.",
-          "Save.",
+          "Enter the seeded admin password (given on first login).",
+          "Choose and save a strong new password.",
         ],
       },
       {
-        title: "Step 8 — Install Sit Happens on your home screen",
+        title: "Step 7 — Install Sit Happens on your devices",
         badges: ["Setup Only", "Daily Use"],
         steps: [
-          "Look for the green 'Install App' button at the bottom of the sidebar.",
-          "Click it — you'll see the native install dialog OR a step-by-step modal.",
-          "On iPhone: tap Share → Add to Home Screen.",
-          "Once installed, Sit Happens opens in its own window with no browser bar.",
+          "Look for the Install App button near the bottom of the sidebar.",
+          "Click it — you'll see the native install prompt or a step-by-step modal.",
+          "On iPhone: open in Safari, tap Share → Add to Home Screen.",
         ],
-        tip: "Install it on your phone, tablet AND front-desk computer. Same data, three devices.",
+        tip: "Install it on your phone, tablet, and the front-desk computer — same data, every device.",
       },
     ],
   },
   {
-    id: "daily-workflow",
-    title: "Daily Workflow",
+    id: "daily-ops",
+    title: "Daily Operations",
     icon: "fa-sun",
-    color: "text-shOrange",
-    overview: "The 8 things you do in the same order every morning. Bookmark this section if you're a new staff member.",
+    color: "text-shAccent",
+    overview: "The screens you touch every day, in the order most teams use them: Dashboard, Run Sheet, Care Board, Kennel Board, Waitlist, Recurring.",
     cards: [
       {
-        title: "Morning — Check the Dashboard first",
+        title: "Start with the Dashboard",
         badges: ["Daily Use"],
         path: "Sidebar → Dashboard",
         steps: [
-          "Glance at today's revenue gauge and capacity tile.",
-          "Scan Today's Tasks (top right) — any vaccine expiries, follow-ups, or low-credit warnings will surface here.",
-          "If there's a red flag, click it to jump straight to the issue.",
+          "The hero shows today's date and quick counts: Daycare / Boarding / Training / Grooming / Photography scheduled today.",
+          "The Owner Clock card is where you clock in/out and see today's hours.",
+          "Today's Sales tile shows net incoming and a one-tap Open Front Desk button.",
+          "Needs-Attention style widgets (pending homework, expiring vaccines, new client uploads, quote requests) sit below — click any row to jump straight to it.",
+          "The Operational Readiness checklist (top of Dashboard, only shows while incomplete) walks through first-time setup — hours, pricing, vaccines, waiver, staff roles, first backup.",
         ],
       },
       {
         title: "Pull up today's Run Sheet",
-        badges: ["Daily Use", "Staff-Only"],
+        badges: ["Daily Use"],
         path: "Sidebar → Run Sheet",
         steps: [
-          "Run Sheet shows every dog scheduled today with their feeding/meds notes.",
+          "Run Sheet lists every dog scheduled today with feeding/medication notes.",
           "Print it or open it on a tablet at the front desk.",
-          "Tick each dog off as they check in.",
+          "Special diets/medications show as a highlighted pill — don't miss them.",
         ],
-        tip: "If a dog is on a special diet or medication, it's flagged with an orange pill — don't miss it.",
       },
       {
-        title: "Confirm pending bookings",
+        title: "Care Board — feeding & medication tracker",
+        badges: ["Daily Use", "All staff"],
+        path: "Sidebar → Care Board",
+        steps: [
+          "Auto-pulls today's feeding + meds for every on-site dog, sorted by time, with status pills: Not due / Due now / Completed / Missed / Skipped.",
+          "Tap Complete to log staff initials + an optional note, or Skip with a preset reason.",
+          "The schedule auto-seeds from each dog's default feeding/medication plan — edit the dog profile to change the defaults.",
+          "Auto-refreshes every 60 seconds so Due now rolls into Missed without a manual refresh.",
+        ],
+      },
+      {
+        title: "Kennel Board — where every dog goes",
+        badges: ["Daily Use", "Care/Dog perms"],
+        path: "Sidebar → Kennel Board",
+        steps: [
+          "One card per on-site dog, grouped by service (Daycare / Boarding / Training / Grooming / Photography).",
+          "Each card has assignment slots — Kennel, Room, Crate, Yard group, Training group — click the card to edit.",
+          "Edit the dropdown options via the Labels button (one label per line).",
+          "Warning badges fire automatically: vaccine lapsed, overdue medication, do-not-group flag, open incident.",
+        ],
+      },
+      {
+        title: "Waitlist + capacity guardrail",
+        badges: ["Daily Use"],
+        path: "Sidebar → Waitlist",
+        steps: [
+          "When daycare or boarding is at capacity, drop the client on the waitlist instead of a booking error.",
+          "Each entry carries priority, service type, requested date range, and notes.",
+          "Status flow: Waiting → Offered → Booked / Declined / Expired / Removed.",
+          "Hit Convert to create the real booking — this bypasses the daily cap but still checks vaccines, waiver, and conflicts.",
+        ],
+      },
+      {
+        title: "Recurring bookings",
+        badges: ["Daily Use"],
+        path: "Sidebar → Recurring",
+        steps: [
+          "Open Recurring → + New Recurring.",
+          "Pick client, dog, and the days of week (e.g. every Mon/Wed/Fri).",
+          "Set a start date and optional end date — bookings auto-generate from this template.",
+        ],
+      },
+      {
+        title: "End of day",
+        badges: ["Daily Use"],
+        path: "Sidebar → Front Desk / Schedule",
+        steps: [
+          "Check out every dog that's leaving from Front Desk or the Schedule view.",
+          "Confirm the register's expected cash matches the drawer before closing out (see Front Desk section).",
+          "Log any incidents from the day before you clock out.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "front-desk",
+    title: "Front Desk",
+    icon: "fa-cash-register",
+    color: "text-shPrimary",
+    overview: "One screen for check-in/checkout, taking payment, the cash register, and everything Shop-related that happens at the counter. This is the highest-traffic screen in the app.",
+    cards: [
+      {
+        title: "Check a dog in or out",
+        badges: ["Daily Use"],
+        path: "Sidebar → Front Desk",
+        steps: [
+          "Find the booking (search or the day's list) and tap Check In on arrival.",
+          "On departure, tap Check Out — this is where the invoice is created and payment is taken.",
+          "If the booking has add-ons (bath, nail trim), they're included automatically in the checkout total.",
+        ],
+      },
+      {
+        title: "Take payment at checkout",
+        badges: ["Daily Use"],
+        steps: [
+          "Choose the tender: Cash, Card (via Stripe if the client pays online), Check, Venmo/PayPal, or existing account credit.",
+          "For cash, enter the amount tendered — the app calculates change due automatically.",
+          "A balance can be paid across more than one tender (split payment) if needed.",
+          "The receipt/payment record is attached to the client's invoice history automatically — no separate logging step.",
+        ],
+        mistake: "Don't take cash before the register is opened for the day — the app blocks cash tenders until the drawer session is started, precisely so counted cash never gets double-attributed.",
+      },
+      {
+        title: "Open the register / cash drawer",
+        badges: ["Daily Use", "Admin Only"],
+        path: "Front Desk → Register status bar",
+        steps: [
+          "The status bar at the top of Front Desk shows Register: OPEN / NOT_OPEN / CLOSED and Printer status.",
+          "Tap Open Drawer to start the day's register session (admin only).",
+          "Recent Sales shows every register transaction today with a reprint option.",
+          "Manage Products opens the retail catalog (see Shop & Online Orders).",
+        ],
+        tip: "Open the drawer before the first cash sale of the day — expected-cash reporting depends on it.",
+      },
+      {
+        title: "Online Payments (Stripe)",
+        badges: ["Live"],
+        path: "Front Desk → Online Payments panel",
+        steps: [
+          "Any invoice a client pays with a card through their portal shows up here automatically, separate from cash/manual entries.",
+          "Use this panel to confirm a payment landed and to see amount, date, and which client/invoice it's tied to.",
+          "Refunds on a Stripe payment are issued from this same panel — Front Desk always shows the correct current status, it never needs a manual 'mark as paid' step for online payments.",
+        ],
+        mistake: "Don't try to refund a Stripe payment through a generic cash-refund flow — always use the Stripe refund action so the client's card is actually credited.",
+      },
+      {
+        title: "Online Orders — Shop pickup workflow",
+        badges: ["Live"],
+        path: "Front Desk → Online Orders panel",
+        steps: [
+          "Every Shop order a client pays for online and marks for local pickup lands here with a status: PREPARING, READY FOR PICKUP, COMPLETED, or NEEDS ATTENTION.",
+          "A small NEW badge marks orders you haven't opened yet — it's independent of the pickup status itself.",
+          "Tap Mark Ready once the order is bagged and waiting at the counter — this is what flips the client's own order status to Ready for Pickup.",
+          "Tap Mark Picked Up once the client has it in hand — this is the final, completed state.",
+          "If an order shows NEEDS ATTENTION (usually a payment or inventory hiccup), open it and use Retry Fulfillment once the underlying issue is resolved.",
+        ],
+        mistake: "The old internal \"fulfilled\" flag is not the customer-facing status — always read and act on the four pickup states above, not a raw fulfilled/unfulfilled toggle.",
+      },
+    ],
+  },
+  {
+    id: "bookings-schedule",
+    title: "Bookings & Schedule",
+    icon: "fa-calendar-check",
+    color: "text-shPrimary",
+    overview: "Create, edit, cancel, and read the schedule, plus how capacity warnings work.",
+    cards: [
+      {
+        title: "Create a booking from the admin side",
+        badges: ["Daily Use"],
+        path: "Sidebar → Bookings → New Booking",
+        steps: [
+          "Click New Booking.",
+          "Pick the client, then their dog (or dogs — multi-dog bookings can be grouped together).",
+          "Pick the service (daycare / boarding / training / grooming / photography) and the date (boarding asks for start and end date).",
+          "Add any add-ons and save — a confirmation email sends automatically.",
+        ],
+      },
+      {
+        title: "Approve pending requests",
         badges: ["Daily Use"],
         path: "Sidebar → Bookings",
         steps: [
           "Filter by Status = Pending.",
-          "Open each one, double-check the dog's vaccines are current.",
-          "Approve, Reject, or message the client for clarification.",
-          "Approved bookings auto-send a confirmation email.",
+          "Open each one, confirm the dog's vaccines are current, then Approve or Reject.",
+          "Approved bookings auto-send a confirmation email to the client.",
         ],
       },
       {
-        title: "Address vaccine and waiver warnings",
-        badges: ["Daily Use", "Admin Only"],
-        path: "Sidebar → Dashboard → Today's Tasks",
+        title: "Edit, reschedule, or cancel a booking",
+        badges: ["Daily Use"],
+        path: "Sidebar → Bookings → open one",
         steps: [
-          "Any dog with an expiring or expired vaccine shows under Today's Tasks.",
-          "Open the dog → Vaccines tab → upload or type in the new expiry date.",
-          "Dogs without a current waiver are also flagged — message the client a re-sign link.",
+          "Open the booking row and click Edit to change date, time, or service — the client is notified of the change.",
+          "Click Cancel to cancel — pick a reason; any cancellation fee is calculated from your Money Rules and the client is emailed.",
         ],
-        mistake: "Letting expired vaccines pile up. Once a dog goes 30+ days expired, your bookings can auto-block depending on Compliance Rules.",
+        mistake: "You can't edit a checked-out booking — once it's a closed receipt, use the refund/reversal flow from Front Desk instead.",
       },
       {
-        title: "Mark training homework as the day unfolds",
-        badges: ["Daily Use", "Staff-Only"],
-        path: "Sidebar → Homework",
-        steps: [
-          "Open Homework → today's assignments are at the top.",
-          "Tap a homework card → mark each task complete as the trainer works through it.",
-          "Add a note for the client to read in their portal.",
-        ],
-      },
-      {
-        title: "Log incidents the moment they happen",
-        badges: ["Daily Use", "Staff-Only"],
-        path: "Sidebar → Incidents",
-        steps: [
-          "Sidebar → Incidents → + New Incident.",
-          "Pick the dog, severity (minor/major), describe what happened.",
-          "If it's major, the admin gets a notification.",
-          "Always log even small stuff (vomiting, limping, scuffles) — the timeline is invaluable later.",
-        ],
-        tip: "Better to over-log than under-log. Owners appreciate knowing about small things proactively.",
-      },
-      {
-        title: "End of day — check out everyone, log retail",
+        title: "Read the Schedule view",
         badges: ["Daily Use"],
         path: "Sidebar → Schedule",
         steps: [
-          "Open Schedule → today.",
-          "For each dog leaving, tap Check Out.",
-          "If they bought treats or merch on their way out, log it under Income → New Sale.",
-          "Any tip the client added shows on the receipt.",
+          "Switch between Day / Week / Month at the top.",
+          "Colored dots represent each booking by service — click any booking for the detail card.",
+          "Capacity ticks fill up as the day books; once you hit your daycare cap, new same-day requests get blocked (admins can still force-book with a confirm prompt).",
         ],
       },
     ],
@@ -404,1074 +326,747 @@ const ADMIN_SECTIONS = [
     id: "clients-dogs",
     title: "Clients & Dogs",
     icon: "fa-paw",
-    color: "text-shBlue",
-    overview: "Everything about adding, updating, and looking up the families and dogs you work with.",
+    color: "text-shSecondary",
+    overview: "Adding, updating, and looking up the families and dogs you work with, plus compliance and safety.",
     cards: [
       {
-        title: "Add a new client",
+        title: "Add a client and a dog",
         badges: ["Daily Use"],
-        path: "Sidebar → Clients → + Add Client",
+        path: "Sidebar → Clients → Add Client · Sidebar → Dogs → Add Dog",
         steps: [
-          "Click + Add Client.",
-          "Fill in name, email, phone, address, emergency contact.",
-          "Tick Create portal login if you want them to be able to book online — set a starter password.",
-          "Save. They'll receive a welcome email with their login link.",
+          "From Clients, click Add Client — name, email, phone, address, emergency contact. Tick Create portal login to let them book online.",
+          "From Dogs, click Add Dog — pick the owner, then breed/sex/birthday, vaccine expiries, feeding/meds, and vet info.",
         ],
-        tip: "Clients can also self-sign-up. Send them your portal URL and they tap Register — their record auto-creates.",
+        tip: "Clients can also self-register from your portal link — their record auto-creates and appears in Clients.",
       },
       {
-        title: "Add a dog to a client",
+        title: "Vaccines, waiver & compliance",
         badges: ["Daily Use"],
-        path: "Sidebar → Dogs → + Add Dog",
+        path: "Sidebar → Dogs → open dog → Vaccines",
         steps: [
-          "Pick the owner from the dropdown.",
-          "Basics: name, breed, sex, birthday, fixed/intact.",
-          "Vaccines: enter rabies expiry (required) plus any other vaccines you require.",
-          "Feeding & Meds: add daily feedings and any medications — these show on the Run Sheet.",
-          "Notes & Vet: vet name, vet phone, anything else worth remembering.",
+          "Enter the expiry date for each required vaccine, optionally attach the vet certificate.",
+          "Dogs without a current waiver are flagged on the Dashboard — message the client a re-sign link.",
+          "Compliance behavior (hard block / warn-only / grace period) is configured in Settings → Clients, Dogs & Compliance → Compliance Rules.",
         ],
       },
       {
-        title: "Update dog notes and behavior flags",
+        title: "Incidents & safety flags",
         badges: ["Daily Use", "Staff-Only"],
-        path: "Sidebar → Dogs → open a dog → Notes & Behavior",
+        path: "Sidebar → Incidents · Per-dog flags on Dogs cards",
         steps: [
-          "Open the dog's profile.",
-          "Scroll to Notes & Behavior.",
-          "Add a date-stamped note (e.g. 'Reactive to skateboards — keep on leash near front').",
-          "Toggle any risk flags that apply (resource guarding, fear-aggressive, escape artist).",
+          "Log an incident with severity (Low/Medium/High/Critical) and type (bite, fight, injury, escape attempt, resource guarding, etc.).",
+          "Safety Flags on each dog card get auto-suggested from incident history and intake answers — click a suggested flag to apply it instantly.",
         ],
-        mistake: "Free-text notes nobody reads. Use the flag toggles too — those appear as colored pills on the Schedule view.",
+      },
+      {
+        title: "Duplicate Check",
+        badges: ["Live", "Admin Only"],
+        path: "Sidebar → Duplicate Check",
+        steps: [
+          "Preview-only scan for duplicate client/dog records before credits, bookings, vaccines, or payments get split across two accounts.",
+          "Nothing is merged automatically — it's a safe list to review before you manually consolidate anything.",
+        ],
       },
       {
         title: "View a client's full history",
         badges: ["Daily Use"],
         path: "Sidebar → Clients → open a client",
         steps: [
-          "Open any client.",
-          "Scroll down — every booking, payment, credit pack, waiver, and trophy is timestamped.",
-          "Use the 'Bookings' filter to see only past visits.",
-        ],
-      },
-      {
-        title: "Recover a client's login",
-        badges: ["Admin Only"],
-        path: "Sidebar → Clients → open a client → Account section",
-        steps: [
-          "Open the client's profile.",
-          "Account section → click Send Password Reset.",
-          "They get an email with a one-time reset link (valid 24h).",
-        ],
-        tip: "If they don't see the email, ask them to check spam, then check the Email Health pill (Settings → Email & Notifications → Email Designer).",
-      },
-    ],
-  },
-  {
-    id: "bookings-schedule",
-    title: "Bookings & Schedule",
-    icon: "fa-calendar-check",
-    color: "text-shGreen",
-    overview: "Create, edit, cancel, and read the schedule. Plus how the capacity warnings work.",
-    cards: [
-      {
-        title: "Create a booking from the admin side",
-        badges: ["Daily Use"],
-        path: "Sidebar → Bookings → New Booking",
-        steps: [
-          "Click New Booking.",
-          "Pick the client, then their dog.",
-          "Pick the service (daycare / boarding / training / grooming).",
-          "Set the start and (for boarding) end date.",
-          "Optional add-ons: bath, nail trim, photography.",
-          "Save — confirmation email auto-sends.",
-        ],
-      },
-      {
-        title: "Edit or reschedule a booking",
-        badges: ["Daily Use"],
-        path: "Sidebar → Bookings → open one",
-        steps: [
-          "Open the booking row.",
-          "Click Edit.",
-          "Change date, time, or service.",
-          "Save — the client gets a notification about the change.",
-        ],
-        mistake: "Editing a checked-out booking. Once checked out, it's a closed receipt — you can only reverse it via the payment reversal flow.",
-      },
-      {
-        title: "Cancel a booking",
-        badges: ["Daily Use"],
-        path: "Sidebar → Bookings → open one → Cancel",
-        steps: [
-          "Open the booking → click Cancel.",
-          "Pick the reason (client request, sick dog, weather, etc.).",
-          "The cancellation fee tier is auto-calculated from your Money Rules.",
-          "Confirm — the client is emailed about the cancellation and any fee.",
-        ],
-        tip: "Cancellation fees are tiered: free outside the window, partial inside it, full for no-shows. Configure under Settings → Services & Pricing → Money Rules.",
-      },
-      {
-        title: "Set up recurring bookings",
-        badges: ["Daily Use"],
-        path: "Sidebar → Recurring",
-        steps: [
-          "Open Recurring from the sidebar.",
-          "+ New Recurring → pick client and dog.",
-          "Choose days of week (e.g. every Mon/Wed/Fri).",
-          "Set start date and (optionally) end date.",
-          "Bookings auto-generate from this template.",
-        ],
-      },
-      {
-        title: "Read the Schedule view",
-        badges: ["Daily Use"],
-        path: "Sidebar → Schedule",
-        steps: [
-          "Switch between Day / Week / Month at the top.",
-          "Colored dots represent each booking by service.",
-          "Click any booking for the detail card.",
-          "On the Day view you'll see capacity ticks fill up — once you hit your daycare cap, new same-day requests get blocked.",
-        ],
-        related: ["Settings → Business Operations → Booking Guardrails"],
-      },
-      {
-        title: "Understanding capacity warnings",
-        badges: ["Daily Use", "Admin Only"],
-        steps: [
-          "When daycare hits the cap, new requests show as red on the public booking page.",
-          "Admins can still force-book past capacity (a confirm dialog asks you to acknowledge).",
-          "Boarding works on kennel slots, not a single number — each kennel can hold one dog at a time.",
+          "Every booking, payment, credit pack, waiver signature, and trophy is timestamped on the client's page.",
+          "Communication Log at the bottom captures every call, text, email, or in-person note tied to that family.",
         ],
       },
     ],
   },
   {
-    id: "training-pipeline",
-    title: "Training Programs & Pipeline",
-    icon: "fa-graduation-cap",
-    color: "text-shGreen",
-    overview: "Sell training programs, move clients through stages, track progress.",
+    id: "shop-orders",
+    title: "Shop & Online Orders",
+    icon: "fa-bag-shopping",
+    color: "text-shAccent",
+    overview: "The Shop is the client-facing storefront for retail products, credit packs, and training programs. Admin manages the catalog here; Front Desk handles the pickup side (see Front Desk section).",
     cards: [
       {
-        title: "Add a new training client to the pipeline",
-        badges: ["Daily Use", "Admin Only"],
-        path: "Sidebar → Pipeline → + New",
+        title: "Manage products",
+        badges: ["Live", "Admin Only"],
+        path: "Front Desk → Manage Products",
         steps: [
-          "Click + New on the Pipeline screen.",
-          "Pick the client and dog.",
-          "Choose the training program (Puppy Foundation, Reactive Rehab, etc.).",
-          "Set stage to 'Intake'.",
-          "Save.",
+          "Add/edit retail products: name, price, photo, stock tracking (on/off), and low-stock threshold.",
+          "Toggle Online Visible to control whether a product appears in the client-facing Shop, independent of whether it's sellable at the register.",
+          "Stock automatically decrements on a completed sale (register or online) and restores on a void/refund.",
         ],
       },
       {
-        title: "Move a client through stages",
-        badges: ["Daily Use", "Admin Only"],
+        title: "Credit packs & training programs",
+        badges: ["Setup Only", "Client-Facing"],
+        path: "Settings → Services & Pricing → Credit Packs · Sidebar → Pipeline (programs)",
         steps: [
-          "Open the pipeline card.",
-          "Drag the card from column to column (Intake → Assessment → Active → Graduating → Graduated).",
-          "Each stage move auto-logs a timestamp.",
-        ],
-        tip: "If you charge the program as a payment plan, set the plan up first (Services & Pricing → Payment Plans) so installments are tied to the pipeline stage.",
-      },
-      {
-        title: "Assign homework",
-        badges: ["Daily Use", "Staff-Only"],
-        path: "Sidebar → Homework → + New",
-        steps: [
-          "Click + New Homework.",
-          "Pick the client/dog.",
-          "Pick a template (Sit, Loose-leash walking, Place command) OR write custom tasks.",
-          "Set due date.",
-          "Save — the client sees it in their portal immediately.",
+          "Credit Packs: set service, quantity, and price — mark Online Visible to sell it through the Shop.",
+          "Training Programs: the same Online Visible toggle controls whether a program shows in the Shop as a purchasable item.",
+          "When a client buys a credit pack or program through the Shop, the credits/enrollment are applied automatically the moment payment clears — no manual step needed.",
         ],
       },
       {
-        title: "Track progress and review",
-        badges: ["Daily Use", "Staff-Only"],
-        path: "Sidebar → Pipeline → open a card → Progress",
+        title: "Understand the Shop order lifecycle",
+        badges: ["Live"],
         steps: [
-          "Open the pipeline card.",
-          "Scroll to Progress — every homework, session, and trainer note is timestamped.",
-          "Add session notes after each in-person training session.",
-          "Mark Graduation when ready.",
+          "A client adds products/packs/programs to their cart and checks out with Stripe.",
+          "Digital items (credits, program enrollment) apply automatically on payment success.",
+          "Physical items requiring pickup flow into Front Desk → Online Orders with the PREPARING → READY FOR PICKUP → COMPLETED lifecycle (full detail in the Front Desk section).",
         ],
+        related: ["Front Desk → Online Orders panel"],
       },
       {
-        title: "Use the standard training commands library",
-        badges: ["Staff-Only"],
-        path: "Settings → Clients, Dogs & Compliance → Training Commands",
+        title: "Apparel / print-on-demand",
+        badges: ["Reference"],
         steps: [
-          "Open Training Commands.",
-          "Add/edit the standard commands menu (Sit, Down, Place, Heel, etc.).",
-          "These appear on every dog's profile under Training and on homework templates.",
+          "Branded apparel (t-shirts, hoodies, etc.) is handled through your external Shopify/Printify storefront if you've linked one — it is not built into this app's Shop directly.",
+          "If you have a print-on-demand link configured, add it as a Portal Link so clients can find it from the portal.",
         ],
       },
     ],
   },
   {
-    id: "homework",
-    title: "Homework & Daily Plans",
-    icon: "fa-pen-to-square",
-    color: "text-purple-300",
-    overview: "How homework is created, assigned, marked, and reviewed.",
+    id: "photography-admin",
+    title: "Photography",
+    icon: "fa-camera-retro",
+    color: "text-shAccent",
+    overview: "Photography is a full, dedicated page in the client portal — not a small popup. Admin manages the featured gallery and headline; session pricing reuses your existing Services & Programs catalog.",
     cards: [
       {
-        title: "Create a homework template",
-        badges: ["Setup Only"],
-        path: "Sidebar → Homework → Templates",
+        title: "Manage the Featured Photos gallery",
+        badges: ["Live", "Admin Only"],
+        path: "Settings → Marketing & Branding → Photography Page",
         steps: [
-          "Open Templates.",
-          "+ New Template → name it (e.g. 'Loose-Leash Foundation').",
-          "Add a checklist of tasks.",
-          "Save. You can now apply this template in one click when creating new homework.",
+          "Upload photos to the Featured Photos gallery — these are what clients see in the lightbox gallery on their Photography page.",
+          "Reorder photos with the up/down controls, feature or hide individual photos, or delete one.",
+          "Edit the page headline shown at the top of the client Photography page.",
         ],
       },
       {
-        title: "Assign homework to a client/dog",
-        badges: ["Daily Use", "Staff-Only"],
-        steps: [
-          "Sidebar → Homework → + New.",
-          "Pick client and dog.",
-          "Pick a template or write custom tasks.",
-          "Set due date.",
-          "Save → client sees it in their portal and gets a notification.",
-        ],
-      },
-      {
-        title: "Update homework status",
-        badges: ["Daily Use", "Staff-Only"],
-        steps: [
-          "Open the homework card.",
-          "Tick off each task as the trainer completes it.",
-          "Add a note (e.g. 'Buddy held the sit-stay for 30 sec at distance').",
-          "Mark Complete when done.",
-        ],
-        tip: "If the client marked it complete first but you disagree, leave a note and bump it back to In Progress — they'll see your reason.",
-      },
-      {
-        title: "Review homework on the Dashboard",
-        badges: ["Daily Use"],
-        path: "Sidebar → Dashboard",
-        steps: [
-          "Dashboard shows the homework you owe an update on (top right).",
-          "Click any row to jump directly into that homework.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "payments",
-    title: "Payments, Income & Services",
-    icon: "fa-dollar-sign",
-    color: "text-shGreen",
-    overview: "Pricing, packs, plans, the P&L, and how the cash-basis ledger works.",
-    cards: [
-      {
-        title: "Set service pricing",
-        badges: ["Setup Only"],
+        title: "Sessions & Packages come from your Services catalog",
+        badges: ["Live", "Reference"],
         path: "Settings → Services & Pricing → Services & Programs",
         steps: [
-          "Open Services & Programs.",
-          "Edit base price, duration, and which add-ons apply per service.",
-          "Save.",
+          "The Photography page's Sessions & Packages section lists whatever services you've tagged as Photography in Services & Programs — there is no separate photography price list.",
+          "Add, edit, or retire a photography package the same way you manage any other service.",
         ],
-        related: ["Settings → Services & Pricing → Money Rules", "Settings → Services & Pricing → Holiday & Peak-Season Pricing"],
       },
       {
-        title: "Create a credit pack",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Services & Pricing → Credit Packs",
+        title: "Pixieset delivery link",
+        badges: ["Live", "Client-Facing"],
+        path: "Settings → Marketing & Branding → Portal Links",
         steps: [
-          "Open Credit Packs.",
-          "+ New Pack → set the service, quantity, and price.",
-          "Save → the pack is now available to sell to clients.",
+          "The client's Photography page has an 'Already Had a Session?' section that points to your Pixieset (or other delivery platform) gallery link.",
+          "Set that link under Portal Links so it stays current — this is the same mechanism as your other outbound portal links (Instagram, Google Reviews, etc.).",
         ],
-        tip: "When you sell a pack, the revenue hits your P&L immediately (cash-basis rule). Burning a credit at checkout = $0 P&L impact.",
+        mistake: "We deliberately did not build a direct Pixieset API integration or an in-app photo-delivery platform — delivered galleries live on Pixieset, and the portal only links out to it.",
+      },
+    ],
+  },
+  {
+    id: "finance",
+    title: "Payments & Finance",
+    icon: "fa-dollar-sign",
+    color: "text-shPrimary",
+    overview: "Pricing, packs, plans, the P&L, and how cash-basis revenue is tracked across every tender type.",
+    cards: [
+      {
+        title: "Track income",
+        badges: ["Daily Use", "Admin Only"],
+        path: "Sidebar → Finance",
+        steps: [
+          "Finance has KPI tiles: Completed / Paid / Unpaid / Booked Upcoming, with a breakdown by service.",
+          "Switch date ranges (This Week / Month / Quarter / YTD) and drill into any day.",
+          "Export CSV, download or email the P&L PDF from the toolbar at the top.",
+        ],
       },
       {
-        title: "Sell a payment plan for a big-ticket purchase",
+        title: "Stripe Online payments — day to day",
+        badges: ["Live"],
+        path: "Sidebar → Finance · Front Desk → Online Payments",
+        steps: [
+          "Stripe payments show up in your income totals exactly like any other tender, tagged so you can always tell a card-online payment apart from cash/manual.",
+          "To refund a Stripe payment, use the refund action inside its own record (Front Desk → Online Payments, or the invoice itself) — this is the only path that actually returns money to the client's card.",
+          "Distinguishing Stripe from cash/manual: look at the tender/method column on any transaction — Stripe-paid rows are labeled distinctly from Cash/Check/Venmo/PayPal rows.",
+        ],
+        mistake: "Never try to reverse a Stripe charge by logging a manual cash refund — it won't touch the card and will make your books wrong.",
+      },
+      {
+        title: "Credit Audit (reconciliation)",
+        badges: ["Live", "Admin Only"],
+        path: "Sidebar → Credit Audit",
+        steps: [
+          "Cross-checks client credit balances against the bookings/purchases that should have produced them, surfacing anything that looks off.",
+          "Use it after a bulk import or a suspected data issue — not a routine daily task.",
+        ],
+      },
+      {
+        title: "Payment plans for big-ticket purchases",
         badges: ["Admin Only"],
         path: "Sidebar → Clients → open client → Payment Plans",
         steps: [
-          "Open the client's profile.",
-          "Click New Payment Plan.",
-          "Pick the service/program (e.g. 8-week training).",
-          "Set the installment schedule (e.g. 4 weekly payments).",
-          "Save — the first installment marks Due, and revenue hits the P&L only as each is marked Paid.",
+          "Open the client's profile → New Payment Plan.",
+          "Pick the service/program and set the installment schedule.",
+          "Revenue posts to the P&L only as each installment is marked Paid.",
         ],
-        mistake: "Marking a future installment Paid before the cash has actually cleared — fix it via the Reverse Payment button.",
       },
       {
-        title: "Track daily / weekly / monthly income",
+        title: "A note on payment methods you'll still see referenced",
+        badges: ["Reference"],
+        steps: [
+          "Settings → Finance & Bookkeeping → Payment Options still lists a Clover toggle from an earlier payment-processor evaluation.",
+          "Clover is not the active payment path — Stripe (online) plus cash/manual entry through the Front Desk register is. If you see a Clover option anywhere, treat it as legacy and do not configure it; flag it to support if it's confusing.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "messages-admin",
+    title: "Messages & Communications",
+    icon: "fa-comments",
+    color: "text-shSecondary",
+    overview: "Two tools for staying in touch with clients — Client Messages for one-to-one back-and-forth, Bulk Email for one-to-many announcements — plus the audit trail behind every send.",
+    cards: [
+      {
+        title: "Client Messages (direct inbox)",
+        badges: ["Live", "Permission-gated"],
+        path: "Sidebar → Client Messages",
+        steps: [
+          "A unified inbox of every conversation a client starts from their portal — filter by Open / Pending / Resolved, or toggle Unread only.",
+          "Click a thread, type a reply, and hit Reply — by default it also emails the client (uncheck to keep it in-app only).",
+          "Internal Notes at the bottom of a thread are visible to staff only, never to the client.",
+          "The sidebar shows an orange unread badge that refreshes every 60 seconds.",
+        ],
+      },
+      {
+        title: "Bulk Client Email",
+        badges: ["Live", "Admin Only"],
+        path: "Sidebar → Bulk Email",
+        steps: [
+          "Pick a recipient slice using filter chips (Active clients, has upcoming bookings, missing vaccines, etc.) — a live recipient counter updates as you adjust.",
+          "Start from a template or write your own, use merge tags for personalization, and Send Test before sending to everyone.",
+          "Every send is logged on each recipient's Communication timeline and in the Bulk Email History tab.",
+        ],
+      },
+      {
+        title: "Announcements banner",
+        badges: ["Live", "Client-Facing"],
+        path: "Sidebar → Announcements",
+        steps: [
+          "Post a banner clients see at the top of their portal Home — set title, message, style (info/success/warning/urgent), and a date window.",
+        ],
+      },
+      {
+        title: "Audit Log",
+        badges: ["Live", "Admin/Manager"],
+        path: "Sidebar → Audit Log",
+        steps: [
+          "Every staff/admin write is captured automatically — filter by group (Bookings, Dogs, Clients, Money, Settings, etc.), user, or free text.",
+          "Click a row to expand the payload — passwords, tokens, and card numbers are auto-redacted.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "training-homework",
+    title: "Training Programs & Homework",
+    icon: "fa-graduation-cap",
+    color: "text-purple-300",
+    overview: "Sell training programs, move clients through stages, assign and track homework.",
+    cards: [
+      {
+        title: "Pipeline — move a training client through stages",
         badges: ["Daily Use", "Admin Only"],
-        path: "Sidebar → Income",
+        path: "Sidebar → Pipeline",
         steps: [
-          "Income screen has KPI tiles (Completed / Paid / Unpaid / Booked Upcoming).",
-          "Switch the date range with the picker.",
-          "Auto-grouped Month → Day so you can drill into any day.",
-          "Watch the green 'Auto-email P&L' status pill at the top — that's confirming the monthly auto-send is healthy.",
+          "+ New → pick client, dog, and training program, stage starts at Intake.",
+          "Drag the card through Assessment → Active → Graduating → Graduated — each move is timestamped.",
         ],
       },
       {
-        title: "Read the P&L PDF",
-        badges: ["Admin Only"],
-        path: "Sidebar → Income → Email Me / Download PDF",
+        title: "Assign and track homework",
+        badges: ["Daily Use", "Staff-Only"],
+        path: "Sidebar → Homework",
         steps: [
-          "Click Email Me to mail the P&L to your inbox now, or Download to grab the PDF directly.",
-          "Top: net income, expenses, payroll.",
-          "Middle: Cash Flow Ledger (Pre-paid In / Register Cash In / Credits Redeemed).",
-          "Bottom: daily revenue chart, top clients, top dogs, retail breakdown.",
+          "+ New Homework → pick client/dog, choose a template or write custom tasks, set a due date.",
+          "The client sees it in their portal immediately and can check items off; you can mark it Complete when you agree it's done.",
         ],
       },
     ],
   },
   {
-    id: "compliance",
-    title: "Vaccines, Waivers & Compliance",
-    icon: "fa-shield-virus",
-    color: "text-red-400",
-    overview: "Block bookings on missing vaccines, expired waivers, and any compliance gap.",
+    id: "staff",
+    title: "Staff & Permissions",
+    icon: "fa-users-gear",
+    color: "text-shSecondary",
+    overview: "Team accounts, roles, and what each role can see and do.",
     cards: [
       {
-        title: "Set which vaccines you require",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Clients, Dogs & Compliance → Vaccine Requirements",
-        steps: [
-          "Toggle each required vaccine on.",
-          "Rabies is on by default.",
-          "Set the warning lead time (default 30 days before expiry).",
-        ],
-      },
-      {
-        title: "Add or update a dog's vaccine records",
-        badges: ["Daily Use"],
-        path: "Sidebar → Dogs → open dog → Vaccines",
-        steps: [
-          "Open the dog → Vaccines tab.",
-          "Enter the expiry date for each vaccine.",
-          "Optionally upload the vet certificate (PDF or photo).",
-          "Save.",
-        ],
-      },
-      {
-        title: "Require waiver signature before booking",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Clients, Dogs & Compliance → Waiver",
-        steps: [
-          "Open Waiver.",
-          "Paste your waiver text.",
-          "Tick 'Require for booking'.",
-          "Optionally set a re-sign frequency (yearly is common).",
-        ],
-      },
-      {
-        title: "Read the compliance warnings on the Dashboard",
-        badges: ["Daily Use"],
-        path: "Sidebar → Dashboard",
-        steps: [
-          "Expiring vaccines + missing waivers appear under Today's Tasks.",
-          "Click any to jump to that dog or client.",
-        ],
-      },
-      {
-        title: "Configure block-on-missing behavior",
+        title: "Add and manage staff",
         badges: ["Admin Only"],
-        path: "Settings → Clients, Dogs & Compliance → Compliance Rules",
+        path: "Sidebar → Staff",
         steps: [
-          "Open Compliance Rules.",
-          "Decide: hard block, warn-only, or grace period.",
-          "Recommended: hard block for rabies, warn-only for everything else.",
+          "Add a new staff account, set their role, and (if enabled) their staff-portal access.",
+          "New staff default to Read-only so a brand-new account can't accidentally change anything destructive.",
+        ],
+      },
+      {
+        title: "Roles & permission matrix",
+        badges: ["Admin Only"],
+        path: "Sidebar → Staff (Roles panel) · Settings → Staff & Admin → Permission Matrix",
+        steps: [
+          "Roles: Owner / Manager / Trainer / Daycare Staff / Boarding Staff / Front Desk / Read-only.",
+          "The permission matrix is a full grid of role × permission — toggle a checkbox to grant/revoke, changes apply on next request.",
+          "The sidebar automatically hides items a staffer doesn't have permission to use.",
         ],
       },
     ],
   },
   {
-    id: "email",
-    title: "Email & Notifications",
-    icon: "fa-paper-plane",
-    color: "text-shGreen",
-    overview: "Every email path, who gets what when, and how to confirm it's actually delivering.",
+    id: "settings-help",
+    title: "Settings",
+    icon: "fa-cog",
+    color: "text-shSecondary",
+    overview: "Settings is organized into nine categories. Use the search box inside Settings to jump straight to a subsection.",
     cards: [
       {
-        title: "What gets sent automatically",
-        badges: ["Daily Use"],
+        title: "Business Operations",
+        badges: ["Reference"],
         steps: [
-          "Booking confirmation — when admin approves a pending booking.",
-          "Booking reminder — N hours before (configurable).",
-          "Review request — N hours after checkout (configurable).",
-          "Vaccine reminder — when a vaccine is approaching expiry.",
-          "Waiver re-sign — when waiver expires.",
-          "Payment receipt — at checkout.",
-          "Monthly P&L — to admin only, on the 1st of each month.",
+          "Feature Visibility (turn major features on/off app-wide), Client Portal Controls, Booking Flow Controls, Dashboard Widget Controls, Operator Quick Controls, Hours & Closures, Capacity & Kennels, Booking Guardrails.",
         ],
       },
       {
-        title: "Customize an email template",
-        badges: ["Admin Only", "Client-Facing"],
-        path: "Settings → Email & Notifications → Email Designer",
+        title: "Services & Pricing",
+        badges: ["Reference"],
         steps: [
-          "Open Email Designer.",
-          "Pick the template (32 to choose from).",
-          "Edit the subject and body — use the variable picker to insert dog/client/booking data.",
-          "Click Send Test — a sample lands in your inbox so you can preview.",
-          "Save.",
-        ],
-        tip: "The Email Health pill at the top tells you instantly if Resend can actually send. Green = healthy, red = your sender domain isn't verified.",
-      },
-      {
-        title: "Adjust quiet hours and timing",
-        badges: ["Admin Only"],
-        path: "Settings → Email & Notifications → Email Timing & Quiet Hours",
-        steps: [
-          "Set quiet hours window (e.g. 8pm–8am).",
-          "Set reminder lead time (e.g. 24h before the booking).",
-          "Set review-request delay (e.g. 2h after checkout).",
+          "Services & Programs, Credit Packs, Payment Plans, Money Rules (fees/tipping/deposits), Holiday & Peak-Season Pricing.",
         ],
       },
       {
-        title: "Text messages (SMS)",
-        badges: ["Coming Soon"],
+        title: "Clients, Dogs & Compliance",
+        badges: ["Reference"],
         steps: [
-          "SMS reminders via Twilio are on the roadmap.",
-          "For now, all reminders go via email.",
+          "Vaccine Requirements, Waiver, Compliance Rules, Training Commands, plus links out to Intake Forms and Incidents & Safety Flags.",
+        ],
+      },
+      {
+        title: "Email & Notifications",
+        badges: ["Reference"],
+        steps: [
+          "Email Designer, Email Automation, Email Timing & Quiet Hours. Text Message Settings and Marketing Emails are listed but are Coming Soon — not live yet.",
+        ],
+      },
+      {
+        title: "Marketing & Branding",
+        badges: ["Reference"],
+        steps: [
+          "Brand & Theme, Portal & UI Polish, Public Service Info, Mood Tags, Portal Links, Photography Page, First Visit Card, Review Links, Marketing QR Codes.",
+        ],
+      },
+      {
+        title: "Staff & Admin",
+        badges: ["Reference"],
+        steps: [
+          "Links out to Manage Staff and Roles & Permissions (both live on the Staff screen), plus the Permission Matrix. Payroll Settings is Coming Soon.",
+        ],
+      },
+      {
+        title: "Finance & Bookkeeping",
+        badges: ["Reference"],
+        steps: [
+          "Links out to the Finance screen, Finance Defaults (fiscal year, export format, mileage rate), and Payment Options (which methods clients see).",
+          "Payment Processors and Refund Rules are listed as Coming Soon in this category — day-to-day Stripe operations happen on the Finance and Front Desk screens today, not here.",
+        ],
+      },
+      {
+        title: "Rewards & Referrals",
+        badges: ["Reference"],
+        steps: [
+          "Links out to Rewards Center and Trophy Wall, plus Loyalty Tiers, Streaks & Referral Rules configuration.",
+        ],
+      },
+      {
+        title: "System & Data",
+        badges: ["Reference"],
+        steps: [
+          "My Account, Backup & Restore, Server Errors, Data Export (CSV), plus links out to Duplicate Check and Audit Log.",
         ],
       },
     ],
   },
   {
-    id: "branding",
-    title: "Branding & Client Portal",
-    icon: "fa-palette",
-    color: "text-shBlue",
-    overview: "Your logo, colors, public copy, and what clients see in the portal.",
+    id: "mobile-admin",
+    title: "Using Admin on a Phone",
+    icon: "fa-mobile",
+    color: "text-shSecondary",
+    overview: "The Admin Portal is fully responsive. On a phone, the desktop sidebar disappears and is replaced by a compact header and a full-screen navigation drawer.",
     cards: [
       {
-        title: "Upload your logo and set brand colors",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Marketing & Branding → Brand & Theme",
+        title: "Mobile header & navigation",
+        badges: ["Live"],
         steps: [
-          "Open Brand & Theme.",
-          "Upload your logo (PNG or SVG, transparent background works best).",
-          "Set primary, secondary, and accent colors.",
-          "Optionally swap the font.",
-          "Save — changes apply across the app and the client portal.",
+          "The top bar shows your logo, the current page title, and a hamburger menu button.",
+          "Tap the hamburger to open the full navigation drawer — every destination is grouped exactly like the desktop sidebar (Operations / Clients / Business / Team / System), with large tap targets.",
+          "The drawer also has your text-size control, the Install App button, and Sign out.",
         ],
       },
       {
-        title: "Write public service descriptions",
-        badges: ["Setup Only", "Client-Facing"],
-        path: "Settings → Marketing & Branding → Public Service Info",
+        title: "Dense screens become stacked cards",
+        badges: ["Live"],
         steps: [
-          "Open Public Service Info.",
-          "For each service, write a 2-3 sentence description in plain language.",
-          "These appear on the booking page and in confirmation emails.",
+          "Desktop tables (Clients, Dogs, Bookings, Audit Log, etc.) automatically switch to stacked mobile cards on a phone — you'll see the same information, just rearranged, never a sideways-scrolling spreadsheet.",
+          "Front Desk's toolbar buttons (Open Drawer / Recent Sales / Manage Products) wrap onto their own rows on narrow screens instead of getting clipped.",
         ],
       },
       {
-        title: "Add portal links",
-        badges: ["Optional", "Client-Facing"],
-        path: "Settings → Marketing & Branding → Portal Links",
+        title: "What to expect on Dashboard, Front Desk, Finance",
+        badges: ["Live"],
         steps: [
-          "Open Portal Links.",
-          "Add outbound links you want clients to see (Instagram, Google Reviews, FAQ).",
-          "These render as buttons on the client portal sidebar.",
-        ],
-      },
-      {
-        title: "Generate marketing QR codes",
-        badges: ["Optional", "Admin Only"],
-        path: "Settings → Marketing & Branding → Marketing QR Codes",
-        steps: [
-          "Open Marketing QR Codes.",
-          "Pick a destination (homepage, booking page, Instagram, etc.).",
-          "Download the PNG.",
-          "Print on flyers, business cards, kennel-door signs.",
+          "Dashboard: hero and stat tiles stack in a single column.",
+          "Front Desk: register/printer status stacks above the action buttons; cart and product grid stack vertically.",
+          "Finance: KPI tiles wrap into a 2-column grid; the transaction table becomes a stacked list.",
         ],
       },
     ],
   },
   {
-    id: "system",
-    title: "Backups, Self-Hosting & Data",
+    id: "troubleshooting-admin",
+    title: "Troubleshooting & Backups",
     icon: "fa-shield-halved",
-    color: "text-shBlue",
-    overview: "Keep your data safe and know what to do when something goes wrong.",
+    color: "text-shSecondary",
+    overview: "Keep your data safe and know what to do when something looks wrong.",
     cards: [
       {
         title: "Take a manual backup",
         badges: ["Admin Only"],
         path: "Settings → System & Data → Backup & Restore",
         steps: [
-          "Open Backup & Restore.",
-          "Click Snapshot Now.",
-          "Wait 10-30 seconds — you'll get a downloadable .gz file.",
-          "Save it somewhere outside the server (Google Drive, external HD).",
+          "Click Snapshot Now, wait for the downloadable file, and save it somewhere outside the server.",
         ],
-        tip: "Do this before any big config change. Restoring from a snapshot is a 3-click rollback.",
+        tip: "Do this before any big configuration change — restoring is a 3-click rollback.",
       },
       {
-        title: "Restore from a backup",
+        title: "An email isn't arriving",
         badges: ["Admin Only"],
-        path: "Settings → System & Data → Backup & Restore",
+        path: "Settings → Email & Notifications → Email Designer",
         steps: [
-          "Open Backup & Restore.",
-          "Upload the .gz file.",
-          "Confirm — this overwrites your current data.",
-          "Wait for the restart.",
+          "Check the Email Health status pill at the top of Email Designer — green means the sending domain is verified and healthy.",
+          "If it's red, your sender domain needs to be verified before any client email will deliver.",
         ],
-        mistake: "Restoring without a fresh snapshot first. Always backup the current state before overwriting.",
       },
       {
         title: "Check the server error log",
         badges: ["Admin Only"],
         path: "Settings → System & Data → Server Errors",
         steps: [
-          "Open Server Errors.",
-          "Latest errors at the top.",
-          "If something's broken, copy the error message and contact support.",
+          "Latest errors appear at the top — copy the message if you need to contact support.",
         ],
       },
       {
-        title: "Self-hosting notes",
-        badges: ["Admin Only"],
-        steps: [
-          "Sit Happens runs on any modern Linux box with Docker.",
-          "MongoDB stores everything — backups are full DB snapshots.",
-          "The app auto-restarts if the container crashes.",
-          "For HTTPS, put it behind Cloudflare or Caddy.",
-        ],
-      },
-      {
-        title: "Data export (CSV)",
+        title: "Export your data",
         badges: ["Live", "Admin Only"],
         path: "Settings → System & Data → Data Export",
         steps: [
-          "Twelve one-click downloads: Clients, Dogs, Bookings, Waitlist, Intake Templates, Intake Submissions, Incidents, Safety Flags, Vaccines, Income, Communications, Staff Time-Clock.",
-          "Each row shows the current count so you know exactly what'll land in the file.",
-          "Click Download CSV — your browser saves a date-stamped file (e.g. sithappens-clients-2026-02-15.csv).",
-          "Nested data (vaccines, safety flags) is stored as JSON inside the cell so the spreadsheet stays a single tidy row per record.",
+          "One-click CSV downloads for Clients, Dogs, Bookings, Waitlist, Intake, Incidents, Vaccines, Income, Communications, Staff Time-Clock, and more.",
         ],
-        tip: "Hand these straight to your bookkeeper, run pivot tables in Google Sheets, or use them as a paper trail before any major data migration.",
-      },
-      {
-        title: "Operational Readiness Checklist",
-        badges: ["Live", "Admin Only"],
-        path: "Dashboard (top of screen)",
-        steps: [
-          "Nine setup checks that confirm your app is ready to run hands-free: business hours, services & pricing, vaccine rules, waiver, intake templates, review links, staff roles, kennel labels, first backup.",
-          "Each unfinished item shows a one-tap Fix button that jumps straight to the right Settings page.",
-          "Collapses into a single chip once everything is done so it doesn't clutter the dashboard.",
-        ],
-        tip: "If you're handing the dashboard off to a new staffer, this checklist is the fastest way to spot what's missing.",
       },
     ],
   },
 ];
 
 const CLIENT_QUICK_ACTIONS = [
-  { id: "_cqa_login",     label: "Log In",              icon: "fa-right-to-bracket", target: "getting-started" },
-  { id: "_cqa_profile",   label: "Update My Info",      icon: "fa-user",             target: "client-profile" },
-  { id: "_cqa_dog",       label: "Add My Dog",          icon: "fa-paw",              target: "dog-profile" },
-  { id: "_cqa_book",      label: "Book a Visit",        icon: "fa-calendar-plus",    target: "booking" },
-  { id: "_cqa_vaccines",  label: "Upload Vaccines",     icon: "fa-shield-virus",     target: "vaccines-waivers" },
-  { id: "_cqa_homework",  label: "View Homework",       icon: "fa-pen-to-square",    target: "homework-training" },
-  { id: "_cqa_install",   label: "Install on Phone",    icon: "fa-mobile",           target: "app-install" },
+  { id: "_cqa_login",    label: "Log In",           icon: "fa-right-to-bracket", target: "getting-started" },
+  { id: "_cqa_book",     label: "Book a Visit",      icon: "fa-calendar-plus",    target: "booking" },
+  { id: "_cqa_shop",     label: "Shop",              icon: "fa-bag-shopping",     target: "shop" },
+  { id: "_cqa_photo",    label: "Photography",       icon: "fa-camera-retro",     target: "photography" },
+  { id: "_cqa_dog",      label: "My Dogs & Records", icon: "fa-paw",              target: "dogs-records" },
+  { id: "_cqa_credits",  label: "Credits & Payments",icon: "fa-wallet",           target: "credits-payments" },
+  { id: "_cqa_mobile",   label: "Install on Phone",  icon: "fa-mobile",           target: "mobile-app" },
 ];
 
 const CLIENT_SECTIONS = [
   {
-    id: "first_time_setup",
-    title: "First-Time Setup",
-    icon: "fa-clipboard-check",
-    color: "text-shOrange",
-    overview: "When you first sign in, the portal walks you through everything we need before booking. The setup checklist sits right at the top until every step is complete.",
-    cards: [
-      {
-        title: "Complete your profile, dogs, vaccines, waiver & emergency contact",
-        badges: ["Required"],
-        steps: [
-          "1. Your Information — tap 'Complete My Info' to confirm your name, phone, email and address.",
-          "2. Dog Information — tap 'Add / Update Dog Info' to add each pup (name, breed, birthday, sex, notes). You can add more dogs any time from the same button.",
-          "3. Emergency Contact — tap 'Add Emergency Contact' to give us a backup name + phone we can call if we can't reach you.",
-          "4. Vaccine Records — tap 'Upload Vaccine Records'. If multiple vaccines are due, a wizard walks you through each one in order. Photos or PDFs are accepted.",
-          "5. Client Waiver — tap 'Review & Sign Waiver' to read and e-sign our liability waiver.",
-          "6. Service Intake Forms — when admin assigns a form (boarding/daycare/training intake), it appears here. Fill it out before that service can be booked.",
-        ],
-        tip: "Booking unlocks automatically the moment every step is green — no need to refresh.",
-      },
-    ],
-  },
-  {
-    id: "booking_and_credits",
-    title: "Booking & Credits",
-    icon: "fa-paw",
-    color: "text-shGreen",
-    overview: "How daycare, boarding, training, photography bookings + credits work.",
-    cards: [
-      {
-        title: "Book a service",
-        badges: ["Beginner"],
-        steps: [
-          "Open the green 'Book Now' card in the middle of the portal (or use the Quick Link).",
-          "Pick the service (daycare, boarding, training, grooming, photography), the dog, the date and any add-ons.",
-          "Submit — admin gets notified and the booking shows up under 'My Bookings'.",
-          "Tabs: Upcoming · Past · All. Click any booking to see status, drop-off time, notes, and payment.",
-        ],
-      },
-      {
-        title: "How credits work",
-        badges: ["Reference"],
-        steps: [
-          "Credits are pre-paid passes (daycare/training/boarding). Each completed booking burns one credit of the matching kind.",
-          "Grooming is pay-on-the-day — no credits used.",
-          "Credits update after completed bookings or admin changes (refunds, gifts, transfers).",
-          "When you're running low, the orange 'Need more credits?' card appears in the credits panel — message us or book your next service.",
-        ],
-      },
-      {
-        title: "Payment plans / manual payment tracking",
-        badges: ["Reference"],
-        steps: [
-          "This app tracks outside/manual payments only — no in-app charging.",
-          "Each payment plan shows what you've paid, what's left, and any overdue rows.",
-          "When admin sets up a new plan it starts as 'Awaiting signature' — review and sign the agreement to continue.",
-          "Send payment outside the app (cash/cheque/transfer/etc.) and admin marks the row paid here.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "messages",
-    title: "Send a message to the team",
-    icon: "fa-comments",
-    color: "text-shGreen",
-    overview: "Need to ask something? Use the Messages button at the top of the portal — it's like a mini inbox between you and the Sit Happens team.",
-    cards: [
-      {
-        title: "Send a new message",
-        badges: ["Beginner"],
-        steps: [
-          "Tap the green 'Messages' button at the top-right of the portal header.",
-          "Hit 'New Message'.",
-          "Pick what it's about (Booking / Daycare / Boarding / Training / Vaccines / Forms / Payments / Dog Records / Other) and which dog (optional).",
-          "Add a short subject and type your message — same as texting.",
-          "Tap Send. You'll see your message right away inside the app.",
-        ],
-        tip: "If you'd rather not pick a category, just leave it on 'Something else' and write what's on your mind.",
-      },
-      {
-        title: "Read replies + reply back",
-        badges: ["Beginner"],
-        steps: [
-          "When the team replies, the Messages button in the header shows an orange unread count.",
-          "Tap the button to open your inbox, then tap the thread to read the full conversation.",
-          "Type a reply at the bottom and hit Reply — the team is notified instantly.",
-          "If your business has email notifications on, you'll also get a copy in your inbox.",
-        ],
-        tip: "Resolved threads automatically re-open if you reply — you don't have to start a new conversation if something comes up later.",
-      },
-      {
-        title: "Training homework, files & rewards",
-        badges: ["Reference"],
-        steps: [
-          "Active training programs show up under 'Training Progress' on the portal — goals, completed skills, files and homework all live there.",
-          "Homework you've been assigned appears as its own card with a checkbox; tick it when done so your trainer can see progress.",
-          "Referral rewards: under Quick Links → Refer a Friend, share your code. When a new client signs up and books, you get a free daycare day.",
-          "Photo gallery & download PIN: when admin posts new photos, the Photo Gallery tile shows a NEW badge. Use the PIN when downloading files from the gallery.",
-        ],
-      },
-    ],
-  },
-  {
     id: "getting-started",
     title: "Getting Started",
     icon: "fa-rocket",
-    color: "text-shGreen",
-    overview: "Open the portal, log in, and find your way around.",
+    color: "text-shPrimary",
+    overview: "Open the portal, log in, complete first-time setup, and find your way around Home.",
     cards: [
       {
-        title: "Open the client portal",
+        title: "Log in and complete first-time setup",
+        badges: ["Required"],
+        steps: [
+          "Open the portal link your business sent you and log in with the email/password on file.",
+          "The first time you log in, an Action Needed banner walks you through: Your Information, Dog Information, Emergency Contact, Vaccine Records, and the Waiver.",
+          "Any service-specific intake form your business assigns (boarding/daycare/training) also appears here — fill it out before that service can be booked.",
+          "Booking unlocks automatically the moment every step is complete — no refresh needed.",
+        ],
+        tip: "Forgot your password? Tap Forgot Password on the login screen — you'll get a reset link by email (valid 24 hours).",
+      },
+      {
+        title: "What's on Home",
         badges: ["Beginner"],
         steps: [
-          "Go to the link your dog daycare/training business sent you.",
-          "Bookmark it or save it to your home screen for one-tap access.",
-        ],
-      },
-      {
-        title: "Log in to your account",
-        badges: ["Beginner"],
-        steps: [
-          "Enter the email address your business has on file.",
-          "Enter your password.",
-          "Tick Remember me on your own device only.",
-        ],
-        tip: "If you signed up at the front desk, your business may have set a starter password — change it once you're in.",
-      },
-      {
-        title: "Recover your login",
-        badges: ["Beginner"],
-        steps: [
-          "On the login screen, tap Forgot Password.",
-          "Enter your email.",
-          "Check your inbox for a reset link (valid 24 hours).",
-          "Set a new password and log in.",
-        ],
-        mistake: "Don't see the email? Check spam, then contact your business — they can manually send another reset link.",
-      },
-      {
-        title: "What you'll see on the dashboard",
-        badges: ["Beginner"],
-        steps: [
-          "Upcoming bookings at the top.",
-          "Your dogs and their compliance status (vaccines, waiver).",
-          "Active homework if you have any.",
-          "Any payment plans or credit balances.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "client-profile",
-    title: "Your Profile",
-    icon: "fa-user",
-    color: "text-shBlue",
-    overview: "Keep your contact info, address, and emergency contact up to date.",
-    cards: [
-      {
-        title: "Update your contact info",
-        badges: ["Beginner"],
-        path: "Portal → My Account",
-        steps: [
-          "Open My Account.",
-          "Edit name, email, phone, address.",
-          "Save.",
-        ],
-        tip: "If you change your email, you'll log in with the new one next time.",
-      },
-      {
-        title: "Set your emergency contact",
-        badges: ["Beginner"],
-        path: "Portal → My Account → Emergency Contact",
-        steps: [
-          "Open My Account.",
-          "Scroll to Emergency Contact.",
-          "Add name, phone, and relationship.",
-          "Save.",
-        ],
-        mistake: "Skipping this. Your business needs someone to call if you can't be reached during a stay.",
-      },
-      {
-        title: "Required fields",
-        badges: ["Beginner"],
-        steps: [
-          "Some fields (name, email, phone) are required to book.",
-          "If your profile has gaps, the portal will prompt you on your next booking.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "dog-profile",
-    title: "Your Dog's Profile",
-    icon: "fa-paw",
-    color: "text-shGreen",
-    overview: "Add your dog, update notes, track behavior and training info.",
-    cards: [
-      {
-        title: "Add a dog",
-        badges: ["Beginner"],
-        path: "Portal → My Dogs → + Add Dog",
-        steps: [
-          "Open My Dogs.",
-          "Click + Add Dog.",
-          "Enter name, breed, sex, birthday, fixed/intact.",
-          "Save.",
-        ],
-      },
-      {
-        title: "Update dog details",
-        badges: ["Beginner"],
-        steps: [
-          "Open My Dogs.",
-          "Tap a dog.",
-          "Edit any field (breed, birthday, fixed status, vet info).",
-          "Save.",
-        ],
-      },
-      {
-        title: "Add notes about your dog",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Open your dog's profile.",
-          "Scroll to Notes (if your business has enabled client notes).",
-          "Add anything the trainer/daycare team should know.",
-        ],
-      },
-      {
-        title: "View training and behavior notes",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Open your dog's profile.",
-          "Scroll to Behavior or Training Notes.",
-          "Notes posted by your trainer appear with date stamps.",
+          "Three quick-action cards at the top: Book Now, Shop, and (if your business offers it) Photography.",
+          "An announcement banner from your business, if one is posted.",
+          "An Action Needed card if any setup step is still incomplete.",
+          "A contextual next-step banner (e.g. \"Add your dog\") when something's missing.",
+          "My Dogs, your upcoming bookings, credits, and Quick Links further down the page.",
         ],
       },
     ],
   },
   {
     id: "booking",
-    title: "Booking Services",
+    title: "Booking",
     icon: "fa-calendar-plus",
-    color: "text-shOrange",
-    overview: "Request daycare, boarding, training, or grooming visits.",
+    color: "text-shAccent",
+    overview: "Request daycare, boarding, training, grooming, or a photography session.",
     cards: [
       {
-        title: "Request a daycare/boarding/training visit",
-        badges: ["Beginner"],
-        path: "Portal → Book a Visit",
-        steps: [
-          "Tap Book a Visit.",
-          "Pick the dog.",
-          "Pick the service (daycare, boarding, training, grooming).",
-          "Pick the date — boarding will ask for start and end date.",
-          "Add any add-ons (bath, nail trim).",
-          "Submit.",
-        ],
-      },
-      {
-        title: "Understand availability",
+        title: "Book a service",
         badges: ["Beginner"],
         steps: [
-          "Dates that are full or closed appear greyed out.",
-          "Same-day requests may not be available — check your business's lead-time rules.",
-          "Boarding shows kennel availability across your date range.",
+          "Tap the Book Now card on Home (or Book in the sidebar/bottom nav).",
+          "Pick the service, the dog (or dogs), the date, and any add-ons.",
+          "Submit — your business is notified and the request shows up under My Bookings as Pending.",
         ],
       },
       {
         title: "What happens after you submit",
         badges: ["Beginner"],
         steps: [
-          "Your request goes to your business as 'Pending'.",
-          "They'll approve or reject within their stated turnaround time.",
-          "You'll get an email either way.",
-          "Approved bookings appear under Upcoming on your dashboard.",
+          "Your business approves or rejects the request — you'll get an email either way.",
+          "Approved bookings appear under Upcoming on Home.",
+          "Some businesses instantly confirm certain services instead of requiring manual approval — if that applies to you, you'll see the booking confirm immediately.",
         ],
       },
       {
-        title: "Cancel or reschedule",
+        title: "Before you can book",
+        badges: ["Beginner"],
+        steps: [
+          "A missing vaccine, an unsigned waiver, or an incomplete profile/dog/emergency-contact section will block a new booking — the portal tells you exactly which one.",
+          "Fix the flagged item (see Dogs & Records) and the booking goes through.",
+        ],
+      },
+      {
+        title: "Cancel or request a reschedule",
         badges: ["Beginner"],
         path: "Portal → Upcoming → open a booking",
         steps: [
-          "Open the upcoming booking.",
-          "Tap Cancel or Request Reschedule.",
-          "Cancellations may have a fee depending on how close to the date — your business sets these rules.",
+          "Open the upcoming booking and tap Cancel or Request Reschedule.",
+          "Cancellations may carry a fee depending on how close to the date you are — your business sets these rules.",
         ],
       },
     ],
   },
   {
-    id: "vaccines-waivers",
-    title: "Vaccines & Waivers",
-    icon: "fa-shield-virus",
-    color: "text-red-400",
-    overview: "Keep vaccine records current and sign the liability waiver.",
+    id: "shop",
+    title: "Shop",
+    icon: "fa-bag-shopping",
+    color: "text-shPrimary",
+    overview: "A dedicated Shop for retail products, credit packs, and training programs — separate from booking a service.",
     cards: [
       {
-        title: "View required vaccines",
+        title: "Browse and buy",
+        badges: ["Beginner"],
+        path: "Portal → Shop",
+        steps: [
+          "Open Shop from the sidebar (desktop) or the bottom nav (mobile).",
+          "Browse Products, Credit Packs, and Training Programs, and add anything to your cart.",
+          "Check out securely with a card through Stripe.",
+        ],
+      },
+      {
+        title: "Credits and programs apply automatically",
+        badges: ["Beginner"],
+        steps: [
+          "Buying a credit pack adds those credits to your account the moment payment clears — no waiting on staff to manually apply it.",
+          "Buying a training program enrolls you in that program the same way.",
+        ],
+      },
+      {
+        title: "Local pickup items",
+        badges: ["Beginner"],
+        steps: [
+          "Physical products you buy for pickup move through four stages: Preparing → Ready for Pickup → Completed. If something needs attention (a payment or stock issue), it shows Needs Attention and your business will follow up.",
+          "You'll get an email when your order is marked Ready for Pickup.",
+        ],
+      },
+      {
+        title: "Apparel and branded merch",
+        badges: ["Reference"],
+        steps: [
+          "Branded apparel may be sold through an external Shopify/Printify store linked from your business's portal, rather than inside this Shop directly — look for that link on the portal if your business offers it.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "photography",
+    title: "Photography",
+    icon: "fa-camera-retro",
+    color: "text-shAccent",
+    overview: "Photography is its own full page — a gallery, a way to book a session, and a link to your delivered photos.",
+    cards: [
+      {
+        title: "The Photography page",
+        badges: ["Beginner"],
+        path: "Portal → Photography",
+        steps: [
+          "Open Photography from the sidebar (desktop) or the Photos icon on the bottom nav (mobile, if your business offers photography).",
+          "Browse the Featured Photos gallery — tap any photo to open it full-screen and swipe through the set.",
+          "Sessions & Packages lists the photography options your business offers, with pricing — tap Book a Session to start a booking for the one you want.",
+        ],
+      },
+      {
+        title: "Already had a session?",
+        badges: ["Beginner"],
+        steps: [
+          "The \"Already Had a Session?\" section at the bottom links out to your business's Pixieset (or similar) gallery — that's where your actual delivered, downloadable photos live.",
+          "The portal's Featured Photos gallery is a showcase of great shots, not your personal delivered gallery — go to the Pixieset link for the photos from your own session.",
+        ],
+      },
+    ],
+  },
+  {
+    id: "dogs-records",
+    title: "Dogs & Records",
+    icon: "fa-paw",
+    color: "text-shPrimary",
+    overview: "Add your dog, keep vaccine records current, sign the waiver, and see training progress.",
+    cards: [
+      {
+        title: "Add or update a dog",
+        badges: ["Beginner"],
+        path: "Portal → My Dogs",
+        steps: [
+          "Open My Dogs → + Add Dog. Enter name, breed, sex, birthday, and fixed/intact status.",
+          "Tap a dog to update any field, or add notes for trainers/daycare staff to see.",
+        ],
+      },
+      {
+        title: "Vaccines and the waiver",
         badges: ["Beginner"],
         path: "Portal → My Dogs → open dog → Vaccines",
         steps: [
-          "Open your dog's Vaccines tab.",
-          "You'll see each required vaccine and its current expiry date.",
-          "Expired/expiring ones show in red.",
+          "Open the dog's Vaccines tab — required vaccines and their expiry dates are listed; expiring/expired ones show in red.",
+          "Tap Update to enter a new expiry date and upload the certificate (photo or PDF).",
+          "Sign or review the waiver from the Waiver page — some businesses require a yearly re-sign, and you'll be prompted automatically.",
         ],
       },
       {
-        title: "Upload an updated vaccine record",
+        title: "Training progress",
         badges: ["Beginner", "Only shown if enabled"],
         steps: [
-          "Open the Vaccines tab.",
-          "Tap Update next to the vaccine.",
-          "Enter the new expiry date.",
-          "Upload the certificate (photo or PDF).",
-          "Save.",
-        ],
-        tip: "Most businesses verify the upload before clearing the warning. Submit it a few days before your next booking.",
-      },
-      {
-        title: "Sign or review the waiver",
-        badges: ["Beginner"],
-        path: "Portal → Waiver",
-        steps: [
-          "Open Waiver.",
-          "Read the text.",
-          "Sign or tap I Agree.",
-          "Some businesses require yearly re-sign — you'll be prompted automatically.",
-        ],
-      },
-      {
-        title: "Why a booking might be blocked",
-        badges: ["Beginner"],
-        steps: [
-          "Missing required vaccine.",
-          "Expired vaccine.",
-          "Unsigned or expired waiver.",
-          "Outstanding balance (depending on your business's rules).",
-          "Fix the flagged item and the booking will be allowed.",
+          "If your dog is in an active training program, Training Progress on Home shows goals, completed skills, and files from your trainer.",
+          "Assigned homework appears with a checkbox — tick items off as you practice at home so your trainer can see progress.",
         ],
       },
     ],
   },
   {
-    id: "homework-training",
-    title: "Homework & Training",
-    icon: "fa-pen-to-square",
-    color: "text-purple-300",
-    overview: "See your assigned practice, mark progress, read trainer notes.",
+    id: "credits-payments",
+    title: "Credits & Payments",
+    icon: "fa-wallet",
+    color: "text-shSecondary",
+    overview: "Where to see your credit balance, buy more, and review what you've paid.",
     cards: [
       {
-        title: "View assigned homework",
-        badges: ["Beginner", "Only shown if enabled"],
-        path: "Portal → Homework",
+        title: "View your credits",
+        badges: ["Beginner"],
+        path: "Portal → Home → Credits card",
         steps: [
-          "Open Homework.",
-          "Active assignments at the top.",
-          "Tap any to see the full checklist and trainer notes.",
+          "The Credits card on Home shows your remaining balance for each credit type (daycare, training, boarding).",
+          "Grooming and one-off services are paid at the time of the visit, not from a credit pack.",
         ],
       },
       {
-        title: "Mark practice complete",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Open the homework.",
-          "Tick off each task as you practice it at home.",
-          "Optionally add a note to your trainer.",
-        ],
-        tip: "Your trainer can see when you've completed tasks — it helps them tailor the next session.",
-      },
-      {
-        title: "Read trainer notes",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Each homework card has a notes section.",
-          "Trainer notes appear with date stamps.",
-          "Older homework stays in the archive — useful for tracking progress over time.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "payments-packages",
-    title: "Payments & Packages",
-    icon: "fa-dollar-sign",
-    color: "text-shGreen",
-    overview: "View packs, payment plans, and receipts.",
-    cards: [
-      {
-        title: "View your credit packs",
-        badges: ["Beginner", "Only shown if enabled"],
-        path: "Portal → Packs & Plans",
-        steps: [
-          "Open Packs & Plans.",
-          "See remaining credits per pack and expiry dates.",
-        ],
-      },
-      {
-        title: "View payment plan progress",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Open Packs & Plans → Payment Plans.",
-          "See each installment, status (Due / Paid), and due date.",
-        ],
-      },
-      {
-        title: "View receipts and invoices",
-        badges: ["Beginner", "Only shown if enabled"],
-        path: "Portal → Receipts",
-        steps: [
-          "Open Receipts.",
-          "Tap any to download a PDF.",
-        ],
-      },
-      {
-        title: "Deposits and cancellation policy",
-        badges: ["Beginner", "Only shown if enabled"],
-        steps: [
-          "Your business may require a deposit for boarding or training.",
-          "Cancellation fees are tiered — free outside the window, partial inside it, full for no-shows.",
-          "These appear on the booking page when you submit.",
-        ],
-      },
-    ],
-  },
-  {
-    id: "notifications",
-    title: "Notifications",
-    icon: "fa-bell",
-    color: "text-shBlue",
-    overview: "What emails you'll receive and when.",
-    cards: [
-      {
-        title: "What you'll get",
+        title: "Buy more credits",
         badges: ["Beginner"],
         steps: [
-          "Booking confirmation — when your request is approved.",
-          "Reminder — usually 24h before your booking.",
-          "Vaccine reminder — when a vaccine is about to expire.",
-          "Homework reminder — if you have an open assignment.",
-          "Receipt — after each completed visit or purchase.",
-          "Review request — a day or so after your visit.",
+          "Tap Buy More Credits on the Credits card, or the orange \"Need more credits?\" prompt when you're running low — both take you straight to the Shop, filtered to credit packs.",
         ],
       },
       {
-        title: "Why an email might not arrive",
+        title: "Payments, invoices & payment plans",
+        badges: ["Beginner", "Only shown if enabled"],
+        steps: [
+          "Payments/Invoices shows what you've paid, including anything paid online with a card.",
+          "If your business set up a payment plan for you (e.g. an 8-week training program), it shows each installment, whether it's Due or Paid, and the due date.",
+        ],
+        mistake: "The portal only shows your own balances and receipts — it never shows your business's internal bookkeeping, staff notes, or other clients' information.",
+      },
+    ],
+  },
+  {
+    id: "messages",
+    title: "Messages",
+    icon: "fa-comments",
+    color: "text-shSecondary",
+    overview: "A direct line to your business's team — like a mini inbox.",
+    cards: [
+      {
+        title: "Send and read messages",
         badges: ["Beginner"],
         steps: [
-          "Check spam first.",
-          "Quiet hours: your business may pause non-urgent emails overnight.",
-          "Outdated email on file: update under My Account.",
-          "Still missing? Contact your business — they can resend.",
+          "Tap the Messages button at the top of the portal (desktop header or mobile bottom nav / More menu).",
+          "Hit New Message, pick a topic (Booking / Vaccines / Payments / Other) and write your message.",
+          "When your business replies, the Messages button shows an orange unread count — tap it, open the thread, and reply from the bottom.",
+        ],
+        tip: "A resolved thread automatically re-opens if you reply again — no need to start a new conversation.",
+      },
+    ],
+  },
+  {
+    id: "rewards",
+    title: "Rewards & Referrals",
+    icon: "fa-gift",
+    color: "text-shAccent",
+    overview: "Trophies for your dog and a referral program, if your business has them turned on.",
+    cards: [
+      {
+        title: "Trophies",
+        badges: ["Beginner", "Only shown if enabled"],
+        steps: [
+          "Trophies your dog has earned show on their profile and in the Rewards section of Home.",
+        ],
+      },
+      {
+        title: "Refer a friend",
+        badges: ["Beginner", "Only shown if enabled"],
+        steps: [
+          "Open Refer a Friend from Quick Links (desktop sidebar) or the More menu (mobile).",
+          "Share your referral code — when a new client signs up and books using it, you get the reward your business offers (commonly a free daycare day).",
         ],
       },
     ],
   },
   {
-    id: "app-install",
-    title: "Install on Your Phone",
+    id: "mobile-app",
+    title: "Using Sit Happens on Your Phone",
     icon: "fa-mobile",
-    color: "text-shOrange",
-    overview: "Use the portal like a native app — one-tap booking from your home screen.",
+    color: "text-shSecondary",
+    overview: "The portal works like a native app on your phone, with a bottom navigation bar instead of the desktop sidebar.",
     cards: [
       {
-        title: "Install on iPhone",
+        title: "Mobile navigation",
         badges: ["Beginner"],
         steps: [
-          "Open the portal in Safari (not Chrome).",
-          "Tap the Share button at the bottom.",
-          "Scroll and tap Add to Home Screen.",
-          "Confirm — an icon appears on your home screen.",
+          "On a phone, the bottom bar has: Home, Book, Shop, Photos (if your business offers photography), and More.",
+          "More opens a sheet with My Dogs, Payments, Credits, Rewards, Refer a Friend, and Help.",
+          "The desktop sidebar (with Home/Book/Shop/Photography/Messages listed vertically) only appears on larger screens — on a phone, use the bottom bar and More sheet instead.",
         ],
       },
       {
-        title: "Install on Android",
+        title: "Install it on your home screen",
         badges: ["Beginner"],
         steps: [
-          "Open the portal in Chrome.",
-          "Tap the three-dot menu (top right).",
-          "Tap Install app or Add to Home Screen.",
-          "Confirm — an icon appears in your app drawer.",
+          "iPhone: open the portal in Safari, tap Share, then Add to Home Screen.",
+          "Android: open the portal in Chrome, tap the three-dot menu, then Install app (or Add to Home Screen).",
+          "Once installed, it opens in its own window with no browser address bar and updates automatically.",
         ],
-      },
-      {
-        title: "Use it like an app",
-        badges: ["Beginner"],
-        steps: [
-          "Tap the home-screen icon to open the portal in its own window — no browser address bar.",
-          "Works the same as any installed app.",
-          "Updates happen automatically — no app-store download needed.",
-        ],
-        tip: "If your business sends you an SMS link to a booking, tapping it opens straight in your installed portal app.",
       },
     ],
   },
@@ -1552,11 +1147,11 @@ export default function Tutorials({ role = "admin" }) {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 tutorials-no-print">
         <div>
-          <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
-            <i className="fas fa-circle-question text-shGreen mr-2" />
+          <h3 className="text-xl font-black text-shText uppercase italic tracking-tight">
+            <i className="fas fa-circle-question text-shPrimary mr-2" />
             {role === "client" ? "Client Portal Tutorial" : "How To Use Sit Happens"}
           </h3>
-          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">
+          <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
             {role === "client"
               ? "How clients book, manage dogs, view homework, and keep records updated"
               : "Operator tutorial center — learn the daily workflow step by step"}
@@ -1564,24 +1159,24 @@ export default function Tutorials({ role = "admin" }) {
         </div>
         <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
           <div className="relative w-full sm:w-64">
-            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-[15px]" />
+            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-shTextMuted text-[15px]" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search tutorials…"
               data-testid="tutorials-search"
-              className="w-full bg-bgPanel border border-bgHover rounded-lg pl-9 pr-3 py-2 text-white text-sm"
+              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded-lg pl-9 pr-3 py-2 text-shText text-sm"
             />
           </div>
           <div className="flex gap-2">
             <button onClick={printCurrent} data-testid="tutorials-print-current"
                     title="Print only the section you're looking at"
-                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/25 flex items-center gap-2">
+                    className="bg-shSecondary/15 text-shSecondary px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shSecondary/25 flex items-center gap-2">
               <i className="fas fa-print" /><span className="hidden sm:inline">Print Page</span>
             </button>
             <button onClick={printAll} data-testid="tutorials-print-all"
                     title="Print the full guide (all sections)"
-                    className="bg-shGreen/15 text-shGreen px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/25 flex items-center gap-2">
+                    className="bg-shPrimary/15 text-shPrimary px-4 py-2 rounded-lg text-[14px] font-black uppercase tracking-widest hover:bg-shPrimary/25 flex items-center gap-2">
               <i className="fas fa-file-pdf" /><span className="hidden sm:inline">Print All</span>
             </button>
           </div>
@@ -1590,17 +1185,17 @@ export default function Tutorials({ role = "admin" }) {
 
       {/* Quick action cards */}
       <div className="tutorials-no-print">
-        <p className="text-[11px] font-black uppercase tracking-[0.25em] text-gray-500 mb-2">Quick Jumps</p>
+        <p className="text-[11px] font-black uppercase tracking-[0.25em] text-shTextMuted mb-2">Quick Jumps</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {quickActions.map(qa => (
             <button
               key={qa.id}
               onClick={() => { setQuery(""); setOpenId(qa.target); }}
               data-testid={`tutorials-quick-${qa.id}`}
-              className="bg-bgPanel border border-bgHover hover:border-shBlue/60 hover:bg-bgBase/50 rounded-lg p-3 text-left transition flex items-center gap-2.5"
+              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/60 hover:bg-[var(--sh-card-base)]/50 rounded-lg p-3 text-left transition flex items-center gap-2.5"
             >
-              <i className={`fas ${qa.icon} text-shBlue text-[14px] w-4`} />
-              <span className="text-[12px] font-black uppercase tracking-widest text-white leading-tight">{qa.label}</span>
+              <i className={`fas ${qa.icon} text-shSecondary text-[14px] w-4`} />
+              <span className="text-[12px] font-black uppercase tracking-widest text-shText leading-tight">{qa.label}</span>
             </button>
           ))}
         </div>
@@ -1615,8 +1210,8 @@ export default function Tutorials({ role = "admin" }) {
             data-testid={`tutorial-chip-${s.id}`}
             className={`px-4 py-2 rounded-lg text-[15px] font-black uppercase tracking-widest border transition ${
               openId === s.id
-                ? "bg-bgPanel border-shBlue text-shBlue"
-                : "bg-bgPanel/40 border-bgHover text-gray-400 hover:border-shBlue/40"
+                ? "bg-[var(--sh-card-base)] border-shSecondary text-shSecondary"
+                : "bg-[var(--sh-card-base)]/40 border-shBorder text-shTextMuted hover:border-shSecondary/40"
             }`}
           >
             <i className={`fas ${s.icon} ${s.color} mr-2`} />{s.title}
@@ -1631,19 +1226,19 @@ export default function Tutorials({ role = "admin" }) {
           return (
             <div key={s.id} className={`tutorial-section ${isActive ? "" : "hidden print-hidden"}`}>
               {/* Section overview header */}
-              <div className="bg-bgPanel/40 border border-bgHover rounded-lg p-4 mb-3">
+              <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-4 mb-3">
                 <h4 className={`text-[15px] font-black uppercase tracking-widest ${s.color}`}>
                   <i className={`fas ${s.icon} mr-2`} />{s.title}
                 </h4>
                 {s.overview && (
-                  <p className="text-[14px] text-gray-300 mt-1.5 normal-case leading-relaxed">{s.overview}</p>
+                  <p className="text-[14px] text-shTextMuted mt-1.5 normal-case leading-relaxed">{s.overview}</p>
                 )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4" data-testid={`tutorial-section-${s.id}`}>
                 {s.cards.map((c, i) => (
-                  <div key={i} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
-                    <h5 className="text-white font-black uppercase tracking-tight text-[15px] flex items-start gap-2">
+                  <div key={i} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-lg tutorial-card" data-testid={`tutorial-card-${s.id}-${i}`}>
+                    <h5 className="text-shText font-black uppercase tracking-tight text-[15px] flex items-start gap-2">
                       <i className={`fas fa-circle-check ${s.color} mt-1 text-[14px]`} />
                       <span>{c.title}</span>
                     </h5>
@@ -1653,11 +1248,11 @@ export default function Tutorials({ role = "admin" }) {
                       </div>
                     )}
                     {c.path && (
-                      <p className="mt-2.5 text-[12px] text-shBlue bg-shBlue/10 border border-shBlue/25 rounded px-2 py-1.5 inline-block normal-case font-bold tracking-wide">
+                      <p className="mt-2.5 text-[12px] text-shSecondary bg-shSecondary/10 border border-shSecondary/25 rounded px-2 py-1.5 inline-block normal-case font-bold tracking-wide">
                         <i className="fas fa-location-arrow mr-1.5" />{c.path}
                       </p>
                     )}
-                    <ol className="mt-3 space-y-2 text-[15px] text-gray-300">
+                    <ol className="mt-3 space-y-2 text-[15px] text-shTextMuted">
                       {(c.steps || []).map((step, j) => (
                         <li key={j} className="flex gap-3">
                           <span className={`${s.color} font-black flex-shrink-0`}>{j + 1}.</span>
@@ -1666,7 +1261,7 @@ export default function Tutorials({ role = "admin" }) {
                       ))}
                     </ol>
                     {c.tip && (
-                      <p className="mt-3 text-[14px] text-shOrange bg-shOrange/5 border border-shOrange/20 rounded p-2.5 leading-snug tip-box">
+                      <p className="mt-3 text-[14px] text-shAccent bg-shAccent/5 border border-shAccent/20 rounded p-2.5 leading-snug tip-box">
                         <i className="fas fa-lightbulb mr-1" />
                         <strong className="uppercase tracking-widest">Pro tip · </strong>{c.tip}
                       </p>
@@ -1678,11 +1273,11 @@ export default function Tutorials({ role = "admin" }) {
                       </p>
                     )}
                     {(c.related || []).length > 0 && (
-                      <div className="mt-3 pt-2.5 border-t border-bgHover">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5">Related</p>
+                      <div className="mt-3 pt-2.5 border-t border-shBorder">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1.5">Related</p>
                         <ul className="space-y-1">
                           {c.related.map((r, k) => (
-                            <li key={k} className="text-[13px] text-shBlue normal-case">
+                            <li key={k} className="text-[13px] text-shSecondary normal-case">
                               <i className="fas fa-arrow-right text-[10px] mr-1.5" />{r}
                             </li>
                           ))}
@@ -1696,7 +1291,7 @@ export default function Tutorials({ role = "admin" }) {
           );
         })}
         {filtered.length === 0 && (
-          <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center text-gray-500 uppercase font-black tracking-widest text-xs">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center text-shTextMuted uppercase font-black tracking-widest text-xs">
             No tutorials match &ldquo;{query}&rdquo;
           </div>
         )}
@@ -1707,16 +1302,22 @@ export default function Tutorials({ role = "admin" }) {
 
 function CardBadge({ label }) {
   const palette = {
-    "Beginner":            "bg-shGreen/15 text-shGreen border-shGreen/30",
-    "Daily Use":           "bg-shBlue/15 text-shBlue border-shBlue/30",
+    "Beginner":            "bg-shPrimary/15 text-shPrimary border-shPrimary/30",
+    "Daily Use":           "bg-shSecondary/15 text-shSecondary border-shSecondary/30",
     "Admin Only":          "bg-red-500/15 text-red-400 border-red-500/30",
     "Client-Facing":       "bg-purple-500/15 text-purple-300 border-purple-500/30",
-    "Setup Only":          "bg-shOrange/15 text-shOrange border-shOrange/30",
-    "Staff-Only":          "bg-shOrange/15 text-shOrange border-shOrange/30",
-    "Optional":            "bg-shBlue/15 text-shBlue border-shBlue/30",
-    "Coming Soon":         "bg-bgHover/60 text-gray-400 border-bgHover",
-    "Only shown if enabled": "bg-bgHover/60 text-gray-400 border-bgHover",
-  }[label] || "bg-bgHover/60 text-gray-400 border-bgHover";
+    "Setup Only":          "bg-shAccent/15 text-shAccent border-shAccent/30",
+    "Staff-Only":          "bg-shAccent/15 text-shAccent border-shAccent/30",
+    "Optional":            "bg-shSecondary/15 text-shSecondary border-shSecondary/30",
+    "Required":            "bg-red-500/15 text-red-400 border-red-500/30",
+    "Reference":           "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+    "Live":                "bg-shPrimary/15 text-shPrimary border-shPrimary/30",
+    "Permission-gated":    "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+    "All staff":           "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+    "Care/Dog perms":      "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+    "Coming Soon":         "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+    "Only shown if enabled": "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder",
+  }[label] || "bg-shSurfaceRaised/60 text-shTextMuted border-shBorder";
   return (
     <span className={`text-[9px] font-black uppercase tracking-[0.2em] px-1.5 py-0.5 rounded border ${palette}`}>
       {label}

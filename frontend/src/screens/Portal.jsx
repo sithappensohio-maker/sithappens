@@ -17,7 +17,11 @@ import TodayPlanCard from "../components/TodayPlanCard";
 import HomeworkIncentivesPanel from "../components/HomeworkIncentivesPanel";
 import PlanProgressRing from "../components/PlanProgressRing";
 import MultiDateCalendar from "../components/MultiDateCalendar";
-import InstallAppButton from "../components/InstallAppButton";
+import PortalHomeActionCard from "../components/PortalHomeActionCard";
+import PremiumButton from "../components/premium/PremiumButton";
+import ClientSidebar from "../components/ClientSidebar";
+import ClientMobileNav from "../components/ClientMobileNav";
+import ClientProfileMenu from "../components/ClientProfileMenu";
 import TextSizePicker from "../components/TextSizePicker";
 import TrophyWall from "../components/TrophyWall";
 import TrophyCelebration from "../components/TrophyCelebration";
@@ -31,6 +35,7 @@ import NeedsPasswordCard from "../components/NeedsPasswordCard";
 import PaymentOptionsCard from "../components/PaymentOptionsCard";
 import PortalInvoices from "../components/PortalInvoices";
 import PortalShop from "../components/PortalShop";
+import PortalPhotography from "../components/PortalPhotography";
 import NeedHelpCard from "../components/NeedHelpCard";
 import VaccineUploadWizard from "../components/VaccineUploadWizard";
 import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
@@ -312,22 +317,22 @@ function ReferFriendModal({ code, onClose }) {
   const email = `mailto:?subject=${encodeURIComponent("Try Sit Happens with my code!")}&body=${encodeURIComponent(message)}`;
   return (
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="refer-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe">
+      <div onClick={(e)=>e.stopPropagation()} className="border border-shBorder rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe" style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex items-center gap-3"><span className="text-shOrange text-2xl"><i className="fas fa-gift"/></span><h4 className="text-xl font-black text-white uppercase italic tracking-tight">Refer a Friend</h4></div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
+          <div className="flex items-center gap-3"><span className="text-shAccent text-2xl"><i className="fas fa-gift"/></span><h4 className="text-xl font-bold text-shText tracking-tight">Refer a Friend</h4></div>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[14px] text-gray-300 mb-4">Share your code with a friend. After they sign up and complete their first appointment (daycare, training, or boarding), we'll add a free daycare day to your account as a thank-you.</p>
-        <div className="bg-bgBase border border-shOrange/40 rounded-lg p-4 text-center mb-4">
-          <p className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Your code</p>
-          <p className="text-3xl font-black text-shOrange tracking-[0.3em] mt-1" data-testid="refer-code">{code}</p>
+        <p className="text-[14px] text-shTextMuted mb-4">Share your code with a friend. After they sign up and complete their first appointment (daycare, training, or boarding), we'll add a free daycare day to your account as a thank-you.</p>
+        <div className="border border-shAccent/40 rounded-lg p-4 text-center mb-4" style={{ background: "var(--sh-card-base)" }}>
+          <p className="text-[13px] uppercase tracking-widest text-shTextMuted font-bold">Your code</p>
+          <p className="text-3xl font-black text-shAccent tracking-[0.3em] mt-1" data-testid="refer-code">{code}</p>
         </div>
         <div className="grid grid-cols-3 gap-2 mb-3">
-          <a href={sms} data-testid="refer-via-sms" className="bg-shGreen/10 hover:bg-shGreen/20 text-shGreen text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className="fas fa-comment mr-1"/>Text</a>
-          <a href={email} data-testid="refer-via-email" className="bg-shBlue/10 hover:bg-shBlue/20 text-shBlue text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className="fas fa-envelope mr-1"/>Email</a>
-          <button onClick={copy} data-testid="refer-copy" className="bg-shOrange/10 hover:bg-shOrange/20 text-shOrange text-center py-3 rounded font-black text-[14px] uppercase tracking-widest"><i className={`fas ${copied?"fa-check":"fa-copy"} mr-1`}/>{copied?"Copied":"Copy"}</button>
+          <a href={sms} data-testid="refer-via-sms" className="bg-shPrimary/10 hover:bg-shPrimary/20 text-shPrimary text-center py-3 rounded-md font-bold text-[14px] uppercase tracking-widest transition"><i className="fas fa-comment mr-1"/>Text</a>
+          <a href={email} data-testid="refer-via-email" className="bg-shSecondary/10 hover:bg-shSecondary/20 text-shSecondary text-center py-3 rounded-md font-bold text-[14px] uppercase tracking-widest transition"><i className="fas fa-envelope mr-1"/>Email</a>
+          <button onClick={copy} data-testid="refer-copy" className="bg-shAccent/10 hover:bg-shAccent/20 text-shAccent text-center py-3 rounded-md font-bold text-[14px] uppercase tracking-widest transition"><i className={`fas ${copied?"fa-check":"fa-copy"} mr-1`}/>{copied?"Copied":"Copy"}</button>
         </div>
-        <button onClick={onClose} className="w-full bg-bgBase border border-bgHover text-gray-300 py-3 rounded font-black text-[15px] uppercase tracking-widest">Done</button>
+        <PremiumButton variant="secondary" onClick={onClose} className="w-full justify-center py-3">Done</PremiumButton>
       </div>
     </div>
   );
@@ -362,29 +367,28 @@ function VaccineUploadModal({ dog, vaccine, onClose, onSaved }) {
   const label = { rabies: "Rabies", bordetella: "Bordetella", dhpp: "DHPP" }[vaccine] || vaccine;
   return (
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose} data-testid="vaccine-upload-modal">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe">
+      <div onClick={(e)=>e.stopPropagation()} className="border border-shBorder rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe" style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-start justify-between gap-3 mb-3">
-          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">Update {label} for {dog.name}</h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
+          <h4 className="text-xl font-bold text-shText tracking-tight">Update {label} for {dog.name}</h4>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <p className="text-[15px] text-gray-400 mb-4">Step 1: enter the expiry date. Step 2: attach a clear photo of the certificate. After you submit, Sit Happens reviews it before booking unlocks.</p>
+        <p className="text-[15px] text-shTextMuted mb-4">Step 1: enter the expiry date. Step 2: attach a clear photo of the certificate. After you submit, Sit Happens reviews it before booking unlocks.</p>
         <div className="space-y-3">
           <div>
-            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">New expiry date</label>
+            <label className="text-[14px] text-shTextMuted font-bold uppercase tracking-widest">New expiry date</label>
             <input type="date" value={expiresOn} onChange={(e)=>setExpiresOn(e.target.value)} data-testid="vaccine-expiry-input"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-3 text-white text-sm" style={{colorScheme:"dark"}} />
+                   className="w-full mt-1 border border-shBorder rounded p-3 text-shText text-sm focus:outline-none focus:border-shPrimary/60" style={{colorScheme:"dark", background: "var(--sh-card-base)"}} />
           </div>
           <div>
-            <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Cert photo required</label>
+            <label className="text-[14px] text-shTextMuted font-bold uppercase tracking-widest">Cert photo required</label>
             <input type="file" accept="image/*" capture="environment" onChange={handleFile} data-testid="vaccine-photo-input"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm file:bg-shBlue file:text-white file:border-0 file:rounded file:px-3 file:py-1 file:font-black file:text-[14px] file:uppercase file:tracking-widest" />
-            {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-bgHover"/>}
+                   className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm file:bg-shSecondary file:text-shText file:border-0 file:rounded file:px-3 file:py-1 file:font-bold file:text-[14px] file:uppercase file:tracking-widest" style={{ background: "var(--sh-card-base)" }} />
+            {photo && <img src={photo} alt="cert preview" className="mt-2 rounded max-h-40 object-contain border border-shBorder"/>}
           </div>
-          {err && <p className="text-[15px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
+          {err && <p className="text-[15px] text-shDanger font-bold uppercase tracking-widest">{err}</p>}
           <div className="flex gap-2">
-            <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[15px] font-black uppercase tracking-widest">Cancel</button>
-            <button onClick={save} disabled={saving || !expiresOn || !photo} data-testid="vaccine-save"
-                    className="flex-1 bg-shGreen text-bgHeader py-3 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">{saving?"Saving…":"Submit for Review"}</button>
+            <PremiumButton variant="ghost" onClick={onClose} className="flex-1 justify-center py-3">Cancel</PremiumButton>
+            <PremiumButton variant="primary" onClick={save} disabled={saving || !expiresOn || !photo} data-testid="vaccine-save" className="flex-1 justify-center py-3">{saving?"Saving…":"Submit for Review"}</PremiumButton>
           </div>
         </div>
       </div>
@@ -424,88 +428,89 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
   return (
     <div className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
          data-testid="vaccine-onboarding-modal">
-      <div className="bg-bgPanel border border-shOrange/60 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto"
+      <div className="border border-shAccent/50 rounded-t-2xl sm:rounded-2xl w-full sm:max-w-lg shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto" style={{ background: "var(--sh-card-base)" }}
            onClick={(e)=>e.stopPropagation()}>
-        <div className="bg-gradient-to-br from-shOrange/25 to-shBlue/10 p-5 sm:p-6 border-b border-shOrange/30">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[12px] font-black uppercase tracking-widest bg-shOrange text-bgHeader px-2 py-0.5 rounded-full">Action Required</span>
+        <div className="p-5 sm:p-6 border-b border-shAccent/30 relative overflow-hidden">
+          <div className="absolute inset-0 pointer-events-none" style={{ background: "radial-gradient(60% 100% at 15% 20%, rgba(242,101,34,0.18), transparent 65%)" }} />
+          <div className="relative">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[12px] font-bold uppercase tracking-widest bg-shAccent/15 text-shAccent border border-shAccent/40 px-2 py-0.5 rounded-full">Action Required</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-bold text-shText tracking-tight">
+              Welcome{client?.name ? `, ${client.name.split(" ")[0]}` : ""}!
+            </h2>
+            <p className="text-[14px] text-shTextMuted normal-case mt-2 leading-relaxed">
+              Before we can host your pup, we need their vaccine records on file. <strong className="text-shText">It only takes 2 minutes</strong> — snap a photo of each cert and type in the expiry date.
+            </p>
           </div>
-          <h2 className="text-2xl sm:text-3xl font-black italic text-white uppercase tracking-tight">
-            Welcome{client?.name ? `, ${client.name.split(" ")[0]}` : ""}!
-          </h2>
-          <p className="text-[14px] text-gray-300 normal-case mt-2 leading-relaxed">
-            Before we can host your pup, we need their vaccine records on file. <strong className="text-white">It only takes 2 minutes</strong> — snap a photo of each cert and type in the expiry date.
-          </p>
         </div>
 
         <div className="p-5 sm:p-6 space-y-4">
           <div className="grid grid-cols-3 gap-2 text-center" data-testid="onboarding-how-it-works">
-            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-              <div className="w-9 h-9 mx-auto rounded-full bg-shGreen/15 text-shGreen flex items-center justify-center">
+            <div className="border border-shBorder rounded-lg p-3" style={{ background: "var(--sh-card-base)" }}>
+              <div className="w-9 h-9 mx-auto rounded-full bg-shPrimary/15 text-shPrimary flex items-center justify-center">
                 <i className="fas fa-camera text-base"/>
               </div>
-              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">1. Upload Cert</p>
-              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Snap a photo + type the expiry date</p>
+              <p className="text-[12px] font-bold text-shText uppercase tracking-widest mt-2 leading-tight">1. Upload Cert</p>
+              <p className="text-[12px] text-shTextMuted normal-case tracking-normal mt-1 leading-tight">Snap a photo + type the expiry date</p>
             </div>
-            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-              <div className="w-9 h-9 mx-auto rounded-full bg-shBlue/15 text-shBlue flex items-center justify-center">
+            <div className="border border-shBorder rounded-lg p-3" style={{ background: "var(--sh-card-base)" }}>
+              <div className="w-9 h-9 mx-auto rounded-full bg-shSecondary/15 text-shSecondary flex items-center justify-center">
                 <i className="fas fa-check-double text-base"/>
               </div>
-              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">2. We Verify</p>
-              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Quick admin check — usually within a few hours</p>
+              <p className="text-[12px] font-bold text-shText uppercase tracking-widest mt-2 leading-tight">2. We Verify</p>
+              <p className="text-[12px] text-shTextMuted normal-case tracking-normal mt-1 leading-tight">Quick admin check — usually within a few hours</p>
             </div>
-            <div className="bg-bgBase border border-bgHover rounded-lg p-3">
-              <div className="w-9 h-9 mx-auto rounded-full bg-shOrange/15 text-shOrange flex items-center justify-center">
+            <div className="border border-shBorder rounded-lg p-3" style={{ background: "var(--sh-card-base)" }}>
+              <div className="w-9 h-9 mx-auto rounded-full bg-shAccent/15 text-shAccent flex items-center justify-center">
                 <i className="fas fa-calendar-check text-base"/>
               </div>
-              <p className="text-[12px] font-black text-white uppercase tracking-widest mt-2 leading-tight">3. Book Stays</p>
-              <p className="text-[12px] text-gray-500 normal-case tracking-normal mt-1 leading-tight">Daycare, boarding & training open up</p>
+              <p className="text-[12px] font-bold text-shText uppercase tracking-widest mt-2 leading-tight">3. Book Stays</p>
+              <p className="text-[12px] text-shTextMuted normal-case tracking-normal mt-1 leading-tight">Daycare, boarding & training open up</p>
             </div>
           </div>
 
           {hasNoDogs ? (
-            <div className="bg-bgBase border border-bgHover rounded-lg p-4">
+            <div className="border border-shBorder rounded-lg p-4" style={{ background: "var(--sh-card-base)" }}>
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-full bg-shBlue/20 text-shBlue font-black flex items-center justify-center shrink-0">1</div>
+                <div className="w-8 h-8 rounded-full bg-shSecondary/20 text-shSecondary font-bold flex items-center justify-center shrink-0">1</div>
                 <div className="flex-1">
-                  <p className="text-white font-black text-[15px] uppercase tracking-widest">Add your dog</p>
-                  <p className="text-[14px] text-gray-400 normal-case mt-1">Tell us their name, breed, age, and any feeding or medication notes.</p>
-                  <button onClick={onAddDog} data-testid="onboarding-add-dog-btn"
-                          className="mt-3 bg-shBlue text-white px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shBlue/90">
+                  <p className="text-shText font-bold text-[15px] uppercase tracking-widest">Add your dog</p>
+                  <p className="text-[14px] text-shTextMuted normal-case mt-1">Tell us their name, breed, age, and any feeding or medication notes.</p>
+                  <PremiumButton variant="cyan" onClick={onAddDog} data-testid="onboarding-add-dog-btn" className="mt-3">
                     <i className="fas fa-plus mr-1.5"/>Add Dog
-                  </button>
+                  </PremiumButton>
                 </div>
               </div>
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-between bg-bgBase rounded-lg px-4 py-3 border border-bgHover">
+              <div className="flex items-center justify-between rounded-lg px-4 py-3 border border-shBorder" style={{ background: "var(--sh-card-base)" }}>
                 <div>
-                  <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Vaccines still needed</p>
-                  <p className="text-shOrange font-black text-[26px] leading-none mt-1" data-testid="onboarding-missing-count">{totalMissing}</p>
+                  <p className="text-[13px] font-bold text-shTextMuted uppercase tracking-widest">Vaccines still needed</p>
+                  <p className="text-shAccent font-bold text-[26px] leading-none mt-1" data-testid="onboarding-missing-count">{totalMissing}</p>
                 </div>
-                <i className="fas fa-shield-virus text-shOrange/40 text-4xl"/>
+                <i className="fas fa-shield-virus text-shAccent/40 text-4xl"/>
               </div>
 
               <div className="space-y-3">
                 {incompleteDogs.map((row) => (
-                  <div key={row.dog.id} className="bg-bgBase border border-bgHover rounded-lg p-4">
-                    <p className="text-white font-black text-[15px] uppercase tracking-widest">{row.dog.name}{row.dog.breed ? <span className="text-gray-500"> · {row.dog.breed}</span> : null}</p>
+                  <div key={row.dog.id} className="border border-shBorder rounded-lg p-4" style={{ background: "var(--sh-card-base)" }}>
+                    <p className="text-shText font-bold text-[15px] uppercase tracking-widest">{row.dog.name}{row.dog.breed ? <span className="text-shTextMuted"> · {row.dog.breed}</span> : null}</p>
                     <div className="mt-3 space-y-2">
                       {row.missing.map((r) => (
-                        <div key={r.key} className="flex items-center justify-between gap-3 bg-bgPanel rounded p-2.5">
+                        <div key={r.key} className="flex items-center justify-between gap-3 rounded p-2.5 border border-shBorder" style={{ background: "var(--sh-card-base)" }}>
                           <div className="flex items-center gap-2 min-w-0">
-                            <i className="fas fa-circle-exclamation text-shOrange text-sm"/>
-                            <span className="text-[15px] font-black text-white uppercase tracking-widest truncate">{r.label}</span>
-                            <span className="text-[13px] text-gray-500 normal-case tracking-normal truncate">
+                            <i className="fas fa-circle-exclamation text-shAccent text-sm"/>
+                            <span className="text-[15px] font-bold text-shText uppercase tracking-widest truncate">{r.label}</span>
+                            <span className="text-[13px] text-shTextMuted normal-case tracking-normal truncate">
                               {row.dog.vaccines?.[r.key] ? `expired ${row.dog.vaccines[r.key]}` : "no date on file"}
                             </span>
                           </div>
-                          <button onClick={() => onUploadVaccine(row.dog, r.key)}
-                                  data-testid={`onboarding-upload-${row.dog.id}-${r.key}`}
-                                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] uppercase tracking-widest hover:bg-shGreen/80 whitespace-nowrap">
+                          <PremiumButton variant="primary" onClick={() => onUploadVaccine(row.dog, r.key)}
+                                  data-testid={`onboarding-upload-${row.dog.id}-${r.key}`} className="whitespace-nowrap py-1.5">
                             <i className="fas fa-camera mr-1"/>Upload
-                          </button>
+                          </PremiumButton>
                         </div>
                       ))}
                     </div>
@@ -513,17 +518,17 @@ function OnboardingChecklist({ dogs, client, onAddDog, onUploadVaccine, onDismis
                 ))}
               </div>
 
-              <div className="bg-shBlue/10 border border-shBlue/30 rounded-lg p-3 flex gap-3">
-                <i className="fas fa-circle-info text-shBlue text-base mt-0.5"/>
-                <p className="text-[14px] text-gray-300 normal-case leading-snug">
-                  Don't have a clear photo handy? Just type the <strong className="text-white">expiry date</strong> your vet wrote on the certificate — you can upload the photo later. We'll review and approve each upload before it goes live.
+              <div className="bg-shSecondary/10 border border-shSecondary/30 rounded-lg p-3 flex gap-3">
+                <i className="fas fa-circle-info text-shSecondary text-base mt-0.5"/>
+                <p className="text-[14px] text-shTextMuted normal-case leading-snug">
+                  Don't have a clear photo handy? Just type the <strong className="text-shText">expiry date</strong> your vet wrote on the certificate — you can upload the photo later. We'll review and approve each upload before it goes live.
                 </p>
               </div>
             </>
           )}
 
           <button onClick={onDismiss} data-testid="onboarding-dismiss-btn"
-                  className="w-full text-gray-500 hover:text-gray-300 text-[14px] font-black uppercase tracking-widest py-3">
+                  className="w-full text-shTextMuted hover:text-shText text-[14px] font-bold uppercase tracking-widest py-3">
             Remind me later <span className="opacity-60">(this stays out of your way until next login)</span>
           </button>
         </div>
@@ -559,6 +564,12 @@ export default function Portal() {
     const params = new URLSearchParams(window.location.search);
     return params.has("shop_order");
   });
+  // Lifted out of PortalShop so the cart survives leaving/returning to the
+  // Shop view (Portal itself never unmounts) and so the nav badge below can
+  // show the live quantity. Still the ONE cart — PortalShop is a fully
+  // controlled consumer of this same state, not a second cart.
+  const [shopCart, setShopCart] = useState([]); // [{kind, ref_id, quantity}]
+  const shopCartCount = shopCart.reduce((n, c) => n + c.quantity, 0);
   const [dogs, setDogs] = useState([]);
   const [client, setClient] = useState(null);
   const [bookings, setBookings] = useState([]);
@@ -588,6 +599,9 @@ export default function Portal() {
   const [tutorialsOpen, setTutorialsOpen] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messagesUnread, setMessagesUnread] = useState(0);
+  // Photography Phase 1 — dedicated full-screen Photography page, same
+  // navigation-swap pattern as the full-screen Shop view below.
+  const [photographyOpen, setPhotographyOpen] = useState(false);
 
   // Sprint 110di-17 — Feature Visibility gates. Each useFeature read is
   // cheap (just a context lookup) and defaults to TRUE so first paint
@@ -635,6 +649,10 @@ export default function Portal() {
   // Sprint 110dh-6 — first-time client setup gate.
   const [setupStatus, setSetupStatus] = useState(null);
   const [setupRefresh, setSetupRefresh] = useState(0);
+  // Redesign — the full step-by-step setup checklist is collapsed behind a
+  // compact "Action Needed" summary on Home by default; expanding it doesn't
+  // change any of its own logic, just whether its (unchanged) markup is shown.
+  const [setupExpanded, setSetupExpanded] = useState(false);
   const [vaccineWizard, setVaccineWizard] = useState(null); // [{dog, vaccine}, ...]
   // Sprint 110dh-9 — once the client has seen the "Setup Complete" hero and
   // clicked through (or dismissed) it, remember that locally so it doesn't
@@ -905,6 +923,15 @@ export default function Portal() {
   // the Book Now button for ALL training bookings. Training is bookable.
   const canBook = avail && avail.vaccine_ok && avail.open_slots > 0 && !waiverNeeded;
 
+  // Photography Phase 1 — declared before the photographyOpen early-return
+  // below (which references it) since `const` bindings aren't hoisted.
+  const goPhotographyBookSession = (serviceId) => {
+    setRebookSeed({ service_type: "photography", service_id: serviceId || "" });
+    setPhotographyOpen(false);
+    if (dogs.length === 0) setDogModal({ open: true, dog: null });
+    else openBookingIfReady();
+  };
+
   // Sprint 110di-3 — Old 3-step onboarding banner removed; the full setup
   // gating now lives in `PortalSetupChecklist`. Kept the `Hi <name>! Welcome`
   // header. No need to track per-step state here anymore.
@@ -917,82 +944,178 @@ export default function Portal() {
   // is a real navigation swap, not a duplicated Shop implementation.
   if (shopOpen) {
     return (
-      <div className="app-shell h-full min-h-0 flex flex-col bg-bgBase" data-testid="client-portal-shop-page">
-        <header className="shrink-0 bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3">
-          <button onClick={() => setShopOpen(false)} data-testid="portal-shop-back-button"
-                  className="text-[13px] sm:text-xs bg-bgBase border border-bgHover text-gray-300 px-3 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:border-shGreen/50 hover:text-shGreen transition flex items-center gap-2">
+      <div className="app-shell h-full min-h-0 flex flex-col" style={{ background: "var(--sh-card-base)" }} data-testid="client-portal-shop-page">
+        <header className="shrink-0 border-b border-shBorder flex items-center justify-between gap-2 px-3 sm:px-8 py-3" style={{ background: "var(--sh-card-base)" }}>
+          <PremiumButton variant="secondary" onClick={() => setShopOpen(false)} data-testid="portal-shop-back-button">
             <i className="fas fa-arrow-left"/>
             <span>Back to Portal</span>
-          </button>
+          </PremiumButton>
           <img src="/logo.png" alt="Sit Happens" className="h-9 sm:h-12 shrink-0" />
         </header>
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
-          <PortalShop initialTab={shopInitialTab} fullScreen />
+          <PortalShop initialTab={shopInitialTab} fullScreen shopifyStoreUrl={pubSettings?.client_portal_links?.shopify_store_url}
+                      cart={shopCart} onCartChange={setShopCart} />
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="app-shell h-full min-h-0 flex flex-col bg-bgBase" data-testid="client-portal">
-      <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
-      {/* Sprint 110u — landing-page-style portal header. Bigger glowing logo,
-          richer welcome line, brand-color glow backdrop. Same buttons, same
-          behaviour — purely visual upgrade. */}
-      <header className="relative shrink-0 bg-bgHeader border-b border-bgHover flex items-center justify-between gap-2 px-3 sm:px-8 py-3 sm:py-0 sm:h-28 overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none opacity-30"
-             style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.45) 0%, transparent 38%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.4) 0%, transparent 42%)" }}/>
-        <div className="relative flex items-center gap-2 sm:gap-4 min-w-0">
-          <img src="/logo.png" alt="Sit Happens"
-               className="h-12 sm:h-20 shrink-0 drop-shadow-[0_0_18px_rgba(140,198,63,0.45)]"
-               data-testid="portal-logo" />
-          <div className="min-w-0">
-            <p className="hidden sm:block text-[11px] text-gray-400 font-black uppercase tracking-[0.3em]">
-              Dog Training · Daycare · Boarding · Photography
-            </p>
-            <p className="text-[14px] sm:text-base text-white font-black uppercase italic tracking-tight sm:mt-1 truncate pr-1">
-              <span className="text-shGreen">·</span> Welcome back, <span className="text-shGreen">{user.name.split(" ")[0] || user.name}</span>
-            </p>
-          </div>
-        </div>
-        <div className="relative flex items-center gap-1.5 sm:gap-2 shrink-0">
-          <button onClick={() => { setShopInitialTab("all"); setShopOpen(true); }} data-testid="portal-shop-nav-button"
-                  className="text-[13px] sm:text-xs bg-shGreen text-bgHeader px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:opacity-90 transition flex items-center gap-2">
-            <i className="fas fa-bag-shopping"/>
-            <span className="hidden sm:inline">Shop</span>
-          </button>
-          {sectionOn("help_button") && (
-            <button onClick={()=>setTutorialsOpen(true)} data-testid="portal-help-button"
-                    className="text-[13px] sm:text-xs bg-shBlue/15 text-shBlue border border-shBlue/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shBlue/25 hover:border-shBlue transition flex items-center gap-2">
-              <i className="fas fa-circle-question"/>
-              <span className="hidden sm:inline">How to Use</span>
-            </button>
-          )}
-          {sectionOn("messages") && (
-            <button onClick={()=>setMessagesOpen(true)} data-testid="portal-messages-button"
-                    className="relative text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2">
-              <i className="fas fa-comments"/>
-              <span className="hidden sm:inline">{label("messages", "Messages")}</span>
-              {messagesUnread > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-shOrange text-bgHeader text-[10px] font-black rounded-full grid place-items-center"
-                      data-testid="portal-messages-badge">{messagesUnread}</span>
-              )}
-            </button>
-          )}
-          <InstallAppButton
-            testid="portal-install-app"
-            label="Install"
-            className="text-[13px] sm:text-xs bg-shGreen/15 text-shGreen border border-shGreen/30 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-shGreen/25 hover:border-shGreen transition flex items-center gap-2"
+  // Photography Phase 1 — dedicated full-screen Photography destination,
+  // same navigation-swap pattern as the Shop view above. Booking/pricing
+  // logic is untouched: "Book a Session" just seeds the existing booking
+  // wizard with service_type="photography" (optionally a specific
+  // service_id) exactly like the existing "Book Again" rebook flow does.
+  if (photographyOpen) {
+    return (
+      <div className="app-shell h-full min-h-0 flex flex-col" style={{ background: "var(--sh-card-base)" }} data-testid="client-portal-photography-page">
+        <header className="shrink-0 border-b border-shBorder flex items-center justify-between gap-2 px-3 sm:px-8 py-3" style={{ background: "var(--sh-card-base)" }}>
+          <PremiumButton variant="secondary" onClick={() => setPhotographyOpen(false)} data-testid="portal-photography-back-button">
+            <i className="fas fa-arrow-left"/>
+            <span>Back to Portal</span>
+          </PremiumButton>
+          <img src="/logo.png" alt="Sit Happens" className="h-9 sm:h-12 shrink-0" />
+        </header>
+        <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-6" data-scroll-root>
+          <PortalPhotography
+            pubSettings={pubSettings}
+            client={client}
+            services={publicServices.filter(s => s.service_type === "photography")}
+            onBookSession={goPhotographyBookSession}
           />
-          <button onClick={logout} data-testid="logout-button"
-                  className="text-[13px] sm:text-xs bg-red-500/10 text-red-400 border border-red-500/20 px-2.5 sm:px-4 py-2 rounded font-black uppercase tracking-widest hover:bg-red-500/20 transition">
-            <i className="fas fa-right-from-bracket sm:hidden"/>
-            <span className="hidden sm:inline">Logout</span>
-          </button>
         </div>
-      </header>
+      </div>
+    );
+  }
+
+  // Redesign Phase B — shared handlers for the sidebar (desktop) and bottom
+  // nav / "More" sheet (mobile). Every one of these reuses an existing
+  // Portal.jsx state setter or handler already wired elsewhere on this
+  // screen (booking wizard gate, Shop, Photography info card, Messages,
+  // dog modal, anchors for Payments/Credits/Rewards, Refer modal, How to
+  // Use) — no new navigation/business logic is introduced here.
+  const goHome = () => document.querySelector('[data-scroll-root]')?.scrollTo({ top: 0, behavior: "smooth" });
+  const goBook = () => { if (dogs.length === 0) setDogModal({ open: true, dog: null }); else openBookingIfReady(); };
+  const goShop = () => { setShopInitialTab("all"); setShopOpen(true); };
+  const goPhotography = () => setPhotographyOpen(true);
+  const goMessages = () => setMessagesOpen(true);
+  const goMyDogs = () => setDogModal({ open: true, dog: dogs[0] || null });
+  const goPayments = () => document.getElementById("portal-payments-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goCredits = () => document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goRewards = () => document.querySelector('[data-testid="portal-trophies-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goRefer = () => setShowReferModal(true);
+  const goHelp = () => setTutorialsOpen(true);
+
+  return (
+    <div className="app-shell h-full min-h-0 flex bg-bgBase" data-testid="client-portal">
+      <ClientSidebar
+        shopCartCount={shopCartCount}
+        messagesUnread={messagesUnread}
+        showPhotography={feat.photography}
+        showMessages={sectionOn("messages")}
+        showHelp={sectionOn("help_button")}
+        onHome={goHome} onBook={goBook} onShop={goShop} onPhotography={goPhotography} onMessages={goMessages}
+        onMyDogs={goMyDogs} onPayments={goPayments} onCredits={goCredits} onRewards={goRewards} onRefer={goRefer} onHelp={goHelp}
+      />
+
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        <OnboardingBanner missingCount={onboardingMissing} onOpen={reopenOnboarding} />
+        {/* Redesign Phase B — simplified header. Logo now lives in the
+            sidebar on desktop (shown here only on mobile, where the sidebar
+            is hidden); lower-value utility actions (How to Use / Install /
+            Logout) moved into ClientProfileMenu instead of permanent
+            buttons. Same underlying behaviour for all of them. */}
+        <header className="shrink-0 bg-bgHeader border-b border-shBorder flex items-center justify-between gap-3 px-3 sm:px-6 py-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <img src="/logo.png" alt="Sit Happens" className="h-9 w-auto shrink-0 md:hidden" data-testid="portal-logo" />
+            <div className="hidden sm:block min-w-0">
+              <p className="text-xl text-shText font-bold truncate">
+                Welcome back, {user.name.split(" ")[0] || user.name}!
+              </p>
+              <p className="text-[13px] text-shTextMuted truncate">
+                Here&apos;s what&apos;s happening with your pup.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {sectionOn("messages") && (
+              <button onClick={goMessages} data-testid="portal-messages-button"
+                      className="relative flex items-center gap-2 h-9 px-3 rounded-full border border-shBorder text-shText text-[13px] font-semibold hover:border-shSecondary/50 transition"
+                      style={{ background: "var(--sh-card-base)", boxShadow: messagesUnread > 0 ? "0 0 14px -5px rgba(0,169,224,0.55)" : undefined }}>
+                <i className="fas fa-comment-dots text-shSecondary"/>
+                <span className="hidden sm:inline">Messages</span>
+                {messagesUnread > 0 && (
+                  <span className="bg-shPrimary text-bgHeader text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 grid place-items-center"
+                        data-testid="portal-messages-badge">{messagesUnread}</span>
+                )}
+              </button>
+            )}
+            <ClientProfileMenu name={user.name} showHelp={sectionOn("help_button")} onHelp={goHelp} onLogout={logout} />
+          </div>
+        </header>
 
       <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8" data-scroll-root>
+        {/* Above-the-fold quick actions — first thing on Home, before the
+            announcement banner or any dashboard content, so Book/Shop/
+            Photography are visible without scrolling. Each card just opens
+            an existing destination (booking wizard, full-screen Shop, or the
+            existing Photography service-info card) — no new booking/shop
+            logic lives here. */}
+        <div className={`grid grid-cols-1 ${feat.photography ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-3 mb-4 sm:mb-6`}
+             data-testid="portal-top-quick-actions">
+          <PortalHomeActionCard
+            testId="portal-quickaction-book"
+            icon="fa-calendar-plus" accent="primary"
+            title="Book Now" description="Schedule training, classes or private sessions."
+            ctaLabel="Book an Appointment" onClick={goBook}
+          />
+          <PortalHomeActionCard
+            testId="portal-quickaction-shop"
+            icon="fa-bag-shopping" accent="shop" emphasized badge="Popular"
+            title="Shop" description="Browse premium training gear, tools & exclusive products."
+            ctaLabel="Shop Now" cartCount={shopCartCount} onClick={goShop}
+          />
+          {feat.photography && (
+            <PortalHomeActionCard
+              testId="portal-quickaction-photography"
+              icon="fa-camera-retro" accent="accent"
+              title="Photography" description="Capture progress. Book a session or order photos."
+              ctaLabel="View Photography" onClick={goPhotography}
+            />
+          )}
+        </div>
+
+        {/* Compact "Action Needed" summary — the full step-by-step checklist
+            (unchanged, same component/props/logic) only mounts once the
+            client taps "Continue Setup", so Home isn't dominated by it. */}
+        {bookingLocked && !setupExpanded && (
+          <div className="relative overflow-hidden mb-4 sm:mb-6 rounded-xl border border-shAccent/25 shadow-sh flex items-center gap-3 px-4 py-3"
+               style={{ background: "var(--sh-card-base)" }}
+               data-testid="portal-action-needed-compact">
+            <span aria-hidden="true" className="pointer-events-none absolute inset-0"
+                  style={{ background: "radial-gradient(120% 160% at 0% 50%, rgba(242,101,34,0.12), transparent 60%)" }}/>
+            <span className="relative z-10 w-9 h-9 shrink-0 rounded-full bg-shAccent/15 border border-shAccent/35 text-shAccent grid place-items-center"
+                  style={{ boxShadow: "0 0 16px -4px rgba(242,101,34,0.5)" }}>
+              <i className="fas fa-triangle-exclamation"/>
+            </span>
+            <div className="relative z-10 flex-1 min-w-0">
+              <p className="text-[11px] sm:text-[13px] font-bold text-shAccent uppercase tracking-wide sm:tracking-wide whitespace-nowrap">Action Needed</p>
+              <p className="text-[13px] text-shTextMuted truncate">Finish your setup to get the most out of your portal.</p>
+            </div>
+            <button
+              onClick={() => {
+                setSetupExpanded(true);
+                setTimeout(() => document.querySelector('[data-testid="portal-setup-checklist"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+              }}
+              data-testid="portal-action-needed-continue"
+              className="relative z-10 shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-shAccent text-white text-[12px] font-black uppercase tracking-widest hover:brightness-110 transition"
+            >
+              <span className="sm:hidden">Setup</span>
+              <span className="hidden sm:inline">Continue Setup</span>
+              <i className="fas fa-arrow-right text-[10px]"/>
+            </button>
+          </div>
+        )}
+
         {/* Sprint 110di-18 — Admin-set announcement banner. Renders at the
             very top whenever enabled + within the date window. */}
         {announcementVisible && (() => {
@@ -1044,6 +1167,12 @@ export default function Portal() {
           />
         )}
         <NeedsPasswordCard />
+        {/* Kept permanently mounted (never conditionally rendered) so it
+            keeps reporting live setup status via onStatusChange regardless
+            of whether the compact banner above is expanded — only its
+            visual output is hidden/shown, its own internals/props/behavior
+            are completely unchanged. */}
+        <div className={setupExpanded ? "" : "hidden"} data-testid="portal-setup-checklist-wrap">
         <PortalSetupChecklist
           refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}
@@ -1088,11 +1217,12 @@ export default function Portal() {
             return false;  // let the checklist fall through to its default scroll
           }}
         />
+        </div>
 
         {/* Phase 10A — One organized client overview replaces the old stack of
             tiny landing callouts and the redundant welcome-only card. Existing
             booking, setup, homework, trophy, dog, and credit data is reused. */}
-        <PortalAnnouncementsCard />
+        <PortalAnnouncementsCard defaultCollapsed />
         <PortalEngagementHub
           dogs={dogs}
           bookings={bookings}
@@ -1206,7 +1336,9 @@ export default function Portal() {
         {/* Stripe Online Payments (Phase 3A) — client-facing invoice list +
             Pay Online. Self-hides while loading/empty; independently checks
             whether online payments are enabled server-side. */}
-        <PortalInvoices />
+        <div id="portal-payments-anchor">
+          <PortalInvoices />
+        </div>
 
         {/* Phase 10A — Fun extras remain available without competing with the
             client's real tasks. The drawer is closed by default so the home
@@ -1245,9 +1377,9 @@ export default function Portal() {
               data, much more visually engaging.
               Sprint 110di-18 — Gated by Client Portal Controls section toggle. */}
           {sectionOn("credits") && (
-          <div className="relative overflow-hidden bg-bgPanel card-pop p-6 rounded-2xl border border-bgHover shadow-2xl" data-testid="credits-card">
+          <div className="relative overflow-hidden p-6 rounded-2xl border border-shBorder shadow-sh" style={{ background: "var(--sh-card-base)" }} data-testid="credits-card">
             <div className="absolute inset-0 pointer-events-none opacity-25"
-                 style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.5) 0%, transparent 55%)" }}/>
+                 style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.35) 0%, transparent 55%)" }}/>
             <div className="relative">
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
                 <i className="fas fa-wallet mr-1"/>{label("credits", "Your Credits")}
@@ -1258,7 +1390,7 @@ export default function Portal() {
               {(() => {
                 const tiles = [];
                 if (feat.daycare) tiles.push(
-                  <CreditMetricCard key="daycare" icon="fa-sun" label="Daycare" value={credits} unit="days"
+                  <CreditMetricCard key="daycare" icon="fa-sun" label="Daycare" value={credits || 0} unit="days"
                     color="shGreen" haloRgba="rgba(140,198,63,0.7)" dropShadow="0 0 8px rgba(140,198,63,0.4)"
                     testid="credit-metric-daycare"/>
                 );
@@ -1290,7 +1422,7 @@ export default function Portal() {
                 const totalCredits = (credits || 0) + (client?.training_credits || 0) + (client?.boarding_credits || 0);
                 if (totalCredits > 2) return null;
                 return (
-                  <div className="mt-3 bg-shOrange/10 border border-shOrange/30 rounded-lg p-3 text-center"
+                  <div className="mt-3 border border-shAccent/30 rounded-lg p-3 text-center" style={{ background: "var(--sh-card-base)" }}
                        data-testid="portal-low-credits-helper">
                     <p className="text-[12px] text-shOrange font-black uppercase tracking-widest">
                       <i className="fas fa-circle-info mr-1"/>Need more credits?
@@ -1309,49 +1441,34 @@ export default function Portal() {
                   </div>
                 );
               })()}
-              <button onClick={()=>setProfileOpen(true)} data-testid="open-profile"
-                      className="mt-4 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shBlue hover:text-shBlue transition">
-                <i className="fas fa-user-pen mr-2"/>My Profile
-              </button>
-              <button onClick={()=>{
+              <PremiumButton variant="secondary" onClick={()=>setProfileOpen(true)} data-testid="open-profile" className="mt-4 w-full justify-center py-2.5">
+                <i className="fas fa-user-pen"/>My Profile
+              </PremiumButton>
+              <PremiumButton variant="secondary" onClick={()=>{
                          setShopInitialTab("credit_pack");
                          setShopOpen(true);
                        }}
-                      data-testid="buy-more-credits"
-                      className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
-                <i className="fas fa-cart-plus mr-2"/>Buy More Credits
-              </button>
-              <button onClick={()=>{
+                      data-testid="buy-more-credits" className="mt-2 w-full justify-center py-2.5">
+                <i className="fas fa-cart-plus"/>Buy More Credits
+              </PremiumButton>
+              <PremiumButton variant="secondary" onClick={()=>{
                          const el = document.getElementById("portal-bookings-anchor");
                          if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
                        }}
-                      data-testid="jump-to-bookings"
-                      className="mt-2 w-full bg-bgBase border border-bgHover text-gray-300 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:border-shGreen hover:text-shGreen transition">
-                <i className="fas fa-calendar-day mr-2"/>{label("my_bookings", "My Bookings")} · {bookings.length}
-              </button>
-              <div className="mt-4 pt-4 border-t border-bgHover">
+                      data-testid="jump-to-bookings" className="mt-2 w-full justify-center py-2.5">
+                <i className="fas fa-calendar-day"/>{label("my_bookings", "My Bookings")} · {bookings.length}
+              </PremiumButton>
+              <div className="mt-4 pt-4 border-t border-shBorder">
                 <TextSizePicker testid="portal-text-size" compact />
               </div>
             </div>
           </div>
           )}
 
-          {/* Client Shop Phase 2 UX — the dashboard only ever shows a small
-              launcher now; the actual storefront lives in the dedicated
-              full-screen Shop view (see shopOpen above). */}
-          <div className="bg-bgPanel card-pop p-5 rounded-2xl border border-bgHover shadow-2xl flex items-center justify-between gap-4 flex-wrap"
-               data-testid="portal-shop-launcher">
-            <div>
-              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
-                <i className="fas fa-bag-shopping mr-1" />Shop
-              </p>
-              <p className="text-gray-400 text-sm">Merch, credit packs &amp; training packages</p>
-            </div>
-            <button onClick={() => { setShopInitialTab("all"); setShopOpen(true); }} data-testid="portal-shop-launcher-button"
-                    className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg font-black text-[13px] uppercase tracking-widest hover:opacity-90 transition">
-              Shop Now
-            </button>
-          </div>
+          {/* The dedicated Shop sidebar card was removed — the top-of-page
+              quick action (see portal-top-quick-actions, above the fold) is
+              now the single primary Shop entrance for Home. Keeping this one
+              here too would just duplicate that same promotion. */}
 
           {sectionOn("waiver_documents") && (
           <div className={`p-5 rounded-xl border shadow-2xl ${waiverNeeded?"bg-red-500/10 border-red-500/40 card-danger":"bg-shGreen/5 border-shGreen/30 card-success"}`} data-testid="waiver-status-card">
@@ -2113,6 +2230,15 @@ export default function Portal() {
         </div>
       </div>
 
+        <ClientMobileNav
+          shopCartCount={shopCartCount}
+          showPhotography={feat.photography}
+          showHelp={sectionOn("help_button")}
+          onHome={goHome} onBook={goBook} onShop={goShop} onPhotography={goPhotography}
+          onMyDogs={goMyDogs} onPayments={goPayments} onCredits={goCredits} onRewards={goRewards} onRefer={goRefer} onHelp={goHelp}
+        />
+      </div>
+
       {showWaiver && pubSettings?.waiver_text && (
         <WaiverModal
           waiverText={pubSettings.waiver_text}
@@ -2122,31 +2248,6 @@ export default function Portal() {
           onClose={()=>setShowWaiver(false)}
           allowClose={waiver?.signed && !waiver?.needs_resign}
         />
-      )}
-
-      {/* Mobile-only sticky "Book Service" jump bar — keeps the CTA always
-          reachable. Sprint 110di-14: respects the existing setup gate so it
-          can never bypass `booking_locked`. When locked → COMPLETE SETUP +
-          scroll to checklist. When ready → BOOK SERVICE + open wizard.
-          Sprint 110di-15: bigger touch target, two-line safe area, and a
-          subtle accent strip on top so it reads as an anchored CTA. */}
-      {dogs.length > 0 && (
-        <button
-          onClick={openBookingIfReady}
-          data-testid="portal-sticky-book"
-          aria-label={bookingLocked ? "Complete setup" : "Book service"}
-          className={`md:hidden fixed bottom-0 inset-x-0 z-30 py-4 px-5 pb-safe flex items-center justify-center gap-2 font-black uppercase tracking-widest text-[15px] shadow-2xl border-t-2 min-h-[56px] active:scale-[0.98] transition ${
-            bookingLocked
-              ? "bg-shOrange text-bgHeader border-shOrange/80"
-              : "bg-shGreen text-bgHeader border-shGreen/80"
-          }`}
-        >
-          {bookingLocked ? (
-            <><i className="fas fa-lock"/>{label("complete_setup", "Complete Setup")}</>
-          ) : (
-            <><i className="fas fa-calendar-plus"/>{label("book_service", "Book Service")}</>
-          )}
-        </button>
       )}
 
       {showBookWizard && readyToBook && (
@@ -2227,14 +2328,14 @@ export default function Portal() {
                             onSaved={async () => { await loadAll(); bumpSetupRefresh(); }} />
       )}
       {tutorialsOpen && (
-        <div className="fixed inset-0 z-[9999] bg-bgBase overflow-y-auto" data-testid="portal-tutorials-overlay">
-          <header className="sticky top-0 bg-bgHeader border-b border-bgHover h-16 flex items-center justify-between px-6 z-10">
+        <div className="fixed inset-0 z-[9999] bg-[var(--sh-card-base)] overflow-y-auto" data-testid="portal-tutorials-overlay">
+          <header className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder h-16 flex items-center justify-between px-6 z-10">
             <div className="flex items-center gap-3">
-              <i className="fas fa-circle-question text-shBlue text-lg"/>
-              <span className="text-white font-black uppercase tracking-widest text-[14px]">How to Use Sit Happens</span>
+              <i className="fas fa-circle-question text-shSecondary text-lg"/>
+              <span className="text-shText font-black uppercase tracking-widest text-[14px]">How to Use Sit Happens</span>
             </div>
             <button onClick={()=>setTutorialsOpen(false)} data-testid="portal-tutorials-close"
-                    className="text-gray-300 hover:text-white text-lg p-2"><i className="fas fa-times"/></button>
+                    className="text-shTextMuted hover:text-shText text-lg p-2"><i className="fas fa-times"/></button>
           </header>
           <div className="p-6 max-w-6xl mx-auto">
             <Tutorials role="client" />

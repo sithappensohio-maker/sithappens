@@ -15,10 +15,10 @@ function cashAmount(r) { return Number(r?.cash_revenue ?? r?.amount_paid ?? (r?.
 function balanceAmount(r) { return Number(r?.balance_due ?? (r?.payment_status === "paid_partial" ? (Number(r?.actual_price || 0) - Number(r?.amount_paid || 0)) : (r?.payment_status === "unpaid" ? r?.actual_price : 0))) || 0; }
 
 const PAYMENT_STATUSES = [
-  { key: "unpaid",       label: "Unpaid",   color: "bg-shOrange/15 text-shOrange" },
-  { key: "paid",         label: "Paid",     color: "bg-shGreen/15 text-shGreen" },
+  { key: "unpaid",       label: "Unpaid",   color: "bg-shAccent/15 text-shAccent" },
+  { key: "paid",         label: "Paid",     color: "bg-shPrimary/15 text-shPrimary" },
   { key: "paid_partial", label: "Partial",  color: "bg-amber-500/15 text-amber-300" },
-  { key: "comped",       label: "Comped",   color: "bg-shBlue/15 text-shBlue" },
+  { key: "comped",       label: "Comped",   color: "bg-shSecondary/15 text-shSecondary" },
   { key: "refunded",     label: "Refunded", color: "bg-red-500/15 text-red-400" },
 ];
 
@@ -279,30 +279,30 @@ export default function Income() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="income-screen">
       {editErr && (
-        <div className="fixed top-4 right-4 z-[70] bg-red-500/95 text-white px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 animate-slide-in" data-testid="income-edit-err">
+        <div className="fixed top-4 right-4 z-[70] bg-red-500/95 text-shText px-4 py-2.5 rounded-lg shadow-xl flex items-center gap-2 animate-slide-in" data-testid="income-edit-err">
           <i className="fas fa-exclamation-triangle"/>
           <span className="text-[15px] font-bold">{editErr}</span>
-          <button onClick={()=>setEditErr("")} className="ml-2 text-white/80 hover:text-white"><i className="fas fa-times"/></button>
+          <button onClick={()=>setEditErr("")} className="ml-2 text-shText/80 hover:text-shText"><i className="fas fa-times"/></button>
         </div>
       )}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
         <PageHero
-          eyebrow={{ icon: "fa-dollar-sign", text: "Money in, money out", color: "text-shGreen" }}
+          eyebrow={{ icon: "fa-dollar-sign", text: "Money in, money out", color: "text-shPrimary" }}
           title="Income & Services."
           highlight="The cash story."
           subtitle="Weekly tally, transaction log, and quick service entry."
           right={(
             <div className="flex gap-2 flex-wrap">
               <button onClick={exportCSV} data-testid="income-export-csv"
-                      className="bg-bgBase border border-bgHover text-gray-200 px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:border-shBlue transition">
+                      className="bg-[var(--sh-card-base)] border border-shBorder text-gray-200 px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:border-shSecondary transition">
                 <i className="fas fa-file-csv mr-1"/>Export CSV
               </button>
               <button onClick={downloadPL} disabled={plBusy} data-testid="pl-download-btn"
-                      className="bg-bgBase border border-shBlue/40 text-shBlue px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shBlue/10 disabled:opacity-50 transition">
+                      className="bg-[var(--sh-card-base)] border border-shSecondary/40 text-shSecondary px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shSecondary/10 disabled:opacity-50 transition">
                 <i className={`fas ${plBusy ? "fa-spinner fa-spin" : "fa-file-pdf"} mr-1`}/>P&L PDF
               </button>
               <button onClick={emailPL} disabled={plBusy} data-testid="pl-email-btn"
-                      className="bg-bgBase border border-shOrange/40 text-shOrange px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shOrange/10 disabled:opacity-50 transition">
+                      className="bg-[var(--sh-card-base)] border border-shAccent/40 text-shAccent px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shAccent/10 disabled:opacity-50 transition">
                 <i className="fas fa-envelope mr-1"/>Email Me
               </button>
               <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn"
@@ -310,7 +310,7 @@ export default function Income() {
                 <i className="fas fa-bag-shopping mr-1"/>Log Retail Sale
               </button>
               <button onClick={()=>setLogOpen(true)} data-testid="income-log-service-btn"
-                      className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/90 transition">
+                      className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/90 transition">
                 <i className="fas fa-plus mr-1"/>Log Service
               </button>
             </div>
@@ -319,13 +319,13 @@ export default function Income() {
         />
       </div>
       {/* Sprint 110di-51 — Tab strip: Transactions vs Accounts Receivable */}
-      <div className="flex items-center gap-1 border-b border-bgHover" data-testid="income-tabs">
+      <div className="flex items-center gap-1 border-b border-shBorder" data-testid="income-tabs">
         <button onClick={()=>setTab("transactions")} data-testid="income-tab-transactions"
-                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="transactions" ? "text-shGreen border-shGreen" : "text-gray-400 border-transparent hover:text-shGreen/80"}`}>
+                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="transactions" ? "text-shPrimary border-shPrimary" : "text-shTextMuted border-transparent hover:text-shPrimary/80"}`}>
           <i className="fas fa-list mr-1.5"/>Transactions
         </button>
         <button onClick={()=>setTab("ar")} data-testid="income-tab-ar"
-                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="ar" ? "text-shOrange border-shOrange" : "text-gray-400 border-transparent hover:text-shOrange/80"}`}>
+                className={`px-4 py-2.5 text-[12px] font-black uppercase tracking-widest border-b-2 transition ${tab==="ar" ? "text-shAccent border-shAccent" : "text-shTextMuted border-transparent hover:text-shAccent/80"}`}>
           <i className="fas fa-file-invoice-dollar mr-1.5"/>Accounts Receivable
         </button>
       </div>
@@ -334,7 +334,7 @@ export default function Income() {
       ) : (
       <>
       {plMsg && (
-        <div className="bg-shBlue/10 border border-shBlue/30 text-shBlue px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">
+        <div className="bg-shSecondary/10 border border-shSecondary/30 text-shSecondary px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest" data-testid="pl-status">
           <i className="fas fa-circle-info mr-2"/>{plMsg} · range {rangeStart} → {rangeEnd}
         </div>
       )}
@@ -343,8 +343,8 @@ export default function Income() {
         <div
           className={`px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest flex items-center gap-2 flex-wrap ${
             plAutoStatus.enabled
-              ? "bg-shGreen/10 border border-shGreen/30 text-shGreen"
-              : "bg-shOrange/10 border border-shOrange/30 text-shOrange"
+              ? "bg-shPrimary/10 border border-shPrimary/30 text-shPrimary"
+              : "bg-shAccent/10 border border-shAccent/30 text-shAccent"
           }`}
           data-testid="pl-auto-status"
         >
@@ -352,16 +352,16 @@ export default function Income() {
           {plAutoStatus.enabled ? (
             <>
               <span>Auto-email · ON</span>
-              <span className="text-gray-400">·</span>
-              <span className="normal-case text-gray-300">
+              <span className="text-shTextMuted">·</span>
+              <span className="normal-case text-shTextMuted">
                 Fires the 1st of each month
-                {plAutoStatus.admin_email && <> to <strong className="text-white">{plAutoStatus.admin_email}</strong></>}
+                {plAutoStatus.admin_email && <> to <strong className="text-shText">{plAutoStatus.admin_email}</strong></>}
               </span>
               {plAutoStatus.last_sent_at && (
                 <>
-                  <span className="text-gray-400">·</span>
-                  <span className="normal-case text-gray-300">
-                    Last sent <strong className="text-white">{plAutoStatus.last_sent_at.slice(0,10)}</strong>
+                  <span className="text-shTextMuted">·</span>
+                  <span className="normal-case text-shTextMuted">
+                    Last sent <strong className="text-shText">{plAutoStatus.last_sent_at.slice(0,10)}</strong>
                     {plAutoStatus.last_period_key && (
                       <> ({plAutoStatus.last_period_key.replace("pl:","")} · net ${(plAutoStatus.last_net||0).toFixed(2)})</>
                     )}
@@ -380,46 +380,46 @@ export default function Income() {
         <div className="card-finance rounded-xl p-5" data-testid="weekly-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
-              <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">This Week (Mon–Sun)</p>
-              <p className="text-white font-black uppercase italic tracking-tight">{summary.week_start} → {summary.week_end}</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">This Week (Mon–Sun)</p>
+              <p className="text-shText font-black uppercase italic tracking-tight">{summary.week_start} → {summary.week_end}</p>
             </div>
             <div className="flex gap-2 items-center flex-wrap">
               <button onClick={()=>setRefDate(localISOFromDate(new Date(parseLocalISO(refDate).getTime() - 7*86400000)))}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
+                      className="bg-[var(--sh-card-base)] border border-shBorder px-3 py-1.5 rounded text-shTextMuted text-[14px] font-black hover:border-shSecondary">
                 <i className="fas fa-chevron-left"/>
               </button>
               <input type="date" value={refDate} onChange={(e)=>setRefDate(e.target.value)} style={{colorScheme:"dark"}}
-                     className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" data-testid="weekly-ref-date" />
+                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" data-testid="weekly-ref-date" />
               <button onClick={()=>setRefDate(localISOFromDate(new Date(parseLocalISO(refDate).getTime() + 7*86400000)))}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-gray-300 text-[14px] font-black hover:border-shBlue">
+                      className="bg-[var(--sh-card-base)] border border-shBorder px-3 py-1.5 rounded text-shTextMuted text-[14px] font-black hover:border-shSecondary">
                 <i className="fas fa-chevron-right"/>
               </button>
               <button onClick={()=>setRefDate(todayISO())}
-                      className="bg-bgBase border border-bgHover px-3 py-1.5 rounded text-shBlue text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
+                      className="bg-[var(--sh-card-base)] border border-shBorder px-3 py-1.5 rounded text-shSecondary text-[14px] font-black uppercase tracking-widest hover:border-shSecondary">
                 Today
               </button>
             </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} transaction${summary.completed_count===1?"":"s"}`} color="text-shGreen" icon="fa-circle-check" big data-testid="tile-completed" />
-            <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shBlue" icon="fa-dollar-sign" />
+            <StatTile label="Completed" value={fmt(summary.completed_total)} sub={`${summary.completed_count} transaction${summary.completed_count===1?"":"s"}`} color="text-shPrimary" icon="fa-circle-check" big data-testid="tile-completed" />
+            <StatTile label="Paid" value={fmt(summary.paid_total)} sub="received" color="text-shSecondary" icon="fa-dollar-sign" />
             <StatTile label="Unpaid" value={fmt(summary.unpaid_total)}
                       sub={summary.ar_outstanding_total > 0
                         ? `outstanding · incl. ${fmt(summary.ar_outstanding_total)} on tabs (${summary.ar_outstanding_count})`
                         : "outstanding"}
-                      color="text-shOrange" icon="fa-hourglass-half" />
-            <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-gray-300" icon="fa-calendar" />
+                      color="text-shAccent" icon="fa-hourglass-half" />
+            <StatTile label="Booked (upcoming)" value={fmt(summary.booked_total)} sub={`${summary.booked_count} sessions`} color="text-shTextMuted" icon="fa-calendar" />
           </div>
           {summary.by_service?.length > 0 && (
             <div className="mt-4">
-              <p className="text-[14px] font-black uppercase tracking-widest text-gray-500 mb-2">Breakdown by service</p>
+              <p className="text-[14px] font-black uppercase tracking-widest text-shTextMuted mb-2">Breakdown by service</p>
               <div className="flex flex-wrap gap-2">
                 {summary.by_service.map(b => (
-                  <span key={b.name} className="bg-bgBase border border-bgHover rounded px-3 py-1.5 text-[14px]">
-                    <span className="text-gray-300">{b.name}</span>
-                    <span className="text-gray-500 mx-1">·</span>
-                    <span className="text-white font-black">{fmt(b.total)}</span>
-                    <span className="text-gray-500 ml-1">({b.count})</span>
+                  <span key={b.name} className="bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-1.5 text-[14px]">
+                    <span className="text-shTextMuted">{b.name}</span>
+                    <span className="text-shTextMuted mx-1">·</span>
+                    <span className="text-shText font-black">{fmt(b.total)}</span>
+                    <span className="text-shTextMuted ml-1">({b.count})</span>
                   </span>
                 ))}
               </div>
@@ -433,13 +433,13 @@ export default function Income() {
         <div className="card-finance rounded-xl p-5" data-testid="range-summary">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
             <div>
-              <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">Longer-Range View</p>
-              <p className="text-white font-black uppercase italic tracking-tight">{rangeStart} → {rangeEnd}</p>
+              <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">Longer-Range View</p>
+              <p className="text-shText font-black uppercase italic tracking-tight">{rangeStart} → {rangeEnd}</p>
             </div>
             <div className="flex flex-wrap gap-1">
               {["month","quarter","ytd","custom"].map(k => (
                 <button key={k} onClick={()=>setRangePreset(k)} data-testid={`range-preset-${k}`}
-                        className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${rangePreset===k?"bg-shBlue text-white":"bg-bgBase text-gray-400 border border-bgHover hover:border-shBlue"}`}>
+                        className={`px-3 py-1.5 rounded text-[14px] font-black uppercase tracking-widest ${rangePreset===k?"bg-shSecondary text-shText":"bg-[var(--sh-card-base)] text-shTextMuted border border-shBorder hover:border-shSecondary"}`}>
                   {k === "ytd" ? "YTD" : k}
                 </button>
               ))}
@@ -448,18 +448,18 @@ export default function Income() {
           {rangePreset === "custom" && (
             <div className="flex gap-2 mb-4">
               <input type="date" value={rangeStart} onChange={(e)=>setRangeStart(e.target.value)} style={{colorScheme:"dark"}}
-                     className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
-              <span className="text-gray-500 self-center">to</span>
+                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" />
+              <span className="text-shTextMuted self-center">to</span>
               <input type="date" value={rangeEnd} onChange={(e)=>setRangeEnd(e.target.value)} style={{colorScheme:"dark"}}
-                     className="bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+                     className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" />
             </div>
           )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-            <StatTile label="Income (all sources)" value={fmt(rangeSummary.completed_total)} sub="Services · Training · Retail · Packs" color="text-shGreen" icon="fa-circle-check" big />
+            <StatTile label="Income (all sources)" value={fmt(rangeSummary.completed_total)} sub="Services · Training · Retail · Packs" color="text-shPrimary" icon="fa-circle-check" big />
             <StatTile label="Expenses" value={fmt(rangeSummary.expenses_total || 0)} sub={`${rangeSummary.expense_count || 0} item${rangeSummary.expense_count===1?"":"s"}`} color="text-red-300" icon="fa-receipt" />
-            <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shOrange" icon="fa-user-clock" />
-            <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shBlue" : "text-red-400"} icon="fa-scale-balanced" big />
-            <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-gray-300" icon="fa-chart-line" />
+            <StatTile label="Labor (w/ taxes)" value={fmt(rangeSummary.labor_total || 0)} sub={rangeSummary.labor_burden ? `${fmt(rangeSummary.labor_gross)} + ${fmt(rangeSummary.labor_burden)} taxes` : "no clocked hours"} color="text-shAccent" icon="fa-user-clock" />
+            <StatTile label="Net (after labor)" value={fmt(rangeSummary.net_total ?? rangeSummary.completed_total)} sub={(rangeSummary.net_total ?? 0) >= 0 ? "in the black" : "in the red"} color={(rangeSummary.net_total ?? 0) >= 0 ? "text-shSecondary" : "text-red-400"} icon="fa-scale-balanced" big />
+            <StatTile label="Avg / day" value={fmt(rangeSummary.completed_total / Math.max(rangeSummary.by_day?.length || 1, 1))} sub="active-day average" color="text-shTextMuted" icon="fa-chart-line" />
           </div>
           {/* Sprint 110cz — removed Credits Redeemed range-view chip; the
               all-in-one Income tile + breakdown shows the full picture now. */}
@@ -472,7 +472,7 @@ export default function Income() {
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-purple-300 uppercase tracking-widest"><i className="fas fa-bag-shopping mr-2"/>Retail Sales</h4>
-            <p className="text-[14px] text-gray-500 mt-1">External POS revenue · logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · added to gross above.</p>
+            <p className="text-[14px] text-shTextMuted mt-1">External POS revenue · logged in <span className="text-shTextMuted font-black">{rangeStart} → {rangeEnd}</span> · added to gross above.</p>
           </div>
           <button onClick={()=>{ setRetailEditing(null); setRetailOpen(true); }} data-testid="retail-add-btn-card"
                   className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30">
@@ -480,12 +480,12 @@ export default function Income() {
           </button>
           {/* Sprint 110di-61 — Standalone "Take Payment" entry point. */}
           <button onClick={()=>setTakePaymentOpen(true)} data-testid="take-payment-open-btn"
-                  className="bg-shGreen/20 text-shGreen border border-shGreen/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/30 ml-2">
+                  className="bg-shPrimary/20 text-shPrimary border border-shPrimary/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shPrimary/30 ml-2">
             <i className="fas fa-cash-register mr-1.5"/>Take Payment
           </button>
         </div>
         {retailSales.length === 0 ? (
-          <div className="text-center py-6 text-gray-500 text-[15px]">
+          <div className="text-center py-6 text-shTextMuted text-[15px]">
             <i className="fas fa-bag-shopping text-2xl mb-2 block opacity-40"/>
             No retail sales logged in this range.
           </div>
@@ -499,18 +499,18 @@ export default function Income() {
             testid="retail-groups"
             emptyText="No retail sales logged in this range."
             renderRow={(r) => (
-              <div key={r.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`retail-row-${r.id}`}>
+              <div key={r.id} className="bg-[var(--sh-card-base)]/40 border border-shBorder/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`retail-row-${r.id}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white truncate">{r.description}</p>
-                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                  <p className="text-sm font-black text-shText truncate">{r.description}</p>
+                  <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">
                     {r.category || "—"} · <span className="capitalize">{r.payment_method || "—"}</span>
                     {r.client_name && <> · <span className="text-purple-300">{r.client_name}</span></>}
                   </p>
                 </div>
                 <span className="text-sm font-black text-purple-300 whitespace-nowrap">+{fmt(r.amount)}</span>
                 <div className="flex gap-2 shrink-0">
-                  <button onClick={()=>{ setRetailEditing(r); setRetailOpen(true); }} className="text-[14px] text-gray-400 hover:text-shBlue p-1" data-testid={`retail-edit-${r.id}`}><i className="fas fa-pen"/></button>
-                  <button onClick={()=>removeRetail(r)} className="text-[14px] text-gray-400 hover:text-red-400 p-1" data-testid={`retail-delete-${r.id}`}><i className="fas fa-trash"/></button>
+                  <button onClick={()=>{ setRetailEditing(r); setRetailOpen(true); }} className="text-[14px] text-shTextMuted hover:text-shSecondary p-1" data-testid={`retail-edit-${r.id}`}><i className="fas fa-pen"/></button>
+                  <button onClick={()=>removeRetail(r)} className="text-[14px] text-shTextMuted hover:text-red-400 p-1" data-testid={`retail-delete-${r.id}`}><i className="fas fa-trash"/></button>
                 </div>
               </div>
             )}
@@ -528,11 +528,11 @@ export default function Income() {
       )}
 
       {/* Expenses (date range matches Range View above) */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl p-5" data-testid="expenses-card">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5" data-testid="expenses-card">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
             <h4 className="text-sm font-black text-red-300 uppercase tracking-widest"><i className="fas fa-receipt mr-2"/>Expenses</h4>
-            <p className="text-[14px] text-gray-500 mt-1">Logged in <span className="text-gray-300 font-black">{rangeStart} → {rangeEnd}</span> · subtracted from gross to show NET above.</p>
+            <p className="text-[14px] text-shTextMuted mt-1">Logged in <span className="text-shTextMuted font-black">{rangeStart} → {rangeEnd}</span> · subtracted from gross to show NET above.</p>
           </div>
           <button onClick={()=>{ setExpEditing(null); setExpOpen(true); }} data-testid="expense-add-btn"
                   className="bg-red-500/20 text-red-300 border border-red-500/40 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30">
@@ -540,7 +540,7 @@ export default function Income() {
           </button>
         </div>
         {expenses.length === 0 ? (
-          <div className="text-center py-6 text-gray-500 text-[15px]">
+          <div className="text-center py-6 text-shTextMuted text-[15px]">
             <i className="fas fa-receipt text-2xl mb-2 block opacity-40"/>
             No expenses logged in this range.
           </div>
@@ -554,24 +554,24 @@ export default function Income() {
             testid="expenses-groups"
             emptyText="No expenses logged in this range."
             renderRow={(e) => (
-              <div key={e.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`expense-row-${e.id}`}>
+              <div key={e.id} className="bg-[var(--sh-card-base)]/40 border border-shBorder/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`expense-row-${e.id}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-black text-white truncate flex items-center gap-2">
+                  <p className="text-sm font-black text-shText truncate flex items-center gap-2">
                     {e.description}
                     {e.receipt_image && (
-                      <span className="inline-flex items-center gap-1 bg-shGreen/15 text-shGreen px-1.5 py-0.5 rounded text-[10px] uppercase tracking-widest font-black" title="Receipt attached">
+                      <span className="inline-flex items-center gap-1 bg-shPrimary/15 text-shPrimary px-1.5 py-0.5 rounded text-[10px] uppercase tracking-widest font-black" title="Receipt attached">
                         <i className="fas fa-paperclip"/>RCPT
                       </span>
                     )}
                   </p>
-                  <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                  <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">
                     {e.category || "—"} · <span className="capitalize">{e.payment_method || "—"}</span>
                   </p>
                 </div>
                 <span className="text-sm font-black text-red-300 whitespace-nowrap">−{fmt(e.amount)}</span>
                 <div className="flex gap-2 shrink-0">
-                  <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[14px] text-gray-400 hover:text-shBlue p-1" data-testid={`expense-edit-${e.id}`}><i className="fas fa-pen"/></button>
-                  <button onClick={()=>removeExpense(e)} className="text-[14px] text-gray-400 hover:text-red-400 p-1" data-testid={`expense-delete-${e.id}`}><i className="fas fa-trash"/></button>
+                  <button onClick={()=>{ setExpEditing(e); setExpOpen(true); }} className="text-[14px] text-shTextMuted hover:text-shSecondary p-1" data-testid={`expense-edit-${e.id}`}><i className="fas fa-pen"/></button>
+                  <button onClick={()=>removeExpense(e)} className="text-[14px] text-shTextMuted hover:text-red-400 p-1" data-testid={`expense-delete-${e.id}`}><i className="fas fa-trash"/></button>
                 </div>
               </div>
             )}
@@ -590,44 +590,44 @@ export default function Income() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2 items-center">
         <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search dog, client, service…" data-testid="income-search"
-               className="flex-1 min-w-[180px] bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" />
+               className="flex-1 min-w-[180px] bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
         <select value={filters.dog_id} onChange={(e)=>setFilters({...filters, dog_id: e.target.value})}
-                className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="">All dogs</option>
           {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
         <select value={filters.service_id} onChange={(e)=>setFilters({...filters, service_id: e.target.value})}
-                className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="">All services</option>
           {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <select value={filters.payment_status} onChange={(e)=>setFilters({...filters, payment_status: e.target.value})}
-                className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="">All payment</option>
           {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
         </select>
         <select value={filters.status} onChange={(e)=>setFilters({...filters, status: e.target.value})}
-                className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="">All status</option>
           <option value="pending">Pending</option>
           <option value="approved">Approved</option>
           <option value="completed">Completed</option>
         </select>
-        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shBlue">
+        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-shTextMuted cursor-pointer hover:text-shSecondary">
           <input type="checkbox" checked={showLegacy} onChange={(e)=>setShowLegacy(e.target.checked)} data-testid="show-legacy-toggle"
-                 className="w-4 h-4 accent-shBlue" />
+                 className="w-4 h-4 accent-shSecondary" />
           Include unpriced
         </label>
-        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-gray-400 cursor-pointer hover:text-shGreen">
+        <label className="flex items-center gap-2 text-[14px] font-black uppercase tracking-widest text-shTextMuted cursor-pointer hover:text-shPrimary">
           <input type="checkbox" checked={groupByDate} onChange={(e)=>setGroupByDate(e.target.checked)} data-testid="group-by-date-toggle"
-                 className="w-4 h-4 accent-shGreen" />
+                 className="w-4 h-4 accent-shPrimary" />
           <i className="fas fa-layer-group"/> Group by date
         </label>
       </div>
 
       {/* Spreadsheet table OR grouped-by-date view */}
       {groupByDate ? (
-        <div className="bg-bgPanel border border-bgHover rounded-xl p-4 card-table" data-testid="income-grouped">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 card-table" data-testid="income-grouped">
           <CollapsibleDateGroups
             rows={filtered}
             getDate={(r) => r.date}
@@ -639,25 +639,25 @@ export default function Income() {
             renderRow={(r) => {
               const ps = PAYMENT_STATUSES.find(p => p.key === r.payment_status);
               return (
-                <div key={r.id} className="bg-bgBase/40 border border-bgHover/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`income-grouped-row-${r.id}`}>
+                <div key={r.id} className="bg-[var(--sh-card-base)]/40 border border-shBorder/40 rounded px-3 py-2 flex items-start gap-3" data-testid={`income-grouped-row-${r.id}`}>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-black text-white truncate">{r.dog_name} <span className="text-gray-500 font-normal">· {r.client_name}</span></p>
-                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-0.5">
+                    <p className="text-sm font-black text-shText truncate">{r.dog_name} <span className="text-shTextMuted font-normal">· {r.client_name}</span></p>
+                    <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">
                       {r.service_name || r.service_type || "—"} · <span className="capitalize">{r.payment_method || "—"}</span>
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {ps && <span className={`text-[12px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${ps.color}`}>{ps.label}</span>}
-                      <span className="text-sm font-black text-shGreen whitespace-nowrap">{fmt(cashAmount(r))}</span>
+                      <span className="text-sm font-black text-shPrimary whitespace-nowrap">{fmt(cashAmount(r))}</span>
                     </div>
                     {Number(r.financial_refund_total || 0) > 0 && (
-                      <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                      <p className="text-[11px] text-shTextMuted font-black uppercase tracking-widest mt-1">
                         refunded {fmt(r.financial_refund_total)}
                       </p>
                     )}
                     {r.financial_locked && (
-                      <button onClick={()=>setCorrectionRow(r)} className="text-shOrange hover:text-white mt-1" title="Adjust locked financial record">
+                      <button onClick={()=>setCorrectionRow(r)} className="text-shAccent hover:text-shText mt-1" title="Adjust locked financial record">
                         <i className="fas fa-shield-halved mr-1"/><span className="text-[11px] uppercase tracking-widest font-black">Adjust</span>
                       </button>
                     )}
@@ -668,10 +668,10 @@ export default function Income() {
           />
         </div>
       ) : (
-      <div className="bg-bgPanel border border-bgHover rounded-xl overflow-hidden" data-testid="income-table">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl overflow-hidden" data-testid="income-table">
         <div className="overflow-x-auto">
           <table className="w-full text-[15px]">
-            <thead className="bg-bgBase border-b border-bgHover text-[13px] font-black uppercase tracking-widest text-gray-500">
+            <thead className="bg-[var(--sh-card-base)] border-b border-shBorder text-[13px] font-black uppercase tracking-widest text-shTextMuted">
               <tr>
                 <th className="px-3 py-2 text-left">Date</th>
                 <th className="px-3 py-2 text-left">Dog · Client</th>
@@ -685,26 +685,26 @@ export default function Income() {
             </thead>
             <tbody>
               {filtered.length === 0 && (
-                <tr><td colSpan="8" className="text-center text-gray-500 text-[14px] uppercase font-black tracking-widest py-10">No transactions match these filters.</td></tr>
+                <tr><td colSpan="8" className="text-center text-shTextMuted text-[14px] uppercase font-black tracking-widest py-10">No transactions match these filters.</td></tr>
               )}
               {filtered.map(r => {
                 const ps = PAYMENT_STATUSES.find(p => p.key === r.payment_status);
                 return (
-                  <tr key={r.id} className="border-b border-bgHover/40 hover:bg-bgBase/50" data-testid={`txn-row-${r.id}`}>
-                    <td className="px-3 py-2 text-gray-300">{r.date}</td>
+                  <tr key={r.id} className="border-b border-shBorder/40 hover:bg-[var(--sh-card-base)]/50" data-testid={`txn-row-${r.id}`}>
+                    <td className="px-3 py-2 text-shTextMuted">{r.date}</td>
                     <td className="px-3 py-2">
-                      <p className="text-white font-black">{r.dog_name}</p>
-                      <p className="text-[13px] text-gray-500">{r.client_name}</p>
+                      <p className="text-shText font-black">{r.dog_name}</p>
+                      <p className="text-[13px] text-shTextMuted">{r.client_name}</p>
                     </td>
                     <td className="px-3 py-2">
                       <select value={r.service_id || ""} disabled={!!r.financial_locked} onChange={(e)=>{ if (e.target.value) inlineUpdate(r, { service_id: e.target.value }); }}
                               title={r.financial_locked ? "Locked after checkout" : "Change service"}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 max-w-[150px] disabled:opacity-60 disabled:cursor-not-allowed">
+                              className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1 text-[14px] text-shTextMuted max-w-[150px] disabled:opacity-60 disabled:cursor-not-allowed">
                         <option value="" disabled>— select service —</option>
                         {services.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                       {!r.service_id && r.service_type && (
-                        <p className="text-[12px] text-gray-500 mt-0.5 uppercase">legacy · {r.service_type}</p>
+                        <p className="text-[12px] text-shTextMuted mt-0.5 uppercase">legacy · {r.service_type}</p>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
@@ -715,36 +715,36 @@ export default function Income() {
                                if (v !== (r.actual_price || 0)) inlineUpdate(r, { actual_price: v });
                              }}
                              data-testid={`txn-price-${r.id}`}
-                             className="w-20 bg-bgBase border border-bgHover rounded p-1 text-right text-shGreen font-black text-[15px] disabled:opacity-60 disabled:cursor-not-allowed" />
-                      <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                             className="w-20 bg-[var(--sh-card-base)] border border-shBorder rounded p-1 text-right text-shPrimary font-black text-[15px] disabled:opacity-60 disabled:cursor-not-allowed" />
+                      <p className="text-[11px] text-shTextMuted font-black uppercase tracking-widest mt-1">
                         cash {fmt(cashAmount(r))}{balanceAmount(r) > 0 ? ` · due ${fmt(balanceAmount(r))}` : ""}{Number(r.financial_refund_total || 0) > 0 ? ` · refunded ${fmt(r.financial_refund_total)}` : ""}
                       </p>
                     </td>
                     <td className="px-3 py-2 text-center">
-                      <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shGreen/15 text-shGreen":r.status==="approved"?"bg-shBlue/15 text-shBlue":"bg-shOrange/15 text-shOrange"}`}>{r.status}</span>
+                      <span className={`text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${r.status==="completed"?"bg-shPrimary/15 text-shPrimary":r.status==="approved"?"bg-shSecondary/15 text-shSecondary":"bg-shAccent/15 text-shAccent"}`}>{r.status}</span>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <select value={r.payment_status || ""} disabled={!!r.financial_locked} onChange={(e)=>inlineUpdate(r, { payment_status: e.target.value })}
                               data-testid={`txn-payment-${r.id}`}
-                              className={`text-[13px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-bgBase text-gray-400"} border border-bgHover disabled:opacity-60 disabled:cursor-not-allowed`}>
+                              className={`text-[13px] font-black uppercase tracking-widest rounded px-2 py-0.5 ${ps?.color || "bg-[var(--sh-card-base)] text-shTextMuted"} border border-shBorder disabled:opacity-60 disabled:cursor-not-allowed`}>
                         <option value="">— set —</option>
                         {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <select value={r.payment_method || ""} disabled={!!r.financial_locked} onChange={(e)=>inlineUpdate(r, { payment_method: e.target.value })}
-                              className="bg-bgBase border border-bgHover rounded p-1 text-[14px] text-gray-300 disabled:opacity-60 disabled:cursor-not-allowed">
+                              className="bg-[var(--sh-card-base)] border border-shBorder rounded p-1 text-[14px] text-shTextMuted disabled:opacity-60 disabled:cursor-not-allowed">
                         <option value="">—</option>
                         {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right">
-                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-gray-400 text-[14px]"/> : r.financial_locked ? (
-                        <button onClick={()=>setCorrectionRow(r)} className="text-shOrange hover:text-white px-2" title="Adjust locked financial record">
+                      {savingId === r.id ? <i className="fas fa-spinner fa-spin text-shTextMuted text-[14px]"/> : r.financial_locked ? (
+                        <button onClick={()=>setCorrectionRow(r)} className="text-shAccent hover:text-shText px-2" title="Adjust locked financial record">
                           <i className="fas fa-shield-halved mr-1"/><span className="text-[11px] uppercase tracking-widest font-black">Adjust</span>
                         </button>
                       ) : (
-                        <button onClick={()=>removeTxn(r)} className="text-gray-500 hover:text-red-400 px-2" title="Remove transaction">
+                        <button onClick={()=>removeTxn(r)} className="text-shTextMuted hover:text-red-400 px-2" title="Remove transaction">
                           <i className="fas fa-trash text-[14px]"/>
                         </button>
                       )}
@@ -754,10 +754,10 @@ export default function Income() {
               })}
             </tbody>
             {filtered.length > 0 && (
-              <tfoot className="bg-bgBase border-t border-bgHover">
+              <tfoot className="bg-[var(--sh-card-base)] border-t border-shBorder">
                 <tr>
-                  <td colSpan="3" className="px-3 py-2 text-[13px] font-black uppercase tracking-widest text-gray-500">{filtered.length} rows</td>
-                  <td className="px-3 py-2 text-right text-shGreen font-black text-[15px]">
+                  <td colSpan="3" className="px-3 py-2 text-[13px] font-black uppercase tracking-widest text-shTextMuted">{filtered.length} rows</td>
+                  <td className="px-3 py-2 text-right text-shPrimary font-black text-[15px]">
                     {fmt(filtered.reduce((sum, r) => sum + cashAmount(r), 0))}
                   </td>
                   <td colSpan="4"></td>
@@ -791,18 +791,18 @@ function DailyBarChart({ points }) {
   if (!points || points.length === 0) return null;
   const max = Math.max(...points.map(p => p.total), 1);
   return (
-    <div className="bg-bgBase border border-bgHover rounded p-3" data-testid="daily-bar-chart">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3" data-testid="daily-bar-chart">
       <div className="flex items-end gap-[2px] h-32 overflow-x-auto">
         {points.map((p) => {
           const h = Math.max((p.total / max) * 100, 2);
           return (
             <div key={p.date} className="flex-1 min-w-[6px] flex flex-col items-center group" title={`${p.date} · $${p.total.toFixed(2)}`}>
-              <div className="w-full bg-shGreen/30 hover:bg-shGreen transition rounded-t" style={{ height: `${h}%` }} />
+              <div className="w-full bg-shPrimary/30 hover:bg-shPrimary transition rounded-t" style={{ height: `${h}%` }} />
             </div>
           );
         })}
       </div>
-      <div className="flex justify-between mt-2 text-[12px] text-gray-500 font-black uppercase tracking-widest">
+      <div className="flex justify-between mt-2 text-[12px] text-shTextMuted font-black uppercase tracking-widest">
         <span>{points[0]?.date}</span>
         <span>{points.length} days w/ revenue</span>
         <span>{points[points.length - 1]?.date}</span>
@@ -812,10 +812,10 @@ function DailyBarChart({ points }) {
 }
 
 function StatTile({ label, value, sub, color, icon, big = false }) {  return (
-    <div className={`bg-bgBase border border-bgHover rounded-lg p-3 ${big ? "md:col-span-1" : ""}`}>
-      <p className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
+    <div className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 ${big ? "md:col-span-1" : ""}`}>
+      <p className="text-[13px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas ${icon} mr-1 ${color}`}/>{label}</p>
       <p className={`${big ? "text-[24px]" : "text-[18px]"} font-black ${color} mt-1`}>{value}</p>
-      {sub && <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-0.5">{sub}</p>}
+      {sub && <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -859,22 +859,22 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl" onClick={(e)=>e.stopPropagation()} data-testid="log-service-modal">
-        <h4 className="text-lg font-black text-white uppercase italic tracking-tight mb-4">Log a Service</h4>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl" onClick={(e)=>e.stopPropagation()} data-testid="log-service-modal">
+        <h4 className="text-lg font-black text-shText uppercase italic tracking-tight mb-4">Log a Service</h4>
         <div className="space-y-3">
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
             <div className="relative">
               <input value={dogQuery || selectedDog?.name || ""} onChange={(e)=>{setDogQuery(e.target.value); setForm({...form, dog_id: ""});}}
                      placeholder="Type to search…" data-testid="log-dog-search"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
               {dogResults.length > 0 && (
-                <div className="absolute z-10 mt-1 w-full bg-bgPanel border border-bgHover rounded shadow-2xl max-h-48 overflow-y-auto">
+                <div className="absolute z-10 mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded shadow-2xl max-h-48 overflow-y-auto">
                   {dogResults.map(d => (
                     <button key={d.id} onClick={()=>{setForm({...form, dog_id: d.id}); setDogQuery("");}}
                             data-testid={`log-dog-pick-${d.id}`}
-                            className="w-full text-left px-3 py-2 hover:bg-bgHover text-white text-[15px]">
-                      <span className="font-black">{d.name}</span> <span className="text-gray-500 text-[13px]">· {d.breed || "Unknown"}</span>
+                            className="w-full text-left px-3 py-2 hover:bg-shSurfaceRaised text-shText text-[15px]">
+                      <span className="font-black">{d.name}</span> <span className="text-shTextMuted text-[13px]">· {d.breed || "Unknown"}</span>
                     </button>
                   ))}
                 </div>
@@ -882,60 +882,60 @@ function LogServiceModal({ onClose, onSaved, dogs, services }) {
             </div>
           </div>
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Service</label>
             <select value={form.service_id} onChange={(e)=>onServiceChange(e.target.value)} data-testid="log-service-select"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               {services.map(s => <option key={s.id} value={s.id}>{s.name} · ${s.base_price?.toFixed(2)}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Price (override)</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Price (override)</label>
               <input type="number" step="0.01" value={form.actual_price} onChange={(e)=>setForm({...form, actual_price: parseFloat(e.target.value) || 0})}
                      data-testid="log-price-input"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-shGreen font-black text-sm" />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shPrimary font-black text-sm" />
             </div>
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Date</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Date</label>
               <input type="date" value={form.date} onChange={(e)=>setForm({...form, date: e.target.value})}
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" style={{colorScheme:"dark"}} />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" style={{colorScheme:"dark"}} />
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Status</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Status</label>
               <select value={form.status} onChange={(e)=>setForm({...form, status: e.target.value})}
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 <option value="completed">Completed</option>
                 <option value="approved">Approved (upcoming)</option>
                 <option value="pending">Pending</option>
               </select>
             </div>
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Payment</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Payment</label>
               <select value={form.payment_status} onChange={(e)=>setForm({...form, payment_status: e.target.value})}
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 {PAYMENT_STATUSES.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
               </select>
             </div>
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Method</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Method</label>
               <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method: e.target.value})}
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
           </div>
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Notes</label>
             <textarea value={form.notes} onChange={(e)=>setForm({...form, notes: e.target.value})} rows={2}
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
           {err && <p className="text-red-400 text-[15px]">{err}</p>}
           <div className="flex justify-end gap-2 pt-2">
-            <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[15px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-shTextMuted px-4 py-2 font-black uppercase text-[15px] tracking-widest">Cancel</button>
             <button onClick={save} disabled={busy || !form.dog_id || !form.service_id} data-testid="log-save-btn"
-                    className="bg-shGreen text-black px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50">
+                    className="bg-shPrimary text-black px-6 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shPrimary/80 disabled:opacity-50">
               {busy ? "Saving…" : "Log Service"}
             </button>
           </div>
@@ -1030,55 +1030,55 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 z-[80] flex items-center justify-center p-4" onClick={onClose} data-testid="expense-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-start justify-between">
-          <h3 className="text-lg font-black text-white uppercase italic tracking-tight">
+          <h3 className="text-lg font-black text-shText uppercase italic tracking-tight">
             <i className="fas fa-receipt text-red-300 mr-2"/>{isEdit ? "Edit Expense" : "Add Expense"}
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Date</label>
             <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} style={{colorScheme:"dark"}}
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Amount (USD)</label>
             <input type="number" step="0.01" min="0" value={form.amount} onChange={(e)=>setForm({...form, amount:e.target.value})}
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-amount" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="expense-amount" />
           </div>
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">What was it</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">What was it</label>
           <input type="text" value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})}
                  placeholder="e.g., 40lb kibble bag, vet supplies, paper towels"
-                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-description" />
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="expense-description" />
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Vendor / store</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Vendor / store</label>
           <input type="text" value={form.vendor || ""} onChange={(e)=>setForm({...form, vendor:e.target.value})}
                  placeholder="e.g., Tractor Supply, Walmart, Chewy"
-                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-vendor" />
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="expense-vendor" />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Category</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Category</label>
             <input type="text" value={form.category} onChange={(e)=>setForm({...form, category:e.target.value})}
                    list="expense-categories" placeholder="e.g., Food, Supplies, Utilities"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="expense-category" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="expense-category" />
             <datalist id="expense-categories">
               {categories.map(c => <option key={c} value={c}/>)}
             </datalist>
           </div>
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               <option value="clover">Clover / Credit Card</option>
               <option value="cash">Cash</option>
               <option value="venmo">Venmo</option>
@@ -1090,29 +1090,29 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <label className="flex items-center gap-2 bg-bgBase border border-bgHover rounded p-2 text-[13px] text-gray-300">
+          <label className="flex items-center gap-2 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-[13px] text-shTextMuted">
             <input type="checkbox" checked={!!form.tax_deductible} onChange={(e)=>setForm({...form, tax_deductible:e.target.checked})}/>
             Tax deductible business expense
           </label>
-          <label className="flex items-center gap-2 bg-bgBase border border-shOrange/40 rounded p-2 text-[13px] text-gray-300">
+          <label className="flex items-center gap-2 bg-[var(--sh-card-base)] border border-shAccent/40 rounded p-2 text-[13px] text-shTextMuted">
             <input type="checkbox" checked={!!form.from_cash_drawer} onChange={(e)=>setForm({...form, from_cash_drawer:e.target.checked, payment_method: e.target.checked ? "cash" : form.payment_method})}/>
             Paid out of cash drawer
           </label>
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Notes (optional)</label>
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm resize-none" />
         </div>
 
         {/* Sprint 110ap — receipt photo / PDF upload for IRS-grade audit trail. */}
         <div data-testid="expense-receipt-field">
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">
             <i className="fas fa-receipt text-red-300 mr-1"/>Receipt (optional)
           </label>
           {form.receipt_image ? (
-            <div className="mt-2 flex items-center gap-3 bg-bgBase/60 border border-bgHover rounded-lg p-3">
+            <div className="mt-2 flex items-center gap-3 bg-[var(--sh-card-base)]/60 border border-shBorder rounded-lg p-3">
               {isPdf ? (
                 <a href={form.receipt_image} download={form.receipt_filename || "receipt.pdf"}
                    className="w-16 h-16 grid place-items-center rounded bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20"
@@ -1121,13 +1121,13 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
                 </a>
               ) : (
                 <button type="button" onClick={()=>setPreviewOpen(true)}
-                        className="w-16 h-16 rounded overflow-hidden border border-bgHover hover:border-shGreen">
+                        className="w-16 h-16 rounded overflow-hidden border border-shBorder hover:border-shPrimary">
                   <img src={form.receipt_image} alt="receipt preview" className="w-full h-full object-cover"/>
                 </button>
               )}
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] text-white truncate font-bold">{form.receipt_filename || (isPdf ? "receipt.pdf" : "receipt.jpg")}</div>
-                <div className="text-[12px] text-gray-500">{isPdf ? "PDF document" : "Tap to view full size"}</div>
+                <div className="text-[13px] text-shText truncate font-bold">{form.receipt_filename || (isPdf ? "receipt.pdf" : "receipt.jpg")}</div>
+                <div className="text-[12px] text-shTextMuted">{isPdf ? "PDF document" : "Tap to view full size"}</div>
               </div>
               <button type="button" onClick={removeReceipt} data-testid="expense-receipt-remove"
                       className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">
@@ -1135,13 +1135,13 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
               </button>
             </div>
           ) : (
-            <label className="mt-2 flex items-center gap-3 bg-bgBase/40 border border-dashed border-bgHover rounded-lg p-4 cursor-pointer hover:border-shGreen/60 transition" data-testid="expense-receipt-uploader">
-              <div className="w-12 h-12 grid place-items-center rounded bg-shGreen/10 text-shGreen">
+            <label className="mt-2 flex items-center gap-3 bg-[var(--sh-card-base)]/40 border border-dashed border-shBorder rounded-lg p-4 cursor-pointer hover:border-shPrimary/60 transition" data-testid="expense-receipt-uploader">
+              <div className="w-12 h-12 grid place-items-center rounded bg-shPrimary/10 text-shPrimary">
                 <i className={`fas ${uploading ? "fa-spinner fa-spin" : "fa-camera"} text-xl`}/>
               </div>
               <div className="flex-1">
-                <div className="text-[14px] font-black text-white">{uploading ? "Uploading…" : "Snap or attach receipt"}</div>
-                <div className="text-[12px] text-gray-500">JPG/PNG (auto-compressed) or PDF up to 2.5 MB</div>
+                <div className="text-[14px] font-black text-shText">{uploading ? "Uploading…" : "Snap or attach receipt"}</div>
+                <div className="text-[12px] text-shTextMuted">JPG/PNG (auto-compressed) or PDF up to 2.5 MB</div>
               </div>
               <input type="file" accept="image/*,application/pdf" capture="environment"
                      onChange={onReceiptFile} className="hidden"
@@ -1155,7 +1155,7 @@ function ExpenseModal({ expense, categories, onClose, onSaved, onError }) {
         )}
 
         <div className="flex gap-2 justify-end pt-2">
-          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+          <button onClick={onClose} className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shSecondary">Cancel</button>
           <button onClick={save} disabled={busy} data-testid="expense-save"
                   className="bg-red-500/20 text-red-300 border border-red-500/40 px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-red-500/30 disabled:opacity-50">
             {busy ? "Saving…" : (isEdit ? "Save changes" : "Add expense")}
@@ -1220,52 +1220,52 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
 
   return (
     <div className="fixed inset-0 bg-black/70 z-[80] flex items-center justify-center p-4" onClick={onClose} data-testid="retail-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl max-w-md w-full p-6 space-y-4" onClick={(e)=>e.stopPropagation()}>
         <div className="flex items-start justify-between">
-          <h3 className="text-lg font-black text-white uppercase italic tracking-tight">
+          <h3 className="text-lg font-black text-shText uppercase italic tracking-tight">
             <i className="fas fa-bag-shopping text-purple-300 mr-2"/>{isEdit ? "Edit Retail Sale" : "Log Retail Sale"}
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-white" data-testid="retail-modal-close"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText" data-testid="retail-modal-close"><i className="fas fa-times"/></button>
         </div>
 
-        <p className="text-[13px] text-gray-500 leading-relaxed">
+        <p className="text-[13px] text-shTextMuted leading-relaxed">
           Manually log a sale from your external POS so it counts toward your Income totals and the monthly P&amp;L PDF.
         </p>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Date</label>
             <input type="date" value={form.date} onChange={(e)=>setForm({...form, date:e.target.value})} style={{colorScheme:"dark"}}
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-date" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="retail-date" />
           </div>
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Amount (USD)</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Amount (USD)</label>
             <input type="number" step="0.01" min="0" value={form.amount} onChange={(e)=>setForm({...form, amount:e.target.value})}
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-purple-300 font-black text-sm" data-testid="retail-amount" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-purple-300 font-black text-sm" data-testid="retail-amount" />
           </div>
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">What did you sell</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">What did you sell</label>
           <input type="text" value={form.description} onChange={(e)=>setForm({...form, description:e.target.value})}
                  placeholder="e.g., 40lb kibble bag, retractable leash, chew toy"
-                 className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-description" />
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="retail-description" />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Category</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Category</label>
             <input type="text" value={form.category} onChange={(e)=>setForm({...form, category:e.target.value})}
                    list="retail-categories" placeholder="e.g., Food, Treats, Toys, Gear"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-category" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="retail-category" />
             <datalist id="retail-categories">
               {categories.map(c => <option key={c} value={c}/>)}
             </datalist>
           </div>
           <div>
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Payment method</label>
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Payment method</label>
             <select value={form.payment_method} onChange={(e)=>setForm({...form, payment_method:e.target.value})}
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="retail-payment-method">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid="retail-payment-method">
               <option value="clover">Clover / Credit Card</option>
               <option value="cash">Cash</option>
               <option value="venmo">Venmo</option>
@@ -1278,13 +1278,13 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Tag to client (optional)</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Tag to client (optional)</label>
           <div className="relative">
             {form.client_id ? (
-              <div className="w-full mt-1 bg-bgBase border border-purple-500/40 rounded p-2 flex items-center gap-2" data-testid="retail-client-selected">
+              <div className="w-full mt-1 bg-[var(--sh-card-base)] border border-purple-500/40 rounded p-2 flex items-center gap-2" data-testid="retail-client-selected">
                 <i className="fas fa-user text-purple-300 text-[12px]"/>
-                <span className="text-white text-sm font-black flex-1">{selectedClient?.name || "Unknown"}</span>
-                <button onClick={()=>{ setForm({...form, client_id:""}); setClientQuery(""); }} className="text-gray-400 hover:text-red-400 text-[12px]" data-testid="retail-client-clear">
+                <span className="text-shText text-sm font-black flex-1">{selectedClient?.name || "Unknown"}</span>
+                <button onClick={()=>{ setForm({...form, client_id:""}); setClientQuery(""); }} className="text-shTextMuted hover:text-red-400 text-[12px]" data-testid="retail-client-clear">
                   <i className="fas fa-times"/>
                 </button>
               </div>
@@ -1292,14 +1292,14 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
               <>
                 <input value={clientQuery} onChange={(e)=>setClientQuery(e.target.value)}
                        placeholder="Type to search clients…" data-testid="retail-client-search"
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 {clientResults.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full bg-bgPanel border border-bgHover rounded shadow-2xl max-h-48 overflow-y-auto">
+                  <div className="absolute z-10 mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded shadow-2xl max-h-48 overflow-y-auto">
                     {clientResults.map(c => (
                       <button key={c.id} onClick={()=>{ setForm({...form, client_id:c.id}); setClientQuery(""); }}
                               data-testid={`retail-client-pick-${c.id}`}
-                              className="w-full text-left px-3 py-2 hover:bg-bgHover text-white text-[15px]">
-                        <span className="font-black">{c.name}</span> <span className="text-gray-500 text-[13px]">· {c.email || "—"}</span>
+                              className="w-full text-left px-3 py-2 hover:bg-shSurfaceRaised text-shText text-[15px]">
+                        <span className="font-black">{c.name}</span> <span className="text-shTextMuted text-[13px]">· {c.email || "—"}</span>
                       </button>
                     ))}
                   </div>
@@ -1310,47 +1310,47 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
         </div>
 
         <div>
-          <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
+          <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black">Notes (optional)</label>
           <textarea value={form.notes} onChange={(e)=>setForm({...form, notes:e.target.value})} rows={2}
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" data-testid="retail-notes" />
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm resize-none" data-testid="retail-notes" />
         </div>
 
         {/* Sprint 110di-61 — Partial-pay toggle. Only available when a
             client is selected (tab requires a client to attach to). */}
         {form.client_id && !isEdit && Number(form.amount) > 0 && (
-          <div className="border-t border-bgHover pt-3">
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
-              <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+          <div className="border-t border-shBorder pt-3">
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black block mb-2">
+              <i className="fas fa-cash-register mr-1 text-shPrimary"/>How much is the client paying today?
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
                       data-testid="retail-pay-full"
-                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shPrimary bg-shPrimary/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shPrimary/50"}`}>
                 <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
               </button>
               <button type="button" onClick={()=>setPayMode("partial")}
                       data-testid="retail-pay-partial"
-                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shAccent bg-shAccent/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shAccent/50"}`}>
                 <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
               </button>
             </div>
             {payMode === "partial" && (
-              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3" data-testid="retail-partial-block">
+              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shAccent/5 border border-shAccent/30 rounded p-3" data-testid="retail-partial-block">
                 <div>
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
-                  <p className="text-xl font-black text-white mt-1">${Number(form.amount).toFixed(2)}</p>
+                  <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">Total</p>
+                  <p className="text-xl font-black text-shText mt-1">${Number(form.amount).toFixed(2)}</p>
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                  <label className="text-[10px] uppercase tracking-widest text-shAccent font-black block">Paying today</label>
                   <input type="number" step="0.01" min="0" value={amountPaid}
                          onChange={(e)=>setAmountPaid(e.target.value)}
                          data-testid="retail-amount-paid" placeholder="$0.00"
-                         className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border-2 border-shAccent/60 rounded p-2 text-shText text-lg font-black focus:border-shAccent focus:outline-none"/>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                  <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">On tab</p>
                   <p className="text-xl font-black mt-1">
-                    <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < Number(form.amount) ? "text-shOrange" : (Number(amountPaid) > Number(form.amount) ? "text-shGreen" : "text-gray-400"))}>
+                    <span className={amountPaid === "" ? "text-shTextMuted" : (Number(amountPaid) < Number(form.amount) ? "text-shAccent" : (Number(amountPaid) > Number(form.amount) ? "text-shPrimary" : "text-shTextMuted"))}>
                       {amountPaid === "" ? `+$${Number(form.amount).toFixed(2)}` : Number(amountPaid) < Number(form.amount) ? `+$${(Number(form.amount) - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > Number(form.amount) ? `−$${(Number(amountPaid) - Number(form.amount)).toFixed(2)}` : "$0.00"}
                     </span>
                   </p>
@@ -1361,7 +1361,7 @@ function RetailSaleModal({ sale, categories, clients, onClose, onSaved, onError 
         )}
 
         <div className="flex gap-2 justify-end pt-2">
-          <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
+          <button onClick={onClose} className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shSecondary">Cancel</button>
           <button onClick={save} disabled={busy} data-testid="retail-save"
                   className="bg-purple-500/20 text-purple-300 border border-purple-500/40 px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-purple-500/30 disabled:opacity-50">
             {busy ? "Saving…" : (isEdit ? "Save changes" : "Log sale")}

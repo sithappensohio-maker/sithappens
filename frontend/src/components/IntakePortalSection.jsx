@@ -46,42 +46,42 @@ export default function IntakePortalSection() {
   return (
     <div data-testid="portal-intake-section">
       <div className="mb-4">
-        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shAccent mb-1">
           <i className="fas fa-clipboard-list mr-1.5"/>Action needed
         </p>
-        <h2 className="text-2xl font-black text-white uppercase italic tracking-tight">Intake Forms.</h2>
-        <p className="text-[14px] text-shOrange font-black mt-1" data-testid="portal-intake-summary">
+        <h2 className="text-2xl font-black text-shText uppercase italic tracking-tight">Intake Forms.</h2>
+        <p className="text-[14px] text-shAccent font-black mt-1" data-testid="portal-intake-summary">
           <i className="fas fa-circle-exclamation mr-1.5"/>{summary}
         </p>
-        <p className="text-[13px] text-gray-400 mt-1">
+        <p className="text-[13px] text-shTextMuted mt-1">
           We sent you {n} form{n===1?"":"s"} to fill out. Takes a couple of minutes each.
         </p>
       </div>
       <div className="space-y-3">
         {assigned.map((s) => (
-          <div key={s.id} className="bg-bgPanel border-l-4 border-shOrange rounded-2xl p-5 shadow-2xl"
+          <div key={s.id} className="bg-[var(--sh-card-base)] border-l-4 border-shAccent rounded-2xl p-5 shadow-2xl"
                data-testid={`portal-intake-card-${s.id}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap mb-1">
-                  <span className="text-[11px] font-black uppercase tracking-widest bg-shOrange/15 text-shOrange px-2 py-0.5 rounded">
+                  <span className="text-[11px] font-black uppercase tracking-widest bg-shAccent/15 text-shAccent px-2 py-0.5 rounded">
                     {FORM_TYPE_LABELS[s.form_type] || s.form_type}
                   </span>
-                  <span className="text-[10px] font-black uppercase tracking-widest bg-shBlue/15 text-shBlue px-2 py-0.5 rounded">
+                  <span className="text-[10px] font-black uppercase tracking-widest bg-shSecondary/15 text-shSecondary px-2 py-0.5 rounded">
                     Pending
                   </span>
                 </div>
-                <p className="text-base text-white font-black uppercase tracking-tight">{s.template?.name || s.template_name}</p>
+                <p className="text-base text-shText font-black uppercase tracking-tight">{s.template?.name || s.template_name}</p>
                 {s.template?.description && (
-                  <p className="text-[13px] text-gray-400 mt-1">{s.template.description}</p>
+                  <p className="text-[13px] text-shTextMuted mt-1">{s.template.description}</p>
                 )}
-                <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-2">
+                <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest mt-2">
                   {s.template?.fields?.length || 0} field{(s.template?.fields?.length||0)===1?"":"s"}
-                  <span className="text-gray-600 ml-2">· assigned {s.sent_at?.slice(0,10) || s.created_at?.slice(0,10)}</span>
+                  <span className="text-shTextMuted ml-2">· assigned {s.sent_at?.slice(0,10) || s.created_at?.slice(0,10)}</span>
                 </p>
               </div>
               <button onClick={()=>setActive(s)} data-testid={`portal-intake-fill-${s.id}`}
-                      className="bg-shGreen text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">
+                      className="bg-shPrimary text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90">
                 <i className="fas fa-pen-to-square mr-2"/>Fill out
               </button>
             </div>
@@ -148,22 +148,22 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[60]">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in"
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in"
            data-testid="portal-intake-modal">
         <div className="flex items-start justify-between mb-1">
           <div className="flex-1 min-w-0 pr-3">
-            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{sub.template?.name || sub.template_name}</h4>
+            <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">{sub.template?.name || sub.template_name}</h4>
             {sub.template?.description && (
-              <p className="text-[13px] text-gray-400 mt-1">{sub.template.description}</p>
+              <p className="text-[13px] text-shTextMuted mt-1">{sub.template.description}</p>
             )}
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="portal-intake-close">
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText" data-testid="portal-intake-close">
             <i className="fas fa-times"/>
           </button>
         </div>
 
         {fields.length === 0 ? (
-          <p className="mt-4 text-sm text-gray-400 italic">This form has no questions. Hit submit to mark it complete.</p>
+          <p className="mt-4 text-sm text-shTextMuted italic">This form has no questions. Hit submit to mark it complete.</p>
         ) : (
           <div className="space-y-4 mt-4">
             {fields.map((f) => (
@@ -174,12 +174,12 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
 
         {err && <div className="mt-4 text-[14px] text-red-300 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
-        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-bgHover">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[13px] tracking-widest" data-testid="portal-intake-cancel">
+        <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-shBorder">
+          <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[13px] tracking-widest" data-testid="portal-intake-cancel">
             Cancel
           </button>
           <button onClick={submit} disabled={submitting} data-testid="portal-intake-submit"
-                  className="bg-shGreen text-bgBase px-7 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-xl disabled:opacity-60">
+                  className="bg-shPrimary text-bgBase px-7 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-xl disabled:opacity-60">
             {submitting ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Submitting…</> : <><i className="fas fa-paper-plane mr-2"/>Submit Form</>}
           </button>
         </div>
@@ -190,14 +190,14 @@ function IntakeFillModal({ sub, onClose, onSubmitted }) {
 
 /* ───── Per-field renderer ───── */
 function FieldInput({ f, value, setValue }) {
-  const inputClass = "w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none";
+  const inputClass = "w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none";
   const baseLabel = (
-    <label className="block text-[12px] font-black text-gray-400 uppercase tracking-widest">
+    <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest">
       {f.label}
       {f.required && <span className="ml-2 text-[10px] text-red-300">Required</span>}
     </label>
   );
-  const help = f.help_text ? <p className="mt-1 text-[12px] text-gray-500">{f.help_text}</p> : null;
+  const help = f.help_text ? <p className="mt-1 text-[12px] text-shTextMuted">{f.help_text}</p> : null;
 
   switch (f.field_type) {
     case "short_text":
@@ -268,13 +268,13 @@ function FieldInput({ f, value, setValue }) {
             <button type="button" onClick={()=>setValue(true)}
                     data-testid={`intake-field-${f.id}-yes`}
                     className={`px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest border transition
-                               ${value===true ? "bg-shGreen text-bgBase border-shGreen" : "bg-bgBase border-bgHover text-gray-300 hover:text-white"}`}>
+                               ${value===true ? "bg-shPrimary text-bgBase border-shPrimary" : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:text-shText"}`}>
               Yes
             </button>
             <button type="button" onClick={()=>setValue(false)}
                     data-testid={`intake-field-${f.id}-no`}
                     className={`px-4 py-2 rounded text-[13px] font-black uppercase tracking-widest border transition
-                               ${value===false ? "bg-red-500 text-white border-red-500" : "bg-bgBase border-bgHover text-gray-300 hover:text-white"}`}>
+                               ${value===false ? "bg-red-500 text-shText border-red-500" : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:text-shText"}`}>
               No
             </button>
           </div>
@@ -290,10 +290,10 @@ function FieldInput({ f, value, setValue }) {
           {baseLabel}
           <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
             {(f.options || []).map((o) => (
-              <label key={o} className="inline-flex items-center gap-2 cursor-pointer text-[13px] text-gray-200"
+              <label key={o} className="inline-flex items-center gap-2 cursor-pointer text-[13px] text-shTextMuted"
                      data-testid={`intake-field-${f.id}-opt-${o}`}>
                 <input type="checkbox" checked={arr.includes(o)} onChange={()=>toggle(o)}
-                       className="accent-shGreen w-4 h-4"/>
+                       className="accent-shPrimary w-4 h-4"/>
                 <span>{o}</span>
               </label>
             ))}
@@ -306,7 +306,7 @@ function FieldInput({ f, value, setValue }) {
       return (
         <div>
           {baseLabel}
-          <div className="mt-1 bg-bgBase border border-dashed border-bgHover rounded p-3 text-[12px] text-gray-500 italic">
+          <div className="mt-1 bg-[var(--sh-card-base)] border border-dashed border-shBorder rounded p-3 text-[12px] text-shTextMuted italic">
             <i className="fas fa-circle-info mr-1"/>File uploads coming soon. For now, please email any documents to your trainer or note &quot;will bring at drop-off&quot; below.
           </div>
           <input

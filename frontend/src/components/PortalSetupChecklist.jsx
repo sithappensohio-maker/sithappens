@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import PremiumButton from "./premium/PremiumButton";
 
 const STATUS_META = {
-  complete:       { label: "Complete",          cls: "bg-shGreen/15  text-shGreen border-shGreen/40",   icon: "fa-circle-check" },
-  pending_review: { label: "Waiting Review",    cls: "bg-shBlue/15   text-shBlue   border-shBlue/40",   icon: "fa-clock" },
-  in_progress:    { label: "Needs Attention",   cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-circle-exclamation" },
-  not_started:    { label: "Start Here",        cls: "bg-shOrange/15 text-shOrange border-shOrange/40", icon: "fa-circle-exclamation" },
+  complete:       { label: "Complete",          cls: "bg-shPrimary/15  text-shPrimary border-shPrimary/40",   icon: "fa-circle-check" },
+  pending_review: { label: "Waiting Review",    cls: "bg-shSecondary/15   text-shSecondary   border-shSecondary/40",   icon: "fa-clock" },
+  in_progress:    { label: "Needs Attention",   cls: "bg-shAccent/15 text-shAccent border-shAccent/40", icon: "fa-circle-exclamation" },
+  not_started:    { label: "Start Here",        cls: "bg-shAccent/15 text-shAccent border-shAccent/40", icon: "fa-circle-exclamation" },
 };
 
 const TARGET_TESTID = {
@@ -146,18 +147,18 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
   const remaining = Math.max(0, total_count - completed_count);
 
   return (
-    <div className="relative overflow-hidden bg-bgPanel border-2 border-shOrange/40 rounded-2xl p-4 sm:p-7 mb-6 shadow-2xl"
+    <div className="relative overflow-hidden border-2 border-shAccent/50 rounded-2xl p-4 sm:p-7 mb-6 shadow-sh" style={{ background: "var(--sh-card-base)" }}
          data-testid="portal-setup-checklist">
       <div className="absolute inset-0 pointer-events-none opacity-30"
            style={{ background: "radial-gradient(circle at 10% 10%, rgba(242,101,34,0.5) 0%, transparent 40%), radial-gradient(circle at 90% 90%, rgba(140,198,63,0.35) 0%, transparent 45%)" }}/>
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shOrange mb-1">
+            <p className="text-[12px] font-bold uppercase tracking-[0.35em] text-shAccent mb-1">
               <i className="fas fa-route mr-1.5"/>Start Here · New Client Setup
             </p>
-            <h2 className="text-2xl sm:text-4xl font-black text-white uppercase italic tracking-tight leading-tight">
-              Finish These Steps, <span className="text-shGreen">Then Book.</span>
+            <h2 className="text-2xl sm:text-4xl font-bold text-shText tracking-tight leading-tight">
+              Finish These Steps, <span className="text-shPrimary">Then Book.</span>
             </h2>
           </div>
           <span className={`shrink-0 text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full border ${overallMeta.cls}`}
@@ -166,75 +167,75 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
           </span>
         </div>
 
-        <p className="text-[13px] sm:text-[14px] text-gray-300 mt-1 max-w-3xl leading-relaxed">
+        <p className="text-[13px] sm:text-[14px] text-shTextMuted mt-1 max-w-3xl leading-relaxed">
           Don&apos;t hunt around the portal. Do the green button below first, then the next one.
           Booking unlocks automatically when the required setup items are finished or approved.
         </p>
 
-        <div className="mt-4 h-2 rounded-full bg-bgBase overflow-hidden">
-          <div className={`h-full transition-all ${pct === 100 ? "bg-shGreen" : "bg-shOrange"}`}
+        <div className="mt-4 h-2 rounded-full bg-[var(--sh-card-base)] overflow-hidden">
+          <div className={`h-full transition-all ${pct === 100 ? "bg-shPrimary" : "bg-shAccent"}`}
                style={{ width: `${Math.max(pct, 4)}%` }} data-testid="portal-setup-progress"/>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-4" data-testid="portal-setup-how-it-works">
-          <div className="rounded-xl border border-shOrange/30 bg-bgBase/80 p-3">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-1 mr-1"/>Do Next Step</p>
-            <p className="text-[12px] text-gray-400 mt-1 leading-snug">Tap the big green button. We&apos;ll open the right screen for you.</p>
+          <div className="rounded-xl border border-shAccent/30 bg-[var(--sh-card-base)] p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shAccent"><i className="fas fa-1 mr-1"/>Do Next Step</p>
+            <p className="text-[12px] text-shTextMuted mt-1 leading-snug">Tap the big green button. We&apos;ll open the right screen for you.</p>
           </div>
-          <div className="rounded-xl border border-shBlue/30 bg-bgBase/80 p-3">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shBlue"><i className="fas fa-2 mr-1"/>We Review</p>
-            <p className="text-[12px] text-gray-400 mt-1 leading-snug">Vaccines may show waiting review after upload. That means you&apos;re done for now.</p>
+          <div className="rounded-xl border border-shSecondary/30 bg-[var(--sh-card-base)] p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary"><i className="fas fa-2 mr-1"/>We Review</p>
+            <p className="text-[12px] text-shTextMuted mt-1 leading-snug">Vaccines may show waiting review after upload. That means you&apos;re done for now.</p>
           </div>
-          <div className="rounded-xl border border-shGreen/30 bg-bgBase/80 p-3">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shGreen"><i className="fas fa-3 mr-1"/>Book</p>
-            <p className="text-[12px] text-gray-400 mt-1 leading-snug">When setup clears, the portal explains booking, credits, messages, and rewards.</p>
+          <div className="rounded-xl border border-shPrimary/30 bg-[var(--sh-card-base)] p-3">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary"><i className="fas fa-3 mr-1"/>Book</p>
+            <p className="text-[12px] text-shTextMuted mt-1 leading-snug">When setup clears, the portal explains booking, credits, messages, and rewards.</p>
           </div>
         </div>
 
         {nextStep && (
-          <div className="mt-5 rounded-2xl border-2 border-shGreen bg-shGreen/10 p-4 sm:p-6 shadow-2xl ring-2 ring-shGreen/20"
+          <div className="mt-5 rounded-2xl border-2 border-shPrimary bg-shPrimary/10 p-4 sm:p-6 shadow-2xl ring-2 ring-shPrimary/20"
                data-testid="portal-setup-next-step">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
-                <p className="inline-flex items-center rounded-full bg-shGreen text-bgHeader px-3 py-1 text-[11px] font-black uppercase tracking-[0.25em]">
+                <p className="inline-flex items-center rounded-full bg-shPrimary text-bgHeader px-3 py-1 text-[11px] font-black uppercase tracking-[0.25em]">
                   <i className="fas fa-arrow-right mr-1.5"/>Do This Next · Step {nextIndex + 1} of {total_count}
                 </p>
-                <h3 className="text-lg sm:text-2xl text-white font-black uppercase italic tracking-tight mt-1">
+                <h3 className="text-lg sm:text-2xl text-shText font-black uppercase italic tracking-tight mt-1">
                   {nextStep.label}
                 </h3>
-                <p className="text-[13px] sm:text-[14px] text-gray-200 mt-1 leading-relaxed">
+                <p className="text-[13px] sm:text-[14px] text-shTextMuted mt-1 leading-relaxed">
                   {stepPlainEnglish(nextStep)}
                 </p>
                 {nextStep.missing && nextStep.missing.length > 0 && (
-                  <div className="mt-3 rounded-lg bg-bgBase/80 border border-bgHover p-3">
-                    <p className="text-[11px] text-shOrange font-black uppercase tracking-widest mb-1">
+                  <div className="mt-3 rounded-lg bg-[var(--sh-card-base)] border border-shBorder p-3">
+                    <p className="text-[11px] text-shAccent font-black uppercase tracking-widest mb-1">
                       Still need from you
                     </p>
                     <ul className="space-y-1">
                       {nextStep.missing.slice(0, 5).map((m, i) => (
-                        <li key={i} className="text-[12px] text-gray-300 break-words">
-                          <i className="fas fa-circle-exclamation text-shOrange mr-1.5"/>{m}
+                        <li key={i} className="text-[12px] text-shTextMuted break-words">
+                          <i className="fas fa-circle-exclamation text-shAccent mr-1.5"/>{m}
                         </li>
                       ))}
                       {nextStep.missing.length > 5 && (
-                        <li className="text-[12px] text-gray-500">+ {nextStep.missing.length - 5} more</li>
+                        <li className="text-[12px] text-shTextMuted">+ {nextStep.missing.length - 5} more</li>
                       )}
                     </ul>
                   </div>
                 )}
                 {nextStep.awaiting_review && nextStep.awaiting_review.length > 0 && (
-                  <div className="mt-3 rounded-lg bg-shBlue/10 border border-shBlue/30 p-3" data-testid="portal-setup-next-awaiting">
-                    <p className="text-[11px] text-shBlue font-black uppercase tracking-widest mb-1">
+                  <div className="mt-3 rounded-lg bg-shSecondary/10 border border-shSecondary/30 p-3" data-testid="portal-setup-next-awaiting">
+                    <p className="text-[11px] text-shSecondary font-black uppercase tracking-widest mb-1">
                       <i className="fas fa-clock mr-1"/>Already submitted — waiting on us
                     </p>
                     <ul className="space-y-1">
                       {nextStep.awaiting_review.slice(0, 5).map((m, i) => (
-                        <li key={i} className="text-[12px] text-gray-300 break-words">
-                          <i className="fas fa-hourglass-half text-shBlue mr-1.5"/>{m}
+                        <li key={i} className="text-[12px] text-shTextMuted break-words">
+                          <i className="fas fa-hourglass-half text-shSecondary mr-1.5"/>{m}
                         </li>
                       ))}
                       {nextStep.awaiting_review.length > 5 && (
-                        <li className="text-[12px] text-gray-500">+ {nextStep.awaiting_review.length - 5} more</li>
+                        <li className="text-[12px] text-shTextMuted">+ {nextStep.awaiting_review.length - 5} more</li>
                       )}
                     </ul>
                   </div>
@@ -247,36 +248,38 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 items-center">
               {nextStep.status === "pending_review" ? (
                 <div data-testid="portal-setup-next-waiting"
-                     className="w-full bg-shBlue/15 text-shBlue border border-shBlue/35 text-[13px] sm:text-[14px] font-black uppercase tracking-widest py-3 rounded min-h-[44px] grid place-items-center text-center">
+                     className="w-full bg-shSecondary/15 text-shSecondary border border-shSecondary/35 text-[13px] sm:text-[14px] font-black uppercase tracking-widest py-3 rounded min-h-[44px] grid place-items-center text-center">
                   <span><i className="fas fa-clock mr-2"/>Waiting on Sit Happens Review</span>
                 </div>
               ) : (
-                <button
+                <PremiumButton
+                  variant="primary"
                   onClick={() => goTo(nextStep.action_target)}
                   data-testid="portal-setup-next-action"
-                  className="w-full bg-shGreen text-bgHeader text-[13px] sm:text-[14px] font-black uppercase tracking-widest py-3 rounded hover:bg-white active:scale-[0.98] transition min-h-[44px] shadow-lg"
+                  className="w-full justify-center py-3 text-[13px] sm:text-[14px]"
                 >
                   <i className="fas fa-hand-pointer mr-2"/>Tap Here: {nextStep.action_label}
-                </button>
+                </PremiumButton>
               )}
               {onHelp && (
-                <button
+                <PremiumButton
+                  variant="cyan"
                   onClick={onHelp}
                   data-testid="portal-setup-help-action"
-                  className="w-full sm:w-auto bg-shBlue/15 text-shBlue border border-shBlue/35 text-[12px] font-black uppercase tracking-widest px-4 py-3 rounded hover:bg-shBlue/25 transition min-h-[44px]"
+                  className="w-full sm:w-auto py-3"
                 >
                   <i className="fas fa-comments mr-2"/>Need Help?
-                </button>
+                </PremiumButton>
               )}
             </div>
           </div>
         )}
 
         <div className="mt-5 flex items-center justify-between gap-3 flex-wrap">
-          <p className="text-[12px] font-black uppercase tracking-widest text-gray-400">
+          <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">
             Full setup checklist · {remaining} left
           </p>
-          <p className="text-[12px] text-gray-500">
+          <p className="text-[12px] text-shTextMuted">
             Green means done. Orange means it needs you. Blue means Sit Happens is reviewing it.
           </p>
         </div>
@@ -291,51 +294,51 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                    data-testid={`portal-setup-step-${s.id}`}
                    className={`relative rounded-xl border p-3 sm:p-4 transition ${
                      isComplete
-                       ? "bg-shGreen/5 border-shGreen/30"
+                       ? "bg-shPrimary/5 border-shPrimary/30"
                        : isNext
-                         ? "bg-bgBase border-shGreen/55 ring-1 ring-shGreen/25"
-                         : "bg-bgBase border-bgHover hover:border-shOrange/60"
+                         ? "bg-[var(--sh-card-base)] border-shPrimary/55 ring-1 ring-shPrimary/25"
+                         : "bg-[var(--sh-card-base)] border-shBorder hover:border-shAccent/60"
                    }`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap mb-1">
-                      <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">
+                      <span className="text-[10px] font-black text-shTextMuted uppercase tracking-widest">
                         Step {idx + 1}
                       </span>
                       <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${meta.cls}`}>
                         <i className={`fas ${meta.icon} mr-1`}/>{meta.label}
                       </span>
                     </div>
-                    <p className={`text-[15px] font-black uppercase italic tracking-tight break-words ${isComplete ? "text-shGreen" : "text-white"}`}>
+                    <p className={`text-[15px] font-black uppercase italic tracking-tight break-words ${isComplete ? "text-shPrimary" : "text-shText"}`}>
                       {s.label}
                     </p>
-                    <p className="text-[12px] text-gray-400 mt-0.5 leading-snug">{s.blurb}</p>
+                    <p className="text-[12px] text-shTextMuted mt-0.5 leading-snug">{s.blurb}</p>
                     {!isComplete && s.missing && s.missing.length > 0 && (
                       <ul className="mt-2 space-y-0.5">
                         {s.missing.slice(0, 3).map((m, i) => (
-                          <li key={i} className="text-[11px] text-shOrange break-words">
+                          <li key={i} className="text-[11px] text-shAccent break-words">
                             <i className="fas fa-circle-exclamation mr-1"/>{m}
                           </li>
                         ))}
                         {s.missing.length > 3 && (
-                          <li className="text-[11px] text-gray-500">+ {s.missing.length - 3} more</li>
+                          <li className="text-[11px] text-shTextMuted">+ {s.missing.length - 3} more</li>
                         )}
                       </ul>
                     )}
                     {!isComplete && s.awaiting_review && s.awaiting_review.length > 0 && (
                       <ul className="mt-2 space-y-0.5" data-testid={`portal-setup-step-awaiting-${s.id}`}>
                         {s.awaiting_review.slice(0, 3).map((m, i) => (
-                          <li key={i} className="text-[11px] text-shBlue break-words">
+                          <li key={i} className="text-[11px] text-shSecondary break-words">
                             <i className="fas fa-hourglass-half mr-1"/>{m} — waiting on us
                           </li>
                         ))}
                         {s.awaiting_review.length > 3 && (
-                          <li className="text-[11px] text-gray-500">+ {s.awaiting_review.length - 3} more</li>
+                          <li className="text-[11px] text-shTextMuted">+ {s.awaiting_review.length - 3} more</li>
                         )}
                       </ul>
                     )}
                     {s.status === "pending_review" && (
-                      <p className="text-[11px] text-shBlue mt-2 leading-snug">
+                      <p className="text-[11px] text-shSecondary mt-2 leading-snug">
                         <i className="fas fa-clock mr-1"/>We&apos;ve got your records — our team is reviewing them.
                       </p>
                     )}
@@ -345,14 +348,14 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo(s.action_target)}
                     data-testid={`portal-setup-step-action-${s.id}`}
-                    className="mt-3 w-full bg-shGreen text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest py-2.5 sm:py-2 rounded hover:bg-shGreen/90 active:scale-[0.98] transition min-h-[40px]"
+                    className="mt-3 w-full bg-shPrimary text-bgHeader text-[12px] sm:text-[13px] font-black uppercase tracking-widest py-2.5 sm:py-2 rounded hover:bg-shPrimary/90 active:scale-[0.98] transition min-h-[40px]"
                   >
                     <i className="fas fa-arrow-right mr-2"/>{s.action_label}
                   </button>
                 )}
                 {!isComplete && s.status === "pending_review" && (
                   <div data-testid={`portal-setup-step-waiting-${s.id}`}
-                       className="mt-3 w-full bg-shBlue/10 text-shBlue border border-shBlue/30 text-[12px] font-black uppercase tracking-widest py-2 rounded text-center">
+                       className="mt-3 w-full bg-shSecondary/10 text-shSecondary border border-shSecondary/30 text-[12px] font-black uppercase tracking-widest py-2 rounded text-center">
                     <i className="fas fa-clock mr-2"/>Waiting On Review
                   </div>
                 )}
@@ -360,7 +363,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo("dogs")}
                     data-testid="portal-setup-add-another-dog"
-                    className="mt-3 w-full bg-shBlue/15 text-shBlue text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shBlue/25 transition border border-shBlue/30"
+                    className="mt-3 w-full bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
                   >
                     <i className="fas fa-plus mr-2"/>Add Another Dog
                   </button>
@@ -369,7 +372,7 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
                   <button
                     onClick={() => goTo("vaccines")}
                     data-testid="portal-setup-update-vaccines"
-                    className="mt-3 w-full bg-shBlue/15 text-shBlue text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shBlue/25 transition border border-shBlue/30"
+                    className="mt-3 w-full bg-shSecondary/15 text-shSecondary text-[12px] font-black uppercase tracking-widest py-2 rounded hover:bg-shSecondary/25 transition border border-shSecondary/30"
                   >
                     <i className="fas fa-rotate mr-2"/>Update Vaccine Records
                   </button>
@@ -380,18 +383,18 @@ export default function PortalSetupChecklist({ onAction = () => {}, onHelp = nul
         </div>
 
         {booking_locked && (
-          <div className="mt-5 bg-shOrange/10 border border-shOrange/30 rounded-lg p-4"
+          <div className="mt-5 bg-shAccent/10 border border-shAccent/30 rounded-lg p-4"
                data-testid="portal-setup-lock-message">
-            <p className="text-[13px] text-shOrange font-black uppercase tracking-widest">
+            <p className="text-[13px] text-shAccent font-black uppercase tracking-widest">
               <i className="fas fa-lock mr-1.5"/>Booking is locked for safety
             </p>
-            <p className="text-[13px] text-gray-300 mt-1">
+            <p className="text-[13px] text-shTextMuted mt-1">
               Follow the big green button above. When your info, dog profile, emergency contact,
               vaccines, waiver, and any assigned forms are complete or approved, the Book button turns on automatically.
             </p>
             {onHelp && (
               <button onClick={onHelp} data-testid="portal-setup-lock-help"
-                      className="mt-3 text-[12px] text-shBlue font-black uppercase tracking-widest underline decoration-dotted">
+                      className="mt-3 text-[12px] text-shSecondary font-black uppercase tracking-widest underline decoration-dotted">
                 Need help? Message Sit Happens
               </button>
             )}
@@ -417,13 +420,13 @@ const DEFAULT_OFFERINGS = [
 export function PortalSetupSuccess({ onBook, onDismiss, onHelp, dismissable = true, offerings = DEFAULT_OFFERINGS }) {
   const items = Array.isArray(offerings) && offerings.length ? offerings : DEFAULT_OFFERINGS;
   return (
-    <div className="relative overflow-hidden bg-shGreen/10 border-2 border-shGreen/40 rounded-2xl p-5 sm:p-6 mb-4 shadow-2xl"
+    <div className="relative overflow-hidden border-2 border-shPrimary/50 rounded-2xl p-5 sm:p-6 mb-4 shadow-sh" style={{ background: "var(--sh-card-base)" }}
          data-testid="portal-setup-success">
       <div className="absolute inset-0 pointer-events-none opacity-25"
            style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.7) 0%, transparent 55%), radial-gradient(circle at 0% 100%, rgba(0,169,224,0.35) 0%, transparent 45%)" }}/>
       {dismissable && onDismiss && (
         <button onClick={onDismiss} data-testid="portal-setup-success-dismiss"
-                className="absolute top-2 right-2 text-gray-400 hover:text-white text-lg p-2 z-10"
+                className="absolute top-2 right-2 text-shTextMuted hover:text-shText text-lg p-2 z-10"
                 aria-label="Dismiss">
           <i className="fas fa-xmark"/>
         </button>
@@ -431,62 +434,59 @@ export function PortalSetupSuccess({ onBook, onDismiss, onHelp, dismissable = tr
       <div className="relative">
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div className="min-w-0 flex-1">
-            <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+            <p className="text-[12px] font-black uppercase tracking-[0.35em] text-shPrimary mb-1">
               <i className="fas fa-circle-check mr-1.5"/>Portal Unlocked
             </p>
-            <h3 className="text-2xl sm:text-4xl font-black text-white uppercase italic tracking-tight leading-tight">
+            <h3 className="text-2xl sm:text-4xl font-bold text-shText tracking-tight leading-tight">
               You&apos;re Ready. Here&apos;s What You Can Do.
             </h3>
-            <p className="text-[13px] sm:text-[15px] text-gray-300 mt-1 max-w-3xl leading-relaxed">
+            <p className="text-[13px] sm:text-[15px] text-shTextMuted mt-1 max-w-3xl leading-relaxed">
               Your setup is complete. Before you start clicking around, here are the main things this portal is for.
             </p>
           </div>
           {onBook && (
-            <button onClick={onBook} data-testid="portal-setup-book-now"
-                    className="bg-shGreen text-bgHeader px-5 py-3 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-white active:scale-[0.98] transition">
+            <PremiumButton variant="primary" onClick={onBook} data-testid="portal-setup-book-now">
               <i className="fas fa-paw mr-2"/>Book a Service
-            </button>
+            </PremiumButton>
           )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-5" data-testid="portal-setup-app-tour">
           {items.map((item) => (
             <div key={item.id || item.title}
-                 className="rounded-xl border border-bgHover bg-bgBase/80 p-4">
-              <div className="w-10 h-10 rounded-lg bg-shGreen/15 text-shGreen grid place-items-center mb-3">
+                 className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-4">
+              <div className="w-10 h-10 rounded-lg bg-shPrimary/15 text-shPrimary grid place-items-center mb-3">
                 <i className={`fas ${item.icon || "fa-paw"}`}/>
               </div>
-              <p className="text-[13px] font-black uppercase italic tracking-tight text-white">
+              <p className="text-[13px] font-black uppercase italic tracking-tight text-shText">
                 {item.title}
               </p>
-              <p className="text-[12px] text-gray-400 mt-1 leading-snug">
+              <p className="text-[12px] text-shTextMuted mt-1 leading-snug">
                 {item.text}
               </p>
             </div>
           ))}
         </div>
 
-        <div className="mt-5 flex items-center justify-between gap-3 flex-wrap rounded-xl border border-shBlue/30 bg-shBlue/10 p-4">
+        <div className="mt-5 flex items-center justify-between gap-3 flex-wrap rounded-xl border border-shSecondary/30 bg-shSecondary/10 p-4">
           <div className="min-w-0">
-            <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shSecondary">
               <i className="fas fa-circle-question mr-1.5"/>Not sure where to start?
             </p>
-            <p className="text-[12px] text-gray-300 mt-0.5">
+            <p className="text-[12px] text-shTextMuted mt-0.5">
               Book your first service or send us a message and we&apos;ll help you through it.
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {onHelp && (
-              <button onClick={onHelp} data-testid="portal-setup-success-help"
-                      className="bg-shBlue/15 text-shBlue border border-shBlue/35 px-4 py-2.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shBlue/25 transition">
+              <PremiumButton variant="cyan" onClick={onHelp} data-testid="portal-setup-success-help">
                 <i className="fas fa-comments mr-2"/>Message Us
-              </button>
+              </PremiumButton>
             )}
             {dismissable && onDismiss && (
-              <button onClick={onDismiss} data-testid="portal-setup-success-explore"
-                      className="bg-bgPanel text-white border border-bgHover px-4 py-2.5 rounded text-[12px] font-black uppercase tracking-widest hover:border-shGreen/50 transition">
+              <PremiumButton variant="secondary" onClick={onDismiss} data-testid="portal-setup-success-explore">
                 Explore Portal
-              </button>
+              </PremiumButton>
             )}
           </div>
         </div>

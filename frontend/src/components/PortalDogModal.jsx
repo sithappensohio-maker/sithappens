@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
 import { dogAgeLabel, dogAgeMonths } from "../lib/dogAge";
+import PremiumButton from "./premium/PremiumButton";
 
 const empty = {
   name: "", breed: "", age_y: 0, age_m: 0, birthday: "",
@@ -84,24 +85,25 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="portal-dog-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in">
+      <div className="border border-shBorder rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-sh max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in"
+           style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? `Edit · ${dog.name}` : "Add Your Dog"}</h4>
-            <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mt-1">Tell us about your pup</p>
+            <h4 className="text-xl font-bold text-shText tracking-tight">{isEdit ? `Edit · ${dog.name}` : "Add Your Dog"}</h4>
+            <p className="text-[13px] font-semibold text-shTextMuted uppercase tracking-widest mt-1">Tell us about your pup</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl" /></button>
         </div>
 
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Name" required>
               <input value={form.name} onChange={(e)=>set({name:e.target.value})} data-testid="pd-name"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
+                     className="w-full border border-shBorder rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
             <Field label="Breed" required>
               <input value={form.breed} onChange={(e)=>set({breed:e.target.value})} placeholder="Golden Retriever"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
+                     className="w-full border border-shBorder rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
             </Field>
           </div>
 
@@ -109,14 +111,14 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
             {form.birthday ? (
               <>
                 <Field label="Age">
-                  <div className="w-full bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center gap-2">
+                  <div className="w-full border border-shBorder rounded p-2 text-shText text-sm flex items-center gap-2" style={{ background: "var(--sh-card-base)" }}>
                     <i className="fas fa-magic-wand-sparkles text-shGreen text-[13px]"/>
                     <span>{dogAgeLabel(form)}</span>
                   </div>
                 </Field>
                 <Field label="Birthday">
                   <input type="date" value={form.birthday} onChange={(e)=>set({birthday:e.target.value})}
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                         className="w-full border border-shBorder rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
                 </Field>
                 <Field label="">
                   <button type="button" onClick={()=>set({birthday:""})}
@@ -127,15 +129,15 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
               <>
                 <Field label="Years">
                   <input type="number" min="0" value={form.age_y} onChange={(e)=>set({age_y:e.target.value})}
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                         className="w-full border border-shBorder rounded p-2 text-white text-sm" />
                 </Field>
                 <Field label="Months">
                   <input type="number" min="0" max="11" value={form.age_m} onChange={(e)=>set({age_m:e.target.value})}
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                         className="w-full border border-shBorder rounded p-2 text-white text-sm" />
                 </Field>
                 <Field label="Birthday">
                   <input type="date" value={form.birthday} onChange={(e)=>set({birthday:e.target.value})}
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                         className="w-full border border-shBorder rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
                 </Field>
               </>
             )}
@@ -144,23 +146,23 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
           <div className="grid grid-cols-2 gap-3">
             <Field label="Sex">
               <select value={form.sex} onChange={(e)=>set({sex:e.target.value})}
-                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full border border-shBorder rounded p-2 text-white text-sm">
                 <option>Male</option><option>Female</option>
               </select>
             </Field>
             <Field label="Spayed / Neutered">
               <select value={form.fixed} onChange={(e)=>set({fixed:e.target.value})}
-                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full border border-shBorder rounded p-2 text-white text-sm">
                 <option>Yes</option><option>No</option>
               </select>
             </Field>
           </div>
 
-          <div className="bg-bgBase/50 border border-bgHover rounded-lg p-4 space-y-3" data-testid="pd-vaccines-readonly">
+          <div className="border border-shAccent/25 rounded-lg p-4 space-y-3" style={{ background: "var(--sh-card-base)" }} data-testid="pd-vaccines-readonly">
             <div className="flex items-center justify-between">
-              <p className="text-[15px] font-black uppercase tracking-widest text-shOrange"><i className="fas fa-shield-virus mr-2"/>Vaccinations</p>
+              <p className="text-[13px] font-bold uppercase tracking-widest text-shAccent"><i className="fas fa-shield-virus mr-2"/>Vaccinations</p>
             </div>
-            <p className="text-[13px] text-gray-400 leading-snug">
+            <p className="text-[13px] text-shTextMuted leading-snug">
               Vaccine dates can't be edited here — they only update once {"Sit Happens"} reviews and approves an uploaded certificate.
               {isEdit ? " Use the button below to submit a new certificate." : " You can add certificates for this pup right after saving."}
             </p>
@@ -168,7 +170,7 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
               {[["rabies","Rabies"],["bordetella","Bordetella"],["dhpp","DHPP"]].map(([k,label]) => {
                 const st = vaxStatusLabel(form.vaccines?.[k]);
                 return (
-                  <div key={k} className="rounded border border-bgHover bg-bgBase p-2.5" data-testid={`pd-vax-status-${k}`}>
+                  <div key={k} className="rounded border border-shBorder p-2.5" style={{ background: "var(--sh-card-base)" }} data-testid={`pd-vax-status-${k}`}>
                     <p className="text-[11px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
                     <p className="text-[12px] text-gray-500 mt-0.5">On file: {fmtVaxDate(form.vaccines?.[k])}</p>
                     <span className={`inline-block mt-1 text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${st.cls}`}>{st.text}</span>
@@ -186,8 +188,9 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
 
           <Field label="Photo (optional)">
             <div className="flex items-center gap-3">
-              {form.photo && <img src={form.photo} alt="" loading="lazy" decoding="async" className="h-16 w-16 rounded object-cover border border-bgHover" />}
-              <label className="bg-bgBase border border-bgHover rounded px-4 py-2 cursor-pointer text-xs font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover">
+              {form.photo && <img src={form.photo} alt="" loading="lazy" decoding="async" className="h-16 w-16 rounded object-cover border border-shBorder" />}
+              <label className="border border-shBorder rounded px-4 py-2 cursor-pointer text-xs font-bold uppercase tracking-widest text-shTextMuted hover:bg-shSurfaceRaised transition"
+                     style={{ background: "var(--sh-card-base)" }}>
                 Upload <input type="file" accept="image/*" onChange={onFile} className="hidden" data-testid="pd-photo" />
               </label>
               {form.photo && <button onClick={()=>set({photo:""})} className="text-red-400 text-xs font-black uppercase">Remove</button>}
@@ -197,27 +200,26 @@ export default function PortalDogModal({ dog = null, onClose, onSaved, onUploadV
           <div className="grid grid-cols-2 gap-3">
             <Field label="Vet name" required>
               <input value={form.vet_name} onChange={(e)=>set({vet_name:e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                     className="w-full border border-shBorder rounded p-2 text-white text-sm" />
             </Field>
             <Field label="Vet phone" required>
               <input value={form.vet_phone} onChange={(e)=>set({vet_phone:e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                     className="w-full border border-shBorder rounded p-2 text-white text-sm" />
             </Field>
           </div>
 
           <Field label="Notes — allergies, fears, special needs, anything we should know">
             <textarea value={form.notes} onChange={(e)=>set({notes:e.target.value})} rows={3}
-                      className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
+                      className="w-full border border-shBorder rounded p-2 text-white text-sm focus:border-shGreen outline-none" />
           </Field>
 
           {err && <div className="text-[14px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-            <button onClick={save} disabled={saving} data-testid="pd-submit"
-                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+            <PremiumButton variant="ghost" onClick={onClose}>Cancel</PremiumButton>
+            <PremiumButton variant="primary" onClick={save} disabled={saving} data-testid="pd-submit">
               {saving ? "Saving…" : (isEdit ? "Save Changes" : "Add Dog")}
-            </button>
+            </PremiumButton>
           </div>
         </div>
       </div>

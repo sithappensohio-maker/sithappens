@@ -23,31 +23,27 @@ export default function PageHero({
   compact = false,                // Sprint 110dh-4: when true, hide eyebrow + subtitle + shrink title on mobile
   testid = "page-hero",
 }) {
-  const eyebrowColor = eyebrow?.color || "text-shGreen";
+  const eyebrowColor = eyebrow?.color || "text-shPrimary";
   return (
-    <div className={`relative overflow-hidden rounded-2xl border border-bgHover bg-gradient-to-br from-bgPanel via-bgBase to-bgPanel ${compact ? "p-3 sm:p-7" : "p-5 sm:p-7"}`}
+    <div className={`relative overflow-hidden rounded-2xl border border-shBorder bg-[var(--sh-card-base)] ${compact ? "p-3 sm:p-7" : "p-5 sm:p-7"}`}
          data-testid={testid}>
-      <div className="absolute inset-0 pointer-events-none opacity-35"
-           style={{ background: "radial-gradient(circle at 12% 18%, rgba(0,169,224,0.45) 0%, transparent 38%), radial-gradient(circle at 88% 78%, rgba(140,198,63,0.4) 0%, transparent 42%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.22) 0%, transparent 32%)" }}/>
+      <div className="absolute inset-0 pointer-events-none opacity-25"
+           style={{ background: "radial-gradient(circle at 12% 18%, rgba(0,169,224,0.4) 0%, transparent 38%), radial-gradient(circle at 88% 78%, rgba(140,198,63,0.35) 0%, transparent 42%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.18) 0%, transparent 32%)" }}/>
       <div className="relative flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
         <div className="min-w-0 flex-1">
           {eyebrow && (
-            <p className={`text-[11px] font-black uppercase tracking-[0.35em] mb-2 ${eyebrowColor} ${compact ? "hidden sm:block" : ""}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-[0.3em] mb-2 ${eyebrowColor} ${compact ? "hidden sm:block" : ""}`}>
               {eyebrow.icon && <i className={`fas ${eyebrow.icon} mr-2`}/>}{eyebrow.text}
             </p>
           )}
-          {/* Sprint 110aa — italic + tight tracking + overflow-hidden caused
-              the tail of right-leaning letters (D, S, B…) to clip. Adding
-              `pr-2` (or `pr-1` on mobile) gives the slant room without
-              affecting layout otherwise. */}
-          <h1 className={`font-black uppercase italic tracking-tight text-white leading-tight pr-1 sm:pr-2 ${
-            compact ? "text-xl sm:text-4xl lg:text-5xl" : "text-3xl sm:text-4xl lg:text-5xl"
+          <h1 className={`font-bold tracking-tight text-shText leading-tight pr-1 sm:pr-2 ${
+            compact ? "text-xl sm:text-3xl lg:text-4xl" : "text-2xl sm:text-3xl lg:text-4xl"
           }`}>
             {title}
-            {highlight && <> <span className="text-shGreen">{highlight}</span></>}
+            {highlight && <> <span className="text-shPrimary">{highlight}</span></>}
           </h1>
           {subtitle && (
-            <p className={`text-[14px] text-gray-300 mt-2 max-w-2xl ${compact ? "hidden sm:block" : ""}`}>{subtitle}</p>
+            <p className={`text-[14px] text-shTextMuted mt-2 max-w-2xl ${compact ? "hidden sm:block" : ""}`}>{subtitle}</p>
           )}
         </div>
         {right && (

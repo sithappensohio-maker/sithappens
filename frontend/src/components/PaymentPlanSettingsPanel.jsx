@@ -23,7 +23,7 @@ export default function PaymentPlanSettingsPanel() {
       .catch(() => setDraft({}));
   }, []);
 
-  if (!draft) return <div className="text-gray-400 text-sm">Loading…</div>;
+  if (!draft) return <div className="text-shTextMuted text-sm">Loading…</div>;
 
   const update = (k, v) => setDraft({ ...draft, [k]: v });
 
@@ -42,17 +42,17 @@ export default function PaymentPlanSettingsPanel() {
 
   return (
     <div className="space-y-5" data-testid="payment-plan-settings">
-      <div className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-xl">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-xl">
         <div className="flex items-baseline justify-between mb-4">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
               <i className="fas fa-file-signature mr-1.5"/>Big-ticket payment plans
             </p>
-            <h3 className="text-xl font-black text-white">Agreement & Defaults</h3>
-            <p className="text-xs text-gray-400 mt-1">Variables inside the agreement are auto-filled when each plan is created.</p>
+            <h3 className="text-xl font-black text-shText">Agreement & Defaults</h3>
+            <p className="text-xs text-shTextMuted mt-1">Variables inside the agreement are auto-filled when each plan is created.</p>
           </div>
           {msg && (
-            <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${msg === "Saved" ? "bg-shGreen/15 text-shGreen border border-shGreen/30" : "bg-red-500/15 text-red-400 border border-red-500/30"}`}>
+            <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${msg === "Saved" ? "bg-shPrimary/15 text-shPrimary border border-shPrimary/30" : "bg-red-500/15 text-red-400 border border-red-500/30"}`}>
               {msg === "Saved" && <i className="fas fa-check mr-1"/>}{msg}
             </span>
           )}
@@ -60,25 +60,25 @@ export default function PaymentPlanSettingsPanel() {
 
         <div className="grid md:grid-cols-3 gap-4 mb-4">
           <div>
-            <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Business name (in agreement)</label>
+            <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Business name (in agreement)</label>
             <input value={draft.business_name || ""} onChange={e => update("business_name", e.target.value)}
                    data-testid="plan-business-name"
-                   className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
           </div>
           <div>
-            <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Reminder · days before due</label>
+            <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Reminder · days before due</label>
             <input type="number" min={0} max={30}
                    value={draft.reminder_days_before ?? 3}
                    onChange={e => update("reminder_days_before", Number(e.target.value))}
                    data-testid="plan-reminder-days"
-                   className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
           </div>
           <div>
-            <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">Default cadence</label>
+            <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Default cadence</label>
             <select value={draft.default_cadence || "biweekly"}
                     onChange={e => update("default_cadence", e.target.value)}
                     data-testid="plan-default-cadence"
-                    className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
+                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText">
               <option value="weekly">Weekly</option>
               <option value="biweekly">Bi-weekly</option>
               <option value="monthly">Monthly</option>
@@ -88,15 +88,15 @@ export default function PaymentPlanSettingsPanel() {
         </div>
 
         <div className="mb-3">
-          <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+          <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">
             Agreement text
           </label>
-          <p className="text-[11px] text-gray-500 mb-1">
+          <p className="text-[11px] text-shTextMuted mb-1">
             Type your agreement like a normal document — bold, italic, lists, links all work via the toolbar.
           </p>
-          <p className="text-[11px] text-gray-400 mb-2">
-            <i className="fas fa-magic-wand-sparkles text-shBlue mr-1"/>
-            <strong>Auto-fill buttons</strong> at the bottom drop in placeholders that get <em>automatically</em> replaced with each client&apos;s actual info when the agreement is sent. Example: clicking <span className="text-shBlue font-black">Client&apos;s full name</span> shows up as <code className="bg-bgHover px-1 rounded text-shBlue">{`{{client_name}}`}</code> in the editor, but the client sees their real name (e.g. &ldquo;Alex Rivera&rdquo;). You don&apos;t need to type these by hand — just click.
+          <p className="text-[11px] text-shTextMuted mb-2">
+            <i className="fas fa-magic-wand-sparkles text-shSecondary mr-1"/>
+            <strong>Auto-fill buttons</strong> at the bottom drop in placeholders that get <em>automatically</em> replaced with each client&apos;s actual info when the agreement is sent. Example: clicking <span className="text-shSecondary font-black">Client&apos;s full name</span> shows up as <code className="bg-shSurfaceRaised px-1 rounded text-shSecondary">{`{{client_name}}`}</code> in the editor, but the client sees their real name (e.g. &ldquo;Alex Rivera&rdquo;). You don&apos;t need to type these by hand — just click.
           </p>
           <RichTextEditor
             value={draft.agreement_html || ""}
@@ -111,7 +111,7 @@ export default function PaymentPlanSettingsPanel() {
         <div className="flex gap-2">
           <button onClick={save} disabled={saving}
                   data-testid="plan-settings-save"
-                  className="bg-shBlue hover:bg-shBlue/80 text-white px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-50">
+                  className="bg-shSecondary hover:bg-shSecondary/80 text-shText px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest disabled:opacity-50">
             {saving ? "Saving…" : "Save Settings"}
           </button>
         </div>
@@ -121,7 +121,7 @@ export default function PaymentPlanSettingsPanel() {
       {draft.agreement_html && (
         <div className="bg-white rounded-xl p-6 shadow-xl"
              data-testid="plan-agreement-preview">
-          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-3">
+          <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shTextMuted mb-3">
             <i className="fas fa-eye mr-1"/>Preview · with sample data
           </p>
           <div className="prose prose-sm max-w-none text-gray-900"

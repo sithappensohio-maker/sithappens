@@ -8,12 +8,12 @@ import { api, formatErr } from "../lib/api";
 import { toast } from "sonner";
 
 const METHOD_META = {
-  google:    { label: "Google",   icon: "fa-google",   cls: "bg-shGreen/15 text-shGreen border-shGreen/40" },
-  facebook:  { label: "Facebook", icon: "fa-facebook", cls: "bg-shBlue/15 text-shBlue border-shBlue/40" },
+  google:    { label: "Google",   icon: "fa-google",   cls: "bg-shPrimary/15 text-shPrimary border-shPrimary/40" },
+  facebook:  { label: "Facebook", icon: "fa-facebook", cls: "bg-shSecondary/15 text-shSecondary border-shSecondary/40" },
   text:      { label: "Text",     icon: "fa-message",  cls: "bg-purple-500/15 text-purple-300 border-purple-400/40" },
-  email:     { label: "Email",    icon: "fa-envelope", cls: "bg-shBlue/15 text-shBlue border-shBlue/40" },
-  in_person: { label: "In-person",icon: "fa-handshake",cls: "bg-shOrange/15 text-shOrange border-shOrange/40" },
-  other:     { label: "Other",    icon: "fa-ellipsis", cls: "bg-bgHover text-gray-300 border-bgHover" },
+  email:     { label: "Email",    icon: "fa-envelope", cls: "bg-shSecondary/15 text-shSecondary border-shSecondary/40" },
+  in_person: { label: "In-person",icon: "fa-handshake",cls: "bg-shAccent/15 text-shAccent border-shAccent/40" },
+  other:     { label: "Other",    icon: "fa-ellipsis", cls: "bg-shSurfaceRaised text-shTextMuted border-shBorder" },
 };
 
 export default function ReviewRequestButton({ clientId, dogId = null, clientName = "", dogName = "", source = "manual", compact = false }) {
@@ -67,24 +67,24 @@ export default function ReviewRequestButton({ clientId, dogId = null, clientName
     <>
       <button onClick={()=>setOpen(true)} data-testid={`review-btn-${clientId}`}
               className={compact
-                ? "text-[12px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80"
-                : "text-[12px] font-black uppercase tracking-widest bg-shOrange/15 text-shOrange border border-shOrange/40 px-3 py-1.5 rounded hover:bg-shOrange/25"}>
+                ? "text-[12px] font-black uppercase tracking-widest text-shAccent hover:text-shAccent/80"
+                : "text-[12px] font-black uppercase tracking-widest bg-shAccent/15 text-shAccent border border-shAccent/40 px-3 py-1.5 rounded hover:bg-shAccent/25"}>
         <i className="fas fa-star mr-1"/>Request review{count > 0 ? ` · ${count}` : ""}
       </button>
 
       {open && links && createPortal((
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in"
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in"
                data-testid={`review-modal-${clientId}`}>
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Request a review</h4>
-                <p className="text-[13px] text-gray-400">{clientName}{dogName ? ` · ${dogName}` : ""}</p>
+                <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Request a review</h4>
+                <p className="text-[13px] text-shTextMuted">{clientName}{dogName ? ` · ${dogName}` : ""}</p>
               </div>
-              <button onClick={()=>setOpen(false)} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+              <button onClick={()=>setOpen(false)} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
             </div>
 
-            <p className="text-[12px] text-gray-500 mb-3">
+            <p className="text-[12px] text-shTextMuted mb-3">
               <i className="fas fa-circle-info mr-1"/>Click a method to open the review page (if linked) and log that you asked. The communication log gets a matching entry automatically.
             </p>
 
@@ -104,14 +104,14 @@ export default function ReviewRequestButton({ clientId, dogId = null, clientName
                 <i className="fas fa-arrow-up-right-from-square text-xs"/>
               </button>
               {(!links.google_url && !links.facebook_url) && (
-                <p className="text-[12px] text-shOrange italic">
+                <p className="text-[12px] text-shAccent italic">
                   <i className="fas fa-triangle-exclamation mr-1"/>No review links saved yet — drop them into <strong>Settings → Review Links</strong>.
                 </p>
               )}
             </div>
 
-            <div className="mt-4 pt-3 border-t border-bgHover">
-              <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-2">Or log a non-link request</p>
+            <div className="mt-4 pt-3 border-t border-shBorder">
+              <p className="text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">Or log a non-link request</p>
               <div className="grid grid-cols-4 gap-1.5">
                 {["text", "email", "in_person", "other"].map(m => (
                   <button key={m} onClick={()=>logRequest(m)} data-testid={`review-method-${m}`}
@@ -123,11 +123,11 @@ export default function ReviewRequestButton({ clientId, dogId = null, clientName
             </div>
 
             {links.default_message && (
-              <div className="mt-4 pt-3 border-t border-bgHover">
-                <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest mb-1">Default message</p>
-                <pre className="text-[12px] text-gray-300 bg-bgBase border border-bgHover rounded p-2 whitespace-pre-wrap font-sans">{fillMessage(links.default_message)}</pre>
+              <div className="mt-4 pt-3 border-t border-shBorder">
+                <p className="text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Default message</p>
+                <pre className="text-[12px] text-shTextMuted bg-[var(--sh-card-base)] border border-shBorder rounded p-2 whitespace-pre-wrap font-sans">{fillMessage(links.default_message)}</pre>
                 <button onClick={copyMessage} data-testid="review-copy"
-                        className="mt-2 text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-shBlue/80">
+                        className="mt-2 text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80">
                   <i className="fas fa-copy mr-1"/>Copy message
                 </button>
               </div>

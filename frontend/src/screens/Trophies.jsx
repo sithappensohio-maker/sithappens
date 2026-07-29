@@ -51,13 +51,13 @@ export default function Trophies() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="trophies-screen">
       <PageHero
-        eyebrow={{ icon: "fa-trophy", text: "Achievement catalog", color: "text-shOrange" }}
+        eyebrow={{ icon: "fa-trophy", text: "Achievement catalog", color: "text-shAccent" }}
         title="Trophy Catalog."
         highlight="Earn it. Show it."
         subtitle="15 trophies seeded by default — add custom ones for your business below."
         right={(
           <button onClick={()=>setCreating(true)} data-testid="add-trophy-button"
-                  className="bg-shOrange text-white px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shOrange/90 transition">
+                  className="bg-shAccent text-shText px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shAccent/90 transition">
             <i className="fas fa-plus mr-2"/>New Trophy
           </button>
         )}
@@ -84,19 +84,19 @@ function TrophySection({ title, trophies, onEdit, onDelete }) {
   if (!trophies.length) return null;
   return (
     <div>
-      <h4 className="text-xs font-black uppercase tracking-widest text-gray-500 mb-3">{title} · {trophies.length}</h4>
+      <h4 className="text-xs font-black uppercase tracking-widest text-shTextMuted mb-3">{title} · {trophies.length}</h4>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {trophies.map(t => (
-          <div key={t.code} className={`bg-bgPanel rounded-xl p-4 border ${t.active ? "border-bgHover" : "border-red-500/30 opacity-60"} flex items-start gap-3`} data-testid={`trophy-card-${t.code}`}>
+          <div key={t.code} className={`bg-[var(--sh-card-base)] rounded-xl p-4 border ${t.active ? "border-shBorder" : "border-red-500/30 opacity-60"} flex items-start gap-3`} data-testid={`trophy-card-${t.code}`}>
             <TrophyBadge definition={t} size="md"/>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <h5 className="text-sm font-black text-white uppercase">{t.name}</h5>
-                <span className="text-[12px] font-black uppercase tracking-widest text-gray-500">{t.tier}</span>
+                <h5 className="text-sm font-black text-shText uppercase">{t.name}</h5>
+                <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">{t.tier}</span>
                 {!t.active && <span className="text-[12px] font-black text-red-400 uppercase">Inactive</span>}
               </div>
-              <p className="text-[14px] text-gray-400 mt-1 leading-tight">{t.description}</p>
-              <div className="text-[13px] text-gray-500 mt-2">
+              <p className="text-[14px] text-shTextMuted mt-1 leading-tight">{t.description}</p>
+              <div className="text-[13px] text-shTextMuted mt-2">
                 {t.trigger_type === "auto" ? (
                   <span><i className="fas fa-robot mr-1"/>Auto · {t.trigger_kind} ≥ {t.threshold}</span>
                 ) : (
@@ -105,7 +105,7 @@ function TrophySection({ title, trophies, onEdit, onDelete }) {
               </div>
               <div className="flex gap-2 mt-3">
                 <button onClick={()=>onEdit(t)} data-testid={`edit-trophy-${t.code}`}
-                        className="text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-shBlue/80">Edit</button>
+                        className="text-[13px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80">Edit</button>
                 <button onClick={()=>onDelete(t)} data-testid={`delete-trophy-${t.code}`}
                         className="text-[13px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">{t.is_default ? "Deactivate" : "Delete"}</button>
               </div>
@@ -160,36 +160,36 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur grid place-items-center p-4" onClick={onClose} data-testid="trophy-editor">
-      <div onClick={(e)=>e.stopPropagation()} className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
+      <div onClick={(e)=>e.stopPropagation()} className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-black uppercase italic text-white"><i className="fas fa-trophy text-shOrange mr-2"/>{isNew ? "New Trophy" : "Edit Trophy"}</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white p-1"><i className="fas fa-times text-lg"/></button>
+          <h3 className="text-lg font-black uppercase italic text-shText"><i className="fas fa-trophy text-shAccent mr-2"/>{isNew ? "New Trophy" : "Edit Trophy"}</h3>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText p-1"><i className="fas fa-times text-lg"/></button>
         </div>
-        <div className="flex items-center gap-4 mb-4 bg-bgBase rounded p-3">
+        <div className="flex items-center gap-4 mb-4 bg-[var(--sh-card-base)] rounded p-3">
           <TrophyBadge definition={form} size="lg"/>
-          <div className="flex-1 text-[14px] text-gray-400">Live preview</div>
+          <div className="flex-1 text-[14px] text-shTextMuted">Live preview</div>
         </div>
         <div className="space-y-3">
           {isNew && (
             <Field label="Code (slug, unique)" required>
               <input value={form.code} onChange={(e)=>setForm({...form, code: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_")})}
                      placeholder="e.g. dog_paw_picaso" data-testid="trophy-code-input"
-                     className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono outline-none focus:border-shBlue"/>
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm font-mono outline-none focus:border-shSecondary"/>
             </Field>
           )}
           <Field label="Name" required>
             <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} data-testid="trophy-name-input"
-                   className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none focus:border-shBlue"/>
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none focus:border-shSecondary"/>
           </Field>
           <Field label="Description">
             <textarea value={form.description} onChange={(e)=>setForm({...form, description: e.target.value})} rows={2}
-                      className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none focus:border-shBlue"/>
+                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none focus:border-shSecondary"/>
           </Field>
           <div className="grid grid-cols-2 gap-3">
             {isNew && (
               <Field label="Category">
                 <select value={form.category} onChange={(e)=>setForm({...form, category: e.target.value})}
-                        className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none">
+                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none">
                   <option value="dog">Dog</option>
                   <option value="client">Client</option>
                 </select>
@@ -197,18 +197,18 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
             )}
             <Field label="Tier">
               <select value={form.tier} onChange={(e)=>setForm({...form, tier: e.target.value})} data-testid="trophy-tier-select"
-                      className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none capitalize">
+                      className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none capitalize">
                 {TIER_OPTIONS.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
               </select>
             </Field>
             <Field label="FontAwesome icon (e.g. fa-bone)">
               <input value={form.icon} onChange={(e)=>setForm({...form, icon: e.target.value})}
-                     className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm font-mono outline-none focus:border-shBlue"/>
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm font-mono outline-none focus:border-shSecondary"/>
             </Field>
             {isNew && (
               <Field label="Trigger kind">
                 <select value={form.trigger_kind} onChange={(e)=>setForm({...form, trigger_kind: e.target.value, trigger_type: e.target.value ? "auto" : "manual"})}
-                        className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none">
+                        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none">
                   {TRIGGER_KIND_OPTIONS.filter(o => !o.value || o.value.startsWith(form.category === "dog" ? "" : "") ).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
               </Field>
@@ -216,12 +216,12 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
             {form.trigger_type === "auto" && (
               <Field label="Threshold">
                 <input type="number" value={form.threshold} onChange={(e)=>setForm({...form, threshold: parseInt(e.target.value)||0})}
-                       className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none focus:border-shBlue"/>
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none focus:border-shSecondary"/>
               </Field>
             )}
           </div>
           <Field label="Custom image (overrides icon)">
-            <input type="file" accept="image/*" onChange={onFile} className="text-sm text-gray-300" data-testid="trophy-image-input"/>
+            <input type="file" accept="image/*" onChange={onFile} className="text-sm text-shTextMuted" data-testid="trophy-image-input"/>
             {form.custom_image && (
               <div className="mt-2 flex items-center gap-2">
                 <img src={form.custom_image} alt="preview" className="w-12 h-12 rounded-full object-cover"/>
@@ -235,13 +235,13 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
                 value={form.image_fit || "circle"}
                 onChange={(e)=>setForm({...form, image_fit: e.target.value})}
                 data-testid="trophy-image-fit-select"
-                className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-sm outline-none focus:border-shBlue"
+                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-sm outline-none focus:border-shSecondary"
               >
                 <option value="circle">Crop to circle — cover-fit, best for photos</option>
                 <option value="contain">Fit inside — whole design visible, tier ring kept</option>
                 <option value="freeform">Full-bleed design — no clip, no ring, your art IS the trophy</option>
               </select>
-              <p className="text-[12px] text-gray-500 mt-1.5 italic">
+              <p className="text-[12px] text-shTextMuted mt-1.5 italic">
                 <i className="fas fa-circle-info mr-1"/>
                 {form.image_fit === "freeform"
                   ? "Trophy renders as a rounded card with a thin tier-coloured border."
@@ -260,7 +260,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
             />
           )}
           {!isNew && (
-            <label className="flex items-center gap-2 text-[15px] text-gray-300">
+            <label className="flex items-center gap-2 text-[15px] text-shTextMuted">
               <input type="checkbox" checked={form.active !== false} onChange={(e)=>setForm({...form, active: e.target.checked})}/>
               Active (uncheck to stop awarding without losing history)
             </label>
@@ -268,9 +268,9 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
         </div>
         {err && <div className="bg-red-500/10 text-red-400 rounded p-3 text-sm mt-3">{err}</div>}
         <div className="flex justify-end gap-3 mt-5">
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-[15px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-[15px] font-black uppercase tracking-widest">Cancel</button>
           <button onClick={save} disabled={busy || !form.name || (isNew && !form.code)} data-testid="save-trophy-button"
-                  className="bg-shOrange text-white px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shOrange/90 disabled:opacity-50">
+                  className="bg-shAccent text-shText px-7 py-2.5 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shAccent/90 disabled:opacity-50">
             {busy ? "Saving…" : "Save"}
           </button>
         </div>
@@ -282,7 +282,7 @@ function TrophyEditor({ trophy, isNew, onClose, onSaved }) {
 function Field({ label, required, children }) {
   return (
     <label className="block">
-      <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">{label}{required && <span className="text-red-400 ml-1">*</span>}</span>
+      <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">{label}{required && <span className="text-red-400 ml-1">*</span>}</span>
       <div className="mt-1">{children}</div>
     </label>
   );
@@ -311,7 +311,7 @@ function FocalPointPicker({ src, offsetX, offsetY, onChange }) {
     <Field label="Focal point — drag the dot to pick what stays inside the circle">
       <div className="flex items-center gap-4 flex-wrap">
         <div
-          className="relative w-40 h-40 rounded-full overflow-hidden border-2 border-shGreen/40 shadow-inner cursor-crosshair select-none touch-none"
+          className="relative w-40 h-40 rounded-full overflow-hidden border-2 border-shPrimary/40 shadow-inner cursor-crosshair select-none touch-none"
           onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); onPointerMove(e, true); }}
           onPointerMove={(e) => onPointerMove(e)}
           onPointerUp={(e) => e.currentTarget.releasePointerCapture(e.pointerId)}
@@ -334,14 +334,14 @@ function FocalPointPicker({ src, offsetX, offsetY, onChange }) {
             data-testid="trophy-focal-dot"
           />
         </div>
-        <div className="text-[13px] text-gray-300 space-y-1.5 max-w-xs">
-          <p><i className="fas fa-hand-pointer text-shGreen mr-1"/>Click or drag inside the circle to pick the focal point.</p>
-          <p className="text-gray-500 font-mono text-[12px]">
-            position: <span className="text-shBlue">{offsetX}%</span> / <span className="text-shBlue">{offsetY}%</span>
+        <div className="text-[13px] text-shTextMuted space-y-1.5 max-w-xs">
+          <p><i className="fas fa-hand-pointer text-shPrimary mr-1"/>Click or drag inside the circle to pick the focal point.</p>
+          <p className="text-shTextMuted font-mono text-[12px]">
+            position: <span className="text-shSecondary">{offsetX}%</span> / <span className="text-shSecondary">{offsetY}%</span>
           </p>
           <button type="button" onClick={reset}
                   data-testid="trophy-focal-reset"
-                  className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
+                  className="text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
             <i className="fas fa-arrows-to-dot mr-1"/>Reset to centre
           </button>
         </div>

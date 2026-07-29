@@ -60,7 +60,7 @@ export default function CollapsibleDateGroups({
   const isOpen = (k) => openKeys.has(k);
 
   if (!rows || rows.length === 0) {
-    return <div className="text-center py-6 text-gray-500 text-[15px]" data-testid={`${testid}-empty`}>{emptyText}</div>;
+    return <div className="text-center py-6 text-shTextMuted text-[15px]" data-testid={`${testid}-empty`}>{emptyText}</div>;
   }
 
   // ── Compact mode: render Month → Day → items (flat list of months across all years) ──
@@ -142,24 +142,24 @@ function GroupHeader({ g, level, open, onToggle, fmtAmount, compact = false }) {
     ? { month: "", day: "pl-4" }[level] || ""
     : { year: "", month: "pl-3", week: "pl-6", day: "pl-9" }[level];
   const labelColor = {
-    year: "text-shGreen",
-    month: "text-shBlue",
-    week: "text-gray-300",
-    day: "text-shGreen",
+    year: "text-shPrimary",
+    month: "text-shSecondary",
+    week: "text-shTextMuted",
+    day: "text-shPrimary",
   }[level];
   const labelSize = level === "month" && !compact ? "text-[14px]" : level === "month" ? "text-[15px]" : "text-[14px]";
   return (
     <button
       type="button"
       onClick={onToggle}
-      className={`w-full ${indent} flex items-center justify-between bg-bgBase/40 hover:bg-bgBase/70 rounded px-3 py-2 transition`}
+      className={`w-full ${indent} flex items-center justify-between bg-[var(--sh-card-base)]/40 hover:bg-[var(--sh-card-base)]/70 rounded px-3 py-2 transition`}
     >
       <span className="flex items-center gap-2">
-        <i className={`fas fa-chevron-${open ? "down" : "right"} text-[11px] text-gray-500 w-3`}/>
+        <i className={`fas fa-chevron-${open ? "down" : "right"} text-[11px] text-shTextMuted w-3`}/>
         <span className={`${labelSize} font-black uppercase tracking-widest ${labelColor}`}>{g.label}</span>
-        <span className="text-[12px] text-gray-500 font-black tracking-widest">· {g.count} item{g.count === 1 ? "" : "s"}</span>
+        <span className="text-[12px] text-shTextMuted font-black tracking-widest">· {g.count} item{g.count === 1 ? "" : "s"}</span>
       </span>
-      <span className="text-[14px] font-black text-white tracking-widest">{fmtAmount(g.total)}</span>
+      <span className="text-[14px] font-black text-shText tracking-widest">{fmtAmount(g.total)}</span>
     </button>
   );
 }

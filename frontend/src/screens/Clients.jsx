@@ -252,13 +252,13 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   return (
     <div className="space-y-6 animate-slide-in" data-testid="clients-screen">
       <PageHero
-        eyebrow={{ icon: "fa-users", text: `${clients.length} families on file`, color: "text-shBlue" }}
+        eyebrow={{ icon: "fa-users", text: `${clients.length} families on file`, color: "text-shSecondary" }}
         title="Client Hub."
         highlight="Where humans live."
         subtitle="Profiles, dogs, credits, and waivers — all in one place."
         right={(
           <button onClick={openNewClient} data-testid="add-client-button"
-                  className="bg-shGreen text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+                  className="bg-shPrimary text-bgHeader px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
             <i className="fas fa-plus mr-2"/>Add Client
           </button>
         )}
@@ -266,22 +266,22 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6" data-testid="client-grid">
-        {clients.length === 0 && <div className="col-span-full text-center text-gray-500 text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
+        {clients.length === 0 && <div className="col-span-full text-center text-shTextMuted text-xs font-black uppercase py-16">No clients yet — add your first.</div>}
         {clients.map(c => (
-          <div key={c.id} className="card-client p-5 sm:p-6 rounded-xl group relative shadow-lg" data-testid={`client-card-${c.id}`}>
+          <div key={c.id} className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/40 transition p-5 sm:p-6 rounded-xl group relative shadow-lg" data-testid={`client-card-${c.id}`}>
             <div className="absolute top-3 right-3 flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
               {c.email && (
-                <button onClick={()=>setEmailClient(c)} className="text-gray-400 hover:text-shGreen p-2 -m-1"
+                <button onClick={()=>setEmailClient(c)} className="text-shTextMuted hover:text-shPrimary p-2 -m-1"
                         title="Email this client"
                         data-testid={`email-client-${c.id}`}><i className="fas fa-paper-plane" /></button>
               )}
-              <button onClick={()=>openEditClient(c)} className="text-gray-400 hover:text-white p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
-              <button onClick={()=>remove(c.id)} className="text-gray-400 hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
+              <button onClick={()=>openEditClient(c)} className="text-shTextMuted hover:text-shText p-2 -m-1" data-testid={`edit-client-${c.id}`}><i className="fas fa-edit" /></button>
+              <button onClick={()=>remove(c.id)} className="text-shTextMuted hover:text-red-400 p-2 -m-1"><i className="fas fa-trash" /></button>
             </div>
             <div className="flex items-center gap-3 pr-16">
-              <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shBlue/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
+              <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shSecondary/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
               <div className="min-w-0 flex-1">
-                <h4 className="text-lg font-black text-white uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+                <h4 className="text-lg font-black text-shText uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   {c.client_status && c.client_status !== "active" && (
                     <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
@@ -291,8 +291,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                       data-testid={`client-setup-badge-${c.id}`}
                       className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border ${
                         c.setup_overall === "pending_review"
-                          ? "bg-shBlue/15 text-shBlue border-shBlue/40"
-                          : "bg-shOrange/15 text-shOrange border-shOrange/40"
+                          ? "bg-shSecondary/15 text-shSecondary border-shSecondary/40"
+                          : "bg-shAccent/15 text-shAccent border-shAccent/40"
                       }`}
                       title="First-time client setup completion"
                     >
@@ -301,7 +301,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                   )}
                   {c.setup_badge && c.setup_overall === "complete" && (
                     <span data-testid={`client-setup-badge-${c.id}`}
-                          className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border bg-shGreen/15 text-shGreen border-shGreen/40"
+                          className="text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border bg-shPrimary/15 text-shPrimary border-shPrimary/40"
                           title="First-time client setup completion">
                       <i className="fas fa-circle-check mr-1"/>Ready to Book
                     </span>
@@ -317,8 +317,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                         : `Pre-paid credit on file: $${Math.abs(Number(c.account_balance)).toFixed(2)}`}
                       className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${
                         Number(c.account_balance) > 0
-                          ? "bg-shOrange/20 text-shOrange border-shOrange/60 animate-pulse"
-                          : "bg-shGreen/15 text-shGreen border-shGreen/40"
+                          ? "bg-shAccent/20 text-shAccent border-shAccent/60 animate-pulse"
+                          : "bg-shPrimary/15 text-shPrimary border-shPrimary/40"
                       }`}
                     >
                       <i className={`fas ${Number(c.account_balance) > 0 ? "fa-file-invoice-dollar" : "fa-piggy-bank"} mr-1`}/>
@@ -328,64 +328,64 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                 </div>
               </div>
             </div>
-            <div className="mt-2 space-y-1 text-xs text-gray-400">
-              {c.phone && <p><i className="fas fa-phone w-4 text-shBlue" /> {c.phone}</p>}
-              {c.email && <p><i className="fas fa-envelope w-4 text-shBlue" /> {c.email}</p>}
-              {c.address && <p><i className="fas fa-map-marker-alt w-4 text-shBlue" /> {c.address}</p>}
+            <div className="mt-2 space-y-1 text-xs text-shTextMuted">
+              {c.phone && <p><i className="fas fa-phone w-4 text-shSecondary" /> {c.phone}</p>}
+              {c.email && <p><i className="fas fa-envelope w-4 text-shSecondary" /> {c.email}</p>}
+              {c.address && <p><i className="fas fa-map-marker-alt w-4 text-shSecondary" /> {c.address}</p>}
             </div>
-            <div className="mt-3 border-t border-bgHover pt-3" data-testid={`client-dogs-${c.id}`}>
-              <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest flex items-center gap-2">
-                <i className="fas fa-paw text-shGreen" /> Dogs · {(c.dogs || []).length}
+            <div className="mt-3 border-t border-shBorder pt-3" data-testid={`client-dogs-${c.id}`}>
+              <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest flex items-center gap-2">
+                <i className="fas fa-paw text-shPrimary" /> Dogs · {(c.dogs || []).length}
               </p>
               {(c.dogs || []).length === 0 ? (
                 <p className="text-[14px] text-gray-600 italic mt-1">No dogs on file</p>
               ) : (
-                <ul className="mt-1 text-[15px] text-white space-y-0.5">
+                <ul className="mt-1 text-[15px] text-shText space-y-0.5">
                   {c.dogs.map(d => (
                     <li key={d.id} data-testid={`client-dog-${d.id}`}>
                       <button onClick={()=>onJumpToDog(d.id)} data-testid={`jump-to-dog-${d.id}`}
-                              className="flex items-baseline gap-2 text-left hover:text-shBlue transition group">
+                              className="flex items-baseline gap-2 text-left hover:text-shSecondary transition group">
                         <span className="font-black uppercase tracking-tight group-hover:underline">{d.name}</span>
-                        {d.breed && <span className="text-gray-500 text-[14px]">· {d.breed}</span>}
-                        <i className="fas fa-arrow-right text-[12px] text-shBlue opacity-0 group-hover:opacity-100 transition" />
+                        {d.breed && <span className="text-shTextMuted text-[14px]">· {d.breed}</span>}
+                        <i className="fas fa-arrow-right text-[12px] text-shSecondary opacity-0 group-hover:opacity-100 transition" />
                       </button>
                     </li>
                   ))}
                 </ul>
               )}
             </div>
-            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-bgHover pt-3">
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-2 border-t border-shBorder pt-3">
               <div>
-                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Daycare</p>
-                <p className="text-xl font-black text-shGreen" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
+                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Daycare</p>
+                <p className="text-xl font-black text-shPrimary" data-testid={`daycare-credits-${c.id}`}>{fmtCredits(c.credits || 0)}</p>
               </div>
               <div>
-                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Training</p>
+                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Training</p>
                 <p className="text-xl font-black text-purple-400" data-testid={`training-credits-${c.id}`}>{fmtCredits(c.training_credits || 0)}</p>
               </div>
               <div>
-                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Boarding</p>
-                <p className="text-xl font-black text-shOrange" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
+                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Boarding</p>
+                <p className="text-xl font-black text-shAccent" data-testid={`boarding-credits-${c.id}`}>{fmtCredits(c.boarding_credits || 0)}</p>
               </div>
               {/* Sprint 110di-51 — Running tab. Positive = client owes,
                   negative = pre-paid credit on file. Hidden when balance is
                   exactly zero (the common case for paid-in-full clients). */}
               {Math.abs(Number(c.account_balance || 0)) > 0.001 ? (
                 <div>
-                  <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Tab</p>
-                  <p className={`text-xl font-black ${Number(c.account_balance) > 0 ? "text-shOrange" : "text-shGreen"}`}
+                  <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Tab</p>
+                  <p className={`text-xl font-black ${Number(c.account_balance) > 0 ? "text-shAccent" : "text-shPrimary"}`}
                      data-testid={`tab-balance-${c.id}`}>
                     {Number(c.account_balance) > 0 ? "" : "+"}
                     ${Math.abs(Number(c.account_balance || 0)).toFixed(2)}
                   </p>
-                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-500">
+                  <p className="text-[10px] uppercase tracking-widest font-black text-shTextMuted">
                     {Number(c.account_balance) > 0 ? "Owes you" : "Pre-paid"}
                   </p>
                 </div>
               ) : null}
               <div className="text-right">
-                <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">Portal</p>
-                <p className="text-[14px] text-shBlue font-black">{c.portal_email ? "Active" : "Not set"}</p>
+                <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">Portal</p>
+                <p className="text-[14px] text-shSecondary font-black">{c.portal_email ? "Active" : "Not set"}</p>
                 {c.portal_email && (
                   <p className={`text-[13px] font-black uppercase tracking-widest mt-1 ${lastLoginColor(c.last_login_at)}`}
                      title={c.last_login_at ? `Logged in ${c.login_count} time${c.login_count===1?"":"s"} · last ${c.last_login_at}` : "Hasn't logged in yet"}
@@ -407,12 +407,12 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               <i className="fas fa-user-shield"/>View Portal as {c.name?.split(" ")[0] || "Client"}
             </button>
             <button onClick={()=>setPreviewId(c.id)} data-testid={`preview-portal-${c.id}`}
-                    className="mt-2 w-full bg-shBlue/10 text-shBlue py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/20 flex items-center justify-center gap-2">
+                    className="mt-2 w-full bg-shSecondary/10 text-shSecondary py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shSecondary/20 flex items-center justify-center gap-2">
               <i className="fas fa-eye"/>Quick portal snapshot
             </button>
             {claimToast && claimToast.clientId === c.id && (
               <div data-testid={`claim-toast-${c.id}`}
-                   className={`mt-2 text-[14px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shGreen/15 text-shGreen" : "bg-yellow-500/15 text-yellow-300"}`}>
+                   className={`mt-2 text-[14px] font-black uppercase tracking-widest rounded px-3 py-2 ${claimToast.tone === "ok" ? "bg-shPrimary/15 text-shPrimary" : "bg-yellow-500/15 text-yellow-300"}`}>
                 <i className={`fas ${claimToast.tone === "ok" ? "fa-check" : "fa-exclamation-triangle"} mr-1`} />{claimToast.msg}
               </div>
             )}
@@ -431,19 +431,19 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
               onPackLots={()=>setLotsOpen(c)}
             />
             {/* Sprint 110ch — Payment plans for big-ticket items */}
-            <div className="mt-3 pt-3 border-t border-bgHover">
+            <div className="mt-3 pt-3 border-t border-shBorder">
               <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id]} />
             </div>
-            <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`client-trophy-section-${c.id}`}>
+            <div className="mt-3 pt-3 border-t border-shBorder" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[13px] font-black uppercase tracking-widest text-gray-500"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
+                <div className="text-[13px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-trophy mr-1"/>Trophies · {(trophyMap[c.id]||[]).length}</div>
                 <button onClick={()=>setAwardPicker(c)} data-testid={`award-trophy-${c.id}`}
-                        className="text-[13px] font-black uppercase tracking-widest text-shOrange hover:text-shOrange/80">+ Award</button>
+                        className="text-[13px] font-black uppercase tracking-widest text-shAccent hover:text-shAccent/80">+ Award</button>
               </div>
               {(trophyMap[c.id]||[]).length > 0 ? (
                 <TrophyWall awards={trophyMap[c.id]} testIdPrefix={`client-trophies-${c.id}`}/>
               ) : (
-                <p className="text-[13px] text-gray-500 italic">No trophies yet.</p>
+                <p className="text-[13px] text-shTextMuted italic">No trophies yet.</p>
               )}
             </div>
             {/* Sprint 110di-25 — Viewport-gated to prevent N+1 fetch storm
@@ -451,8 +451,8 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <LazyMount testid={`client-extra-${c.id}`} minHeight="160px">
               <IntakeFormsSection clientId={c.id} />
               <CommunicationLog clientId={c.id} />
-              <div className="mt-3 pt-3 border-t border-bgHover flex items-center justify-between">
-                <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+              <div className="mt-3 pt-3 border-t border-shBorder flex items-center justify-between">
+                <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">
                   <i className="fas fa-star mr-1"/>Reviews
                 </span>
                 <ReviewRequestButton clientId={c.id} clientName={c.name} compact={true}/>
@@ -481,11 +481,11 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <Input label="Name" value={form.name} onChange={(v)=>setForm({...form, name:v})} testId="client-name-input" />
             {/* Profile photo — shown as an avatar on the Clients list card. */}
             <div className="flex items-center gap-3">
-              <Avatar src={form.photo} icon="fa-user" size="lg" ring="border-shBlue/40" testid="client-photo-preview"/>
+              <Avatar src={form.photo} icon="fa-user" size="lg" ring="border-shSecondary/40" testid="client-photo-preview"/>
               <div className="flex-1">
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Profile Photo</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Profile Photo</label>
                 <div className="flex items-center gap-2 mt-1">
-                  <label className="bg-shBlue/10 text-shBlue border border-shBlue/40 px-3 py-2 rounded cursor-pointer text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/20" data-testid="client-photo-upload-btn">
+                  <label className="bg-shSecondary/10 text-shSecondary border border-shSecondary/40 px-3 py-2 rounded cursor-pointer text-[15px] font-black uppercase tracking-widest hover:bg-shSecondary/20" data-testid="client-photo-upload-btn">
                     <i className="fas fa-upload mr-1"/>{form.photo ? "Replace" : "Upload"}
                     <input type="file" accept="image/*" className="hidden" data-testid="client-photo-input"
                            onChange={async (e) => {
@@ -498,69 +498,69 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                   </label>
                   {form.photo && <button type="button" onClick={()=>setForm({...form, photo:""})} className="text-red-400 text-xs font-black uppercase">Remove</button>}
                 </div>
-                <p className="text-[13px] text-gray-500 mt-1 normal-case">Optional. Auto-compressed. Falls back to a placeholder icon if empty.</p>
+                <p className="text-[13px] text-shTextMuted mt-1 normal-case">Optional. Auto-compressed. Falls back to a placeholder icon if empty.</p>
               </div>
             </div>
             <Input label="Address" value={form.address} onChange={(v)=>setForm({...form, address:v})} />
             <div className="grid grid-cols-2 gap-4">
               <Input label="Phone" value={form.phone} onChange={(v)=>setForm({...form, phone:v})} />
-              <Input label="Credits" type="number" step="0.5" color="text-shBlue" value={form.credits} onChange={(v)=>setForm({...form, credits:parseFloat(v)||0})} testId="client-credits-input" />
+              <Input label="Credits" type="number" step="0.5" color="text-shSecondary" value={form.credits} onChange={(v)=>setForm({...form, credits:parseFloat(v)||0})} testId="client-credits-input" />
             </div>
             <Input label="Email" type="email" value={form.email} onChange={(v)=>setForm({...form, email:v})} />
             <Input label="Emergency Contact" color="text-red-400" value={form.emerg} onChange={(v)=>setForm({...form, emerg:v})} />
             <div>
-              <Input label="Photo Gallery URL (PicTime, Pixieset, etc.)" color="text-shGreen"
+              <Input label="Photo Gallery URL (PicTime, Pixieset, etc.)" color="text-shPrimary"
                      value={form.photo_gallery_url || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_url: v.trim()})}
                      testId="client-photo-gallery-input" />
-              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as &ldquo;See your pup in action — order prints&rdquo;. Leave blank if no gallery yet.</p>
+              <p className="text-[13px] text-shTextMuted mt-1 normal-case"><i className="fas fa-camera-retro mr-1"/>Per-client private gallery link. Shown on their portal as &ldquo;See your pup in action — order prints&rdquo;. Leave blank if no gallery yet.</p>
             </div>
             <div>
-              <Input label="Photo Gallery Download PIN" color="text-shOrange"
+              <Input label="Photo Gallery Download PIN" color="text-shAccent"
                      value={form.photo_gallery_pin || ""}
                      onChange={(v)=>setForm({...form, photo_gallery_pin: v.trim()})}
                      testId="client-photo-gallery-pin-input" />
-              <p className="text-[13px] text-gray-500 mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under &ldquo;See your pup in action&rdquo; with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
+              <p className="text-[13px] text-shTextMuted mt-1 normal-case"><i className="fas fa-key mr-1"/>Optional. Shown to the client under &ldquo;See your pup in action&rdquo; with a copy button — used to unlock photo downloads on PicTime/Pixieset. Leave blank to hide.</p>
             </div>
             <div>
               <button type="button" onClick={()=>setForm(f => ({...f, photo_gallery_has_new: !f.photo_gallery_has_new}))}
                       data-testid="client-photo-gallery-new-toggle"
                       className={`w-full flex items-center justify-between gap-3 rounded border px-3 py-2.5 transition ${form.photo_gallery_has_new
-                          ? "bg-shOrange/15 border-shOrange/60 hover:bg-shOrange/25"
-                          : "bg-bgBase border-bgHover hover:border-shOrange/40"}`}>
+                          ? "bg-shAccent/15 border-shAccent/60 hover:bg-shAccent/25"
+                          : "bg-[var(--sh-card-base)] border-shBorder hover:border-shAccent/40"}`}>
                 <div className="flex items-center gap-3 text-left">
-                  <i className={`fas fa-bell ${form.photo_gallery_has_new ? "text-shOrange" : "text-gray-500"} text-lg w-6 text-center`}/>
+                  <i className={`fas fa-bell ${form.photo_gallery_has_new ? "text-shAccent" : "text-shTextMuted"} text-lg w-6 text-center`}/>
                   <div>
-                    <p className={`text-[15px] font-black uppercase tracking-widest ${form.photo_gallery_has_new ? "text-shOrange" : "text-white"}`}>
+                    <p className={`text-[15px] font-black uppercase tracking-widest ${form.photo_gallery_has_new ? "text-shAccent" : "text-shText"}`}>
                       {form.photo_gallery_has_new ? "New photos badge: ON" : "Notify of New Photos"}
                     </p>
-                    <p className="text-[13px] text-gray-500 normal-case tracking-normal">{form.photo_gallery_has_new
+                    <p className="text-[13px] text-shTextMuted normal-case tracking-normal">{form.photo_gallery_has_new
                       ? "Client sees a pulsing NEW badge on their gallery link. Clears when they open it."
                       : "Flip on after uploading a fresh batch to nudge the client to visit their gallery."}</p>
                   </div>
                 </div>
-                <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${form.photo_gallery_has_new ? "bg-shOrange/30 text-shOrange" : "bg-bgHover text-gray-400"}`}>
+                <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${form.photo_gallery_has_new ? "bg-shAccent/30 text-shAccent" : "bg-shSurfaceRaised text-shTextMuted"}`}>
                   {form.photo_gallery_has_new ? "On" : "Off"}
                 </span>
               </button>
             </div>
             {!editing && (
-              <div className="border-t border-bgHover pt-4 -mx-1" data-testid="quick-add-dog-section">
+              <div className="border-t border-shBorder pt-4 -mx-1" data-testid="quick-add-dog-section">
                 <button type="button" onClick={()=>setAddDog(v=>!v)} data-testid="quick-add-dog-toggle"
-                        className={`w-full flex items-center justify-between gap-3 rounded border px-3 py-2.5 transition ${addDog ? "bg-shGreen/10 border-shGreen/50" : "bg-bgBase border-bgHover hover:border-shGreen/40"}`}>
+                        className={`w-full flex items-center justify-between gap-3 rounded border px-3 py-2.5 transition ${addDog ? "bg-shPrimary/10 border-shPrimary/50" : "bg-[var(--sh-card-base)] border-shBorder hover:border-shPrimary/40"}`}>
                   <div className="flex items-center gap-3 text-left">
-                    <i className={`fas fa-paw text-lg w-6 text-center ${addDog ? "text-shGreen" : "text-gray-500"}`}/>
+                    <i className={`fas fa-paw text-lg w-6 text-center ${addDog ? "text-shPrimary" : "text-shTextMuted"}`}/>
                     <div>
-                      <p className={`text-[15px] font-black uppercase tracking-widest ${addDog ? "text-shGreen" : "text-white"}`}>Also add a dog</p>
-                      <p className="text-[13px] text-gray-500 normal-case tracking-normal">Saves a trip to the Dogs screen for new sign-ups.</p>
+                      <p className={`text-[15px] font-black uppercase tracking-widest ${addDog ? "text-shPrimary" : "text-shText"}`}>Also add a dog</p>
+                      <p className="text-[13px] text-shTextMuted normal-case tracking-normal">Saves a trip to the Dogs screen for new sign-ups.</p>
                     </div>
                   </div>
-                  <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${addDog ? "bg-shGreen/30 text-shGreen" : "bg-bgHover text-gray-400"}`}>{addDog ? "On" : "Off"}</span>
+                  <span className={`text-[13px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${addDog ? "bg-shPrimary/30 text-shPrimary" : "bg-shSurfaceRaised text-shTextMuted"}`}>{addDog ? "On" : "Off"}</span>
                 </button>
 
                 {addDog && (
-                  <div className="mt-3 space-y-3 bg-bgBase border border-bgHover rounded-lg p-4">
-                    <Input label="Dog Name" color="text-shGreen" value={dog.name}
+                  <div className="mt-3 space-y-3 bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4">
+                    <Input label="Dog Name" color="text-shPrimary" value={dog.name}
                            onChange={(v)=>setDog({...dog, name:v})} testId="quick-dog-name-input" />
                     <div className="grid grid-cols-2 gap-3">
                       <Input label="Breed" value={dog.breed} onChange={(v)=>setDog({...dog, breed:v})} testId="quick-dog-breed-input" />
@@ -573,43 +573,43 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
                            onChange={(v)=>setDog({...dog, birthday:v})} testId="quick-dog-birthday-input" />
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Sex</label>
+                        <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Sex</label>
                         <select value={dog.sex} onChange={(e)=>setDog({...dog, sex:e.target.value})}
                                 data-testid="quick-dog-sex-select"
-                                className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                                className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                           <option value="Male">Male</option>
                           <option value="Female">Female</option>
                         </select>
                       </div>
                       <div>
-                        <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Fixed / Altered</label>
+                        <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Fixed / Altered</label>
                         <select value={dog.fixed} onChange={(e)=>setDog({...dog, fixed:e.target.value})}
-                                className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                                className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                           <option value="No">No</option>
                           <option value="Yes">Yes</option>
                         </select>
                       </div>
                     </div>
                     <div>
-                      <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mb-1">Vaccine Expiry Dates + Optional Cert Photos</p>
+                      <p className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mb-1">Vaccine Expiry Dates + Optional Cert Photos</p>
                       <div className="space-y-2">
                         <VaccineCertRow vaccine="rabies" label="Rabies" dog={dog} setDog={setDog} testIdBase="quick-dog-rabies"/>
                         <VaccineCertRow vaccine="bordetella" label="Bordetella" dog={dog} setDog={setDog} testIdBase="quick-dog-bordetella"/>
                         <VaccineCertRow vaccine="dhpp" label="DHPP" dog={dog} setDog={setDog} testIdBase="quick-dog-dhpp"/>
                       </div>
-                      <p className="text-[13px] text-gray-500 normal-case mt-1.5"><i className="fas fa-keyboard text-shBlue mr-1"/>Tip: copy a cert photo from your phone/email then press <kbd className="bg-bgPanel border border-bgHover rounded px-1.5 py-0.5 text-[12px] mx-0.5">Ctrl/Cmd + V</kbd> to drop it on the next empty cert. Leave blank to skip — the client will be prompted on their portal.</p>
+                      <p className="text-[13px] text-shTextMuted normal-case mt-1.5"><i className="fas fa-keyboard text-shSecondary mr-1"/>Tip: copy a cert photo from your phone/email then press <kbd className="bg-[var(--sh-card-base)] border border-shBorder rounded px-1.5 py-0.5 text-[12px] mx-0.5">Ctrl/Cmd + V</kbd> to drop it on the next empty cert. Leave blank to skip — the client will be prompted on their portal.</p>
                     </div>
                     <Input label="Notes (optional)" value={dog.notes} onChange={(v)=>setDog({...dog, notes:v})}
                            testId="quick-dog-notes-input" />
-                    <p className="text-[13px] text-gray-500 normal-case"><i className="fas fa-circle-info text-shBlue mr-1"/>Feeding, medications, training skills, and photos can be added from the Dogs screen after save.</p>
+                    <p className="text-[13px] text-shTextMuted normal-case"><i className="fas fa-circle-info text-shSecondary mr-1"/>Feeding, medications, training skills, and photos can be added from the Dogs screen after save.</p>
                   </div>
                 )}
               </div>
             )}
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={()=>setOpen(false)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-              <button onClick={submitClient} data-testid="save-client-button" className="bg-shBlue text-white px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save</button>
+              <button onClick={()=>setOpen(false)} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Cancel</button>
+              <button onClick={submitClient} data-testid="save-client-button" className="bg-shSecondary text-shText px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save</button>
             </div>
           </div>
         </Modal>
@@ -617,14 +617,14 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
 
       {portalOpen && (
         <Modal title="Portal Login" onClose={()=>setPortalOpen(null)}>
-          <p className="text-[15px] text-gray-400 mb-4">Set the email and password the client will use to access the portal.</p>
+          <p className="text-[15px] text-shTextMuted mb-4">Set the email and password the client will use to access the portal.</p>
           <div className="space-y-4">
             <Input label="Login Email" type="email" value={portalForm.email} onChange={(v)=>setPortalForm({...portalForm, email:v})} testId="portal-email-input" />
             <Input label="Temporary password (min 8 chars)" type="password" value={portalForm.password} onChange={(v)=>setPortalForm({...portalForm, password:v})} testId="portal-password-input" />
             {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
             <div className="flex justify-end gap-3 pt-4">
-              <button onClick={()=>setPortalOpen(null)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
-              <button onClick={savePortal} data-testid="save-portal-button" className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save Login</button>
+              <button onClick={()=>setPortalOpen(null)} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Cancel</button>
+              <button onClick={savePortal} data-testid="save-portal-button" className="bg-shPrimary text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg">Save Login</button>
             </div>
           </div>
         </Modal>
@@ -687,9 +687,9 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
   const anyNegative = next.daycare < 0 || next.training < 0 || next.boarding < 0;
 
   const rows = [
-    { key: "daycare", label: "Daycare", color: "text-shGreen", testid: "adjust-daycare" },
+    { key: "daycare", label: "Daycare", color: "text-shPrimary", testid: "adjust-daycare" },
     { key: "training", label: "Training", color: "text-purple-400", testid: "adjust-training" },
-    { key: "boarding", label: "Boarding", color: "text-shOrange", testid: "adjust-boarding" },
+    { key: "boarding", label: "Boarding", color: "text-shAccent", testid: "adjust-boarding" },
   ];
 
   const save = async () => {
@@ -709,42 +709,42 @@ function AdjustCreditsModal({ client, onClose, onSaved }) {
 
   return (
     <Modal title={`Adjust credits · ${client.name}`} onClose={onClose} maxWidth="max-w-md">
-      <p className="text-[14px] text-gray-400 mb-4">
+      <p className="text-[14px] text-shTextMuted mb-4">
         Use positive numbers to add, negative to remove. This is for fixing data-entry mistakes or comping a client — it doesn&rsquo;t create a receipt.
       </p>
       <div className="space-y-3" data-testid="adjust-credits-modal">
         {rows.map(r => (
-          <div key={r.key} className="bg-bgBase/60 border border-bgHover rounded p-3 flex items-center gap-3">
+          <div key={r.key} className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-[13px] uppercase font-black text-gray-500 tracking-widest">{r.label}</p>
-              <p className="text-[14px] text-gray-500">Current <span className="text-white font-black">{fmtCredits(current[r.key])}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{fmtCredits(next[r.key])}</span></p>
+              <p className="text-[13px] uppercase font-black text-shTextMuted tracking-widest">{r.label}</p>
+              <p className="text-[14px] text-shTextMuted">Current <span className="text-shText font-black">{fmtCredits(current[r.key])}</span> → New <span className={`font-black ${next[r.key] < 0 ? "text-red-400" : r.color}`}>{fmtCredits(next[r.key])}</span></p>
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) - (r.key === "training" ? 1 : 0.5) }))}
                       data-testid={`${r.testid}-minus`}
-                      className="w-9 h-9 bg-bgHover hover:bg-red-500/30 text-red-400 rounded font-black"><i className="fas fa-minus"/></button>
+                      className="w-9 h-9 bg-shSurfaceRaised hover:bg-red-500/30 text-red-400 rounded font-black"><i className="fas fa-minus"/></button>
               <input type="number" step={r.key === "training" ? "1" : "0.5"} value={deltas[r.key]}
                      onChange={(e)=>setDeltas(d => ({ ...d, [r.key]: e.target.value }))}
                      data-testid={`${r.testid}-input`}
-                     className="w-16 bg-bgPanel border border-bgHover rounded p-2 text-center text-white text-sm" />
+                     className="w-16 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-center text-shText text-sm" />
               <button type="button" onClick={()=>setDeltas(d => ({ ...d, [r.key]: (Number(d[r.key])||0) + (r.key === "training" ? 1 : 0.5) }))}
                       data-testid={`${r.testid}-plus`}
-                      className="w-9 h-9 bg-bgHover hover:bg-shGreen/30 text-shGreen rounded font-black"><i className="fas fa-plus"/></button>
+                      className="w-9 h-9 bg-shSurfaceRaised hover:bg-shPrimary/30 text-shPrimary rounded font-black"><i className="fas fa-plus"/></button>
             </div>
           </div>
         ))}
         <div>
-          <label className="text-[14px] text-gray-400 font-black uppercase tracking-widest">Reason / note <span className="text-gray-600 normal-case tracking-normal">(saved to audit log)</span></label>
+          <label className="text-[14px] text-shTextMuted font-black uppercase tracking-widest">Reason / note <span className="text-gray-600 normal-case tracking-normal">(saved to audit log)</span></label>
           <textarea value={note} onChange={(e)=>setNote(e.target.value)} rows={2} data-testid="adjust-note"
                     placeholder="e.g. comp for missed appointment, fixing entry mistake…"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
         </div>
         {err && <p className="text-[15px] text-red-400 font-black uppercase tracking-widest">{err}</p>}
         {anyNegative && <p className="text-[14px] text-red-400 font-black uppercase tracking-widest">Cannot drop a balance below zero.</p>}
         <div className="flex gap-2 pt-1">
-          <button onClick={onClose} className="flex-1 text-gray-400 hover:text-white py-2 text-[15px] font-black uppercase tracking-widest">Cancel</button>
+          <button onClick={onClose} className="flex-1 text-shTextMuted hover:text-shText py-2 text-[15px] font-black uppercase tracking-widest">Cancel</button>
           <button onClick={save} disabled={!anyChange || anyNegative || saving} data-testid="adjust-save"
-                  className="flex-1 bg-shOrange text-bgHeader py-2 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">
+                  className="flex-1 bg-shAccent text-bgHeader py-2 rounded font-black text-[15px] uppercase tracking-widest shadow disabled:opacity-50">
             {saving ? "Saving…" : "Apply"}
           </button>
         </div>
@@ -803,142 +803,142 @@ function SellPackModal({ client, packs, onClose, onSold }) {
   return (
     <Modal title={`Sell Credit Packs · ${client.name}`} onClose={onClose}>
       {packs.filter(p=>p.active).length === 0 ? (
-        <p className="text-[14px] text-gray-400">No packs configured. Set them up in <span className="text-shBlue">Settings → Credit Packs</span> first.</p>
+        <p className="text-[14px] text-shTextMuted">No packs configured. Set them up in <span className="text-shSecondary">Settings → Credit Packs</span> first.</p>
       ) : (
         <div className="space-y-4" data-testid="sell-pack-modal">
           <div className="flex gap-2 flex-wrap">
             {[
               {k:"all", label:"All"},
-              {k:"daycare", label:"Daycare", color:"text-shGreen"},
+              {k:"daycare", label:"Daycare", color:"text-shPrimary"},
               {k:"training", label:"Training", color:"text-purple-400"},
-              {k:"boarding", label:"Boarding", color:"text-shOrange"},
+              {k:"boarding", label:"Boarding", color:"text-shAccent"},
             ].map(p => (
               <button key={p.k} onClick={()=>setPoolFilter(p.k)} data-testid={`pool-filter-${p.k}`}
-                      className={`px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-bgBase border-shBlue text-shBlue":"border-bgHover text-gray-400 hover:text-shBlue"}`}>
+                      className={`px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest border ${poolFilter===p.k?"bg-[var(--sh-card-base)] border-shSecondary text-shSecondary":"border-shBorder text-shTextMuted hover:text-shSecondary"}`}>
                 {p.label}
               </button>
             ))}
           </div>
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Available Packs · tap to add</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Available Packs · tap to add</label>
             <div className="mt-2 space-y-1.5 max-h-56 overflow-auto pr-1">
               {active.map(p => {
                 const isTr = p.service_type === "training";
                 const isBd = p.service_type === "boarding";
-                const color = isTr ? "text-purple-400" : isBd ? "text-shOrange" : "text-shGreen";
+                const color = isTr ? "text-purple-400" : isBd ? "text-shAccent" : "text-shPrimary";
                 const iconHex = p.color || (isTr ? "#a855f7" : isBd ? "#f26522" : "#8cc63f");
                 const unit = isTr ? "sessions" : isBd ? "nights" : "credits";
                 const inCart = cart[p.id] || 0;
                 return (
                   <button key={p.id} onClick={()=>addToCart(p.id)} data-testid={`add-pack-${p.id}`}
-                          className={`w-full text-left flex items-center justify-between bg-bgBase border rounded p-2.5 hover:border-shBlue transition ${inCart > 0 ? "border-shBlue" : "border-bgHover"}`}>
+                          className={`w-full text-left flex items-center justify-between bg-[var(--sh-card-base)] border rounded p-2.5 hover:border-shSecondary transition ${inCart > 0 ? "border-shSecondary" : "border-shBorder"}`}>
                     <div className="min-w-0 flex-1 flex items-center gap-2.5">
                       <i className={`fas ${p.icon || (isTr ? "fa-graduation-cap" : isBd ? "fa-moon" : "fa-sun")} shrink-0`} style={{ color: iconHex }}/>
                       <div className="min-w-0 flex-1">
-                        <p className="text-[14px] font-black text-white truncate">{p.name}</p>
+                        <p className="text-[14px] font-black text-shText truncate">{p.name}</p>
                         <p className={`text-[13px] uppercase tracking-widest font-bold ${color}`}>
                           {p.qty} {unit} · ${p.price.toFixed(2)} · ${p.value_each.toFixed(2)}/each
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {inCart > 0 && <span className="bg-shBlue text-bgHeader px-2 py-0.5 rounded text-[14px] font-black">×{inCart}</span>}
-                      <i className="fas fa-plus text-shGreen text-[14px]" />
+                      {inCart > 0 && <span className="bg-shSecondary text-bgHeader px-2 py-0.5 rounded text-[14px] font-black">×{inCart}</span>}
+                      <i className="fas fa-plus text-shPrimary text-[14px]" />
                     </div>
                   </button>
                 );
               })}
-              {active.length === 0 && <p className="text-[15px] text-gray-500 italic">No packs in this pool.</p>}
+              {active.length === 0 && <p className="text-[15px] text-shTextMuted italic">No packs in this pool.</p>}
             </div>
           </div>
 
           {cartItems.length > 0 && (
-            <div className="border border-shGreen/40 bg-shGreen/5 rounded p-3 space-y-2" data-testid="sell-cart">
-              <p className="text-[13px] uppercase tracking-widest text-shGreen font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
+            <div className="border border-shPrimary/40 bg-shPrimary/5 rounded p-3 space-y-2" data-testid="sell-cart">
+              <p className="text-[13px] uppercase tracking-widest text-shPrimary font-black">Cart · {cartItems.length} line item{cartItems.length === 1 ? "" : "s"}</p>
               {cartItems.map(({ pack, qty }) => {
                 const isTr = pack.service_type === "training";
                 const isBd = pack.service_type === "boarding";
-                const color = isTr ? "text-purple-400" : isBd ? "text-shOrange" : "text-shGreen";
+                const color = isTr ? "text-purple-400" : isBd ? "text-shAccent" : "text-shPrimary";
                 const unit = isTr ? "sessions" : isBd ? "nights" : "credits";
                 return (
-                  <div key={pack.id} className="flex items-center justify-between gap-2 bg-bgBase rounded px-2 py-1.5" data-testid={`cart-row-${pack.id}`}>
+                  <div key={pack.id} className="flex items-center justify-between gap-2 bg-[var(--sh-card-base)] rounded px-2 py-1.5" data-testid={`cart-row-${pack.id}`}>
                     <div className="min-w-0 flex-1">
-                      <p className="text-[15px] text-white font-bold truncate">{pack.name}</p>
+                      <p className="text-[15px] text-shText font-bold truncate">{pack.name}</p>
                       <p className={`text-[12px] uppercase tracking-widest font-bold ${color}`}>
                         {pack.qty * qty} {unit} · ${(pack.price * qty).toFixed(2)}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button onClick={()=>removeFromCart(pack.id)} data-testid={`cart-minus-${pack.id}`}
-                              className="bg-bgHover text-white w-7 h-7 rounded font-black text-sm hover:bg-red-500/40">−</button>
-                      <span className="text-white font-black w-6 text-center text-sm">{qty}</span>
+                              className="bg-shSurfaceRaised text-shText w-7 h-7 rounded font-black text-sm hover:bg-red-500/40">−</button>
+                      <span className="text-shText font-black w-6 text-center text-sm">{qty}</span>
                       <button onClick={()=>addToCart(pack.id)} data-testid={`cart-plus-${pack.id}`}
-                              className="bg-bgHover text-white w-7 h-7 rounded font-black text-sm hover:bg-shGreen/40">+</button>
-                      <button onClick={()=>clearItem(pack.id)} className="text-gray-500 hover:text-red-400 ml-1"><i className="fas fa-times text-xs"/></button>
+                              className="bg-shSurfaceRaised text-shText w-7 h-7 rounded font-black text-sm hover:bg-shPrimary/40">+</button>
+                      <button onClick={()=>clearItem(pack.id)} className="text-shTextMuted hover:text-red-400 ml-1"><i className="fas fa-times text-xs"/></button>
                     </div>
                   </div>
                 );
               })}
               <div className="grid grid-cols-4 gap-2 pt-2 text-center">
-                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Daycare</p><p className="text-shGreen text-lg font-black">+{totalDaycare}</p></div>
-                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
-                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Boarding</p><p className="text-shOrange text-lg font-black">+{totalBoarding}</p></div>
-                <div><p className="text-[12px] uppercase tracking-widest text-gray-500">Charge</p><p className="text-white text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-shTextMuted">Daycare</p><p className="text-shPrimary text-lg font-black">+{totalDaycare}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-shTextMuted">Training</p><p className="text-purple-400 text-lg font-black">+{totalTraining}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-shTextMuted">Boarding</p><p className="text-shAccent text-lg font-black">+{totalBoarding}</p></div>
+                <div><p className="text-[12px] uppercase tracking-widest text-shTextMuted">Charge</p><p className="text-shText text-lg font-black" data-testid="cart-total-charge">${totalCharge.toFixed(2)}</p></div>
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Payment method</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Payment method</label>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               <option value="cash">Cash</option><option value="clover">Clover / Credit Card</option><option value="venmo">Venmo</option><option value="paypal">PayPal</option><option value="check">Check</option><option value="other">Other</option>
             </select>
           </div>
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Note (optional)</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Note (optional)</label>
             <input value={note} onChange={(e)=>setNote(e.target.value)} placeholder="e.g., birthday gift, returning customer"
-                   className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                   className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
           {/* Sprint 110di-61 — Partial-pay toggle. Identical UX to the
               CheckoutModal partial-pay flow. */}
           {totalCharge > 0 && (
-            <div className="border-t border-bgHover pt-3">
-              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
-                <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+            <div className="border-t border-shBorder pt-3">
+              <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black block mb-2">
+                <i className="fas fa-cash-register mr-1 text-shPrimary"/>How much is the client paying today?
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
                         data-testid="sell-pack-pay-full"
-                        className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                        className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shPrimary bg-shPrimary/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shPrimary/50"}`}>
                   <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
                 </button>
                 <button type="button" onClick={()=>{ setPayMode("partial"); }}
                         data-testid="sell-pack-pay-partial"
-                        className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                        className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shAccent bg-shAccent/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shAccent/50"}`}>
                   <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
                 </button>
               </div>
               {payMode === "partial" && (
-                <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3"
+                <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shAccent/5 border border-shAccent/30 rounded p-3"
                      data-testid="sell-pack-partial-block">
                   <div>
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
-                    <p className="text-xl font-black text-white mt-1">${totalCharge.toFixed(2)}</p>
+                    <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">Total</p>
+                    <p className="text-xl font-black text-shText mt-1">${totalCharge.toFixed(2)}</p>
                   </div>
                   <div>
-                    <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                    <label className="text-[10px] uppercase tracking-widest text-shAccent font-black block">Paying today</label>
                     <input type="number" step="0.01" min="0" value={amountPaid}
                            onChange={(e)=>setAmountPaid(e.target.value)}
                            data-testid="sell-pack-amount-paid"
                            autoFocus placeholder="$0.00"
-                           className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                           className="w-full mt-1 bg-[var(--sh-card-base)] border-2 border-shAccent/60 rounded p-2 text-shText text-lg font-black focus:border-shAccent focus:outline-none"/>
                   </div>
                   <div>
-                    <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                    <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">On tab</p>
                     <p className="text-xl font-black mt-1">
-                      <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < totalCharge ? "text-shOrange" : (Number(amountPaid) > totalCharge ? "text-shGreen" : "text-gray-400"))}>
+                      <span className={amountPaid === "" ? "text-shTextMuted" : (Number(amountPaid) < totalCharge ? "text-shAccent" : (Number(amountPaid) > totalCharge ? "text-shPrimary" : "text-shTextMuted"))}>
                         {amountPaid === "" ? `+$${totalCharge.toFixed(2)}` : Number(amountPaid) < totalCharge ? `+$${(totalCharge - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > totalCharge ? `−$${(Number(amountPaid) - totalCharge).toFixed(2)}` : "$0.00"}
                       </span>
                     </p>
@@ -947,12 +947,12 @@ function SellPackModal({ client, packs, onClose, onSold }) {
               )}
             </div>
           )}
-          <p className="text-[13px] text-gray-500 italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
+          <p className="text-[13px] text-shTextMuted italic">Income is recognized when each credit is redeemed at check-out, not now.</p>
           {err && <p className="text-red-400 text-[15px]">{err}</p>}
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Cancel</button>
             <button onClick={sell} disabled={busy || cartItems.length === 0} data-testid="confirm-sell-pack"
-                    className="bg-shGreen text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
+                    className="bg-shPrimary text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg disabled:opacity-50">
               {busy ? "Selling…" : (totalCredits > 0 ? `Sell · +${totalCredits} credits · $${totalCharge.toFixed(2)}` : "Sell")}
             </button>
           </div>
@@ -1067,10 +1067,10 @@ function SellProgramModal({ client, onClose, onSold }) {
               <i className="fas fa-graduation-cap mr-1"/>Current training credits: {breakdown.global_training_credits}
             </p>
             {breakdown.by_program.length > 0 && (
-              <ul className="text-gray-400 text-[11px] space-y-0.5">
+              <ul className="text-shTextMuted text-[11px] space-y-0.5">
                 {breakdown.by_program.map(p => (
                   <li key={p.program_id}>
-                    • {p.program_name}: <span className="text-shGreen font-black">{p.qty_remaining}</span> of {p.qty_total} {p.unit} left
+                    • {p.program_name}: <span className="text-shPrimary font-black">{p.qty_remaining}</span> of {p.qty_total} {p.unit} left
                   </li>
                 ))}
               </ul>
@@ -1079,10 +1079,10 @@ function SellProgramModal({ client, onClose, onSold }) {
         )}
 
         <label className="block">
-          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Program *</span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Program *</span>
           <select value={programId} onChange={(e)=>setProgramId(e.target.value)}
                   data-testid="sell-program-select"
-                  className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             <option value="">— pick a program —</option>
             {programs.map(p => (
               <option key={p.id} value={p.id}>
@@ -1091,24 +1091,24 @@ function SellProgramModal({ client, onClose, onSold }) {
             ))}
           </select>
           {programs.length === 0 && (
-            <p className="text-[11px] text-shOrange mt-1 italic">
+            <p className="text-[11px] text-shAccent mt-1 italic">
               No sellable programs found. Make sure programs have a session count + price set.
             </p>
           )}
         </label>
 
         <label className="block">
-          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+          <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">
             Assign to dog <span className="text-gray-600 normal-case">(optional)</span>
           </span>
           <select value={dogId} onChange={(e)=>setDogId(e.target.value)}
                   data-testid="sell-program-dog"
-                  className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             <option value="">{`— don't assign now (credits only) —`}</option>
             {dogs.map(d => <option key={d.id} value={d.id}>{d.name} · {d.breed || "—"}</option>)}
           </select>
           {dogId && (
-            <p className="text-[11px] text-shGreen mt-1 italic">
+            <p className="text-[11px] text-shPrimary mt-1 italic">
               Will auto-enroll this dog so trainer can start logging sessions immediately.
             </p>
           )}
@@ -1118,7 +1118,7 @@ function SellProgramModal({ client, onClose, onSold }) {
             picked (need someone to book FOR) and when the program is Board &
             Train (the dog will already be on-site). */}
         {dogId && selectedProgram && selectedProgram.type !== "board_train" && (
-          <div className="bg-shBlue/5 border border-shBlue/30 rounded p-3 space-y-2"
+          <div className="bg-shSecondary/5 border border-shSecondary/30 rounded p-3 space-y-2"
                data-testid="sell-program-schedule">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -1126,9 +1126,9 @@ function SellProgramModal({ client, onClose, onSold }) {
                 checked={scheduleEnabled}
                 onChange={(e) => setScheduleEnabled(e.target.checked)}
                 data-testid="sell-program-schedule-toggle"
-                className="w-4 h-4 accent-shBlue"
+                className="w-4 h-4 accent-shSecondary"
               />
-              <span className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+              <span className="text-[12px] font-black uppercase tracking-widest text-shSecondary">
                 <i className="fas fa-calendar-check mr-1"/>Auto-book {qty || "N"} weekly sessions
               </span>
             </label>
@@ -1136,32 +1136,32 @@ function SellProgramModal({ client, onClose, onSold }) {
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="block">
-                    <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Day of week</span>
+                    <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Day of week</span>
                     <select value={dow} onChange={(e) => setDow(e.target.value)}
                             data-testid="sell-program-schedule-dow"
-                            className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                            className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                       {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
                         .map((d, i) => <option key={i} value={i}>{d}</option>)}
                     </select>
                   </label>
                   <label className="block">
-                    <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Time</span>
+                    <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Time</span>
                     <input type="time" value={scheduleTime}
                            onChange={(e) => setScheduleTime(e.target.value)}
                            data-testid="sell-program-schedule-time"
-                           className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                           className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
                   </label>
                 </div>
                 <label className="block">
-                  <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">
+                  <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">
                     Start date <span className="text-gray-600 normal-case">(blank = next occurrence)</span>
                   </span>
                   <input type="date" value={scheduleStart}
                          onChange={(e) => setScheduleStart(e.target.value)}
                          data-testid="sell-program-schedule-start"
-                         className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                         className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
                 </label>
-                <label className="flex items-center gap-2 text-[11px] text-gray-400 cursor-pointer">
+                <label className="flex items-center gap-2 text-[11px] text-shTextMuted cursor-pointer">
                   <input
                     type="checkbox"
                     checked={overrideClosures}
@@ -1172,20 +1172,20 @@ function SellProgramModal({ client, onClose, onSold }) {
                   <span>Book even on closed days (skip the auto-skip)</span>
                 </label>
                 {schedulePreview.length > 0 && (
-                  <div className="bg-bgBase/60 border border-bgHover rounded p-2 mt-2"
+                  <div className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-2 mt-2"
                        data-testid="sell-program-schedule-preview">
-                    <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted mb-1">
                       <i className="fas fa-eye mr-1"/>Sessions preview · {schedulePreview.length} weekly
                     </p>
                     <div className="flex flex-wrap gap-1 text-[11px]">
                       {schedulePreview.slice(0, 12).map((d, i) => (
-                        <span key={i} className="bg-bgHover text-gray-300 rounded px-1.5 py-0.5">{d} · {scheduleTime}</span>
+                        <span key={i} className="bg-shSurfaceRaised text-shTextMuted rounded px-1.5 py-0.5">{d} · {scheduleTime}</span>
                       ))}
                       {schedulePreview.length > 12 && (
-                        <span className="text-gray-500 text-[10px] self-center">… +{schedulePreview.length - 12} more</span>
+                        <span className="text-shTextMuted text-[10px] self-center">… +{schedulePreview.length - 12} more</span>
                       )}
                     </div>
-                    <p className="text-[10px] text-gray-500 mt-1 italic">
+                    <p className="text-[10px] text-shTextMuted mt-1 italic">
                       Closed-day dates will be skipped automatically (rolling forward 7 days each time).
                     </p>
                   </div>
@@ -1197,24 +1197,24 @@ function SellProgramModal({ client, onClose, onSold }) {
 
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
-            <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Price ($)</span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Price ($)</span>
             <input type="number" min="0" step="0.01"
                    value={overridePrice}
                    placeholder={listPrice ? listPrice.toFixed(2) : "0.00"}
                    onChange={(e)=>setOverridePrice(e.target.value)}
                    data-testid="sell-program-price"
-                   className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
             {overridePrice !== "" && Number(overridePrice) !== listPrice && (
-              <p className="text-[11px] text-shOrange mt-1 italic">
+              <p className="text-[11px] text-shAccent mt-1 italic">
                 {Number(overridePrice) < listPrice ? "Discount" : "Surcharge"} applied
               </p>
             )}
           </label>
           <label className="block">
-            <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Payment</span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Payment</span>
             <select value={method} onChange={(e)=>setMethod(e.target.value)}
                     data-testid="sell-program-method"
-                    className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               <option value="cash">Cash</option>
               <option value="clover">Clover / Credit Card</option>
               <option value="venmo">Venmo</option>
@@ -1227,21 +1227,21 @@ function SellProgramModal({ client, onClose, onSold }) {
         </div>
 
         <label className="block">
-          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">Note <span className="text-gray-600 normal-case">(optional)</span></span>
+          <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Note <span className="text-gray-600 normal-case">(optional)</span></span>
           <input type="text" value={note} onChange={(e)=>setNote(e.target.value)}
                  data-testid="sell-program-note"
-                 className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                 className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
         </label>
 
         {selectedProgram && (
-          <div className="bg-bgBase/60 border border-bgHover rounded p-3 text-[13px]" data-testid="sell-program-summary">
-            <p className="font-black uppercase tracking-widest text-shGreen mb-2">
+          <div className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-3 text-[13px]" data-testid="sell-program-summary">
+            <p className="font-black uppercase tracking-widest text-shPrimary mb-2">
               <i className="fas fa-receipt mr-1"/>Summary
             </p>
-            <p className="text-gray-300">
+            <p className="text-shTextMuted">
               {selectedProgram.name} · {qty} {unit}
             </p>
-            <p className="text-gray-400 text-[12px] mt-1">
+            <p className="text-shTextMuted text-[12px] mt-1">
               ${effectivePrice.toFixed(2)} total · ${perEach.toFixed(2)} per {unit.replace(/s$/, "")}
             </p>
           </div>
@@ -1249,40 +1249,40 @@ function SellProgramModal({ client, onClose, onSold }) {
 
         {/* Sprint 110di-61 — Partial-pay toggle for program sales. */}
         {selectedProgram && effectivePrice > 0 && (
-          <div className="border-t border-bgHover pt-3">
-            <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black block mb-2">
-              <i className="fas fa-cash-register mr-1 text-shGreen"/>How much is the client paying today?
+          <div className="border-t border-shBorder pt-3">
+            <label className="text-[13px] uppercase tracking-widest text-shTextMuted font-black block mb-2">
+              <i className="fas fa-cash-register mr-1 text-shPrimary"/>How much is the client paying today?
             </label>
             <div className="grid grid-cols-2 gap-2">
               <button type="button" onClick={()=>{ setPayMode("full"); setAmountPaid(""); }}
                       data-testid="sell-program-pay-full"
-                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shGreen bg-shGreen/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shGreen/50"}`}>
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="full" ? "border-shPrimary bg-shPrimary/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shPrimary/50"}`}>
                 <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-check-circle mr-1"/>Paid in full</div>
               </button>
               <button type="button" onClick={()=>setPayMode("partial")}
                       data-testid="sell-program-pay-partial"
-                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shOrange bg-shOrange/15 text-white" : "border-bgHover bg-bgPanel text-gray-400 hover:border-shOrange/50"}`}>
+                      className={`p-2 rounded border-2 text-left transition ${payMode==="partial" ? "border-shAccent bg-shAccent/15 text-shText" : "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted hover:border-shAccent/50"}`}>
                 <div className="text-[12px] font-black uppercase tracking-widest"><i className="fas fa-file-invoice-dollar mr-1"/>Partial / on tab</div>
               </button>
             </div>
             {payMode === "partial" && (
-              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shOrange/5 border border-shOrange/30 rounded p-3" data-testid="sell-program-partial-block">
+              <div className="mt-2 grid grid-cols-3 gap-3 items-end bg-shAccent/5 border border-shAccent/30 rounded p-3" data-testid="sell-program-partial-block">
                 <div>
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Total</p>
-                  <p className="text-xl font-black text-white mt-1">${effectivePrice.toFixed(2)}</p>
+                  <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">Total</p>
+                  <p className="text-xl font-black text-shText mt-1">${effectivePrice.toFixed(2)}</p>
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-widest text-shOrange font-black block">Paying today</label>
+                  <label className="text-[10px] uppercase tracking-widest text-shAccent font-black block">Paying today</label>
                   <input type="number" step="0.01" min="0" value={amountPaid}
                          onChange={(e)=>setAmountPaid(e.target.value)}
                          data-testid="sell-program-amount-paid"
                          autoFocus placeholder="$0.00"
-                         className="w-full mt-1 bg-bgPanel border-2 border-shOrange/60 rounded p-2 text-white text-lg font-black focus:border-shOrange focus:outline-none"/>
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border-2 border-shAccent/60 rounded p-2 text-shText text-lg font-black focus:border-shAccent focus:outline-none"/>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">On tab</p>
+                  <p className="text-[10px] uppercase tracking-widest text-shTextMuted font-black">On tab</p>
                   <p className="text-xl font-black mt-1">
-                    <span className={amountPaid === "" ? "text-gray-500" : (Number(amountPaid) < effectivePrice ? "text-shOrange" : (Number(amountPaid) > effectivePrice ? "text-shGreen" : "text-gray-400"))}>
+                    <span className={amountPaid === "" ? "text-shTextMuted" : (Number(amountPaid) < effectivePrice ? "text-shAccent" : (Number(amountPaid) > effectivePrice ? "text-shPrimary" : "text-shTextMuted"))}>
                       {amountPaid === "" ? `+$${effectivePrice.toFixed(2)}` : Number(amountPaid) < effectivePrice ? `+$${(effectivePrice - Number(amountPaid)).toFixed(2)}` : Number(amountPaid) > effectivePrice ? `−$${(Number(amountPaid) - effectivePrice).toFixed(2)}` : "$0.00"}
                     </span>
                   </p>
@@ -1299,12 +1299,12 @@ function SellProgramModal({ client, onClose, onSold }) {
         )}
 
         <div className="flex gap-2 pt-2">
-          <button onClick={onClose} className="flex-1 text-gray-400 py-3 text-[14px] font-black uppercase tracking-widest">
+          <button onClick={onClose} className="flex-1 text-shTextMuted py-3 text-[14px] font-black uppercase tracking-widest">
             Cancel
           </button>
           <button onClick={sell} disabled={busy || !programId}
                   data-testid="sell-program-confirm"
-                  className="flex-1 bg-purple-500 text-white py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
+                  className="flex-1 bg-purple-500 text-shText py-3 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
             {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Selling…</> : <><i className="fas fa-check mr-1"/>Confirm sale</>}
           </button>
         </div>
@@ -1318,10 +1318,10 @@ function SellProgramModal({ client, onClose, onSold }) {
 function Modal({ title, children, onClose, maxWidth = "max-w-md" }) {
   return (
     <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
-      <div className={`bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full ${maxWidth} p-5 sm:p-8 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] sm:max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto`}>
-        <div className="flex items-center justify-between mb-5 sm:mb-6 sticky top-0 bg-bgPanel pt-1 -mt-1 z-10">
-          <h4 className="text-lg sm:text-xl font-black text-white uppercase italic tracking-tight pr-3">{title}</h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl shrink-0 p-1 -m-1"><i className="fas fa-times" /></button>
+      <div className={`bg-[var(--sh-card-base)] border border-shBorder rounded-t-2xl sm:rounded-2xl w-full ${maxWidth} p-5 sm:p-8 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] sm:max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto`}>
+        <div className="flex items-center justify-between mb-5 sm:mb-6 sticky top-0 bg-[var(--sh-card-base)] pt-1 -mt-1 z-10">
+          <h4 className="text-lg sm:text-xl font-black text-shText uppercase italic tracking-tight pr-3">{title}</h4>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl shrink-0 p-1 -m-1"><i className="fas fa-times" /></button>
         </div>
         {children}
       </div>
@@ -1345,9 +1345,9 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
     <Modal title={`Receipts · ${client.name}`} onClose={onClose} maxWidth="max-w-lg">
       <div className="space-y-3 max-h-[60vh] overflow-auto" data-testid="receipts-list">
         {err && <p className="text-red-400 text-[15px]">{err}</p>}
-        {receipts === null && !err && <p className="text-gray-500 text-[15px]">Loading…</p>}
+        {receipts === null && !err && <p className="text-shTextMuted text-[15px]">Loading…</p>}
         {receipts && receipts.length === 0 && (
-          <p className="text-[14px] text-gray-400 italic">No pack purchases yet. Sales will appear here automatically.</p>
+          <p className="text-[14px] text-shTextMuted italic">No pack purchases yet. Sales will appear here automatically.</p>
         )}
         {receipts && receipts.map((r, i) => {
           const dt = new Date(r.sold_at);
@@ -1355,23 +1355,23 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
           const tr = r.totals?.training?.qty || 0;
           return (
             <div key={i} data-testid={`receipt-row-${i}`}
-                 className="bg-bgBase border border-bgHover rounded p-3 hover:border-shBlue transition">
+                 className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 hover:border-shSecondary transition">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[14px] font-black text-white">{dt.toLocaleDateString()} · {dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
-                  <p className="text-[13px] uppercase tracking-widest text-gray-500 mt-0.5">
+                  <p className="text-[14px] font-black text-shText">{dt.toLocaleDateString()} · {dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
+                  <p className="text-[13px] uppercase tracking-widest text-shTextMuted mt-0.5">
                     {r.line_count} item{r.line_count === 1 ? "" : "s"} · {r.lot_count} pack{r.lot_count === 1 ? "" : "s"} · {r.payment_method} · {r.sold_by}
                   </p>
                   <div className="flex gap-2 mt-1.5 flex-wrap">
-                    {dc > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-shGreen bg-shGreen/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
+                    {dc > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-shPrimary bg-shPrimary/10 px-2 py-0.5 rounded">+{dc} daycare</span>}
                     {tr > 0 && <span className="text-[12px] uppercase tracking-widest font-black text-purple-400 bg-purple-400/10 px-2 py-0.5 rounded">+{tr} training</span>}
                   </div>
-                  {r.note && <p className="text-[14px] text-gray-400 italic mt-1.5 truncate">&ldquo;{r.note}&rdquo;</p>}
+                  {r.note && <p className="text-[14px] text-shTextMuted italic mt-1.5 truncate">&ldquo;{r.note}&rdquo;</p>}
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-shGreen text-xl font-black">${r.total_price.toFixed(2)}</p>
+                  <p className="text-shPrimary text-xl font-black">${r.total_price.toFixed(2)}</p>
                   <button onClick={()=>onReprint(r)} data-testid={`reprint-${i}`}
-                          className="mt-1.5 text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                          className="mt-1.5 text-[13px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
                     <i className="fas fa-print mr-1"/>Reprint
                   </button>
                 </div>
@@ -1381,7 +1381,7 @@ function ReceiptsListModal({ client, onClose, onReprint }) {
         })}
       </div>
       <div className="flex justify-end pt-4">
-        <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Close</button>
+        <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Close</button>
       </div>
     </Modal>
   );
@@ -1397,26 +1397,26 @@ function ReceiptModal({ data, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 print:bg-white print:p-0 print:block" data-testid="pack-receipt">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg shadow-2xl print:shadow-none print:bg-white print:border-0 print:rounded-none print:max-w-none print:w-full">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg shadow-2xl print:shadow-none print:bg-white print:border-0 print:rounded-none print:max-w-none print:w-full">
         {/* Header (hidden in print) */}
-        <div className="flex items-center justify-between p-6 border-b border-bgHover print:hidden">
-          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">
-            <i className="fas fa-receipt text-shGreen mr-2"/>Sale Complete
+        <div className="flex items-center justify-between p-6 border-b border-shBorder print:hidden">
+          <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">
+            <i className="fas fa-receipt text-shPrimary mr-2"/>Sale Complete
           </h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="receipt-close"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText" data-testid="receipt-close"><i className="fas fa-times"/></button>
         </div>
 
         {/* Printable receipt body */}
-        <div id="pack-receipt-print" className="p-6 text-white print:text-black print:p-10">
-          <div className="border-b border-bgHover pb-4 mb-4 print:border-gray-300">
-            <p className="text-[13px] uppercase tracking-widest text-shGreen print:text-gray-600 font-black">Sit Happens · Receipt</p>
+        <div id="pack-receipt-print" className="p-6 text-shText print:text-black print:p-10">
+          <div className="border-b border-shBorder pb-4 mb-4 print:border-gray-300">
+            <p className="text-[13px] uppercase tracking-widest text-shPrimary print:text-gray-600 font-black">Sit Happens · Receipt</p>
             <h3 className="text-2xl font-black mt-1 uppercase tracking-tight print:text-black">{client?.name}</h3>
-            <p className="text-[14px] text-gray-400 print:text-gray-600 mt-1">{dateStr} · Sold by {sold_by}</p>
+            <p className="text-[14px] text-shTextMuted print:text-gray-600 mt-1">{dateStr} · Sold by {sold_by}</p>
           </div>
 
           <table className="w-full text-[14px]">
             <thead>
-              <tr className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600">
+              <tr className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600">
                 <th className="text-left font-black pb-2">Item</th>
                 <th className="text-right font-black pb-2">Qty</th>
                 <th className="text-right font-black pb-2">Each</th>
@@ -1425,10 +1425,10 @@ function ReceiptModal({ data, onClose }) {
             </thead>
             <tbody>
               {lines.map((l, i) => (
-                <tr key={i} className="border-t border-bgHover print:border-gray-300" data-testid={`receipt-line-${i}`}>
+                <tr key={i} className="border-t border-shBorder print:border-gray-300" data-testid={`receipt-line-${i}`}>
                   <td className="py-2.5 font-bold">
                     {l.name}
-                    <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-bold">
+                    <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-bold">
                       {(l.pack_qty || 0) * l.qty} {l.service_type === "training" ? "training sessions" : l.service_type === "boarding" ? "boarding nights" : "daycare credits"}
                     </p>
                   </td>
@@ -1442,49 +1442,49 @@ function ReceiptModal({ data, onClose }) {
 
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[15px]">
             {dc > 0 && (
-              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Daycare credits added</p>
-                <p className="text-shGreen text-2xl font-black print:text-black">+{dc}</p>
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black">Daycare credits added</p>
+                <p className="text-shPrimary text-2xl font-black print:text-black">+{dc}</p>
               </div>
             )}
             {tr > 0 && (
-              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Training sessions added</p>
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black">Training sessions added</p>
                 <p className="text-purple-400 text-2xl font-black print:text-black">+{tr}</p>
               </div>
             )}
             {bd > 0 && (
-              <div className="bg-bgBase border border-bgHover rounded p-3 print:bg-white print:border-gray-300">
-                <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Boarding nights added</p>
-                <p className="text-shOrange text-2xl font-black print:text-black">+{bd}</p>
+              <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3 print:bg-white print:border-gray-300">
+                <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black">Boarding nights added</p>
+                <p className="text-shAccent text-2xl font-black print:text-black">+{bd}</p>
               </div>
             )}
           </div>
 
-          <div className="mt-5 border-t-2 border-shGreen pt-3 flex items-end justify-between print:border-black">
+          <div className="mt-5 border-t-2 border-shPrimary pt-3 flex items-end justify-between print:border-black">
             <div>
-              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Payment · {payment_method}</p>
-              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black mt-1">Credits never expire</p>
+              <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black">Payment · {payment_method}</p>
+              <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black mt-1">Credits never expire</p>
             </div>
             <div className="text-right">
-              <p className="text-[12px] uppercase tracking-widest text-gray-500 print:text-gray-600 font-black">Total charged</p>
-              <p className="text-shGreen text-3xl font-black print:text-black" data-testid="receipt-total">${total_price.toFixed(2)}</p>
+              <p className="text-[12px] uppercase tracking-widest text-shTextMuted print:text-gray-600 font-black">Total charged</p>
+              <p className="text-shPrimary text-3xl font-black print:text-black" data-testid="receipt-total">${total_price.toFixed(2)}</p>
             </div>
           </div>
 
-          {note && <p className="mt-4 text-[14px] text-gray-400 italic print:text-gray-600">Note: {note}</p>}
+          {note && <p className="mt-4 text-[14px] text-shTextMuted italic print:text-gray-600">Note: {note}</p>}
 
-          <p className="mt-6 text-[13px] text-gray-500 print:text-gray-600 text-center">
+          <p className="mt-6 text-[13px] text-shTextMuted print:text-gray-600 text-center">
             Sit Happens Dog Training · Daycare · Boarding<br/>
             Thank you for your business!
           </p>
         </div>
 
         {/* Actions (hidden in print) */}
-        <div className="flex justify-end gap-3 p-6 border-t border-bgHover print:hidden">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest" data-testid="receipt-done">Done</button>
+        <div className="flex justify-end gap-3 p-6 border-t border-shBorder print:hidden">
+          <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest" data-testid="receipt-done">Done</button>
           <button onClick={print} data-testid="receipt-print"
-                  className="bg-shBlue text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shBlue/90">
+                  className="bg-shSecondary text-bgHeader px-8 py-2 rounded font-black text-[14px] uppercase tracking-widest shadow-lg hover:bg-shSecondary/90">
             <i className="fas fa-print mr-2"/>Print Receipt
           </button>
         </div>
@@ -1493,12 +1493,12 @@ function ReceiptModal({ data, onClose }) {
   );
 }
 
-export function Input({ label, value, onChange, type="text", color="text-gray-500", testId }) {
+export function Input({ label, value, onChange, type="text", color="text-shTextMuted", testId }) {
   return (
     <div>
       <label className={`text-[14px] font-black uppercase tracking-widest ${color}`}>{label}</label>
       <input type={type} value={value ?? ""} onChange={(e)=>onChange(e.target.value)} data-testid={testId}
-             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
+             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none" />
     </div>
   );
 }
@@ -1544,30 +1544,30 @@ function VaccineCertRow({ vaccine, label, dog, setDog, testIdBase }) {
   };
 
   return (
-    <div className="bg-bgPanel border border-bgHover rounded p-2"
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2"
          onPaste={onPasteRow} onDragOver={(e)=>e.preventDefault()} onDrop={onDrop}
          data-testid={`${testIdBase}-row`}>
       <div className="grid grid-cols-12 gap-2 items-center">
         <div className="col-span-4">
-          <p className="text-[13px] font-black text-gray-300 uppercase tracking-widest">{label}</p>
+          <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">{label}</p>
         </div>
         <div className="col-span-5">
           <input type="date" value={date}
                  onChange={(e)=>setDog({...dog, [vaccine]: e.target.value})}
                  data-testid={`${testIdBase}-input`} style={{colorScheme:"dark"}}
-                 className="w-full bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" />
+                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" />
         </div>
         <div className="col-span-3 flex justify-end gap-1.5">
           {photo ? (
             <>
-              <img src={photo} alt={`${label} cert`} className="h-8 w-8 object-cover rounded border border-shGreen/40"
+              <img src={photo} alt={`${label} cert`} className="h-8 w-8 object-cover rounded border border-shPrimary/40"
                    data-testid={`${testIdBase}-preview`} title="Cert attached"/>
               <button type="button" onClick={()=>setDog((d)=>({...d, [photoKey]: ""}))}
                       data-testid={`${testIdBase}-photo-clear`}
                       className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 px-1">Clear</button>
             </>
           ) : (
-            <label className="bg-bgBase border border-bgHover rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-shGreen hover:border-shGreen/40 cursor-pointer"
+            <label className="bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shPrimary hover:border-shPrimary/40 cursor-pointer"
                    data-testid={`${testIdBase}-photo-label`}>
               <i className="fas fa-paperclip mr-1"/>Cert
               <input type="file" accept="image/*" className="hidden" onChange={onFile}
@@ -1604,11 +1604,11 @@ function lastLoginLabel(iso) {
 
 // Color codes recency: green = active, gray = quiet, red = stale (>90 days).
 function lastLoginColor(iso) {
-  if (!iso) return "text-gray-500";
+  if (!iso) return "text-shTextMuted";
   const days = (Date.now() - new Date(iso).getTime()) / 86400000;
-  if (days < 7) return "text-shGreen";
-  if (days < 30) return "text-shBlue";
-  if (days < 90) return "text-gray-400";
+  if (days < 7) return "text-shPrimary";
+  if (days < 30) return "text-shSecondary";
+  if (days < 90) return "text-shTextMuted";
   return "text-red-400";
 }
 
@@ -1620,11 +1620,11 @@ function ClientStatusPill({ status, clientId, onChange }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const labels = {
-    prospect: { text: "Prospect", color: "bg-shOrange/20 text-shOrange border-shOrange/40" },
-    evaluation_scheduled: { text: "Eval Scheduled", color: "bg-shBlue/20 text-shBlue border-shBlue/40" },
+    prospect: { text: "Prospect", color: "bg-shAccent/20 text-shAccent border-shAccent/40" },
+    evaluation_scheduled: { text: "Eval Scheduled", color: "bg-shSecondary/20 text-shSecondary border-shSecondary/40" },
     evaluated: { text: "Evaluated", color: "bg-purple-500/20 text-purple-400 border-purple-500/40" },
     rejected: { text: "Rejected", color: "bg-red-500/20 text-red-400 border-red-500/40" },
-    active: { text: "Active", color: "bg-shGreen/20 text-shGreen border-shGreen/40" },
+    active: { text: "Active", color: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
   };
   const meta = labels[status] || labels.prospect;
   const setStatus = async (newStatus) => {
@@ -1645,14 +1645,14 @@ function ClientStatusPill({ status, clientId, onChange }) {
       </button>
       {open && createPortal((
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-[100]" onClick={()=>setOpen(false)}>
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e)=>e.stopPropagation()}
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={(e)=>e.stopPropagation()}
                data-testid="client-status-modal">
-            <h4 className="text-lg font-black text-white uppercase italic mb-2">Update client status</h4>
-            <p className="text-[13px] text-gray-400 mb-3">Current: <strong className="text-white">{meta.text}</strong></p>
+            <h4 className="text-lg font-black text-shText uppercase italic mb-2">Update client status</h4>
+            <p className="text-[13px] text-shTextMuted mb-3">Current: <strong className="text-shText">{meta.text}</strong></p>
             <textarea value={note} onChange={(e)=>setNote(e.target.value)}
                       placeholder="Optional note (e.g. 'Passed eval — friendly with all sizes')"
                       data-testid="client-status-note"
-                      className="block w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm mb-3" rows={2}/>
+                      className="block w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm mb-3" rows={2}/>
             <div className="grid grid-cols-1 gap-2">
               {["evaluation_scheduled", "evaluated", "active", "rejected"].filter(s => s !== status).map(s => (
                 <button key={s} onClick={()=>setStatus(s)} disabled={busy}
@@ -1662,7 +1662,7 @@ function ClientStatusPill({ status, clientId, onChange }) {
                 </button>
               ))}
               <button onClick={()=>setOpen(false)} disabled={busy}
-                      className="text-gray-400 hover:text-white font-black text-[12px] uppercase tracking-widest mt-1 py-2">
+                      className="text-shTextMuted hover:text-shText font-black text-[12px] uppercase tracking-widest mt-1 py-2">
                 Cancel
               </button>
             </div>
@@ -1737,29 +1737,29 @@ function ClientActionsMenu({
 
   const items = [
     { label: hasPortal ? "Send password reset email" : "Send claim account email",
-      icon: "fa-envelope", color: "text-shGreen", onClick: onSendClaim,
+      icon: "fa-envelope", color: "text-shPrimary", onClick: onSendClaim,
       testId: `menu-send-claim-${clientId}` },
     { label: hasPortal ? "Manually set portal password" : "Manually create portal login",
-      icon: "fa-key", color: "text-shBlue", onClick: onSetPassword,
+      icon: "fa-key", color: "text-shSecondary", onClick: onSetPassword,
       testId: `menu-set-password-${clientId}` },
     { divider: true },
-    { label: "Sell Credit Pack", icon: "fa-coins", color: "text-shGreen",
+    { label: "Sell Credit Pack", icon: "fa-coins", color: "text-shPrimary",
       onClick: onSellPack, testId: `menu-sell-pack-${clientId}` },
     { label: "Sell Training Program", icon: "fa-graduation-cap", color: "text-purple-300",
       onClick: onSellProgram, testId: `menu-sell-program-${clientId}` },
     // Sprint 110di-61 — Take a standalone payment (settle a tab, prepay).
-    { label: "Take Payment", icon: "fa-cash-register", color: "text-shGreen",
+    { label: "Take Payment", icon: "fa-cash-register", color: "text-shPrimary",
       onClick: onTakePayment, testId: `menu-take-payment-${clientId}` },
-    { label: "Adjust Credits", icon: "fa-plus-minus", color: "text-shOrange",
+    { label: "Adjust Credits", icon: "fa-plus-minus", color: "text-shAccent",
       onClick: onAdjustCredits, testId: `menu-adjust-credits-${clientId}` },
     { divider: true },
-    { label: "Receipts", icon: "fa-receipt", color: "text-gray-300",
+    { label: "Receipts", icon: "fa-receipt", color: "text-shTextMuted",
       onClick: onReceipts, testId: `menu-receipts-${clientId}` },
-    { label: "Files & Homework", icon: "fa-folder-open", color: "text-shBlue",
+    { label: "Files & Homework", icon: "fa-folder-open", color: "text-shSecondary",
       onClick: onFiles, testId: `menu-files-${clientId}` },
     { label: "Legacy Pricing", icon: "fa-lock", color: "text-amber-400",
       onClick: onLegacy, testId: `menu-legacy-${clientId}` },
-    { label: "View Pack Lots", icon: "fa-layer-group", color: "text-shBlue",
+    { label: "View Pack Lots", icon: "fa-layer-group", color: "text-shSecondary",
       onClick: onPackLots, testId: `menu-pack-lots-${clientId}` },
   ];
 
@@ -1778,18 +1778,18 @@ function ClientActionsMenu({
            backgroundColor: "#0a1426",
            backgroundImage: "linear-gradient(155deg, rgba(10,20,38,1) 0%, rgba(4,10,22,1) 100%)",
          }}
-         className="border-2 border-shBlue rounded-lg shadow-[0_28px_56px_-12px_rgba(0,0,0,0.95),0_0_28px_rgba(0,174,240,0.45)] overflow-hidden">
+         className="border-2 border-shSecondary rounded-lg shadow-[0_28px_56px_-12px_rgba(0,0,0,0.95),0_0_28px_rgba(0,174,240,0.45)] overflow-hidden">
       {items.map((it, i) => it.divider ? (
-        <div key={`d${i}`} className="h-px bg-bgHover" />
+        <div key={`d${i}`} className="h-px bg-shSurfaceRaised" />
       ) : (
         <button key={it.label}
                 role="menuitem"
                 onClick={fire(it.onClick)}
                 data-testid={it.testId}
-                className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-shBlue/15 transition group">
+                className="w-full text-left px-4 py-2.5 flex items-center gap-3 hover:bg-shSecondary/15 transition group">
           <i className={`fas ${it.icon} ${it.color} w-4 text-center`} />
           <span className={`text-[14px] font-black uppercase tracking-widest ${it.color}`}>{it.label}</span>
-          <i className="fas fa-chevron-right ml-auto text-[10px] text-gray-600 group-hover:text-gray-300 transition" />
+          <i className="fas fa-chevron-right ml-auto text-[10px] text-gray-600 group-hover:text-shTextMuted transition" />
         </button>
       ))}
     </div>,
@@ -1802,7 +1802,7 @@ function ClientActionsMenu({
               onClick={()=>setOpen(o=>!o)}
               data-testid={`manage-client-toggle-${clientId}`}
               aria-expanded={open}
-              className="w-full bg-bgBase border-2 border-shBlue/60 text-shBlue py-2.5 rounded text-[15px] font-black uppercase tracking-widest hover:border-shBlue hover:bg-shBlue/10 flex items-center justify-center gap-2 transition shadow-[0_0_14px_rgba(0,174,240,0.25)]">
+              className="w-full bg-[var(--sh-card-base)] border-2 border-shSecondary/60 text-shSecondary py-2.5 rounded text-[15px] font-black uppercase tracking-widest hover:border-shSecondary hover:bg-shSecondary/10 flex items-center justify-center gap-2 transition shadow-[0_0_14px_rgba(0,174,240,0.25)]">
         <i className="fas fa-bars-staggered" />
         Manage Client
         <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] transition-transform`} />

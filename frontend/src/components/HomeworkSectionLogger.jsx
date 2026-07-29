@@ -30,10 +30,10 @@ export default function HomeworkSectionLogger({ homework, onLogged }) {
   return (
     <div className="space-y-4">
       {(snap.global_rules_this_week || []).length > 0 && (
-        <div className="bg-shOrange/5 border border-shOrange/30 rounded-lg p-3">
-          <p className="text-[15px] font-black uppercase tracking-widest text-shOrange mb-2"><i className="fas fa-triangle-exclamation mr-1"/>House Rules This Week</p>
-          <ul className="space-y-1 text-[15px] text-gray-300">
-            {snap.global_rules_this_week.map((r,i) => <li key={i} className="flex gap-2"><span className="text-shOrange flex-shrink-0">▸</span><span>{r}</span></li>)}
+        <div className="bg-shAccent/5 border border-shAccent/30 rounded-lg p-3">
+          <p className="text-[15px] font-black uppercase tracking-widest text-shAccent mb-2"><i className="fas fa-triangle-exclamation mr-1"/>House Rules This Week</p>
+          <ul className="space-y-1 text-[15px] text-shTextMuted">
+            {snap.global_rules_this_week.map((r,i) => <li key={i} className="flex gap-2"><span className="text-shAccent flex-shrink-0">▸</span><span>{r}</span></li>)}
           </ul>
         </div>
       )}
@@ -85,42 +85,42 @@ function SectionCard({ section, logs, homeworkId, onLogged }) {
   const lastLog = logs[logs.length - 1];
 
   return (
-    <div className="bg-bgBase border border-bgHover rounded-lg p-4">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4">
       <div className="flex items-center justify-between">
-        <h5 className="text-white font-black text-[15px] uppercase tracking-tight">{section.title}</h5>
-        <span className="text-[14px] font-black uppercase tracking-widest text-gray-500">{logs.length} log{logs.length===1?"":"s"}</span>
+        <h5 className="text-shText font-black text-[15px] uppercase tracking-tight">{section.title}</h5>
+        <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted">{logs.length} log{logs.length===1?"":"s"}</span>
       </div>
-      {section.instructions && <p className="text-[15px] text-gray-300 mt-2 whitespace-pre-wrap leading-snug">{section.instructions}</p>}
+      {section.instructions && <p className="text-[15px] text-shTextMuted mt-2 whitespace-pre-wrap leading-snug">{section.instructions}</p>}
 
       {!open ? (
         <div className="mt-3 flex items-center gap-3">
           <button onClick={()=>setOpen(true)} data-testid={`log-section-${section.id}`}
-                  className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+                  className="bg-shSecondary/15 text-shSecondary px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shSecondary/25">
             <i className="fas fa-plus mr-1"/> Log a session
           </button>
-          {lastLog && <span className="text-[14px] text-gray-500">Last logged {lastLog.date}</span>}
+          {lastLog && <span className="text-[14px] text-shTextMuted">Last logged {lastLog.date}</span>}
         </div>
       ) : (
-        <div className="mt-3 space-y-3 bg-bgPanel/50 border border-bgHover rounded p-3">
+        <div className="mt-3 space-y-3 bg-[var(--sh-card-base)]/50 border border-shBorder rounded p-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Session date</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Session date</label>
               <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-1.5 text-white text-sm" style={{colorScheme:"dark"}} />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-shText text-sm" style={{colorScheme:"dark"}} />
             </div>
           </div>
           {(section.fields || []).map(f => <FieldInput key={f.id} field={f} value={values[f.id]} onChange={(v)=>setField(f.id, v)} />)}
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Note (optional)</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Note (optional)</label>
             <textarea value={note} onChange={(e)=>setNote(e.target.value)} rows={2}
                       placeholder="Anything notable about today's session?"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
-          {err && <p className="text-[15px] text-red-400">{err}</p>}
+          {err && <p className="text-[15px] text-shDanger">{err}</p>}
           <div className="flex justify-end gap-2">
-            <button onClick={()=>setOpen(false)} className="text-gray-400 text-[14px] uppercase font-black tracking-widest">Cancel</button>
+            <button onClick={()=>setOpen(false)} className="text-shTextMuted text-[14px] uppercase font-black tracking-widest">Cancel</button>
             <button onClick={submit} disabled={busy} data-testid={`submit-section-${section.id}`}
-                    className="bg-shGreen text-black px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
+                    className="bg-shPrimary text-black px-4 py-2 rounded font-black text-[14px] uppercase tracking-widest disabled:opacity-50">
               {busy ? "Saving…" : "Save log"}
             </button>
           </div>
@@ -129,13 +129,13 @@ function SectionCard({ section, logs, homeworkId, onLogged }) {
 
       {logs.length > 0 && (
         <details className="mt-3">
-          <summary className="cursor-pointer text-[14px] font-black uppercase tracking-widest text-gray-400 hover:text-gray-200">View history ({logs.length})</summary>
+          <summary className="cursor-pointer text-[14px] font-black uppercase tracking-widest text-shTextMuted hover:text-shTextMuted">View history ({logs.length})</summary>
           <ul className="mt-2 space-y-2">
             {logs.slice().reverse().map(l => (
-              <li key={l.id} className="text-[14px] text-gray-300 bg-bgPanel/40 rounded p-2 border border-bgHover/50">
+              <li key={l.id} className="text-[14px] text-shTextMuted bg-[var(--sh-card-base)]/40 rounded p-2 border border-shBorder/50">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-shGreen font-black">{l.date}</span>
-                  <span className="text-gray-500">{(l.logged_at||"").slice(11,16)}</span>
+                  <span className="text-shPrimary font-black">{l.date}</span>
+                  <span className="text-shTextMuted">{(l.logged_at||"").slice(11,16)}</span>
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-1">
                   {(section.fields || []).map(f => {
@@ -144,10 +144,10 @@ function SectionCard({ section, logs, homeworkId, onLogged }) {
                     const km = KIND_META[f.kind] || {};
                     let display = v;
                     if (km.type === "checkbox") display = v ? "✓" : "✗";
-                    return <span key={f.id} className="text-gray-300"><span className="text-gray-500">{f.label}:</span> <span className="text-white font-black">{String(display)}</span>{km.unit ? ` ${km.unit}` : ""}</span>;
+                    return <span key={f.id} className="text-shTextMuted"><span className="text-shTextMuted">{f.label}:</span> <span className="text-shText font-black">{String(display)}</span>{km.unit ? ` ${km.unit}` : ""}</span>;
                   })}
                 </div>
-                {l.note && <p className="mt-1 italic text-gray-400">"{l.note}"</p>}
+                {l.note && <p className="mt-1 italic text-shTextMuted">"{l.note}"</p>}
               </li>
             ))}
           </ul>
@@ -164,31 +164,31 @@ function FieldInput({ field, value, onChange }) {
     return (
       <label className="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={!!value} onChange={(e)=>onChange(e.target.checked)}
-               className="w-4 h-4 accent-shGreen" />
-        <span className="text-[15px] text-gray-300">{field.label}</span>
+               className="w-4 h-4 accent-shPrimary" />
+        <span className="text-[15px] text-shTextMuted">{field.label}</span>
       </label>
     );
   }
   if (km.type === "longtext") {
     return (
       <div>
-        <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{field.label}</label>
+        <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{field.label}</label>
         <textarea value={value || ""} onChange={(e)=>onChange(e.target.value)} rows={2}
                   placeholder={field.placeholder || ""}
-                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                  className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
       </div>
     );
   }
   return (
     <div>
-      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{field.label}{targetSuffix}</label>
+      <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{field.label}{targetSuffix}</label>
       <input
         type={km.type}
         min={km.min} max={km.max} step={km.step}
         value={value ?? ""}
         onChange={(e)=>onChange(e.target.value)}
         placeholder={field.placeholder || ""}
-        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"
       />
     </div>
   );

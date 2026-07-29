@@ -22,14 +22,14 @@ const BLANK_FORM = {
 };
 
 function stockStatus(p) {
-  if (!p.active) return { label: "INACTIVE", cls: "text-gray-500 bg-bgHover" };
-  if (!p.track_inventory) return { label: "NOT TRACKED", cls: "text-gray-400 bg-bgHover" };
+  if (!p.active) return { label: "INACTIVE", cls: "text-shTextMuted bg-shSurfaceRaised" };
+  if (!p.track_inventory) return { label: "NOT TRACKED", cls: "text-shTextMuted bg-shSurfaceRaised" };
   const stock = Number(p.stock_on_hand || 0);
   if (stock <= 0.0005) return { label: "OUT OF STOCK", cls: "text-red-400 bg-red-500/10" };
   if (p.low_stock_threshold != null && stock <= Number(p.low_stock_threshold) + 0.0005) {
-    return { label: "LOW STOCK", cls: "text-shOrange bg-shOrange/10" };
+    return { label: "LOW STOCK", cls: "text-shAccent bg-shAccent/10" };
   }
-  return { label: "IN STOCK", cls: "text-shGreen bg-shGreen/10" };
+  return { label: "IN STOCK", cls: "text-shPrimary bg-shPrimary/10" };
 }
 
 export default function ManageProductsPanel({ onClose, onChanged }) {
@@ -184,94 +184,94 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" data-testid="manage-products-panel">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
         <div className="flex items-center justify-between mb-4">
-          <p className="text-white text-xl font-black uppercase tracking-widest">Manage Products</p>
-          <button onClick={handlePanelClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-lg" /></button>
+          <p className="text-shText text-xl font-black uppercase tracking-widest">Manage Products</p>
+          <button onClick={handlePanelClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-lg" /></button>
         </div>
 
         {formOpen ? (
           <div className="space-y-3">
-            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Product Name *</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Product Name *</label>
                 <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
               </div>
               <div>
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Category</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Category</label>
                 <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
               </div>
               <div>
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Selling Price *</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Selling Price *</label>
                 <input type="number" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
               </div>
               <div>
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Cost (optional)</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cost (optional)</label>
                 <input type="number" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
               </div>
               <div>
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
                   {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
                 </label>
                 <input type="number" disabled={!!editingId} value={form.starting_stock}
                        onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white disabled:opacity-50" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
               </div>
               <div className="col-span-2">
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Description (optional)</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Description (optional)</label>
                 <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                       className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
               </div>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="track-inv" checked={form.track_inventory}
                        onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
-                <label htmlFor="track-inv" className="text-white text-sm">Track Inventory</label>
+                <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
               </div>
               {form.track_inventory && (
                 <div>
-                  <label className="text-[11px] text-gray-500 uppercase tracking-widest">Low Stock Warning</label>
+                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
                   <input type="number" value={form.low_stock_threshold}
                          onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
-                         className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
                 </div>
               )}
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="active" checked={form.active}
                        onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} />
-                <label htmlFor="active" className="text-white text-sm">Active</label>
+                <label htmlFor="active" className="text-shText text-sm">Active</label>
               </div>
             </div>
 
             {/* Client Shop Phase 1 — additive online-visibility controls. */}
-            <div className="border-t border-bgHover pt-3 mt-1 space-y-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Client Shop</p>
+            <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+              <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Client Shop</p>
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="show-online" checked={form.show_online}
                        onChange={(e) => setForm((f) => ({ ...f, show_online: e.target.checked }))}
                        data-testid="product-show-online" />
-                <label htmlFor="show-online" className="text-white text-sm">Show Online (client Shop)</label>
+                <label htmlFor="show-online" className="text-shText text-sm">Show Online (client Shop)</label>
               </div>
               {form.show_online && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
-                    <label className="text-[11px] text-gray-500 uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
+                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
                     <input value={form.online_description} onChange={(e) => setForm((f) => ({ ...f, online_description: e.target.value }))}
                            data-testid="product-online-description"
-                           className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
                   </div>
                   <div>
-                    <label className="text-[11px] text-gray-500 uppercase tracking-widest">Sort Order (optional)</label>
+                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sort Order (optional)</label>
                     <input type="number" value={form.online_sort_order}
                            onChange={(e) => setForm((f) => ({ ...f, online_sort_order: e.target.value }))}
-                           className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
                   </div>
                   <div className="col-span-2">
-                    <label className="text-[11px] text-gray-500 uppercase tracking-widest mb-1 block">Product Photo</label>
+                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo</label>
                     <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
                                      onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
                   </div>
@@ -279,11 +279,11 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
               )}
             </div>
             <div className="flex gap-3 pt-2">
-              <button onClick={closeFormWithoutSaving} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
+              <button onClick={closeFormWithoutSaving} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
                 Cancel
               </button>
               <button onClick={saveForm} disabled={saving}
-                      className="flex-1 bg-shGreen text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                      className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
                 {saving ? "Saving…" : "Save"}
               </button>
             </div>
@@ -291,20 +291,20 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
         ) : historyProduct ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">History — {historyProduct.name}</p>
-              <button onClick={() => setHistoryProduct(null)} className="text-shGreen text-[11px] font-black uppercase tracking-widest">Back</button>
+              <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">History — {historyProduct.name}</p>
+              <button onClick={() => setHistoryProduct(null)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Back</button>
             </div>
             <div className="space-y-1 max-h-96 overflow-y-auto">
-              {movements.length === 0 && <p className="text-gray-500 text-sm">No stock movements yet.</p>}
+              {movements.length === 0 && <p className="text-shTextMuted text-sm">No stock movements yet.</p>}
               {movements.map((m) => (
-                <div key={m.id} className="flex items-center justify-between text-sm border-b border-bgHover py-1.5">
+                <div key={m.id} className="flex items-center justify-between text-sm border-b border-shBorder py-1.5">
                   <div>
-                    <span className="text-white font-bold">{new Date(m.created_at).toLocaleDateString()}</span>{" "}
-                    <span className="text-gray-400">{m.type} — {m.reason}</span>
+                    <span className="text-shText font-bold">{new Date(m.created_at).toLocaleDateString()}</span>{" "}
+                    <span className="text-shTextMuted">{m.type} — {m.reason}</span>
                   </div>
-                  <span className={m.quantity_delta > 0 ? "text-shGreen font-bold" : "text-red-400 font-bold"}>
+                  <span className={m.quantity_delta > 0 ? "text-shPrimary font-bold" : "text-red-400 font-bold"}>
                     {m.quantity_delta > 0 ? "+" : ""}{m.quantity_delta}{"  "}
-                    <span className="text-gray-500 font-normal">{m.stock_before} → {m.stock_after}</span>
+                    <span className="text-shTextMuted font-normal">{m.stock_before} → {m.stock_after}</span>
                   </span>
                 </div>
               ))}
@@ -314,14 +314,14 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
           <>
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search products"
-                     className="flex-1 min-w-[160px] bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                     className="flex-1 min-w-[160px] bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
               {[["all", "All"], ["low", "Low Stock"], ["out", "Out of Stock"], ["inactive", "Inactive"]].map(([k, label]) => (
                 <button key={k} onClick={() => setFilter(k)}
-                        className={`px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest ${filter === k ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                        className={`px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest ${filter === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                   {label}
                 </button>
               ))}
-              <button onClick={openAdd} className="bg-shGreen text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest">
+              <button onClick={openAdd} className="bg-shPrimary text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest">
                 + Add Product
               </button>
             </div>
@@ -329,7 +329,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-gray-500 text-[11px] uppercase tracking-widest text-left border-b border-bgHover">
+                  <tr className="text-shTextMuted text-[11px] uppercase tracking-widest text-left border-b border-shBorder">
                     <th className="py-2 pr-2">Product</th>
                     <th className="py-2 pr-2">Category</th>
                     <th className="py-2 pr-2 text-right">Price</th>
@@ -340,17 +340,17 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading && <tr><td colSpan={7} className="py-6 text-center text-gray-500">Loading…</td></tr>}
-                  {!loading && filtered.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-gray-500">No products found.</td></tr>}
+                  {loading && <tr><td colSpan={7} className="py-6 text-center text-shTextMuted">Loading…</td></tr>}
+                  {!loading && filtered.length === 0 && <tr><td colSpan={7} className="py-6 text-center text-shTextMuted">No products found.</td></tr>}
                   {filtered.map((p) => {
                     const status = stockStatus(p);
                     return (
-                      <tr key={p.id} className="border-b border-bgHover/60">
-                        <td className="py-2 pr-2 text-white font-bold cursor-pointer" onClick={() => openEdit(p)}>{p.name}</td>
-                        <td className="py-2 pr-2 text-gray-400">{p.category || "—"}</td>
-                        <td className="py-2 pr-2 text-right text-white">{money(p.price)}</td>
-                        <td className="py-2 pr-2 text-right text-gray-400">{p.cost != null ? money(p.cost) : "—"}</td>
-                        <td className="py-2 pr-2 text-right text-white">{p.track_inventory ? p.stock_on_hand : "—"}</td>
+                      <tr key={p.id} className="border-b border-shBorder/60">
+                        <td className="py-2 pr-2 text-shText font-bold cursor-pointer" onClick={() => openEdit(p)}>{p.name}</td>
+                        <td className="py-2 pr-2 text-shTextMuted">{p.category || "—"}</td>
+                        <td className="py-2 pr-2 text-right text-shText">{money(p.price)}</td>
+                        <td className="py-2 pr-2 text-right text-shTextMuted">{p.cost != null ? money(p.cost) : "—"}</td>
+                        <td className="py-2 pr-2 text-right text-shText">{p.track_inventory ? p.stock_on_hand : "—"}</td>
                         <td className="py-2 pr-2">
                           <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest ${status.cls}`}>{status.label}</span>
                         </td>
@@ -358,12 +358,12 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
                           <div className="flex items-center gap-2 justify-end">
                             {p.track_inventory && (
                               <>
-                                <button onClick={() => openReceive(p)} className="text-shGreen text-[11px] font-black uppercase tracking-widest">Receive</button>
-                                <button onClick={() => openAdjust(p)} className="text-gray-400 text-[11px] font-black uppercase tracking-widest">Adjust</button>
-                                <button onClick={() => openHistory(p)} className="text-gray-400 text-[11px] font-black uppercase tracking-widest">History</button>
+                                <button onClick={() => openReceive(p)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Receive</button>
+                                <button onClick={() => openAdjust(p)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Adjust</button>
+                                <button onClick={() => openHistory(p)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">History</button>
                               </>
                             )}
-                            <button onClick={() => openEdit(p)} className="text-gray-400 text-[11px] font-black uppercase tracking-widest">Edit</button>
+                            <button onClick={() => openEdit(p)} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Edit</button>
                           </div>
                         </td>
                       </tr>
@@ -378,29 +378,29 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
 
       {stockModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-sm p-5 space-y-3">
-            <p className="text-white font-black uppercase tracking-widest">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-sm p-5 space-y-3">
+            <p className="text-shText font-black uppercase tracking-widest">
               {stockModal.mode === "receive" ? "Receive Stock" : "Adjust Stock"} — {stockModal.product.name}
             </p>
-            <p className="text-gray-400 text-sm">Current: {stockModal.product.stock_on_hand}</p>
+            <p className="text-shTextMuted text-sm">Current: {stockModal.product.stock_on_hand}</p>
             <div>
-              <label className="text-[11px] text-gray-500 uppercase tracking-widest">
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
                 {stockModal.mode === "receive" ? "Quantity received" : "Quantity adjustment (+/-)"}
               </label>
               <input type="number" value={stockQty} onChange={(e) => setStockQty(e.target.value)}
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
             </div>
             <div>
-              <label className="text-[11px] text-gray-500 uppercase tracking-widest">Reason</label>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Reason</label>
               <input value={stockReason} onChange={(e) => setStockReason(e.target.value)} placeholder="e.g. Damaged, Lost, count correction"
-                     className="w-full bg-bgBase border border-bgHover rounded p-2 text-white" />
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
             </div>
             <div className="flex gap-3 pt-1">
-              <button onClick={() => setStockModal(null)} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
+              <button onClick={() => setStockModal(null)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
                 Cancel
               </button>
               <button onClick={submitStock} disabled={stockBusy}
-                      className="flex-1 bg-shGreen text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                      className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
                 {stockBusy ? "Saving…" : "Save"}
               </button>
             </div>

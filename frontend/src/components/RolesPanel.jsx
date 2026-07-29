@@ -65,41 +65,41 @@ export default function RolesPanel() {
   if (loading || !matrix) return null;
 
   return (
-    <div className="bg-bgPanel border border-bgHover rounded-2xl shadow-lg mb-6" data-testid="roles-panel">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl shadow-lg mb-6" data-testid="roles-panel">
       <button onClick={()=>setOpen(o=>!o)} className="w-full flex items-center justify-between p-5 text-left">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary mb-1">
             <i className="fas fa-key mr-1.5"/>Phase 7 · Roles & permissions
           </p>
-          <h3 className="text-lg font-black text-white uppercase italic tracking-tight">Staff Roles</h3>
-          <p className="text-[13px] text-gray-400 mt-1">
+          <h3 className="text-lg font-black text-shText uppercase italic tracking-tight">Staff Roles</h3>
+          <p className="text-[13px] text-shTextMuted mt-1">
             Assign a role to each staff member to control what they can see and do.
           </p>
         </div>
-        <i className={`fas fa-chevron-${open?"up":"down"} text-gray-500`}/>
+        <i className={`fas fa-chevron-${open?"up":"down"} text-shTextMuted`}/>
       </button>
 
       {open && (
         <div className="px-5 pb-5 space-y-3">
           {employees.length === 0 ? (
-            <p className="text-[13px] text-gray-500 italic">Add staff members below first, then come back here to assign roles.</p>
+            <p className="text-[13px] text-shTextMuted italic">Add staff members below first, then come back here to assign roles.</p>
           ) : (
             <div className="space-y-2" data-testid="roles-employee-list">
               {employees.map(emp => (
-                <div key={emp.id} className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center gap-3 flex-wrap"
+                <div key={emp.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-center gap-3 flex-wrap"
                      data-testid={`role-row-${emp.id}`}>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white font-black uppercase tracking-tight">
+                    <p className="text-sm text-shText font-black uppercase tracking-tight">
                       {emp.display_name || emp.name}
-                      {emp.is_owner && <span className="text-[10px] font-black text-shGreen uppercase tracking-widest ml-2">Owner</span>}
+                      {emp.is_owner && <span className="text-[10px] font-black text-shPrimary uppercase tracking-widest ml-2">Owner</span>}
                     </p>
-                    <p className="text-[12px] text-gray-500 truncate">{emp.email}</p>
+                    <p className="text-[12px] text-shTextMuted truncate">{emp.email}</p>
                   </div>
                   <select value={emp.staff_role || "read_only"}
                           onChange={(e)=>setRole(emp.id, e.target.value)}
                           disabled={emp.is_owner}
                           data-testid={`role-select-${emp.id}`}
-                          className={`bg-bgPanel border border-bgHover rounded p-2 text-white text-sm font-black uppercase tracking-widest ${emp.is_owner?"opacity-50 cursor-not-allowed":""}`}>
+                          className={`bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-black uppercase tracking-widest ${emp.is_owner?"opacity-50 cursor-not-allowed":""}`}>
                     {matrix.roles.filter(r => r !== "owner" || emp.is_owner).map(r => (
                       <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
                     ))}
@@ -111,7 +111,7 @@ export default function RolesPanel() {
 
           <div>
             <button onClick={()=>setShowMatrix(s=>!s)} data-testid="toggle-matrix"
-                    className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-shBlue/80">
+                    className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-shSecondary/80">
               <i className={`fas fa-table mr-1`}/>{showMatrix ? "Hide" : "Show"} permission matrix
             </button>
 
@@ -120,9 +120,9 @@ export default function RolesPanel() {
                 <table className="w-full text-[11px]">
                   <thead>
                     <tr>
-                      <th className="text-left p-2 text-gray-500 font-black uppercase tracking-widest">Permission</th>
+                      <th className="text-left p-2 text-shTextMuted font-black uppercase tracking-widest">Permission</th>
                       {matrix.roles.map(r => (
-                        <th key={r} className="p-2 text-gray-500 font-black uppercase tracking-widest text-center" title={r}>
+                        <th key={r} className="p-2 text-shTextMuted font-black uppercase tracking-widest text-center" title={r}>
                           {(ROLE_LABELS[r] || r).split(" / ")[0].split(" ")[0]}
                         </th>
                       ))}
@@ -130,12 +130,12 @@ export default function RolesPanel() {
                   </thead>
                   <tbody>
                     {matrix.permission_keys.map(k => (
-                      <tr key={k} className="border-t border-bgHover">
-                        <td className="p-2 text-gray-300">{PERM_LABELS[k] || k}</td>
+                      <tr key={k} className="border-t border-shBorder">
+                        <td className="p-2 text-shTextMuted">{PERM_LABELS[k] || k}</td>
                         {matrix.roles.map(r => (
                           <td key={r} className="p-2 text-center">
                             {matrix.matrix[r]?.[k]
-                              ? <i className="fas fa-check text-shGreen"/>
+                              ? <i className="fas fa-check text-shPrimary"/>
                               : <i className="fas fa-minus text-gray-600 text-[9px]"/>}
                           </td>
                         ))}

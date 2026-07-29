@@ -73,16 +73,16 @@ export function MileageDashTile({ onNavTax }) {
   };
 
   return (
-    <div className="bg-bgPanel rounded-xl border border-bgHover overflow-hidden card-pop" data-testid="mileage-dash-tile">
+    <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder overflow-hidden card-pop" data-testid="mileage-dash-tile">
       <div className="px-4 pt-3 pb-2 flex items-center justify-between flex-wrap gap-2">
-        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen">
+        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
           <i className="fas fa-car-side mr-2"/>Business Mileage
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           {data && data.ytd_tax_savings > 0 && (
             <span data-testid="mileage-tax-savings-chip"
                   title={`Approx ${data.combined_tax_rate_pct}% combined marginal rate`}
-                  className="bg-shGreen/10 border border-shGreen/40 text-shGreen px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest">
+                  className="bg-shPrimary/10 border border-shPrimary/40 text-shPrimary px-2.5 py-1 rounded-full text-[11px] font-black uppercase tracking-widest">
               <i className="fas fa-piggy-bank mr-1"/>
               YTD tax savings ${data.ytd_tax_savings.toFixed(2)}
             </span>
@@ -90,7 +90,7 @@ export function MileageDashTile({ onNavTax }) {
           {data && (
             <button onClick={onNavTax}
                     data-testid="mileage-dash-nav"
-                    className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">
+                    className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">
               Quarterly tax<i className="fas fa-arrow-right ml-1"/>
             </button>
           )}
@@ -99,25 +99,25 @@ export function MileageDashTile({ onNavTax }) {
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-2 px-4 pb-3" data-testid="mileage-stats">
-        <Stat label="Today" miles={data?.today_miles} dollars={data?.today_deduction} accent="text-shGreen"/>
-        <Stat label="This month" miles={data?.mtd_miles} dollars={data?.mtd_deduction} accent="text-white"/>
-        <Stat label="YTD" miles={data?.ytd_miles} dollars={data?.ytd_deduction} accent="text-shBlue"/>
+        <Stat label="Today" miles={data?.today_miles} dollars={data?.today_deduction} accent="text-shPrimary"/>
+        <Stat label="This month" miles={data?.mtd_miles} dollars={data?.mtd_deduction} accent="text-shText"/>
+        <Stat label="YTD" miles={data?.ytd_miles} dollars={data?.ytd_deduction} accent="text-shSecondary"/>
       </div>
 
       {/* Quick-log form */}
       <form onSubmit={log}
-            className="border-t border-bgHover bg-bgBase/30 px-4 py-3 space-y-2"
+            className="border-t border-shBorder bg-[var(--sh-card-base)]/30 px-4 py-3 space-y-2"
             data-testid="mileage-log-form">
         {recent.length > 0 && (
           <div className="flex items-center gap-2" data-testid="mileage-recent-row">
             <label className="block flex-1">
-              <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">
-                <i className="fas fa-clock-rotate-left mr-1 text-shBlue"/>Re-use a recent trip
+              <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">
+                <i className="fas fa-clock-rotate-left mr-1 text-shSecondary"/>Re-use a recent trip
               </span>
               <select onChange={(e) => applyRecent(e.target.value)}
                       defaultValue=""
                       data-testid="mileage-recent-select"
-                      className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                      className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 <option value="">— pick a recent trip —</option>
                 {recent.map((t, i) => (
                   <option key={i} value={i}>
@@ -131,39 +131,39 @@ export function MileageDashTile({ onNavTax }) {
         )}
         <div className="flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Date</span>
+            <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">Date</span>
             <input type="date" value={date} onChange={(e)=>setDate(e.target.value)}
                    data-testid="mileage-input-date"
-                   className="mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
           </label>
           <label className="block">
-            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Miles</span>
+            <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">Miles</span>
             <input type="number" min="0" step="0.1" value={miles} onChange={(e)=>setMiles(e.target.value)}
                    placeholder="e.g. 12.5"
                    data-testid="mileage-input-miles"
-                   className="mt-1 w-24 bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="mt-1 w-24 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
           </label>
           <label className="block flex-1 min-w-[160px]">
-            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Purpose</span>
+            <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">Purpose</span>
             <input type="text" value={purpose} onChange={(e)=>setPurpose(e.target.value)}
                    placeholder='e.g. "Supply run"'
                    data-testid="mileage-input-purpose"
-                   className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
           </label>
           <label className="block flex-1 min-w-[160px]">
-            <span className="block text-[10px] font-black uppercase tracking-widest text-gray-500">Destination</span>
+            <span className="block text-[10px] font-black uppercase tracking-widest text-shTextMuted">Destination</span>
             <input type="text" value={destination} onChange={(e)=>setDestination(e.target.value)}
                    placeholder='e.g. "Petco · Niles Rd"'
                    data-testid="mileage-input-destination"
-                   className="mt-1 w-full bg-bgPanel border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
           </label>
           <button type="submit" disabled={busy}
                   data-testid="mileage-log-submit"
-                  className="bg-shGreen text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  className="bg-shPrimary text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
             {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Logging…</> : <><i className="fas fa-plus mr-1"/>Log miles</>}
           </button>
           {data?.rate_per_mile && (
-            <span className="text-[11px] text-gray-500 italic">Rate ${data.rate_per_mile}/mi</span>
+            <span className="text-[11px] text-shTextMuted italic">Rate ${data.rate_per_mile}/mi</span>
           )}
         </div>
       </form>
@@ -181,10 +181,10 @@ function Stat({ label, miles, dollars, accent }) {
   const m = miles ?? 0;
   const d = dollars ?? 0;
   return (
-    <div className="bg-bgBase rounded-lg border border-bgHover p-2 text-center">
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
+    <div className="bg-[var(--sh-card-base)] rounded-lg border border-shBorder p-2 text-center">
+      <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{label}</p>
       <p className={`text-lg font-black ${accent}`}>{m} mi</p>
-      <p className="text-[11px] text-gray-400">${d.toFixed ? d.toFixed(2) : d}</p>
+      <p className="text-[11px] text-shTextMuted">${d.toFixed ? d.toFixed(2) : d}</p>
     </div>
   );
 }

@@ -33,20 +33,20 @@ export default function DogManageMenu({ dog, onOpen, onDelete }) {
   return (
     <div ref={ref} className="absolute top-3 right-3 z-10" data-testid={`dog-manage-${dog.id}`}>
       <button onClick={() => setOpen(o => !o)} data-testid={`dog-manage-btn-${dog.id}`}
-              className="bg-bgHeader/90 text-white px-3 py-1.5 rounded-md text-[11px] font-black uppercase tracking-widest border border-bgHover hover:border-shGreen flex items-center gap-1.5 shadow-lg">
+              className="bg-bgHeader/90 text-shText px-3 py-1.5 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder hover:border-shPrimary flex items-center gap-1.5 shadow-lg">
         <i className="fas fa-sliders"/>Manage<i className={`fas fa-chevron-${open ? "up" : "down"} text-[9px]`}/>
       </button>
       {open && (
-        <div className="absolute right-0 mt-1 w-56 bg-bgPanel border border-bgHover rounded-md shadow-2xl py-1"
+        <div className="absolute right-0 mt-1 w-56 bg-[var(--sh-card-base)] border border-shBorder rounded-md shadow-2xl py-1"
              data-testid={`dog-manage-menu-${dog.id}`}>
           {QUICK_TABS.map(t => (
             <button key={t.id} onClick={() => { setOpen(false); onOpen(dog, t.id); }}
                     data-testid={`dog-manage-item-${dog.id}-${t.id}`}
-                    className="w-full text-left px-3 py-2 text-[12px] font-black uppercase tracking-widest text-gray-300 hover:bg-bgHover hover:text-white flex items-center gap-2">
-              <i className={`fas ${t.icon} text-shGreen w-4 text-center`}/>{t.label}
+                    className="w-full text-left px-3 py-2 text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:bg-shSurfaceRaised hover:text-shText flex items-center gap-2">
+              <i className={`fas ${t.icon} text-shPrimary w-4 text-center`}/>{t.label}
             </button>
           ))}
-          <div className="border-t border-bgHover my-1"/>
+          <div className="border-t border-shBorder my-1"/>
           <button onClick={() => { setOpen(false); onDelete(); }}
                   data-testid={`dog-manage-delete-${dog.id}`}
                   className="w-full text-left px-3 py-2 text-[12px] font-black uppercase tracking-widest text-red-400 hover:bg-red-500/10 flex items-center gap-2">

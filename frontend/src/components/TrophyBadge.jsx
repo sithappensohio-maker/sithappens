@@ -57,10 +57,10 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
         onClick={onClick}
         title={name}
         data-testid={testId || `trophy-${t.trophy_code || t.code || "badge"}`}
-        className={`relative ${dim} rounded-2xl bg-bgBase grid place-items-center transition transform overflow-hidden border-2 ${tierBorder} shadow-lg ${onClick ? "hover:scale-105 cursor-pointer" : "cursor-default"} ${locked ? "opacity-30 grayscale" : ""}`}
+        className={`relative ${dim} rounded-2xl bg-[var(--sh-card-base)] grid place-items-center transition transform overflow-hidden border-2 ${tierBorder} shadow-lg ${onClick ? "hover:scale-105 cursor-pointer" : "cursor-default"} ${locked ? "opacity-30 grayscale" : ""}`}
       >
         <img src={image} alt={name} className="w-full h-full object-contain"/>
-        {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-bgBase rounded-full p-1 text-gray-400"/>}
+        {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-[var(--sh-card-base)] rounded-full p-1 text-shTextMuted"/>}
       </button>
     );
   }
@@ -91,7 +91,7 @@ export default function TrophyBadge({ trophy, definition, size = "md", onClick, 
       ) : (
         <i className={`fas ${icon} ${txt} drop-shadow`}/>
       )}
-      {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-bgBase rounded-full p-1 text-gray-400"/>}
+      {locked && <i className="fas fa-lock absolute bottom-0 right-0 text-[12px] bg-[var(--sh-card-base)] rounded-full p-1 text-shTextMuted"/>}
     </button>
   );
 }

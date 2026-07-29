@@ -85,7 +85,7 @@ export default function Pipeline({ onJumpToDog }) {
     <>
     <div className="p-8 max-w-7xl mx-auto space-y-6" data-testid="pipeline-screen">
       <PageHero
-        eyebrow={{ icon: "fa-graduation-cap", text: "Training Hub", color: "text-shGreen" }}
+        eyebrow={{ icon: "fa-graduation-cap", text: "Training Hub", color: "text-shPrimary" }}
         title="Training Hub."
         highlight="Every dog. One view."
         subtitle="Active enrollments, current week, last trainer, stalled dogs — all on one page. Open the tracker without leaving."
@@ -103,15 +103,15 @@ export default function Pipeline({ onJumpToDog }) {
       {/* Sprint 110di-72 — Training Tip of the Day */}
       {todayTip && (
         <div data-testid="training-tip-card"
-             className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+             className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md card-info">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
                 <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day · {todayTip.category?.replace(/_/g, " ")}
               </p>
-              <p className="text-white text-[15px] leading-relaxed">{todayTip.tip}</p>
+              <p className="text-shText text-[15px] leading-relaxed">{todayTip.tip}</p>
               {todayTip.source && (
-                <p className="text-gray-500 text-[11px] mt-1">— {todayTip.source}</p>
+                <p className="text-shTextMuted text-[11px] mt-1">— {todayTip.source}</p>
               )}
             </div>
             <CsvImportButton
@@ -140,14 +140,14 @@ export default function Pipeline({ onJumpToDog }) {
       <div className="flex flex-wrap gap-2 mb-5 items-center" data-testid="pipeline-filters">
         <input value={search} onChange={(e)=>setSearch(e.target.value)} placeholder="Search dog, client, program…"
                data-testid="pipeline-search"
-               className="flex-1 min-w-[200px] bg-bgPanel border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
+               className="flex-1 min-w-[200px] bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none" />
         <FilterChip label="All Statuses" value="" current={filterStatus} onClick={setFilterStatus} />
         {Object.entries(STATUS_META).map(([k, m]) => (
           <FilterChip key={k} label={m.label} value={k} current={filterStatus} onClick={setFilterStatus} color={m.color} />
         ))}
         <div className="w-full md:w-auto md:ml-2">
           <select value={filterType} onChange={(e)=>setFilterType(e.target.value)} data-testid="pipeline-type-filter"
-                  className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                  className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             <option value="">All Types</option>
             {Object.entries(TYPE_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
           </select>
@@ -155,25 +155,25 @@ export default function Pipeline({ onJumpToDog }) {
         <input value={trainerFilter} onChange={(e)=>setTrainerFilter(e.target.value)}
                placeholder="Filter by trainer…"
                data-testid="pipeline-trainer-filter"
-               className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm w-48"/>
+               className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm w-48"/>
         <button onClick={() => setFilterStalled(s => !s)}
                 data-testid="pipeline-stalled-filter"
                 className={`px-3 py-2 rounded text-[12px] font-black uppercase tracking-widest border transition ${
                   filterStalled
                     ? "bg-red-500/20 text-red-300 border-red-500/40"
-                    : "bg-bgPanel text-gray-400 border-bgHover hover:text-white"
+                    : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:text-shText"
                 }`}>
           <i className="fas fa-triangle-exclamation mr-1"/>Stalled 7d+
         </button>
       </div>
 
       <div className="card-stat rounded-xl overflow-hidden shadow-lg">
-        {loading && <p className="p-8 text-center text-gray-500 text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
+        {loading && <p className="p-8 text-center text-shTextMuted text-sm"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>}
         {!loading && rows.length === 0 && (
-          <p className="p-12 text-center text-gray-500 text-sm">No enrollments match these filters.</p>
+          <p className="p-12 text-center text-shTextMuted text-sm">No enrollments match these filters.</p>
         )}
         {!loading && rows.length > 0 && (
-          <div className="divide-y divide-bgHover">
+          <div className="divide-y divide-shBorder">
             {rows.map(r => (
               <Row
                 key={r.id}
@@ -214,50 +214,50 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenTracker, onSaved }) {
       <button
         onClick={onToggle}
         data-testid={`pipeline-row-toggle-${row.id}`}
-        className="w-full px-4 py-3 hover:bg-bgHover/30 text-left transition flex items-center gap-3"
+        className="w-full px-4 py-3 hover:bg-shSurfaceRaised/30 text-left transition flex items-center gap-3"
       >
         {row.dog_photo
-          ? <img src={row.dog_photo} alt={row.dog_name} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover border border-bgHover shrink-0" />
-          : <div className="w-10 h-10 rounded-full bg-bgBase border border-bgHover flex items-center justify-center shrink-0 text-shGreen"><i className="fas fa-paw"/></div>}
+          ? <img src={row.dog_photo} alt={row.dog_name} loading="lazy" decoding="async" className="w-10 h-10 rounded-full object-cover border border-shBorder shrink-0" />
+          : <div className="w-10 h-10 rounded-full bg-[var(--sh-card-base)] border border-shBorder flex items-center justify-center shrink-0 text-shPrimary"><i className="fas fa-paw"/></div>}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-black text-white">{row.dog_name}</p>
-            <span className="text-[14px] text-gray-500">·</span>
-            <p className="text-[15px] text-gray-400 truncate">{row.client_name}</p>
+            <p className="text-sm font-black text-shText">{row.dog_name}</p>
+            <span className="text-[14px] text-shTextMuted">·</span>
+            <p className="text-[15px] text-shTextMuted truncate">{row.client_name}</p>
             <span className="text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded" style={{color: tm.color, background: tm.color+"15", border: `1px solid ${tm.color}40`}}>{tm.label}</span>
             {hasNotes && (
-              <span className="text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-shBlue/15 text-shBlue border border-shBlue/40" title="Has trainer notes">
+              <span className="text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded bg-shSecondary/15 text-shSecondary border border-shSecondary/40" title="Has trainer notes">
                 <i className="fas fa-note-sticky mr-1"/>Notes
               </span>
             )}
             {overdue && <span className="text-[13px] font-black uppercase tracking-widest px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40"><i className="fas fa-triangle-exclamation mr-1"/>Overdue {Math.abs(row.days_to_target)}d</span>}
           </div>
-          <p className="text-[15px] text-gray-300 mt-1 truncate">{row.program_snapshot?.name}</p>
+          <p className="text-[15px] text-shTextMuted mt-1 truncate">{row.program_snapshot?.name}</p>
           <div className="mt-1.5 flex items-center gap-3">
-            <div className="flex-1 max-w-xs h-2 bg-bgBase rounded-full overflow-hidden border border-bgHover">
+            <div className="flex-1 max-w-xs h-2 bg-[var(--sh-card-base)] rounded-full overflow-hidden border border-shBorder">
               <div className="h-full transition-all" style={{width: `${row.mastered_pct||0}%`, background: tm.color}} />
             </div>
-            <span className="text-[14px] text-gray-400 font-black tabular-nums whitespace-nowrap">{row.mastered_pct}% · {row.mastered_goals}/{row.total_goals}</span>
+            <span className="text-[14px] text-shTextMuted font-black tabular-nums whitespace-nowrap">{row.mastered_pct}% · {row.mastered_goals}/{row.total_goals}</span>
           </div>
         </div>
         <div className="shrink-0 text-right">
           <span className="text-[13px] font-black uppercase tracking-widest px-2 py-1 rounded" style={{color: sm.color, background: sm.color+"15", border: `1px solid ${sm.color}40`}}>
             <i className={`fas ${sm.icon} mr-1`}/>{sm.label}
           </span>
-          <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest mt-1">
+          <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest mt-1">
             {row.days_since_start != null ? `${row.days_since_start}d in` : "—"}
             {row.target_completion_date && ` · ${row.days_to_target >= 0 ? row.days_to_target + "d left" : Math.abs(row.days_to_target) + "d over"}`}
           </p>
         </div>
-        <i className={`fas ${expanded ? "fa-chevron-up" : "fa-chevron-down"} text-gray-500 ml-2 shrink-0`}/>
+        <i className={`fas ${expanded ? "fa-chevron-up" : "fa-chevron-down"} text-shTextMuted ml-2 shrink-0`}/>
       </button>
 
       {expanded && (
         <ExpandedDetail row={row} onJumpToDog={onJumpToDog} onSaved={onSaved} />
       )}
       {/* Sprint 110di-72 — Quick actions + last-session ribbon */}
-      <div className="border-t border-bgHover/60 bg-bgBase/40 px-4 py-2 flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="text-gray-500 font-black uppercase tracking-widest">
+      <div className="border-t border-shBorder/60 bg-[var(--sh-card-base)]/40 px-4 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+        <span className="text-shTextMuted font-black uppercase tracking-widest">
           <i className="fas fa-clock mr-1"/>
           Last session: {row.last_session_at
             ? `${new Date(row.last_session_at).toLocaleDateString([], {month:"short",day:"numeric"})} · ${row.last_trainer_name || "Trainer"}`
@@ -272,13 +272,13 @@ function Row({ row, expanded, onToggle, onJumpToDog, onOpenTracker, onSaved }) {
         <div className="ml-auto flex flex-wrap gap-1.5">
           <button onClick={(e)=>{ e.stopPropagation(); onOpenTracker(); }}
                   data-testid={`hub-open-tracker-${row.id}`}
-                  className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shGreen/25">
+                  className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shPrimary/25">
             <i className="fas fa-paw mr-1"/>Tracker
           </button>
           {onJumpToDog && (
             <button onClick={(e)=>{ e.stopPropagation(); onJumpToDog(row.dog_id); }}
                     data-testid={`hub-open-dog-${row.id}`}
-                    className="bg-shBlue/15 text-shBlue border border-shBlue/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shBlue/25">
+                    className="bg-shSecondary/15 text-shSecondary border border-shSecondary/40 px-2 py-1 rounded font-black uppercase tracking-widest hover:bg-shSecondary/25">
               <i className="fas fa-dog mr-1"/>Dog Profile
             </button>
           )}
@@ -335,13 +335,13 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
   const progress = row.goal_progress || {};
 
   return (
-    <div className="px-4 pb-5 pt-2 bg-bgBase/40 border-t border-bgHover" data-testid={`pipeline-detail-${row.id}`}>
+    <div className="px-4 pb-5 pt-2 bg-[var(--sh-card-base)]/40 border-t border-shBorder" data-testid={`pipeline-detail-${row.id}`}>
       {/* Quick actions */}
       <div className="flex flex-wrap gap-2 mb-4">
         <button
           onClick={() => onJumpToDog?.(row.dog_id)}
           data-testid={`pipeline-jump-${row.id}`}
-          className="bg-shBlue/15 hover:bg-shBlue/30 text-shBlue border border-shBlue/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
+          className="bg-shSecondary/15 hover:bg-shSecondary/30 text-shSecondary border border-shSecondary/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
         >
           <i className="fas fa-paw mr-1.5"/>Open dog profile
         </button>
@@ -363,7 +363,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
             <button
               onClick={() => setStatus("completed")}
               data-testid={`pipeline-status-complete-${row.id}`}
-              className="bg-shGreen/15 hover:bg-shGreen/30 text-shGreen border border-shGreen/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
+              className="bg-shPrimary/15 hover:bg-shPrimary/30 text-shPrimary border border-shPrimary/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
             >
               <i className="fas fa-flag-checkered mr-1.5"/>Mark complete
             </button>
@@ -373,7 +373,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
           <button
             onClick={() => setStatus("active")}
             data-testid={`pipeline-status-resume-${row.id}`}
-            className="bg-shGreen/15 hover:bg-shGreen/30 text-shGreen border border-shGreen/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
+            className="bg-shPrimary/15 hover:bg-shPrimary/30 text-shPrimary border border-shPrimary/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest"
           >
             <i className="fas fa-play mr-1.5"/>Resume
           </button>
@@ -383,10 +383,10 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
       {/* Trainer notes */}
       <div className="mb-5">
         <div className="flex items-baseline justify-between mb-2">
-          <label className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">
+          <label className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary">
             <i className="fas fa-note-sticky mr-1.5"/>Trainer Notes
           </label>
-          <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">
+          <span className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">
             {saving ? "Saving…" : savedAt ? `Saved ${formatRelativeTime(savedAt)}` : "Auto-saves as you type"}
           </span>
         </div>
@@ -396,14 +396,14 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
           placeholder="Anything worth remembering — temperament, what worked this week, follow-ups, handler quirks…"
           rows={4}
           data-testid={`pipeline-notes-${row.id}`}
-          className="w-full bg-bgPanel border border-bgHover rounded p-2 text-sm text-white focus:border-shBlue outline-none"
+          className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-sm text-shText focus:border-shSecondary outline-none"
         />
       </div>
 
       {/* Goal grid */}
       {modules.length > 0 ? (
         <div data-testid={`pipeline-goals-${row.id}`}>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-2">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-2">
             <i className="fas fa-list-check mr-1.5"/>Goals · Click a status to update
           </p>
           {modules.map((m, mi) => (
@@ -417,7 +417,7 @@ function ExpandedDetail({ row, onJumpToDog, onSaved }) {
           ))}
         </div>
       ) : (
-        <p className="text-gray-500 text-[13px] italic">This program has no modules/goals defined yet — edit the program in Settings to add some.</p>
+        <p className="text-shTextMuted text-[13px] italic">This program has no modules/goals defined yet — edit the program in Settings to add some.</p>
       )}
     </div>
   );
@@ -427,26 +427,26 @@ function ModuleBlock({ module: mod, moduleIndex, progress, onGoalUpdate }) {
   const goals = mod.goals || [];
   const mastered = goals.filter(g => (progress[g.id] || {}).status === "mastered").length;
   return (
-    <div className="mb-3 last:mb-0 bg-bgPanel border border-bgHover rounded-lg overflow-hidden">
-      <div className="px-3 py-2 bg-bgHover/40 flex items-baseline justify-between">
-        <p className="text-[13px] font-black text-white">
-          <span className="text-shBlue">M{moduleIndex + 1}</span> · {mod.name || `Module ${moduleIndex + 1}`}
+    <div className="mb-3 last:mb-0 bg-[var(--sh-card-base)] border border-shBorder rounded-lg overflow-hidden">
+      <div className="px-3 py-2 bg-shSurfaceRaised/40 flex items-baseline justify-between">
+        <p className="text-[13px] font-black text-shText">
+          <span className="text-shSecondary">M{moduleIndex + 1}</span> · {mod.name || `Module ${moduleIndex + 1}`}
         </p>
-        <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">
+        <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">
           {mastered}/{goals.length} mastered
         </span>
       </div>
       {goals.length === 0 ? (
-        <p className="px-3 py-2 text-gray-500 text-[12px] italic">No goals in this module.</p>
+        <p className="px-3 py-2 text-shTextMuted text-[12px] italic">No goals in this module.</p>
       ) : (
-        <ul className="divide-y divide-bgHover">
+        <ul className="divide-y divide-shBorder">
           {goals.map(g => {
             const p = progress[g.id] || { status: "not_started", score: 0, notes: "" };
             return (
               <li key={g.id} className="px-3 py-2 flex items-center gap-3" data-testid={`pipeline-goal-${g.id}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] text-white truncate">{g.name}</p>
-                  {g.description && <p className="text-[11px] text-gray-500 truncate">{g.description}</p>}
+                  <p className="text-[13px] text-shText truncate">{g.name}</p>
+                  {g.description && <p className="text-[11px] text-shTextMuted truncate">{g.description}</p>}
                 </div>
                 <ScoreSelector
                   score={p.score || 0}
@@ -472,7 +472,7 @@ function ScoreSelector({ score, status, manualOnly, onChange, onStatusToggle, te
       <button
         onClick={() => onStatusToggle(isDone ? "not_started" : "mastered")}
         data-testid={`${testIdPrefix}-toggle`}
-        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest border ${isDone ? "bg-shGreen/20 text-shGreen border-shGreen/50" : "bg-bgBase text-gray-400 border-bgHover hover:text-white"}`}
+        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest border ${isDone ? "bg-shPrimary/20 text-shPrimary border-shPrimary/50" : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:text-shText"}`}
       >
         {isDone ? "✓ Done" : "Mark Done"}
       </button>
@@ -503,9 +503,9 @@ function ScoreSelector({ score, status, manualOnly, onChange, onStatusToggle, te
 
 function Stat({ label, value, color }) {
   return (
-    <div className="px-3 py-1.5 rounded border bg-bgPanel" style={{borderColor: color+"50"}}>
+    <div className="px-3 py-1.5 rounded border bg-[var(--sh-card-base)]" style={{borderColor: color+"50"}}>
       <span className="text-[14px] font-black uppercase tracking-widest" style={{color}}>{label}</span>
-      <span className="text-white ml-2 font-black">{value}</span>
+      <span className="text-shText ml-2 font-black">{value}</span>
     </div>
   );
 }
@@ -514,7 +514,7 @@ function FilterChip({ label, value, current, onClick, color }) {
   const active = current === value;
   return (
     <button onClick={()=>onClick(value)} data-testid={`pipeline-filter-${value || "all"}`}
-            className={`px-3 py-1.5 rounded text-[15px] font-black uppercase tracking-widest border transition ${active?"text-white":"text-gray-400 border-bgHover hover:text-white"}`}
+            className={`px-3 py-1.5 rounded text-[15px] font-black uppercase tracking-widest border transition ${active?"text-shText":"text-shTextMuted border-shBorder hover:text-shText"}`}
             style={active ? {background: (color||"#00a9e0"), borderColor: color||"#00a9e0"} : {}}>
       {label}
     </button>

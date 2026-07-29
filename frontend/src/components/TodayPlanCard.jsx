@@ -229,7 +229,7 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
   // card), skip the green outer frame and just spit out the inner items list.
   const inner = (
     <>
-      {err && <p className="text-red-400 text-[14px] mb-3" data-testid="today-plan-err">{err}</p>}
+      {err && <p className="text-shDanger text-[14px] mb-3" data-testid="today-plan-err">{err}</p>}
       <div className="space-y-4">
         {visibleItems.map((item) => {
           const pct = item.total_days ? Math.round((item.streak / item.total_days) * 100) : 0;
@@ -237,23 +237,23 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
           const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
           const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
           return (
-            <div key={item.homework_id} className={`${unwrapped ? "" : "bg-bgBase border border-bgHover rounded-lg p-4"}`} data-testid={`today-plan-item-${item.homework_id}`}>
+            <div key={item.homework_id} className={`${unwrapped ? "" : "bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4"}`} data-testid={`today-plan-item-${item.homework_id}`}>
               <div className="flex items-start justify-between gap-2 flex-wrap mb-2">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+                  <p className="text-[12px] font-black uppercase tracking-widest text-shSecondary">
                     {item.dog_name} · day {item.day_number}/{item.total_days}
-                    {totalMinutes > 0 && <span className="text-gray-500 normal-case"> · ~{totalMinutes} min</span>}
+                    {totalMinutes > 0 && <span className="text-shTextMuted normal-case"> · ~{totalMinutes} min</span>}
                   </p>
-                  <h3 className="text-base font-black text-white uppercase italic tracking-tight">{item.title}</h3>
-                  {item.day_focus && <p className="text-[14px] text-gray-300 mt-0.5"><i className="fas fa-flag-checkered text-shGreen mr-1"/>{item.day_focus}</p>}
+                  <h3 className="text-base font-black text-shText uppercase italic tracking-tight">{item.title}</h3>
+                  {item.day_focus && <p className="text-[14px] text-shTextMuted mt-0.5"><i className="fas fa-flag-checkered text-shPrimary mr-1"/>{item.day_focus}</p>}
                 </div>
                 {/* Sprint 110m — when this is rendered inside a per-plan card
                     (unwrapped=true), the parent already shows a progress ring at
                     the header level, so we drop the duplicate "Progress N%" tile. */}
                 {!unwrapped && (
                   <div className="text-right">
-                    <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest">Progress</p>
-                    <p className="text-shGreen text-xl font-black">{pct}%</p>
+                    <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">Progress</p>
+                    <p className="text-shPrimary text-xl font-black">{pct}%</p>
                   </div>
                 )}
               </div>
@@ -270,13 +270,13 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                     const isSubmitted = d.status === "submitted";
                     const isLocked = d.status === "locked";
                     const isNeedsRedo = d.status === "needs_redo";
-                    let cls = "border-bgHover bg-bgBase/40 text-gray-600";
+                    let cls = "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted";
                     let icon = "fa-lock";
-                    if (isDone) { cls = "border-shGreen/50 bg-shGreen/15 text-shGreen"; icon = "fa-check"; }
-                    else if (isSubmitted) { cls = "border-shOrange/50 bg-shOrange/15 text-shOrange"; icon = "fa-hourglass-half"; }
+                    if (isDone) { cls = "border-shPrimary/50 bg-shPrimary/15 text-shPrimary"; icon = "fa-check"; }
+                    else if (isSubmitted) { cls = "border-shAccent/50 bg-shAccent/15 text-shAccent"; icon = "fa-hourglass-half"; }
                     else if (isNeedsRedo) { cls = "border-red-500/50 bg-red-500/15 text-red-300"; icon = "fa-rotate-left"; }
-                    else if (isCurrent) { cls = "border-shGreen bg-shGreen/25 text-white ring-2 ring-shGreen/40"; icon = "fa-circle-play"; }
-                    else if (isLocked) { cls = "border-bgHover bg-bgBase/40 text-gray-600"; icon = "fa-lock"; }
+                    else if (isCurrent) { cls = "border-shPrimary bg-shPrimary/25 text-shText ring-2 ring-shPrimary/40"; icon = "fa-circle-play"; }
+                    else if (isLocked) { cls = "border-shBorder bg-[var(--sh-card-base)] text-shTextMuted"; icon = "fa-lock"; }
                     return (
                       <div key={d.day_number}
                            data-testid={`today-plan-day-pip-${item.homework_id}-${d.day_number}`}
@@ -294,17 +294,17 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
               <div className="flex items-center justify-end gap-2 mb-2">
                 <button onClick={() => setFullscreenItem(item)}
                         data-testid={`today-plan-fullscreen-${item.homework_id}`}
-                        className="text-[12px] font-black uppercase tracking-widest text-shBlue hover:text-white border border-shBlue/40 hover:border-shBlue rounded px-2.5 py-1 transition">
+                        className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:text-shText border border-shSecondary/40 hover:border-shSecondary rounded px-2.5 py-1 transition">
                   <i className="fas fa-expand mr-1.5"/>Open fullscreen
                 </button>
               </div>
 
               {item.instructions && (
-                <div className="bg-bgPanel/60 border-l-4 border-shGreen/60 rounded p-3 mb-3" data-testid={`today-plan-instructions-block-${item.homework_id}`}>
-                  <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-1">
+                <div className="bg-[var(--sh-card-base)]/60 border-l-4 border-shPrimary/60 rounded p-3 mb-3" data-testid={`today-plan-instructions-block-${item.homework_id}`}>
+                  <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary mb-1">
                     <i className="fas fa-bookmark mr-1"/>Trainer's instructions
                   </p>
-                  <p className="text-[13px] text-gray-200 whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
+                  <p className="text-[13px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
                 </div>
               )}
 
@@ -350,26 +350,26 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                   title: item.title,
                 })}
                         data-testid={`today-plan-catchup-${item.homework_id}`}
-                        className="w-full mb-3 bg-shOrange/15 border border-shOrange/40 hover:bg-shOrange/25 rounded p-3 text-left transition">
-                  <p className="text-[13px] font-black uppercase tracking-widest text-shOrange">
+                        className="w-full mb-3 bg-shAccent/15 border border-shAccent/40 hover:bg-shAccent/25 rounded p-3 text-left transition">
+                  <p className="text-[13px] font-black uppercase tracking-widest text-shAccent">
                     <i className="fas fa-clock-rotate-left mr-1"/>You missed day {item.missed_day_number}
                   </p>
-                  <p className="text-[14px] text-gray-300">Tap to pick a catch-up plan.</p>
+                  <p className="text-[14px] text-shTextMuted">Tap to pick a catch-up plan.</p>
                 </button>
               )}
 
               {item.status === "submitted" ? (
-                <p className="text-[14px] text-shGreen italic"><i className="fas fa-circle-check mr-1"/>Submitted — waiting on trainer review.</p>
+                <p className="text-[14px] text-shPrimary italic"><i className="fas fa-circle-check mr-1"/>Submitted — waiting on trainer review.</p>
               ) : item.status === "needs_redo" ? (
-                <p className="text-[14px] text-shOrange italic"><i className="fas fa-rotate-left mr-1"/>Trainer asked you to redo this day. Re-check steps below.</p>
+                <p className="text-[14px] text-shAccent italic"><i className="fas fa-rotate-left mr-1"/>Trainer asked you to redo this day. Re-check steps below.</p>
               ) : null}
 
               {item.steps.length === 0 ? (
-                <p className="text-[14px] text-gray-500 italic mt-1">No checklist steps on this day — fill in the homework below.</p>
+                <p className="text-[14px] text-shTextMuted italic mt-1">No checklist steps on this day — fill in the homework below.</p>
               ) : (
                 <div className="space-y-1.5 mt-1">
                   {item.status !== "submitted" && (
-                    <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-1" data-testid={`today-plan-instructions-${item.homework_id}`}>
+                    <p className="text-[12px] font-black uppercase tracking-widest text-shPrimary mb-1" data-testid={`today-plan-instructions-${item.homework_id}`}>
                       <i className="fas fa-square-check mr-1"/>Check off each step as you complete the homework below
                     </p>
                   )}
@@ -379,12 +379,12 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                     return (
                       <div key={s.id}
                            data-testid={`today-plan-step-${item.homework_id}-${s.id}`}
-                           className={`rounded border transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover hover:border-shGreen/40"}`}>
+                           className={`rounded border transition ${s.done ? "border-shPrimary/40 bg-shPrimary/5" : "border-shBorder hover:border-shPrimary/40"}`}>
                         <div className="flex items-start gap-3 p-2.5">
                           <button onClick={() => toggleStep(item, s)}
                                   disabled={isBusy || item.status === "submitted"}
                                   data-testid={`today-plan-step-check-${item.homework_id}-${s.id}`}
-                                  className={`shrink-0 w-7 h-7 rounded grid place-items-center transition ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgPanel border border-bgHover hover:border-shGreen"} disabled:opacity-60`}
+                                  className={`shrink-0 w-7 h-7 rounded grid place-items-center transition ${s.done ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary"} disabled:opacity-60`}
                                   aria-label={s.done ? "Mark step incomplete" : "Mark step complete"}>
                             {isBusy ? <i className="fas fa-spinner fa-spin text-xs"/> : s.done ? <i className="fas fa-check text-xs"/> : null}
                           </button>
@@ -392,30 +392,30 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
                                 disabled={isBusy || item.status === "submitted"}
                                 data-testid={`today-plan-step-label-${item.homework_id}-${s.id}`}
                                 className="flex-1 text-left disabled:opacity-60">
-                          <p className={`text-[15px] leading-snug break-words ${s.done ? "line-through text-gray-500" : "text-white"}`}>
+                          <p className={`text-[15px] leading-snug break-words ${s.done ? "line-through text-shTextMuted" : "text-shText"}`}>
                             {s.label}
                           </p>
                           {/* Sprint 110di-66 — Always show per-step directions inline so the
                               client can actually read them without tapping anything. */}
                           {s.description && (
                             <p data-testid={`today-plan-step-description-${item.homework_id}-${s.id}`}
-                               className={`text-[13px] leading-relaxed mt-1 whitespace-pre-wrap ${s.done ? "text-gray-600 line-through decoration-gray-600/40" : "text-gray-300"}`}>
+                               className={`text-[13px] leading-relaxed mt-1 whitespace-pre-wrap ${s.done ? "text-shTextMuted line-through decoration-gray-600/40" : "text-shTextMuted"}`}>
                               {s.description}
                             </p>
                           )}
                         </button>
                         {s.minutes ? (
-                          <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest ${s.done ? "text-gray-600" : "text-shGreen"}`}>
+                          <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest ${s.done ? "text-shTextMuted" : "text-shPrimary"}`}>
                             {s.minutes} min
                           </span>
                         ) : null}
                       </div>
                       {/* Notes stay collapsible since they're optional/edge-case content. */}
                       {s.notes && (
-                        <div className="px-3 pb-3 pt-1 border-t border-bgHover/60"
+                        <div className="px-3 pb-3 pt-1 border-t border-shBorder/60"
                              data-testid={`today-plan-step-notes-${item.homework_id}-${s.id}`}>
-                          <p className="text-[13px] text-gray-400 italic whitespace-pre-wrap leading-relaxed border-l-2 border-shBlue/40 pl-3 mt-2">
-                            <i className="fas fa-circle-info text-shBlue mr-1"/>{s.notes}
+                          <p className="text-[13px] text-shTextMuted italic whitespace-pre-wrap leading-relaxed border-l-2 border-shSecondary/40 pl-3 mt-2">
+                            <i className="fas fa-circle-info text-shSecondary mr-1"/>{s.notes}
                           </p>
                         </div>
                       )}
@@ -465,8 +465,8 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
              data-testid={`day-advance-toast-${celebration.kind}`}>
           <div className={`pointer-events-auto relative max-w-md w-full rounded-xl shadow-2xl border px-4 py-3 flex items-center gap-3 animate-slide-in overflow-visible ${
                   celebration.kind === "complete"
-                    ? "bg-gradient-to-r from-shOrange/30 via-shOrange/20 to-shGreen/20 border-shOrange/60"
-                    : "bg-gradient-to-r from-shGreen/25 via-shGreen/15 to-shBlue/20 border-shGreen/60"
+                    ? "bg-gradient-to-r from-shAccent/30 via-shAccent/20 to-shPrimary/20 border-shAccent/60"
+                    : "bg-gradient-to-r from-shPrimary/25 via-shPrimary/15 to-shSecondary/20 border-shPrimary/60"
                 }`}>
             {/* Sprint 110q — CSS-only confetti burst, only on plan-complete. */}
             {celebration.kind === "complete" && (
@@ -495,12 +495,12 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
             )}
             <span className="text-3xl">{celebration.kind === "complete" ? "🏆" : "🎉"}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-[14px] font-black text-white uppercase tracking-tight">
+              <p className="text-[14px] font-black text-shText uppercase tracking-tight">
                 {celebration.kind === "complete"
                   ? `Plan complete!`
                   : `Day ${celebration.day_completed} done — Day ${celebration.next_day} unlocked!`}
               </p>
-              <p className="text-[12px] text-gray-300 truncate">
+              <p className="text-[12px] text-shTextMuted truncate">
                 {celebration.kind === "complete"
                   ? `${celebration.dog_name} crushed all ${celebration.total_days} days of "${celebration.title}".`
                   : `Keep the streak going with ${celebration.dog_name}.`}
@@ -508,7 +508,7 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
             </div>
             <button onClick={() => setCelebration(null)}
                     data-testid="day-advance-toast-close"
-                    className="text-gray-300 hover:text-white p-1 shrink-0">
+                    className="text-shTextMuted hover:text-shText p-1 shrink-0">
               <i className="fas fa-times"/>
             </button>
           </div>
@@ -523,12 +523,12 @@ export default function TodayPlanCard({ onChanged, homeworkId = null, unwrapped 
   }
 
   return (
-    <div className="bg-bgPanel border border-shGreen/40 rounded-xl p-5 mb-5 shadow-lg" data-testid="today-plan-card">
+    <div className="bg-[var(--sh-card-base)] border border-shPrimary/40 rounded-xl p-5 mb-5 shadow-lg" data-testid="today-plan-card">
       <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-        <h2 className="text-lg font-black text-white uppercase italic tracking-tight">
-          <i className="fas fa-bullseye text-shGreen mr-2"/>Today's Plan
+        <h2 className="text-lg font-black text-shText uppercase italic tracking-tight">
+          <i className="fas fa-bullseye text-shPrimary mr-2"/>Today's Plan
         </h2>
-        <span className="text-[12px] text-gray-500 font-black uppercase tracking-widest">{visibleItems.length} active</span>
+        <span className="text-[12px] text-shTextMuted font-black uppercase tracking-widest">{visibleItems.length} active</span>
       </div>
       {inner}
       {portals}
@@ -546,11 +546,11 @@ function CatchUpModal({ target, onApply, onClose }) {
   };
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose} data-testid="catch-up-modal">
-      <div className="bg-bgPanel border border-shOrange/40 rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <h4 className="text-lg font-black text-white uppercase italic tracking-tight">
-          <i className="fas fa-clock-rotate-left text-shOrange mr-2"/>Catch up — {target.dog_name}
+      <div className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded-2xl w-full max-w-md p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">
+          <i className="fas fa-clock-rotate-left text-shAccent mr-2"/>Catch up — {target.dog_name}
         </h4>
-        <p className="text-[14px] text-gray-400 mt-1">Day {target.missed_day_number} of {target.title} got skipped. What now?</p>
+        <p className="text-[14px] text-shTextMuted mt-1">Day {target.missed_day_number} of {target.title} got skipped. What now?</p>
 
         <div className="space-y-2 mt-4">
           <CatchUpOption busy={busy === "skip_missed"} onClick={() => apply("skip_missed")} testid="catchup-skip"
@@ -561,7 +561,7 @@ function CatchUpModal({ target, onApply, onClose }) {
                          icon="fa-right-from-bracket" title="Push back the schedule" subtitle="Bump everything out by one day."/>
         </div>
 
-        <button onClick={onClose} disabled={!!busy} className="mt-4 text-gray-400 hover:text-white text-[13px] font-black uppercase tracking-widest w-full text-center py-2">
+        <button onClick={onClose} disabled={!!busy} className="mt-4 text-shTextMuted hover:text-shText text-[13px] font-black uppercase tracking-widest w-full text-center py-2">
           Never mind
         </button>
       </div>
@@ -572,11 +572,11 @@ function CatchUpModal({ target, onApply, onClose }) {
 function CatchUpOption({ busy, onClick, icon, title, subtitle, testid }) {
   return (
     <button onClick={onClick} disabled={busy} data-testid={testid}
-            className="w-full text-left flex items-start gap-3 p-3 rounded border border-bgHover hover:border-shGreen/50 bg-bgBase transition disabled:opacity-60">
-      <i className={`fas ${busy ? "fa-spinner fa-spin" : icon} text-shGreen text-xl w-8 text-center pt-0.5`}/>
+            className="w-full text-left flex items-start gap-3 p-3 rounded border border-shBorder hover:border-shPrimary/50 bg-[var(--sh-card-base)] transition disabled:opacity-60">
+      <i className={`fas ${busy ? "fa-spinner fa-spin" : icon} text-shPrimary text-xl w-8 text-center pt-0.5`}/>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-black text-white uppercase tracking-tight">{title}</p>
-        <p className="text-[13px] text-gray-400">{subtitle}</p>
+        <p className="text-sm font-black text-shText uppercase tracking-tight">{title}</p>
+        <p className="text-[13px] text-shTextMuted">{subtitle}</p>
       </div>
     </button>
   );
@@ -591,21 +591,21 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
   const totalMinutes = (item.steps || []).reduce((acc, s) => acc + (Number(s.minutes) || 0), 0);
   const allResources = [...(item.resources || []), ...(item.plan_resources || [])];
   return (
-    <div className="fixed inset-0 z-[9999] bg-bgBase overflow-y-auto overscroll-contain" data-testid="today-plan-fullscreen-modal" role="dialog" aria-modal="true">
-      <div className="sticky top-0 z-10 bg-bgPanel border-b border-bgHover shadow-lg">
+    <div className="fixed inset-0 z-[9999] bg-[var(--sh-card-base)] overflow-y-auto overscroll-contain" data-testid="today-plan-fullscreen-modal" role="dialog" aria-modal="true">
+      <div className="sticky top-0 z-10 bg-[var(--sh-card-base)] border-b border-shBorder shadow-lg">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-widest text-shBlue">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shSecondary">
               {item.dog_name} · day {item.day_number}/{item.total_days}
-              {totalMinutes > 0 && <span className="text-gray-500 normal-case"> · ~{totalMinutes} min</span>}
+              {totalMinutes > 0 && <span className="text-shTextMuted normal-case"> · ~{totalMinutes} min</span>}
             </p>
-            <h2 className="text-lg font-black text-white uppercase italic tracking-tight truncate">{item.title}</h2>
+            <h2 className="text-lg font-black text-shText uppercase italic tracking-tight truncate">{item.title}</h2>
           </div>
           <button onClick={onClose}
                   type="button"
                   data-testid="today-plan-fullscreen-close"
                   aria-label="Close fullscreen view"
-                  className="shrink-0 bg-red-500/20 hover:bg-red-500/40 border-2 border-red-400/60 hover:border-red-400 text-white rounded-full w-11 h-11 grid place-items-center text-lg font-black transition active:scale-95">
+                  className="shrink-0 bg-red-500/20 hover:bg-red-500/40 border-2 border-shDanger/60 hover:border-shDanger text-shText rounded-full w-11 h-11 grid place-items-center text-lg font-black transition active:scale-95">
             <i className="fas fa-xmark"/>
           </button>
         </div>
@@ -613,20 +613,20 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
 
       <div className="max-w-3xl mx-auto px-4 py-6 space-y-5">
         {item.day_focus && (
-          <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-4">
-            <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-1.5">
+          <div className="bg-shPrimary/10 border border-shPrimary/30 rounded-lg p-4">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shPrimary mb-1.5">
               <i className="fas fa-flag-checkered mr-1"/>Today's focus
             </p>
-            <p className="text-[16px] text-white leading-relaxed">{item.day_focus}</p>
+            <p className="text-[16px] text-shText leading-relaxed">{item.day_focus}</p>
           </div>
         )}
 
         {item.instructions && (
-          <div className="bg-bgPanel border border-bgHover rounded-lg p-4">
-            <p className="text-[12px] font-black uppercase tracking-widest text-gray-400 mb-2">
-              <i className="fas fa-bookmark text-shGreen mr-1"/>Trainer's instructions
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-4">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2">
+              <i className="fas fa-bookmark text-shPrimary mr-1"/>Trainer's instructions
             </p>
-            <p className="text-[15px] text-gray-200 whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
+            <p className="text-[15px] text-shTextMuted whitespace-pre-wrap leading-relaxed">{item.instructions}</p>
           </div>
         )}
 
@@ -663,7 +663,7 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
 
         {(item.steps || []).length > 0 && (
           <div>
-            <p className="text-[12px] font-black uppercase tracking-widest text-shGreen mb-3">
+            <p className="text-[12px] font-black uppercase tracking-widest text-shPrimary mb-3">
               <i className="fas fa-list-check mr-1"/>Steps · tap circle to mark done
             </p>
             <div className="space-y-3">
@@ -672,31 +672,31 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
                 return (
                   <div key={s.id}
                        data-testid={`today-plan-fullscreen-step-${s.id}`}
-                       className={`rounded-lg border p-4 transition ${s.done ? "border-shGreen/40 bg-shGreen/5" : "border-bgHover bg-bgPanel"}`}>
+                       className={`rounded-lg border p-4 transition ${s.done ? "border-shPrimary/40 bg-shPrimary/5" : "border-shBorder bg-[var(--sh-card-base)]"}`}>
                     <div className="flex items-start gap-3">
                       <button onClick={() => onToggleStep(s)}
                               type="button"
                               disabled={isBusy || item.status === "submitted"}
                               data-testid={`today-plan-fullscreen-step-check-${s.id}`}
                               aria-label={s.done ? "Mark step incomplete" : "Mark step complete"}
-                              className={`shrink-0 w-12 h-12 rounded-full grid place-items-center transition active:scale-95 ${s.done ? "bg-shGreen text-bgHeader" : "bg-bgBase border-2 border-shGreen/60 hover:border-shGreen hover:bg-shGreen/10"} disabled:opacity-60`}>
-                        {isBusy ? <i className="fas fa-spinner fa-spin"/> : s.done ? <i className="fas fa-check text-lg"/> : <i className="fas fa-circle text-shGreen/30 text-xs"/>}
+                              className={`shrink-0 w-12 h-12 rounded-full grid place-items-center transition active:scale-95 ${s.done ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border-2 border-shPrimary/60 hover:border-shPrimary hover:bg-shPrimary/10"} disabled:opacity-60`}>
+                        {isBusy ? <i className="fas fa-spinner fa-spin"/> : s.done ? <i className="fas fa-check text-lg"/> : <i className="fas fa-circle text-shPrimary/30 text-xs"/>}
                       </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <p className={`text-[17px] leading-snug font-black ${s.done ? "line-through text-gray-500" : "text-white"}`}>{s.label}</p>
+                          <p className={`text-[17px] leading-snug font-black ${s.done ? "line-through text-shTextMuted" : "text-shText"}`}>{s.label}</p>
                           {s.minutes ? (
-                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${s.done ? "bg-bgHover text-gray-500" : "bg-shGreen/20 text-shGreen"}`}>
+                            <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded ${s.done ? "bg-shBorder text-shTextMuted" : "bg-shPrimary/20 text-shPrimary"}`}>
                               {s.minutes} min
                             </span>
                           ) : null}
                         </div>
                         {s.description && (
-                          <p className="text-[14px] text-gray-300 mt-2 whitespace-pre-wrap leading-relaxed">{s.description}</p>
+                          <p className="text-[14px] text-shTextMuted mt-2 whitespace-pre-wrap leading-relaxed">{s.description}</p>
                         )}
                         {s.notes && (
-                          <p className="text-[13px] text-gray-400 italic mt-2 border-l-2 border-shBlue/40 pl-3 whitespace-pre-wrap leading-relaxed">
-                            <i className="fas fa-circle-info text-shBlue mr-1"/>{s.notes}
+                          <p className="text-[13px] text-shTextMuted italic mt-2 border-l-2 border-shSecondary/40 pl-3 whitespace-pre-wrap leading-relaxed">
+                            <i className="fas fa-circle-info text-shSecondary mr-1"/>{s.notes}
                           </p>
                         )}
                       </div>
@@ -714,7 +714,7 @@ function FullscreenItemModal({ item, busy, onToggleStep, onClose }) {
           <button onClick={onClose}
                   type="button"
                   data-testid="today-plan-fullscreen-done"
-                  className="w-full bg-shGreen text-bgHeader py-4 rounded-lg text-[15px] font-black uppercase tracking-widest hover:opacity-90 active:scale-95 transition">
+                  className="w-full bg-shPrimary text-bgHeader py-4 rounded-lg text-[15px] font-black uppercase tracking-widest hover:opacity-90 active:scale-95 transition">
             <i className="fas fa-check mr-2"/>Done reading — back to portal
           </button>
         </div>
@@ -732,8 +732,8 @@ function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSub
   const submitting = !!form.submitting;
   const disabled = !!blockReason || submitting;
   return (
-    <div className="mt-4 pt-4 border-t border-bgHover space-y-3" data-testid={`today-plan-form-${hwId}`}>
-      <p className="text-[12px] font-black uppercase tracking-widest text-shBlue">
+    <div className="mt-4 pt-4 border-t border-shBorder space-y-3" data-testid={`today-plan-form-${hwId}`}>
+      <p className="text-[12px] font-black uppercase tracking-widest text-shSecondary">
         <i className="fas fa-pen-to-square mr-1"/>Today's homework
       </p>
 
@@ -753,27 +753,27 @@ function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSub
       ))}
 
       <div>
-        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Note for your trainer (optional)</label>
+        <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Note for your trainer (optional)</label>
         <textarea value={form.note || ""} onChange={(e) => patch({ note: e.target.value })}
                   rows={2}
                   data-testid={`today-plan-note-${hwId}`}
                   placeholder="Anything tricky? Wins? Questions?"
-                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                  className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
       </div>
 
       <div>
-        <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest block">Photo (optional)</label>
+        <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest block">Photo (optional)</label>
         {form.photo ? (
           <div className="mt-1 relative inline-block">
-            <img src={form.photo} alt="" className="max-h-24 rounded border border-bgHover" />
+            <img src={form.photo} alt="" className="max-h-24 rounded border border-shBorder" />
             <button onClick={() => patch({ photo: "" })}
                     data-testid={`today-plan-photo-clear-${hwId}`}
-                    className="absolute top-1 right-1 bg-black/80 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px]">
+                    className="absolute top-1 right-1 bg-black/80 text-shText rounded-full w-5 h-5 flex items-center justify-center text-[10px]">
               <i className="fas fa-times"/>
             </button>
           </div>
         ) : (
-          <label className="mt-1 inline-flex items-center gap-2 bg-bgBase border border-bgHover rounded px-3 py-2 text-[13px] text-gray-300 font-black uppercase tracking-widest hover:border-shBlue cursor-pointer"
+          <label className="mt-1 inline-flex items-center gap-2 bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-[13px] text-shTextMuted font-black uppercase tracking-widest hover:border-shSecondary cursor-pointer"
                  data-testid={`today-plan-photo-pick-${hwId}`}>
             <i className="fas fa-camera"/>Add photo
             <input type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
@@ -783,14 +783,14 @@ function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSub
 
       <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
         {blockReason && (
-          <span className="text-[12px] text-gray-400 italic" data-testid={`today-plan-block-${hwId}`}>
+          <span className="text-[12px] text-shTextMuted italic" data-testid={`today-plan-block-${hwId}`}>
             <i className="fas fa-lock mr-1"/>{blockReason}
           </span>
         )}
         <button onClick={onSubmit}
                 disabled={disabled}
                 data-testid={`today-plan-submit-${hwId}`}
-                className="bg-shGreen text-bgHeader px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/80 disabled:opacity-50 disabled:cursor-not-allowed">
+                className="bg-shPrimary text-bgHeader px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shPrimary/80 disabled:opacity-50 disabled:cursor-not-allowed">
           <i className={`fas ${submitting ? "fa-spinner fa-spin" : "fa-paper-plane"} mr-2`}/>
           {submitting ? "Sending…" : "Mark Day Complete"}
         </button>
@@ -802,14 +802,14 @@ function InlineHomeworkForm({ item, form, patch, onPickPhoto, blockReason, onSub
 function MoodRow({ value, onChange, testid }) {
   return (
     <div>
-      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">How did it go?</label>
+      <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">How did it go?</label>
       <div className="flex gap-1.5 mt-1" data-testid={testid}>
         {[1, 2, 3, 4, 5].map((n) => (
           <button key={n} onClick={() => onChange(n)} type="button"
                   data-testid={`${testid}-${n}`}
-                  className={`flex-1 py-2 rounded border text-center transition ${value === n ? "border-shGreen bg-shGreen/15" : "border-bgHover hover:border-shGreen/50"}`}>
+                  className={`flex-1 py-2 rounded border text-center transition ${value === n ? "border-shPrimary bg-shPrimary/15" : "border-shBorder hover:border-shPrimary/50"}`}>
             <div className="text-xl leading-none">{MOOD_EMOJI[n]}</div>
-            <div className={`text-[10px] font-black uppercase tracking-widest mt-0.5 ${value === n ? "text-shGreen" : "text-gray-500"}`}>{MOOD_LABEL[n]}</div>
+            <div className={`text-[10px] font-black uppercase tracking-widest mt-0.5 ${value === n ? "text-shPrimary" : "text-shTextMuted"}`}>{MOOD_LABEL[n]}</div>
           </button>
         ))}
       </div>
@@ -820,9 +820,9 @@ function MoodRow({ value, onChange, testid }) {
 function FieldInput({ field, hwId, value, onChange }) {
   const km = KIND_META[field.kind] || { type: "text" };
   const label = (
-    <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">
+    <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">
       {field.label || field.kind}
-      {km.unit && <span className="text-gray-600 normal-case ml-1">({km.unit})</span>}
+      {km.unit && <span className="text-shTextMuted normal-case ml-1">({km.unit})</span>}
     </label>
   );
   const tid = `today-plan-field-${hwId}-${field.id}`;
@@ -834,8 +834,8 @@ function FieldInput({ field, hwId, value, onChange }) {
       <label className="flex items-center gap-2 cursor-pointer">
         <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)}
                data-testid={tid}
-               className="accent-shGreen w-4 h-4" />
-        <span className="text-[14px] text-white">{field.label || field.kind}</span>
+               className="accent-shPrimary w-4 h-4" />
+        <span className="text-[14px] text-shText">{field.label || field.kind}</span>
       </label>
     );
   }
@@ -845,7 +845,7 @@ function FieldInput({ field, hwId, value, onChange }) {
         {label}
         <textarea value={value || ""} onChange={(e) => onChange(e.target.value)} rows={2}
                   data-testid={tid}
-                  className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                  className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
       </div>
     );
   }
@@ -857,7 +857,7 @@ function FieldInput({ field, hwId, value, onChange }) {
              onChange={(e) => onChange(e.target.value)}
              min={km.min} max={km.max}
              data-testid={tid}
-             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
     </div>
   );
 }

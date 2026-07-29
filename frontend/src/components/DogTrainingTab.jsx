@@ -36,7 +36,7 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
   };
   useEffect(() => { if (dogId) load(); }, [dogId]);
 
-  if (!meta) return <p className="text-gray-500 text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
+  if (!meta) return <p className="text-shTextMuted text-sm py-6 text-center"><i className="fas fa-spinner fa-spin mr-2"/>Loading…</p>;
 
   const typeByKey = Object.fromEntries(meta.types.map(t => [t.key, t]));
   const active = enrollments.filter(e => e.status === "active");
@@ -91,10 +91,10 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
 
       {/* Enroll dropdown */}
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[15px] font-black uppercase tracking-widest text-gray-500">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
+        <p className="text-[15px] font-black uppercase tracking-widest text-shTextMuted">{active.length>0 ? `${active.length} active enrollment${active.length>1?"s":""}` : "No active programs"}</p>
         <div className="flex gap-2">
           <button onClick={()=>setEnrollOpen(true)} data-testid="enroll-btn"
-                  className="bg-shBlue text-white px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
+                  className="bg-shSecondary text-shText px-4 py-2 rounded font-black text-[15px] uppercase tracking-widest shadow">
             <i className="fas fa-graduation-cap mr-1"/>Enroll
           </button>
           <button onClick={()=>setCustomOpen(true)} data-testid="custom-btn"
@@ -116,28 +116,28 @@ export default function DogTrainingTab({ dogId, dogName, dogAgeMonths = 0 }) {
                           onOpenTracker={()=>setTrackerFor({ dog_id: dogId, enrollment_id: e.id })} />
         ))
       ) : (
-        <div className="bg-bgBase/40 border border-dashed border-bgHover rounded p-6 text-center" data-testid="no-active">
-          <i className="fas fa-graduation-cap text-shBlue text-3xl mb-2"/>
-          <p className="text-sm font-black text-white uppercase tracking-tight">No active training program</p>
-          <p className="text-[14px] text-gray-400 mt-1">Enroll {dogName} in a standard program or build a custom plan.</p>
+        <div className="bg-[var(--sh-card-base)]/40 border border-dashed border-shBorder rounded p-6 text-center" data-testid="no-active">
+          <i className="fas fa-graduation-cap text-shSecondary text-3xl mb-2"/>
+          <p className="text-sm font-black text-shText uppercase tracking-tight">No active training program</p>
+          <p className="text-[14px] text-shTextMuted mt-1">Enroll {dogName} in a standard program or build a custom plan.</p>
         </div>
       )}
 
       {/* History */}
       {history.length > 0 && (
-        <details className="bg-bgBase/40 border border-bgHover rounded p-3" data-testid="enrollment-history">
-          <summary className="cursor-pointer text-[15px] font-black uppercase tracking-widest text-shBlue">History · {history.length}</summary>
+        <details className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded p-3" data-testid="enrollment-history">
+          <summary className="cursor-pointer text-[15px] font-black uppercase tracking-widest text-shSecondary">History · {history.length}</summary>
           <div className="mt-3 space-y-2">
             {history.map(h => (
-              <div key={h.id} className="bg-bgPanel rounded p-3 border border-bgHover">
+              <div key={h.id} className="bg-[var(--sh-card-base)] rounded p-3 border border-shBorder">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-black text-white">{h.program_snapshot.name}</p>
-                    <p className="text-[15px] text-gray-500">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
+                    <p className="text-sm font-black text-shText">{h.program_snapshot.name}</p>
+                    <p className="text-[15px] text-shTextMuted">{h.status.toUpperCase()} · {h.mastered_goals}/{h.total_goals} mastered ({h.mastered_pct}%)</p>
                   </div>
                   {h.status !== "active" && (
                     <button onClick={()=>updateStatus(h.id, "active")} data-testid={`resume-${h.id}`}
-                            className="text-[14px] font-black uppercase tracking-widest text-shBlue hover:text-white">Resume</button>
+                            className="text-[14px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">Resume</button>
                   )}
                 </div>
               </div>
@@ -183,24 +183,24 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
   const totalWeeks = enrollment.total_weeks || (snap.modules || []).length;
   const currentWeek = enrollment.current_week || 1;
   return (
-    <div className="bg-bgBase/60 border border-bgHover rounded-lg overflow-hidden" data-testid={`enrollment-${enrollment.id}`}>
-      <div className="px-3 sm:px-4 py-3 border-b border-bgHover" style={{background: color + "10"}}>
+    <div className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded-lg overflow-hidden" data-testid={`enrollment-${enrollment.id}`}>
+      <div className="px-3 sm:px-4 py-3 border-b border-shBorder" style={{background: color + "10"}}>
         <div className="flex items-center gap-3 sm:gap-4">
           <ProgressRing percent={enrollment.mastered_pct} size={64} stroke={6} color={color}
                         label={`${enrollment.mastered_goals}/${enrollment.total_goals}`} />
           <div className="flex-1 min-w-0">
             <p className="text-[13px] sm:text-[14px] font-black uppercase tracking-widest" style={{color}}>{typeMeta?.label || snap.type}</p>
-            <p className="text-sm sm:text-base font-black text-white truncate">{snap.name}</p>
+            <p className="text-sm sm:text-base font-black text-shText truncate">{snap.name}</p>
           </div>
           <div className="flex flex-col gap-1 shrink-0">
             <button onClick={onOpenTracker} data-testid={`open-tracker-${enrollment.id}`}
-                    className="bg-shGreen/20 text-shGreen border border-shGreen/40 px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap shadow">
+                    className="bg-shPrimary/20 text-shPrimary border border-shPrimary/40 px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap shadow">
               <i className="fas fa-paw mr-1"/>Log Session
             </button>
             <button onClick={()=>onStatus("completed")} data-testid={`complete-${enrollment.id}`}
-                    className="bg-shGreen text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
+                    className="bg-shPrimary text-bgHeader px-3 py-1.5 rounded font-black text-[13px] sm:text-[14px] uppercase tracking-widest shadow whitespace-nowrap"><i className="fas fa-flag-checkered mr-1"/>Complete</button>
             <button onClick={()=>onStatus("on_hold")} data-testid={`hold-${enrollment.id}`}
-                    className="text-gray-400 hover:text-white text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
+                    className="text-shTextMuted hover:text-shText text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-pause mr-1"/>On Hold</button>
             <button onClick={onUnenroll} data-testid={`unenroll-${enrollment.id}`}
                     className="text-red-400 hover:text-red-300 text-[13px] sm:text-[14px] font-black uppercase tracking-widest whitespace-nowrap"><i className="fas fa-user-minus mr-1"/>Unenroll</button>
           </div>
@@ -210,22 +210,22 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
                            testid={`enrollment-focus-${enrollment.id}`} />
         )}
         <div className="flex items-center gap-2 flex-wrap mt-2">
-          <p className="text-[13px] sm:text-[14px] text-gray-500 font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
+          <p className="text-[13px] sm:text-[14px] text-shTextMuted font-black uppercase tracking-widest">Started {enrollment.started_at}</p>
           {editTarget ? (
             <input type="date" defaultValue={enrollment.target_completion_date||""}
                    onBlur={(e)=>{ if (e.target.value !== enrollment.target_completion_date) onTargetDate(e.target.value); setEditTarget(false); }}
                    data-testid={`target-date-input-${enrollment.id}`}
-                   className="bg-bgPanel border border-bgHover rounded px-1 text-[14px] text-white" style={{colorScheme:"dark"}} autoFocus />
+                   className="bg-[var(--sh-card-base)] border border-shBorder rounded px-1 text-[14px] text-shText" style={{colorScheme:"dark"}} autoFocus />
           ) : (
             <button onClick={()=>setEditTarget(true)} data-testid={`target-date-${enrollment.id}`}
-                    className={`text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-white ${overdue?"text-red-400":"text-gray-500"}`}>
+                    className={`text-[13px] sm:text-[14px] font-black uppercase tracking-widest hover:text-shText ${overdue?"text-red-400":"text-shTextMuted"}`}>
               <i className="fas fa-calendar-day mr-1"/>Target: {enrollment.target_completion_date || "—"}{overdue && " (overdue)"}
             </button>
           )}
           {/* Sprint 110di-64 — Trainer's "what week am I focused on" pill */}
           {totalWeeks > 0 && (
             <button onClick={()=>setPlanOpen(true)} data-testid={`week-pill-${enrollment.id}`}
-                    className="bg-shGreen/15 text-shGreen border border-shGreen/40 px-3 py-0.5 rounded-full font-black text-[12px] uppercase tracking-widest hover:bg-shGreen/25 transition">
+                    className="bg-shPrimary/15 text-shPrimary border border-shPrimary/40 px-3 py-0.5 rounded-full font-black text-[12px] uppercase tracking-widest hover:bg-shPrimary/25 transition">
               <i className="fas fa-calendar-week mr-1.5"/>Week {currentWeek} of {totalWeeks}
               <span className="ml-1.5 text-[11px] opacity-70">· Plan</span>
             </button>
@@ -236,7 +236,7 @@ function EnrollmentCard({ enrollment, typeMeta, dogId, onStatus, onUnenroll, onT
       <div className="px-2 sm:px-3 py-2 space-y-4">
         {snap.modules.map((m, idx) => (
           <div key={m.id} className={`px-2 py-2 ${idx === 0 ? "" : "mt-1"}`}>
-            <p className="text-[15px] font-black uppercase tracking-widest text-shBlue mb-2">{m.name}</p>
+            <p className="text-[15px] font-black uppercase tracking-widest text-shSecondary mb-2">{m.name}</p>
             <div className="space-y-1">
               {m.goals.map(g => {
                 const p = enrollment.goal_progress?.[g.id] || { score: 0, status: "not_started", notes: "" };
@@ -273,17 +273,17 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid={`lesson-plan-modal-${enrollment.id}`}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-hidden flex flex-col min-h-0">
-        <div className="px-5 py-4 border-b border-bgHover flex items-center justify-between" style={{background: color + "10"}}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-hidden flex flex-col min-h-0">
+        <div className="px-5 py-4 border-b border-shBorder flex items-center justify-between" style={{background: color + "10"}}>
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.3em]" style={{color}}>Lesson Plan · Trainer view</p>
-            <h3 className="text-lg font-black text-white uppercase tracking-tight">{snap.name}</h3>
+            <h3 className="text-lg font-black text-shText uppercase tracking-tight">{snap.name}</h3>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl"><i className="fas fa-times"/></button>
         </div>
         <div className="overflow-y-auto p-5 space-y-3">
           {modules.length === 0 && (
-            <p className="text-gray-500 text-center py-8 text-sm">No weeks defined yet — add modules to this program in Settings → Programs to build out your weekly plan.</p>
+            <p className="text-shTextMuted text-center py-8 text-sm">No weeks defined yet — add modules to this program in Settings → Programs to build out your weekly plan.</p>
           )}
           {modules.map((m, idx) => {
             const isCurrent = m.id === currentId;
@@ -295,35 +295,35 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
             }).length;
             return (
               <div key={m.id} data-testid={`lesson-week-${enrollment.id}-${idx+1}`}
-                   className={`border rounded-lg p-3 transition ${isCurrent ? "bg-bgBase border-shGreen shadow-lg shadow-shGreen/10" : isPast ? "bg-bgBase/30 border-bgHover opacity-60" : "bg-bgBase/60 border-bgHover"}`}>
+                   className={`border rounded-lg p-3 transition ${isCurrent ? "bg-[var(--sh-card-base)] border-shPrimary shadow-lg shadow-shPrimary/10" : isPast ? "bg-[var(--sh-card-base)]/30 border-shBorder opacity-60" : "bg-[var(--sh-card-base)]/60 border-shBorder"}`}>
                 <div className="flex items-start gap-3">
-                  <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border-2 ${isCurrent ? "bg-shGreen text-bgHeader border-shGreen" : isPast ? "bg-bgHover text-gray-500 border-bgHover" : "text-shBlue border-shBlue/60"}`}>
+                  <div className={`shrink-0 w-10 h-10 rounded-full flex items-center justify-center font-black text-sm border-2 ${isCurrent ? "bg-shPrimary text-bgHeader border-shPrimary" : isPast ? "bg-shSurfaceRaised text-shTextMuted border-shBorder" : "text-shSecondary border-shSecondary/60"}`}>
                     {isPast ? <i className="fas fa-check"/> : idx + 1}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <p className="text-[12px] font-black uppercase tracking-widest text-gray-500">Week {idx + 1}</p>
+                      <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Week {idx + 1}</p>
                       {isCurrent ? (
-                        <span className="text-[11px] font-black uppercase tracking-widest text-shGreen bg-shGreen/15 px-2 py-0.5 rounded-full"><i className="fas fa-bullseye mr-1"/>Focus this week</span>
+                        <span className="text-[11px] font-black uppercase tracking-widest text-shPrimary bg-shPrimary/15 px-2 py-0.5 rounded-full"><i className="fas fa-bullseye mr-1"/>Focus this week</span>
                       ) : (
                         <button onClick={()=>onPickModule(m.id)} data-testid={`lesson-week-set-${enrollment.id}-${idx+1}`}
-                                className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                                className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
                           Set as current
                         </button>
                       )}
                     </div>
-                    <p className="text-sm font-black text-white mt-0.5">{m.name}</p>
-                    {m.description && <p className="text-[14px] text-gray-400 mt-1 leading-snug">{m.description}</p>}
+                    <p className="text-sm font-black text-shText mt-0.5">{m.name}</p>
+                    {m.description && <p className="text-[14px] text-shTextMuted mt-1 leading-snug">{m.description}</p>}
                     {goalCount > 0 && (
                       <div className="mt-2 space-y-1">
-                        <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">Skills · {mastered}/{goalCount} mastered</p>
-                        <ul className="text-[13px] text-gray-300 space-y-0.5">
+                        <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Skills · {mastered}/{goalCount} mastered</p>
+                        <ul className="text-[13px] text-shTextMuted space-y-0.5">
                           {(m.goals || []).map(g => {
                             const p = enrollment.goal_progress?.[g.id] || {};
                             const done = p.status === "mastered" || (p.score || 0) >= 4;
                             return (
-                              <li key={g.id} className={`flex items-center gap-2 ${done ? "line-through text-gray-500" : ""}`}>
-                                <i className={`fas ${done ? "fa-circle-check text-shGreen" : "fa-circle text-gray-600"} text-[11px]`}/>
+                              <li key={g.id} className={`flex items-center gap-2 ${done ? "line-through text-shTextMuted" : ""}`}>
+                                <i className={`fas ${done ? "fa-circle-check text-shPrimary" : "fa-circle text-gray-600"} text-[11px]`}/>
                                 <span>{g.name}</span>
                               </li>
                             );
@@ -337,8 +337,8 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
             );
           })}
         </div>
-        <div className="px-5 py-3 border-t border-bgHover bg-bgBase/40 text-[12px] text-gray-500">
-          <i className="fas fa-circle-info mr-1"/>Tap <span className="text-shBlue font-black">Set as current</span> to bump the week pointer. Skills check off automatically when you mark a goal mastered on the main training tab.
+        <div className="px-5 py-3 border-t border-shBorder bg-[var(--sh-card-base)]/40 text-[12px] text-shTextMuted">
+          <i className="fas fa-circle-info mr-1"/>Tap <span className="text-shSecondary font-black">Set as current</span> to bump the week pointer. Skills check off automatically when you mark a goal mastered on the main training tab.
         </div>
       </div>
     </div>
@@ -349,10 +349,10 @@ function LessonPlanTimelineModal({ enrollment, color, onPickModule, onClose }) {
 // TrainingTrackerModal now use the SAME 4-status pills so the operator never
 // sees two grading systems for what is one and the same goal_progress doc.
 const STATUS_PRESETS = [
-  { key: "not_started", label: "Not Started", score: 0, cls: "bg-gray-500/20 text-gray-300 border-gray-500/30" },
-  { key: "in_progress", label: "Learning",    score: 2, cls: "bg-shBlue/20 text-shBlue border-shBlue/30" },
-  { key: "in_progress", label: "Proficient",  score: 3, cls: "bg-shOrange/20 text-shOrange border-shOrange/30" },
-  { key: "mastered",    label: "Mastered",    score: 5, cls: "bg-shGreen/20 text-shGreen border-shGreen/40" },
+  { key: "not_started", label: "Not Started", score: 0, cls: "bg-gray-500/20 text-shTextMuted border-gray-500/30" },
+  { key: "in_progress", label: "Learning",    score: 2, cls: "bg-shSecondary/20 text-shSecondary border-shSecondary/30" },
+  { key: "in_progress", label: "Proficient",  score: 3, cls: "bg-shAccent/20 text-shAccent border-shAccent/30" },
+  { key: "mastered",    label: "Mastered",    score: 5, cls: "bg-shPrimary/20 text-shPrimary border-shPrimary/40" },
 ];
 
 function presetIndex(progress) {
@@ -371,17 +371,17 @@ function GoalRow({ goal, progress, onChange }) {
   const isDone = progress.status === "mastered" || progress.score >= 4;
   const activeIdx = presetIndex(progress);
   return (
-    <div className="bg-bgPanel rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
+    <div className="bg-[var(--sh-card-base)] rounded px-3 py-2" data-testid={`goal-${goal.id}`}>
       <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-black text-white">{goal.name} {isManual && <span className="text-[12px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
-          {goal.description && <p className="text-[14px] text-gray-500">{goal.description}</p>}
+          <p className="text-[14px] font-black text-shText">{goal.name} {isManual && <span className="text-[12px] text-pink-300 ml-2 tracking-widest">[MANUAL]</span>}</p>
+          {goal.description && <p className="text-[14px] text-shTextMuted">{goal.description}</p>}
         </div>
         <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
           {isManual ? (
             <button onClick={()=>onChange({ score: isDone ? 0 : 5, status: isDone ? "not_started" : "mastered" })}
                     data-testid={`goal-toggle-${goal.id}`}
-                    className={`px-3 py-1 rounded text-[14px] font-black uppercase tracking-widest border ${isDone?"bg-shGreen text-bgHeader border-shGreen":"text-gray-400 border-bgHover hover:text-white"}`}>
+                    className={`px-3 py-1 rounded text-[14px] font-black uppercase tracking-widest border ${isDone?"bg-shPrimary text-bgHeader border-shPrimary":"text-shTextMuted border-shBorder hover:text-shText"}`}>
               <i className={`fas ${isDone?"fa-check":"fa-square"} mr-1`}/>{isDone?"Done":"Mark Done"}
             </button>
           ) : (
@@ -392,14 +392,14 @@ function GoalRow({ goal, progress, onChange }) {
                         data-testid={`goal-status-${goal.id}-${btn.label.toLowerCase().replace(/\s+/g,'-')}`}
                         title={btn.label}
                         className={`px-2 py-1 rounded text-[11px] font-black uppercase tracking-widest border transition ${
-                          activeIdx === i ? `${btn.cls} ring-2 ring-white/10` : "bg-bgBase text-gray-500 border-bgHover hover:text-white"
+                          activeIdx === i ? `${btn.cls} ring-2 ring-white/10` : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:text-shText"
                         }`}>
                   {btn.label}
                 </button>
               ))}
             </div>
           )}
-          <button onClick={()=>setOpenNote(o=>!o)} className="text-gray-400 hover:text-white text-xs px-2 py-1"><i className="fas fa-note-sticky"/></button>
+          <button onClick={()=>setOpenNote(o=>!o)} className="text-shTextMuted hover:text-shText text-xs px-2 py-1"><i className="fas fa-note-sticky"/></button>
         </div>
       </div>
       {openNote && (
@@ -408,10 +408,10 @@ function GoalRow({ goal, progress, onChange }) {
                  onBlur={()=>{ if (note !== progress.notes) onChange({ notes: note }); setOpenNote(false); }}
                  onKeyDown={(e)=>{ if (e.key === "Enter") { onChange({ notes: note }); setOpenNote(false); } }}
                  placeholder="Trainer note for this goal"
-                 className="flex-1 bg-bgBase border border-bgHover rounded p-1.5 text-[15px] text-white" autoFocus />
+                 className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-1.5 text-[15px] text-shText" autoFocus />
         </div>
       )}
-      {!openNote && progress.notes && <p className="text-[14px] text-gray-400 italic mt-1 pl-1">&quot;{progress.notes}&quot;</p>}
+      {!openNote && progress.notes && <p className="text-[14px] text-shTextMuted italic mt-1 pl-1">&quot;{progress.notes}&quot;</p>}
     </div>
   );
 }
@@ -420,10 +420,10 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
   const grouped = Object.values(typeMeta).map(t => ({ ...t, items: programs.filter(p => p.type === t.key) }));
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" data-testid="enroll-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
-        <div className="px-6 py-4 border-b border-bgHover flex items-center justify-between shrink-0">
-          <h4 className="text-base font-black text-white uppercase italic">Enroll in Program</h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl"/></button>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_2rem)] flex flex-col min-h-0 shadow-2xl">
+        <div className="px-6 py-4 border-b border-shBorder flex items-center justify-between shrink-0">
+          <h4 className="text-base font-black text-shText uppercase italic">Enroll in Program</h4>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl"/></button>
         </div>
         <div className="overflow-y-auto flex-1 min-h-0 p-4 space-y-4">
           {grouped.filter(g => g.items.length > 0).map(g => (
@@ -434,17 +434,17 @@ function EnrollModal({ programs, dogAgeMonths, typeMeta, onPick, onClose }) {
                   const tooYoung = dogAgeMonths > 0 && p.min_age_months > dogAgeMonths;
                   return (
                     <button key={p.id} onClick={()=>onPick(p.id)} data-testid={`enroll-pick-${p.id}`}
-                            className="w-full text-left bg-bgBase/60 border border-bgHover hover:border-shBlue rounded p-3 transition">
+                            className="w-full text-left bg-[var(--sh-card-base)]/60 border border-shBorder hover:border-shSecondary rounded p-3 transition">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-black text-white">{p.name}</p>
-                          <p className="text-[15px] text-gray-400 mt-0.5">{p.focus}</p>
-                          <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                          <p className="text-sm font-black text-shText">{p.name}</p>
+                          <p className="text-[15px] text-shTextMuted mt-0.5">{p.focus}</p>
+                          <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest mt-1">
                             {p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}
                           </p>
                         </div>
                         {tooYoung && (
-                          <span className="shrink-0 text-[14px] font-black uppercase tracking-widest text-shOrange px-2 py-1 bg-shOrange/15 rounded">
+                          <span className="shrink-0 text-[14px] font-black uppercase tracking-widest text-shAccent px-2 py-1 bg-shAccent/15 rounded">
                             <i className="fas fa-triangle-exclamation mr-1"/>Under {p.min_age_months}mo
                           </span>
                         )}

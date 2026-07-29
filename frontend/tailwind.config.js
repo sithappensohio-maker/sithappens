@@ -19,10 +19,30 @@ module.exports = {
         bgPanel:  'var(--bg-panel,  #0c143e)',
         bgHeader: 'var(--bg-header, #03061a)',
         bgHover:  'var(--bg-hover,  #1a225a)',
+        // Redesign Phase A — semantic design-system tokens. These alias the
+        // same CSS variables as the brand-name colors above (see index.css's
+        // "Design-system semantic tokens" block); they exist so new
+        // components can be written against role names (surface/primary/
+        // accent/...) instead of brand names, without introducing a second
+        // color source of truth.
+        shBg:            'var(--sh-bg)',
+        shSurface:       'var(--sh-surface)',
+        shSurfaceRaised: 'var(--sh-surface-raised)',
+        shBorder:        'var(--sh-border)',
+        shPrimary:       'var(--sh-primary)',
+        shSecondary:     'var(--sh-secondary)',
+        shAccent:        'var(--sh-accent)',
+        shDanger:        'var(--sh-danger)',
+        shText:          'var(--sh-text)',
+        shTextMuted:     'var(--sh-text-muted)',
       },
       fontFamily: {
         // Same trick: --sh-font is set at runtime by ThemeProvider.
         sans: ['var(--sh-font, Inter)', 'ui-sans-serif', 'system-ui'],
+      },
+      boxShadow: {
+        sh: 'var(--sh-shadow)',
+        shGlow: 'var(--sh-glow)',
       },
     },
   },

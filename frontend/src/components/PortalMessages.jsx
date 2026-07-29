@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import PremiumButton from "./premium/PremiumButton";
 
 const CATEGORIES = [
   { id: "booking",     label: "Booking question" },
@@ -92,88 +93,90 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 p-3 sm:p-6 overflow-y-auto" data-testid="portal-messages-modal">
-      <div className="bg-bgPanel rounded-xl border border-bgHover max-w-4xl mx-auto overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-bgHover">
-          <p className="text-sm sm:text-base font-black text-white uppercase italic">
-            <i className="fas fa-comments text-shGreen mr-2"/>Messages
+      <div className="rounded-xl border border-shBorder max-w-4xl mx-auto overflow-hidden shadow-sh" style={{ background: "var(--sh-card-base)" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-shBorder">
+          <p className="text-sm sm:text-base font-bold text-shText">
+            <i className="fas fa-comments text-shSecondary mr-2"/>Messages
           </p>
           <button onClick={onClose} data-testid="portal-messages-close"
-                  className="text-gray-500 hover:text-white text-xl"><i className="fas fa-xmark"/></button>
+                  className="text-shTextMuted hover:text-shText text-xl"><i className="fas fa-xmark"/></button>
         </div>
 
         {composing ? (
           <div className="p-5 space-y-3" data-testid="portal-messages-composer">
-            <p className="text-[12px] text-gray-400">Send the team a message. We'll reply right inside the app and (if you have email reminders on) your inbox.</p>
+            <p className="text-[12px] text-shTextMuted">Send the team a message. We'll reply right inside the app and (if you have email reminders on) your inbox.</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">What's it about?</label>
+                <label className="text-[11px] font-bold text-shTextMuted uppercase tracking-widest block mb-1">What's it about?</label>
                 <select value={category} onChange={e => setCategory(e.target.value)}
                         data-testid="portal-messages-category"
-                        className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
+                        style={{ background: "var(--sh-card-base)" }}
+                        className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shSecondary/60">
                   {CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">Which dog? (optional)</label>
+                <label className="text-[11px] font-bold text-shTextMuted uppercase tracking-widest block mb-1">Which dog? (optional)</label>
                 <select value={dogId} onChange={e => setDogId(e.target.value)}
                         data-testid="portal-messages-dog"
-                        className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
+                        style={{ background: "var(--sh-card-base)" }}
+                        className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shSecondary/60">
                   <option value="">— Not specific —</option>
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
             </div>
             <div>
-              <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">Subject (optional)</label>
+              <label className="text-[11px] font-bold text-shTextMuted uppercase tracking-widest block mb-1">Subject (optional)</label>
               <input value={subject} onChange={e => setSubject(e.target.value)}
                      data-testid="portal-messages-subject"
                      placeholder="Short summary"
-                     className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"/>
+                     style={{ background: "var(--sh-card-base)" }}
+                     className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shSecondary/60"/>
             </div>
             <div>
-              <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-1">Message</label>
+              <label className="text-[11px] font-bold text-shTextMuted uppercase tracking-widest block mb-1">Message</label>
               <textarea value={bodyTxt} onChange={e => setBodyTxt(e.target.value)} rows={6}
                         data-testid="portal-messages-body"
                         placeholder="Type your message…"
-                        className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"/>
+                        style={{ background: "var(--sh-card-base)" }}
+                        className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shSecondary/60"/>
             </div>
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setComposing(false)} className="text-[12px] font-black uppercase tracking-widest px-3 py-2 text-gray-400 hover:text-white">
+              <PremiumButton variant="ghost" onClick={() => setComposing(false)}>
                 Cancel
-              </button>
-              <button onClick={startNewThread} disabled={busy || !bodyTxt.trim()}
-                      data-testid="portal-messages-send-new"
-                      className="text-[13px] font-black uppercase tracking-widest px-4 py-2 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 disabled:opacity-40">
-                {busy ? <><i className="fas fa-spinner fa-spin mr-2"/>Sending…</> : <><i className="fas fa-paper-plane mr-2"/>Send</>}
-              </button>
+              </PremiumButton>
+              <PremiumButton variant="cyan" onClick={startNewThread} disabled={busy || !bodyTxt.trim()} data-testid="portal-messages-send-new">
+                {busy ? <><i className="fas fa-spinner fa-spin"/>Sending…</> : <><i className="fas fa-paper-plane"/>Send</>}
+              </PremiumButton>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-3 min-h-[60vh]">
             {/* Threads list */}
-            <div className="border-r border-bgHover sm:col-span-1 overflow-y-auto max-h-[70vh]">
+            <div className="border-r border-shBorder sm:col-span-1 overflow-y-auto max-h-[70vh]">
               <button onClick={() => { setComposing(true); }}
                       data-testid="portal-messages-new"
-                      className="w-full text-left px-4 py-3 bg-shGreen/10 hover:bg-shGreen/20 text-shGreen text-[13px] font-black uppercase tracking-widest border-b border-bgHover">
+                      className="w-full text-left px-4 py-3 bg-shSecondary/10 hover:bg-shSecondary/20 text-shSecondary text-[13px] font-bold uppercase tracking-widest border-b border-shBorder transition">
                 <i className="fas fa-plus mr-2"/>New Message
               </button>
               {threads.length === 0 && (
-                <p className="text-[12px] text-gray-500 p-5 text-center">No messages yet — say hi 👋</p>
+                <p className="text-[12px] text-shTextMuted p-5 text-center">No messages yet — say hi 👋</p>
               )}
               {threads.map(t => (
                 <button key={t.id} onClick={() => setActiveId(t.id)}
                         data-testid={`portal-messages-thread-${t.id}`}
-                        className={`w-full text-left px-4 py-3 border-b border-bgHover/40 transition ${
-                          activeId === t.id ? "bg-shBlue/10" : "hover:bg-bgBase/40"
+                        className={`w-full text-left px-4 py-3 border-b border-shBorder transition ${
+                          activeId === t.id ? "bg-shSecondary/10 border-l-2 border-l-shSecondary" : "hover:bg-shSurfaceRaised"
                         }`}>
                   <div className="flex items-start justify-between gap-2">
-                    <p className={`text-[13px] font-black truncate ${t.unread_client ? "text-white" : "text-gray-400"}`}>
-                      {t.unread_client && <span className="inline-block w-1.5 h-1.5 rounded-full bg-shOrange mr-1.5 align-middle"/>}
+                    <p className={`text-[13px] font-bold truncate ${t.unread_client ? "text-shText" : "text-shTextMuted"}`}>
+                      {t.unread_client && <span className="inline-block w-1.5 h-1.5 rounded-full bg-shAccent mr-1.5 align-middle" style={{ boxShadow: "0 0 6px rgba(242,101,34,0.7)" }}/>}
                       {t.subject || CATEGORIES.find(c => c.id === t.category)?.label || "Message"}
                     </p>
                   </div>
-                  <p className="text-[11px] text-gray-500 mt-1 truncate">{t.last_message_preview}</p>
-                  <p className="text-[11px] text-gray-500 mt-1">{fmtTime(t.last_message_at)}</p>
+                  <p className="text-[11px] text-shTextMuted mt-1 truncate">{t.last_message_preview}</p>
+                  <p className="text-[11px] text-shTextMuted mt-1">{fmtTime(t.last_message_at)}</p>
                 </button>
               ))}
             </div>
@@ -181,13 +184,13 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
             {/* Active conversation */}
             <div className="sm:col-span-2 flex flex-col min-h-0 max-h-[70vh]">
               {!active && (
-                <p className="text-[13px] text-gray-500 p-8 text-center">Select a message or start a new one.</p>
+                <p className="text-[13px] text-shTextMuted p-8 text-center">Select a message or start a new one.</p>
               )}
               {active && (
                 <>
-                  <div className="px-4 py-3 border-b border-bgHover">
-                    <p className="text-sm font-black text-white truncate">{active.subject}</p>
-                    <p className="text-[11px] text-gray-500 mt-0.5">
+                  <div className="px-4 py-3 border-b border-shBorder">
+                    <p className="text-sm font-bold text-shText truncate">{active.subject}</p>
+                    <p className="text-[11px] text-shTextMuted mt-0.5">
                       {CATEGORIES.find(c => c.id === active.category)?.label || active.category}
                       {active.dog_name && <span> · 🐾 {active.dog_name}</span>}
                     </p>
@@ -197,29 +200,28 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
                       const isMe = m.sender_role === "client";
                       return (
                         <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[85%] rounded-lg p-3 ${
-                            isMe ? "bg-shBlue/15 border border-shBlue/30" : "bg-bgBase border border-bgHover"
-                          }`}>
-                            <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mb-1">
+                          <div className={`max-w-[85%] rounded-lg p-3 border ${
+                            isMe ? "bg-shSecondary/10 border-shSecondary/30" : "border-shBorder"
+                          }`} style={isMe ? undefined : { background: "var(--sh-card-base)" }}>
+                            <p className="text-[11px] text-shTextMuted font-bold uppercase tracking-widest mb-1">
                               {isMe ? "You" : "Sit Happens"} · {fmtTime(m.created_at)}
                             </p>
-                            <pre className="text-[13px] text-white whitespace-pre-wrap font-sans">{m.body}</pre>
+                            <pre className="text-[13px] text-shText whitespace-pre-wrap font-sans">{m.body}</pre>
                           </div>
                         </div>
                       );
                     })}
                   </div>
-                  <div className="p-3 border-t border-bgHover">
+                  <div className="p-3 border-t border-shBorder">
                     <textarea value={reply} onChange={e => setReply(e.target.value)} rows={2}
                               placeholder="Type a reply…"
                               data-testid="portal-messages-reply-body"
-                              className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"/>
+                              style={{ background: "var(--sh-card-base)" }}
+                              className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shSecondary/60"/>
                     <div className="flex justify-end mt-2">
-                      <button onClick={sendReply} disabled={busy || !reply.trim()}
-                              data-testid="portal-messages-send-reply"
-                              className="text-[13px] font-black uppercase tracking-widest px-4 py-2 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 disabled:opacity-40">
-                        {busy ? <><i className="fas fa-spinner fa-spin mr-2"/>Sending…</> : <><i className="fas fa-paper-plane mr-2"/>Reply</>}
-                      </button>
+                      <PremiumButton variant="cyan" onClick={sendReply} disabled={busy || !reply.trim()} data-testid="portal-messages-send-reply">
+                        {busy ? <><i className="fas fa-spinner fa-spin"/>Sending…</> : <><i className="fas fa-paper-plane"/>Reply</>}
+                      </PremiumButton>
                     </div>
                   </div>
                 </>

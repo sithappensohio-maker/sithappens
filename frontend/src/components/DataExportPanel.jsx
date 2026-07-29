@@ -59,9 +59,9 @@ export default function DataExportPanel() {
 
   return (
     <div className="space-y-5" data-testid="data-export-panel">
-      <div className="border border-shBlue/30 bg-shBlue/5 rounded p-4">
-        <p className="text-[13px] text-gray-300">
-          <span className="text-shBlue font-black uppercase tracking-widest"><i className="fas fa-cloud-arrow-down mr-2"/>One-click CSV exports.</span>
+      <div className="border border-shSecondary/30 bg-shSecondary/5 rounded p-4">
+        <p className="text-[13px] text-shTextMuted">
+          <span className="text-shSecondary font-black uppercase tracking-widest"><i className="fas fa-cloud-arrow-down mr-2"/>One-click CSV exports.</span>
           Pull a clean spreadsheet of any major dataset for accounting, audits, migrations, or just to email your bookkeeper.
           Each file includes the row count in the response header so nothing is silently truncated.
         </p>
@@ -74,23 +74,23 @@ export default function DataExportPanel() {
           return (
             <div
               key={ent.id}
-              className="bg-bgBase border border-bgHover rounded p-4 flex flex-col gap-3"
+              className="bg-[var(--sh-card-base)] border border-shBorder rounded p-4 flex flex-col gap-3"
               data-testid={`export-row-${ent.id}`}
             >
               <div className="flex items-start gap-3">
-                <i className={`fas ${ent.icon} text-shBlue text-lg mt-0.5`}/>
+                <i className={`fas ${ent.icon} text-shSecondary text-lg mt-0.5`}/>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-black text-white uppercase tracking-tight">{ent.label}</span>
+                    <span className="text-sm font-black text-shText uppercase tracking-tight">{ent.label}</span>
                     {loading ? (
-                      <span className="text-[11px] text-gray-500 uppercase tracking-widest">Loading…</span>
+                      <span className="text-[11px] text-shTextMuted uppercase tracking-widest">Loading…</span>
                     ) : (
-                      <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${empty ? "bg-gray-700/40 text-gray-500" : "bg-shGreen/15 text-shGreen"}`}>
+                      <span className={`text-[11px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${empty ? "bg-gray-700/40 text-shTextMuted" : "bg-shPrimary/15 text-shPrimary"}`}>
                         {n ?? 0} rows
                       </span>
                     )}
                   </div>
-                  <p className="text-[12px] text-gray-400 mt-0.5">{ent.desc}</p>
+                  <p className="text-[12px] text-shTextMuted mt-0.5">{ent.desc}</p>
                 </div>
               </div>
               <button
@@ -99,8 +99,8 @@ export default function DataExportPanel() {
                 data-testid={`export-btn-${ent.id}`}
                 className={`text-[13px] font-black uppercase tracking-widest px-3 py-2 rounded transition ${
                   empty
-                    ? "bg-gray-700/30 text-gray-500 cursor-not-allowed"
-                    : "bg-shBlue/15 text-shBlue hover:bg-shBlue/25"
+                    ? "bg-gray-700/30 text-shTextMuted cursor-not-allowed"
+                    : "bg-shSecondary/15 text-shSecondary hover:bg-shSecondary/25"
                 }`}
               >
                 {busyId === ent.id ? (
@@ -116,9 +116,9 @@ export default function DataExportPanel() {
         })}
       </div>
 
-      <div className="text-[12px] text-gray-500 leading-relaxed border-t border-bgHover pt-4">
+      <div className="text-[12px] text-shTextMuted leading-relaxed border-t border-shBorder pt-4">
         <p><i className="fas fa-circle-info mr-1"/>CSVs are generated on-demand from your live database — no scheduled jobs to manage.</p>
-        <p className="mt-1">Nested fields (e.g. <span className="text-gray-300 font-mono">safety_flags</span>, <span className="text-gray-300 font-mono">vaccines</span>) are exported as JSON inside the cell so nothing is lost.</p>
+        <p className="mt-1">Nested fields (e.g. <span className="text-shTextMuted font-mono">safety_flags</span>, <span className="text-shTextMuted font-mono">vaccines</span>) are exported as JSON inside the cell so nothing is lost.</p>
       </div>
     </div>
   );

@@ -28,8 +28,8 @@ function isMobile() {
 // user opens detail by clicking the dot OR the day cell (existing behavior).
 function dotColorFor(eventLike) {
   const t = (eventLike?.service_type || eventLike?.extendedProps?.service_type || "").toLowerCase();
-  if (t === "daycare") return "#8cc63f";       // shGreen
-  if (t === "boarding") return "#00a9e0";      // shBlue
+  if (t === "daycare") return "#8cc63f";       // shPrimary
+  if (t === "boarding") return "#00a9e0";      // shSecondary
   if (t === "grooming") return "#f59e0b";      // amber-500
   if (t === "training") return "#a78bfa";      // purple-400
   if (t === "photography") return "#f472b6";   // pink-400
@@ -46,8 +46,8 @@ function renderMobileDot(arg) {
 
 /** Cute service color chips, kept in sync with the calendar palette. */
 const SVC_META = {
-  daycare: { color: "bg-shGreen/25 text-shGreen border-shGreen/50", label: "Daycare" },
-  boarding: { color: "bg-shBlue/25 text-shBlue border-shBlue/50", label: "Boarding" },
+  daycare: { color: "bg-shPrimary/25 text-shPrimary border-shPrimary/50", label: "Daycare" },
+  boarding: { color: "bg-shSecondary/25 text-shSecondary border-shSecondary/50", label: "Boarding" },
   training: { color: "bg-purple-500/25 text-purple-300 border-purple-500/50", label: "Training" },
   grooming: { color: "bg-pink-500/25 text-pink-300 border-pink-500/50", label: "Grooming" },
   photography: { color: "bg-amber-500/25 text-amber-300 border-amber-500/50", label: "Photography" },
@@ -253,15 +253,15 @@ export default function Schedule() {
   return (
     <div className={`${mobile ? "flex flex-col gap-3" : "h-full flex flex-col gap-4"} animate-slide-in`} data-testid="schedule-calendar">
       <PageHero
-        eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shBlue" }}
+        eyebrow={{ icon: "fa-mouse-pointer", text: "Schedule · drag to reschedule", color: "text-shSecondary" }}
         title="The Calendar."
         highlight="Every pup. Every day."
         subtitle="Drag any event to reschedule. Click a day to see the full roster."
-        right={msg ? (<span className="bg-shGreen/15 text-shGreen border border-shGreen/30 text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded">{msg}</span>) : null}
+        right={msg ? (<span className="bg-shPrimary/15 text-shPrimary border border-shPrimary/30 text-[12px] font-black uppercase tracking-widest px-3 py-2 rounded">{msg}</span>) : null}
         compact={mobile}
         testid="schedule-hero"
       />
-      <div className={`bg-bgPanel p-2 sm:p-4 rounded-xl border border-bgHover ${mobile ? "" : "flex-1 overflow-hidden"}`}
+      <div className={`bg-[var(--sh-card-base)] p-2 sm:p-4 rounded-xl border border-shBorder ${mobile ? "" : "flex-1 overflow-hidden"}`}
            data-testid="schedule-grid-wrap">
         {/* Sprint 110di-45 — Mobile view toggle. Defaults to MONTH (grid with
             colored dots per booking, color-coded by service). User can flip to
@@ -271,12 +271,12 @@ export default function Schedule() {
           <div className="flex items-center justify-center gap-1 mb-2" data-testid="schedule-mobile-view-toggle">
             <button onClick={()=>setMobileViewPersist("month")}
                     data-testid="schedule-view-month"
-                    className={`px-3 py-1.5 rounded-l-lg text-[11px] font-black uppercase tracking-widest border transition ${mobileView==="month" ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/40 hover:text-shGreen"}`}>
+                    className={`px-3 py-1.5 rounded-l-lg text-[11px] font-black uppercase tracking-widest border transition ${mobileView==="month" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:border-shPrimary/40 hover:text-shPrimary"}`}>
               <i className="fas fa-th mr-1"/>Month
             </button>
             <button onClick={()=>setMobileViewPersist("list")}
                     data-testid="schedule-view-list"
-                    className={`px-3 py-1.5 rounded-r-lg text-[11px] font-black uppercase tracking-widest border transition -ml-px ${mobileView==="list" ? "bg-shGreen text-bgHeader border-shGreen" : "bg-bgBase text-gray-400 border-bgHover hover:border-shGreen/40 hover:text-shGreen"}`}>
+                    className={`px-3 py-1.5 rounded-r-lg text-[11px] font-black uppercase tracking-widest border transition -ml-px ${mobileView==="list" ? "bg-shPrimary text-bgHeader border-shPrimary" : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:border-shPrimary/40 hover:text-shPrimary"}`}>
               <i className="fas fa-list-ul mr-1"/>List
             </button>
           </div>
@@ -313,9 +313,9 @@ export default function Schedule() {
           </div>
         </div>
         {mobile && mobileView === "month" && (
-          <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
-            <i className="fas fa-circle text-shGreen mr-1 text-[8px] align-middle"/>Daycare
-            <i className="fas fa-circle text-shBlue ml-2 mr-1 text-[8px] align-middle"/>Boarding
+          <p className="text-[11px] text-shTextMuted mt-2 px-2 italic" data-testid="schedule-mobile-hint">
+            <i className="fas fa-circle text-shPrimary mr-1 text-[8px] align-middle"/>Daycare
+            <i className="fas fa-circle text-shSecondary ml-2 mr-1 text-[8px] align-middle"/>Boarding
             <i className="fas fa-circle text-amber-500 ml-2 mr-1 text-[8px] align-middle"/>Grooming
             <i className="fas fa-circle text-purple-400 ml-2 mr-1 text-[8px] align-middle"/>Training
             <i className="fas fa-circle text-pink-400 ml-2 mr-1 text-[8px] align-middle"/>Photo
@@ -323,7 +323,7 @@ export default function Schedule() {
           </p>
         )}
         {mobile && mobileView === "list" && (
-          <p className="text-[11px] text-gray-500 mt-2 px-2 italic" data-testid="schedule-mobile-hint">
+          <p className="text-[11px] text-shTextMuted mt-2 px-2 italic" data-testid="schedule-mobile-hint">
             <i className="fas fa-list-ul mr-1"/>Tap any booking to open it · use prev / next arrows to jump months
           </p>
         )}
@@ -340,14 +340,14 @@ export default function Schedule() {
              onClick={()=>{ setDayOpen(null); setNewBooking(null); }}
              data-testid="day-roster-modal">
           <div onClick={(e)=>e.stopPropagation()}
-               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
-            <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
+               className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
+            <div className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder px-5 py-4 flex items-center justify-between gap-3 z-10">
               <div className="min-w-0">
-                <p className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Day Roster</p>
-                <h2 className="text-lg font-black uppercase italic text-white tracking-tight truncate">{pretty(dayOpen)}</h2>
+                <p className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Day Roster</p>
+                <h2 className="text-lg font-black uppercase italic text-shText tracking-tight truncate">{pretty(dayOpen)}</h2>
               </div>
               <button onClick={()=>{ setDayOpen(null); setNewBooking(null); }}
-                      data-testid="day-roster-close" className="text-gray-500 hover:text-white">
+                      data-testid="day-roster-close" className="text-shTextMuted hover:text-shText">
                 <i className="fas fa-xmark text-xl"/>
               </button>
             </div>
@@ -356,16 +356,16 @@ export default function Schedule() {
               {!newBooking && (
                 <>
                   {dayBookings.length === 0 ? (
-                    <div className="bg-bgBase border border-dashed border-bgHover rounded-lg p-8 text-center" data-testid="day-roster-empty">
+                    <div className="bg-[var(--sh-card-base)] border border-dashed border-shBorder rounded-lg p-8 text-center" data-testid="day-roster-empty">
                       <i className="fas fa-calendar-day text-gray-600 text-3xl mb-2"/>
-                      <p className="text-white font-black text-[14px] uppercase tracking-widest">Nothing booked yet</p>
-                      <p className="text-[14px] text-gray-500 normal-case mt-1">Use the button below to add the first appointment.</p>
+                      <p className="text-shText font-black text-[14px] uppercase tracking-widest">Nothing booked yet</p>
+                      <p className="text-[14px] text-shTextMuted normal-case mt-1">Use the button below to add the first appointment.</p>
                     </div>
                   ) : (
                     <div className="space-y-2" data-testid="day-roster-list">
-                      <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">{dayBookings.length} appointment{dayBookings.length !== 1 ? "s" : ""}</p>
+                      <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">{dayBookings.length} appointment{dayBookings.length !== 1 ? "s" : ""}</p>
                       {dayBookings.map((e) => {
-                        const meta = SVC_META[e.extendedProps?.service_type] || { color: "bg-gray-500/20 text-gray-300 border-gray-500/40", label: e.extendedProps?.service_type };
+                        const meta = SVC_META[e.extendedProps?.service_type] || { color: "bg-gray-500/20 text-shTextMuted border-gray-500/40", label: e.extendedProps?.service_type };
                         const t = e.extendedProps?.time;
                         const svc = e.extendedProps?.service_type;
                         const balField = svc === "training" ? "training_credits"
@@ -375,15 +375,15 @@ export default function Schedule() {
                         const cid = e.extendedProps?.client_id;
                         const credits = balField && cid ? (clientBalById[cid]?.[balField] ?? null) : null;
                         const creditChipColor = credits == null ? ""
-                          : credits > 0 ? "bg-shGreen/15 text-shGreen border-shGreen/40"
-                          : "bg-gray-700/50 text-gray-400 border-gray-600";
+                          : credits > 0 ? "bg-shPrimary/15 text-shPrimary border-shPrimary/40"
+                          : "bg-gray-700/50 text-shTextMuted border-gray-600";
                         return (
                           <button key={e.id} onClick={()=>setDetailId(e.id)}
-                                  className="w-full text-left bg-bgBase border border-bgHover rounded-lg px-3 py-2.5 flex items-start gap-3 hover:border-shBlue/60 transition" data-testid={`day-roster-row-${e.id}`}>
+                                  className="w-full text-left bg-[var(--sh-card-base)] border border-shBorder rounded-lg px-3 py-2.5 flex items-start gap-3 hover:border-shSecondary/60 transition" data-testid={`day-roster-row-${e.id}`}>
                             <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-2 py-1 rounded border ${meta.color}`}>{meta.label}</span>
                             <div className="flex-1 min-w-0">
-                              <p className="text-white font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
-                              <p className="text-[13px] text-gray-500 normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
+                              <p className="text-shText font-black text-[14px] truncate">{e.title.replace(/^\d+:\d+\s·\s/, "")}</p>
+                              <p className="text-[13px] text-shTextMuted normal-case truncate">{e.extendedProps?.client_name || "—"}</p>
                             </div>
                             {credits != null && (
                               <span className={`shrink-0 text-[12px] font-black uppercase tracking-widest px-1.5 py-1 rounded border ${creditChipColor}`}
@@ -392,9 +392,9 @@ export default function Schedule() {
                                 <i className="fas fa-coins mr-1"/>{credits}
                               </span>
                             )}
-                            {t && <span className="shrink-0 text-[14px] font-black text-shOrange tracking-widest">{t}</span>}
+                            {t && <span className="shrink-0 text-[14px] font-black text-shAccent tracking-widest">{t}</span>}
                             {e.extendedProps?.status === "pending" && (
-                              <span className="shrink-0 text-[12px] font-black uppercase tracking-widest bg-shOrange/20 text-shOrange px-1.5 py-0.5 rounded">Pending</span>
+                              <span className="shrink-0 text-[12px] font-black uppercase tracking-widest bg-shAccent/20 text-shAccent px-1.5 py-0.5 rounded">Pending</span>
                             )}
                           </button>
                         );
@@ -402,7 +402,7 @@ export default function Schedule() {
                     </div>
                   )}
                   <button onClick={startNewBooking} data-testid="day-roster-new-btn"
-                          className="w-full bg-shBlue text-white px-5 py-3 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shBlue/90">
+                          className="w-full bg-shSecondary text-shText px-5 py-3 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shSecondary/90">
                     <i className="fas fa-plus mr-2"/>New Appointment for this day
                   </button>
                 </>
@@ -410,23 +410,23 @@ export default function Schedule() {
 
               {newBooking && (
                 <div className="space-y-3" data-testid="day-roster-new-form">
-                  <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Quick-add for {pretty(dayOpen)}</p>
+                  <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Quick-add for {pretty(dayOpen)}</p>
                   <div>
-                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                    <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
                     <select value={newBooking.dog_id}
                             onChange={(e)=>setNewBooking({...newBooking, dog_id: e.target.value})}
                             data-testid="day-roster-dog-select"
-                            className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                            className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                       <option value="">— pick a dog —</option>
                       {dogs.map(d => <option key={d.id} value={d.id}>{d.name}{d.breed ? ` · ${d.breed}` : ""}</option>)}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Service</label>
+                    <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Service</label>
                     <select value={newBooking.service_type}
                             onChange={(e)=>setNewBooking({...newBooking, service_type: e.target.value})}
                             data-testid="day-roster-service-select"
-                            className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                            className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                       <option value="daycare">Daycare</option>
                       <option value="boarding">Boarding</option>
                       <option value="training">Training</option>
@@ -436,45 +436,45 @@ export default function Schedule() {
                   </div>
                   {newBooking.service_type === "boarding" && (
                     <div>
-                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Check-out date</label>
+                      <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Check-out date</label>
                       <input type="date" value={newBooking.end_date}
                              onChange={(e)=>setNewBooking({...newBooking, end_date: e.target.value})}
                              style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
                     </div>
                   )}
                   {(newBooking.service_type === "training" || newBooking.service_type === "grooming") && (
                     <div>
-                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Appointment time</label>
+                      <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Appointment time</label>
                       <input type="time" value={newBooking.time}
                              onChange={(e)=>setNewBooking({...newBooking, time: e.target.value})}
                              data-testid="day-roster-time-input"
                              style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
                     </div>
                   )}
                   {newBooking.service_type === "grooming" && (
                     <div>
-                      <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Grooming type</label>
+                      <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Grooming type</label>
                       <select value={newBooking.grooming_type}
                               onChange={(e)=>setNewBooking({...newBooking, grooming_type: e.target.value})}
-                              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                              className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                         <option value="bath">Bath</option>
                         <option value="nail_trim">Nail trim</option>
                       </select>
                     </div>
                   )}
                   <div>
-                    <label className="text-[13px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+                    <label className="text-[13px] font-black text-shTextMuted uppercase tracking-widest">Notes (optional)</label>
                     <input value={newBooking.notes}
                            onChange={(e)=>setNewBooking({...newBooking, notes: e.target.value})}
-                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                           className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
                   </div>
                   {bookErr && <p className="text-red-400 text-[14px] normal-case">{bookErr}</p>}
                   <div className="flex justify-end gap-3 pt-1">
-                    <button onClick={()=>setNewBooking(null)} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Back</button>
+                    <button onClick={()=>setNewBooking(null)} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Back</button>
                     <button onClick={saveBooking} disabled={bookSaving} data-testid="day-roster-save-btn"
-                            className="bg-shBlue text-white px-5 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
+                            className="bg-shSecondary text-shText px-5 py-2 rounded font-black text-[14px] uppercase tracking-widest hover:bg-shSecondary/90 disabled:opacity-50">
                       {bookSaving ? <><i className="fas fa-circle-notch fa-spin mr-2"/>Saving…</> : "Add appointment"}
                     </button>
                   </div>

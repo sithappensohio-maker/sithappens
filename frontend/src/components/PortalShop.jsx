@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import NeonEdge from "./premium/NeonEdge";
+import PremiumButton from "./premium/PremiumButton";
+import { accentRgb } from "./premium/tokens";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
  * real cart + checkout: physical products, credit packs, and training
@@ -50,7 +53,7 @@ function ShopImage({ imageId, alt }) {
 
   if (src) return <img src={src} alt={alt || ""} className="w-full h-32 object-cover rounded-lg" />;
   return (
-    <div className="w-full h-32 rounded-lg bg-bgBase border border-bgHover grid place-items-center text-gray-600">
+    <div className="w-full h-32 rounded-lg border border-shBorder grid place-items-center text-shTextMuted" style={{ background: "var(--sh-card-base)" }}>
       <i className="fas fa-image text-2xl" />
     </div>
   );
@@ -59,45 +62,44 @@ function ShopImage({ imageId, alt }) {
 function ItemCard({ item, cartQty, onAdd }) {
   const outOfStock = item.kind === "product" && item.track_inventory && !item.in_stock;
   return (
-    <div className="bg-bgPanel border border-bgHover rounded-xl p-3 flex flex-col" data-testid={`shop-card-${item.kind}-${item.id}`}>
+    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200" data-testid={`shop-card-${item.kind}-${item.id}`}>
       <ShopImage imageId={item.image_id} alt={item.name} />
-      <p className="text-white font-black text-[14px] mt-3 truncate">{item.name}</p>
-      {item.description && <p className="text-gray-400 text-[12px] mt-1 line-clamp-2">{item.description}</p>}
+      <p className="text-shText font-bold text-[14px] mt-3 truncate">{item.name}</p>
+      {item.description && <p className="text-shTextMuted text-[12px] mt-1 line-clamp-2">{item.description}</p>}
 
       {item.kind === "product" && (
-        <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black mt-1">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {item.track_inventory
             ? (item.in_stock ? `${item.stock_on_hand} in stock` : "Out of stock")
             : "Available"}
         </p>
       )}
       {item.kind === "credit_pack" && (
-        <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black mt-1">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {item.qty} {item.service_type} credits
         </p>
       )}
       {item.kind === "training_program" && (
-        <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black mt-1">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-bold mt-1">
           {item.format_count} {item.format_unit}
         </p>
       )}
 
       <div className="mt-auto pt-3 space-y-2">
-        <p className="text-shGreen font-black text-[18px]">{money(item.price)}</p>
-        <button
-          onClick={() => onAdd(item)}
-          disabled={outOfStock}
-          data-testid={`shop-buy-${item.kind}-${item.id}`}
-          className={`w-full px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest transition ${
-            outOfStock
-              ? "bg-bgBase border border-bgHover text-gray-600 cursor-not-allowed"
-              : "bg-shGreen text-bgHeader hover:opacity-90"
-          }`}
-        >
-          {outOfStock ? "Out of Stock" : cartQty > 0 ? `In Cart (${cartQty})` : "Add to Cart"}
-        </button>
+        <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
+        {outOfStock ? (
+          <button disabled data-testid={`shop-buy-${item.kind}-${item.id}`}
+                  className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
+                  style={{ background: "var(--sh-card-base)" }}>
+            Out of Stock
+          </button>
+        ) : (
+          <PremiumButton variant="primary" onClick={() => onAdd(item)} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
+            {cartQty > 0 ? `In Cart (${cartQty})` : "Add to Cart"}
+          </PremiumButton>
+        )}
       </div>
-    </div>
+    </NeonEdge>
   );
 }
 
@@ -117,29 +119,30 @@ function CartPanel({ cart, items, onQtyChange, onRemove, onCheckout, busy, onClo
   // since PortalShop's own root wrapper carries those exact classes).
   return createPortal(
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" data-testid="shop-cart-panel">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-5 space-y-3 max-h-[85vh] overflow-y-auto">
+      <div className="border border-shBorder rounded-2xl w-full max-w-md p-5 space-y-3 max-h-[85vh] overflow-y-auto shadow-sh" style={{ background: "var(--sh-card-base)" }}>
         <div className="flex items-center justify-between">
-          <p className="text-white font-black uppercase tracking-widest text-sm">Your Cart</p>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-xmark" /></button>
+          <p className="text-shText font-bold uppercase tracking-widest text-sm">Your Cart</p>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-xmark" /></button>
         </div>
 
-        {lines.length === 0 && <p className="text-gray-500 text-sm py-6 text-center">Your cart is empty.</p>}
+        {lines.length === 0 && <p className="text-shTextMuted text-sm py-6 text-center">Your cart is empty.</p>}
 
         <div className="space-y-2">
           {lines.map((l) => (
-            <div key={cartKey(l.kind, l.ref_id)} className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-center justify-between gap-2"
+            <div key={cartKey(l.kind, l.ref_id)} className="border border-shBorder rounded-lg p-3 flex items-center justify-between gap-2"
+                 style={{ background: "var(--sh-card-base)" }}
                  data-testid={`shop-cart-line-${l.kind}-${l.ref_id}`}>
               <div className="min-w-0">
-                <p className="text-white font-bold text-sm truncate">{l.item.name}</p>
-                <p className="text-[11px] text-gray-500">{money(l.item.price)} each</p>
+                <p className="text-shText font-bold text-sm truncate">{l.item.name}</p>
+                <p className="text-[11px] text-shTextMuted">{money(l.item.price)} each</p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity - 1)}
-                        className="w-7 h-7 rounded bg-bgPanel border border-bgHover text-gray-300">−</button>
-                <span className="text-white font-bold w-5 text-center">{l.quantity}</span>
+                        className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">−</button>
+                <span className="text-shText font-bold w-5 text-center">{l.quantity}</span>
                 <button onClick={() => onQtyChange(l.kind, l.ref_id, l.quantity + 1)}
-                        className="w-7 h-7 rounded bg-bgPanel border border-bgHover text-gray-300">+</button>
-                <button onClick={() => onRemove(l.kind, l.ref_id)} className="text-gray-500 hover:text-red-400 ml-1">
+                        className="w-7 h-7 rounded border border-shBorder text-shTextMuted hover:text-shText transition bg-[var(--sh-card-base)]">+</button>
+                <button onClick={() => onRemove(l.kind, l.ref_id)} className="text-shTextMuted hover:text-shDanger ml-1">
                   <i className="fas fa-trash-can text-xs" />
                 </button>
               </div>
@@ -149,16 +152,14 @@ function CartPanel({ cart, items, onQtyChange, onRemove, onCheckout, busy, onClo
 
         {lines.length > 0 && (
           <>
-            <div className="flex items-center justify-between pt-2 border-t border-bgHover">
-              <p className="text-gray-400 text-sm">Subtotal</p>
-              <p className="text-white font-black">{money(subtotal)}</p>
+            <div className="flex items-center justify-between pt-2 border-t border-shBorder">
+              <p className="text-shTextMuted text-sm">Subtotal</p>
+              <p className="text-shText font-black">{money(subtotal)}</p>
             </div>
-            <p className="text-[11px] text-gray-500">Tax (if applicable) is calculated on the next step. You&apos;ll be taken to Stripe&apos;s secure checkout — Sit Happens never sees or stores your card details.</p>
-            <button onClick={onCheckout} disabled={busy}
-                    data-testid="shop-checkout-button"
-                    className="w-full bg-shGreen text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+            <p className="text-[11px] text-shTextMuted">Tax (if applicable) is calculated on the next step. You&apos;ll be taken to Stripe&apos;s secure checkout — Sit Happens never sees or stores your card details.</p>
+            <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-checkout-button" className="w-full justify-center py-3">
               {busy ? "Redirecting…" : "Checkout"}
-            </button>
+            </PremiumButton>
           </>
         )}
       </div>
@@ -167,12 +168,43 @@ function CartPanel({ cart, items, onQtyChange, onRemove, onCheckout, busy, onClo
   );
 }
 
-export default function PortalShop({ initialTab = "all", fullScreen = false }) {
+function ApparelSection({ storeUrl }) {
+  if (!storeUrl) return null;
+  return (
+    <div data-testid="shop-apparel-section"
+         className="mb-4 rounded-2xl border border-shOrange/30 bg-gradient-to-br from-shOrange/10 to-transparent p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+      <div className="w-12 h-12 shrink-0 rounded-full bg-shOrange/15 border border-shOrange/30 grid place-items-center">
+        <i className="fas fa-shirt text-shOrange text-lg" />
+      </div>
+      <div className="flex-1">
+        <p className="text-white font-black text-[15px]">Sit Happens Apparel &amp; Merch</p>
+        <p className="text-gray-400 text-sm mt-0.5">
+          Shirts, hoodies, mugs and more — printed and shipped directly to you.
+        </p>
+        <p className="text-gray-500 text-[12px] mt-1">
+          Opens in a new tab with its own secure checkout, and ships straight to your door.
+        </p>
+      </div>
+      <a href={storeUrl} target="_blank" rel="noopener noreferrer" data-testid="shop-apparel-button"
+         className="shrink-0 bg-shOrange text-bgHeader px-5 py-2.5 rounded text-[12px] font-black uppercase tracking-widest text-center hover:brightness-110 transition">
+        Shop Apparel <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
+      </a>
+    </div>
+  );
+}
+
+export default function PortalShop({ initialTab = "all", fullScreen = false, shopifyStoreUrl = "", cart: cartProp, onCartChange }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab);
-  const [cart, setCart] = useState([]); // [{kind, ref_id, quantity}]
+  // Cart is controlled by the parent (Portal.jsx) when cart/onCartChange are
+  // passed, so it survives leaving/returning to this view — still the ONE
+  // cart, just lifted, not a second one. Falls back to local state so this
+  // component still works standalone if ever used without those props.
+  const [localCart, setLocalCart] = useState([]); // [{kind, ref_id, quantity}]
+  const cart = cartProp !== undefined ? cartProp : localCart;
+  const setCart = onCartChange || setLocalCart;
   const [cartOpen, setCartOpen] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const idemKeyRef = useRef(null);
@@ -285,24 +317,28 @@ export default function PortalShop({ initialTab = "all", fullScreen = false }) {
 
   return (
     <div id="portal-shop-anchor" data-testid="portal-shop"
-         className={fullScreen ? "w-full max-w-6xl mx-auto" : "bg-bgPanel card-pop p-6 rounded-2xl border border-bgHover shadow-2xl"}>
+         className={fullScreen ? "w-full max-w-6xl mx-auto" : "p-6 rounded-2xl border border-shBorder shadow-sh"}
+         style={fullScreen ? undefined : { background: "var(--sh-card-base)" }}>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen">
+        <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shPrimary">
           <i className="fas fa-bag-shopping mr-1" />Shop
         </p>
         <button onClick={() => setCartOpen(true)} data-testid="shop-cart-open"
-                className="relative bg-bgBase border border-bgHover text-gray-300 px-3 py-2 rounded text-[11px] font-black uppercase tracking-widest hover:border-shGreen/50">
+                className="relative border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
+                style={{ background: "var(--sh-card-base)" }}>
           <i className="fas fa-cart-shopping mr-1" />Cart
           {cartCount > 0 && (
-            <span className="absolute -top-2 -right-2 bg-shGreen text-bgHeader rounded-full w-5 h-5 text-[10px] grid place-items-center font-black" data-testid="shop-cart-count">
+            <span style={{ position: "absolute" }} className="-top-2 -right-2 bg-shAccent text-white rounded-full w-5 h-5 text-[10px] grid place-items-center font-black" data-testid="shop-cart-count">
               {cartCount}
             </span>
           )}
         </button>
       </div>
 
+      <ApparelSection storeUrl={shopifyStoreUrl} />
+
       {returning && (
-        <div className="mb-4 bg-bgBase border border-bgHover rounded-lg p-3 text-sm" data-testid="shop-order-return-status">
+        <div className="mb-4 border border-shBorder rounded-lg p-3 text-sm" style={{ background: "var(--sh-card-base)" }} data-testid="shop-order-return-status">
           {returning.status === "pending_payment" ? (
             <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Payment processing…</span>
           ) : returning.status === "paid" && returning.fulfillmentStatus !== "fulfilled" && returning.fulfillmentStatus !== "needs_attention" ? (
@@ -328,9 +364,10 @@ export default function PortalShop({ initialTab = "all", fullScreen = false }) {
       <div className="flex flex-wrap gap-2 justify-center mb-4">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)} data-testid={`shop-tab-${t.key}`}
-                  className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest transition ${
-                    tab === t.key ? "bg-shGreen text-bgHeader" : "bg-bgBase border border-bgHover text-gray-400 hover:border-shGreen/50"
-                  }`}>
+                  className={`px-3 py-1.5 rounded-md text-[11px] font-bold uppercase tracking-widest transition border ${
+                    tab === t.key ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted hover:border-shPrimary/50 hover:text-shText"
+                  }`}
+                  style={tab === t.key ? undefined : { background: "var(--sh-card-base)" }}>
             {t.label}
           </button>
         ))}

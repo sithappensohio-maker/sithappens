@@ -118,22 +118,22 @@ export default function IconPicker({ value, onChange, testid = "icon-picker", au
       <div className="flex items-center gap-2">
         <button type="button" onClick={()=>setOpen(o=>!o)}
                 data-testid={`${testid}-toggle`}
-                className="shrink-0 w-10 h-10 mt-1 bg-bgBase border border-bgHover rounded grid place-items-center text-white hover:border-shGreen">
+                className="shrink-0 w-10 h-10 mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded grid place-items-center text-shText hover:border-shPrimary">
           <i className={`fas ${value || "fa-tag"}`}/>
         </button>
         <input value={value} onChange={(e)=>onChange(e.target.value)} placeholder="fa-tag"
-               className="flex-1 mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+               className="flex-1 mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
       </div>
       {open && (
-        <div className="absolute z-20 left-0 right-0 mt-2 bg-bgPanel border border-bgHover rounded-lg shadow-2xl p-3 max-h-72 overflow-hidden flex flex-col"
+        <div className="absolute z-20 left-0 right-0 mt-2 bg-[var(--sh-card-base)] border border-shBorder rounded-lg shadow-2xl p-3 max-h-72 overflow-hidden flex flex-col"
              data-testid={`${testid}-grid`}>
           <div className="flex items-center gap-2 mb-2">
-            <i className="fas fa-search text-gray-500 text-xs"/>
+            <i className="fas fa-search text-shTextMuted text-xs"/>
             <input autoFocus value={q} onChange={(e)=>setQ(e.target.value)}
                    placeholder="Search icons (e.g. paw, bath, training)…"
-                   className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1 text-white text-[14px]"
+                   className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1 text-shText text-[14px]"
                    data-testid={`${testid}-search`}/>
-            <button type="button" onClick={()=>setOpen(false)} className="text-gray-500 hover:text-white text-xs px-1" aria-label="Close icon picker">
+            <button type="button" onClick={()=>setOpen(false)} className="text-shTextMuted hover:text-shText text-xs px-1" aria-label="Close icon picker">
               <i className="fas fa-xmark"/>
             </button>
           </div>
@@ -143,12 +143,12 @@ export default function IconPicker({ value, onChange, testid = "icon-picker", au
                       onClick={()=>{ onChange(i.name); setOpen(false); }}
                       title={i.name.replace("fa-", "")}
                       data-testid={`${testid}-${i.name}`}
-                      className={`aspect-square rounded grid place-items-center text-white hover:bg-shGreen/20 hover:text-shGreen border ${value === i.name ? "border-shGreen bg-shGreen/20 text-shGreen" : "border-transparent"}`}>
+                      className={`aspect-square rounded grid place-items-center text-shText hover:bg-shPrimary/20 hover:text-shPrimary border ${value === i.name ? "border-shPrimary bg-shPrimary/20 text-shPrimary" : "border-transparent"}`}>
                 <i className={`fas ${i.name} text-[14px]`}/>
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="col-span-8 text-center text-[14px] text-gray-500 py-4">No icons match &quot;{q}&quot;.</p>
+              <p className="col-span-8 text-center text-[14px] text-shTextMuted py-4">No icons match &quot;{q}&quot;.</p>
             )}
           </div>
         </div>

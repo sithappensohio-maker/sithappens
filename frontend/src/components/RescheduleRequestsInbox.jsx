@@ -50,14 +50,14 @@ export default function RescheduleRequestsInbox({ onChanged }) {
   if (rows.length === 0) return null;
 
   return (
-    <div className="bg-shBlue/5 border border-shBlue/40 rounded-xl p-4 shadow-lg space-y-3"
+    <div className="bg-shSecondary/5 border border-shSecondary/40 rounded-xl p-4 shadow-lg space-y-3"
          data-testid="reschedule-inbox">
       <div className="flex items-baseline justify-between">
-        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary">
           <i className="fas fa-calendar-pen mr-1.5"/>Reschedule requests · {rows.length} pending
         </p>
         <button onClick={load}
-                className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white">
+                className="text-[10px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">
           <i className="fas fa-rotate"/>
         </button>
       </div>
@@ -65,29 +65,29 @@ export default function RescheduleRequestsInbox({ onChanged }) {
       {rows.map(req => (
         <div key={req.id}
              data-testid={`reschedule-row-${req.id}`}
-             className="bg-bgPanel border border-bgHover rounded-lg p-3">
+             className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3">
           <div className="flex items-baseline justify-between flex-wrap gap-2">
             <div className="min-w-0">
-              <p className="text-sm font-black text-white">
+              <p className="text-sm font-black text-shText">
                 {req.dog_name} · {req.client_name}
               </p>
-              <p className="text-[12px] text-gray-400">
-                Currently <strong className="text-gray-300">{req.current_date} at {req.current_time || "—"}</strong>
+              <p className="text-[12px] text-shTextMuted">
+                Currently <strong className="text-shTextMuted">{req.current_date} at {req.current_time || "—"}</strong>
               </p>
             </div>
-            <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+            <span className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">
               {new Date(req.created_at).toLocaleString()}
             </span>
           </div>
 
           {req.client_note && (
-            <p className="text-[12px] text-gray-400 italic mt-1.5 mb-1.5">
+            <p className="text-[12px] text-shTextMuted italic mt-1.5 mb-1.5">
               &ldquo;{req.client_note}&rdquo;
             </p>
           )}
 
           <div className="mt-2">
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shGreen mb-1.5">
+            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1.5">
               Proposed slots · tap to approve
             </p>
             <div className="flex flex-wrap gap-2">
@@ -96,7 +96,7 @@ export default function RescheduleRequestsInbox({ onChanged }) {
                   key={i}
                   onClick={() => approve(req.id, i, s)}
                   data-testid={`reschedule-approve-${req.id}-${i}`}
-                  className="bg-shGreen/15 hover:bg-shGreen/30 text-shGreen border border-shGreen/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest transition"
+                  className="bg-shPrimary/15 hover:bg-shPrimary/30 text-shPrimary border border-shPrimary/40 rounded px-3 py-1.5 text-[12px] font-black uppercase tracking-widest transition"
                 >
                   <i className="fas fa-check mr-1.5"/>
                   {s.date} · {s.time}
@@ -105,7 +105,7 @@ export default function RescheduleRequestsInbox({ onChanged }) {
             </div>
           </div>
 
-          <div className="mt-3 pt-2 border-t border-bgHover">
+          <div className="mt-3 pt-2 border-t border-shBorder">
             {decliningId === req.id ? (
               <div className="flex gap-2 items-center">
                 <input
@@ -114,7 +114,7 @@ export default function RescheduleRequestsInbox({ onChanged }) {
                   onChange={e => setDeclineReason(e.target.value)}
                   placeholder="Why? (sent to client)"
                   data-testid={`reschedule-decline-reason-${req.id}`}
-                  className="flex-1 bg-bgBase border border-bgHover rounded px-2 py-1 text-xs text-white"
+                  className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-2 py-1 text-xs text-shText"
                 />
                 <button onClick={() => submitDecline(req.id)}
                         data-testid={`reschedule-decline-confirm-${req.id}`}
@@ -122,7 +122,7 @@ export default function RescheduleRequestsInbox({ onChanged }) {
                   Send
                 </button>
                 <button onClick={() => { setDecliningId(null); setDeclineReason(""); }}
-                        className="text-gray-500 hover:text-white text-[10px] font-black uppercase tracking-widest">
+                        className="text-shTextMuted hover:text-shText text-[10px] font-black uppercase tracking-widest">
                   Cancel
                 </button>
               </div>
@@ -130,7 +130,7 @@ export default function RescheduleRequestsInbox({ onChanged }) {
               <button
                 onClick={() => setDecliningId(req.id)}
                 data-testid={`reschedule-decline-${req.id}`}
-                className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-red-400"
+                className="text-[10px] font-black uppercase tracking-widest text-shTextMuted hover:text-red-400"
               >
                 <i className="fas fa-xmark mr-1"/>None work · decline
               </button>

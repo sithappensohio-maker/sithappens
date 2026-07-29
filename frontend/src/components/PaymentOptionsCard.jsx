@@ -33,17 +33,17 @@ export default function PaymentOptionsCard({ compact = false }) {
 
   return (
     <div
-      className={`bg-bgPanel card-pop rounded-2xl border border-bgHover shadow-2xl ${compact ? "p-4" : "p-5 sm:p-6"}`}
+      className={`bg-[var(--sh-card-base)] card-pop rounded-2xl border border-shBorder shadow-2xl ${compact ? "p-4" : "p-5 sm:p-6"}`}
       data-testid="portal-payment-options"
     >
       <div className="flex items-center justify-between mb-3">
-        <p className="text-[13px] sm:text-[14px] font-black text-shGreen uppercase tracking-widest">
+        <p className="text-[13px] sm:text-[14px] font-black text-shPrimary uppercase tracking-widest">
           <i className="fas fa-money-bill-wave mr-2"/>How to pay
         </p>
-        <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest">Optional</span>
+        <span className="text-[10px] text-shTextMuted font-black uppercase tracking-widest">Optional</span>
       </div>
 
-      <p className="text-[12px] text-gray-400 leading-snug mb-3">
+      <p className="text-[12px] text-shTextMuted leading-snug mb-3">
         Payment is optional and never required to submit a booking.
         Pick whichever method works for you.
       </p>
@@ -52,20 +52,20 @@ export default function PaymentOptionsCard({ compact = false }) {
         {rows.map((r) => (
           <div
             key={r.key}
-            className="bg-bgBase border border-bgHover rounded-lg p-3 overflow-hidden"
+            className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 overflow-hidden"
             data-testid={`portal-pay-${r.key}`}
           >
             {/* Header row: icon + label (label can be long like "@sit-happens"
                 so allow it to wrap and break inside words rather than push the
                 Open button off the card edge). */}
             <div className="flex items-center gap-2 mb-1.5">
-              <i className={`fas ${ICONS[r.key] || "fa-money-bill"} text-shGreen text-lg shrink-0`}/>
-              <span className="text-white font-black uppercase tracking-wide text-[13px] leading-tight min-w-0 break-words">
+              <i className={`fas ${ICONS[r.key] || "fa-money-bill"} text-shPrimary text-lg shrink-0`}/>
+              <span className="text-shText font-black uppercase tracking-wide text-[13px] leading-tight min-w-0 break-words">
                 {r.label || r.key}
               </span>
             </div>
             {r.instructions && (
-              <p className="text-[12px] text-gray-400 leading-snug break-words">
+              <p className="text-[12px] text-shTextMuted leading-snug break-words">
                 {r.instructions}
               </p>
             )}
@@ -74,7 +74,7 @@ export default function PaymentOptionsCard({ compact = false }) {
                 href={r.link}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-2 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shGreen/90 inline-flex items-center justify-center gap-1.5 w-full sm:w-auto"
+                className="mt-2 bg-shPrimary text-bgHeader px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest hover:bg-shPrimary/90 inline-flex items-center justify-center gap-1.5 w-full sm:w-auto"
                 data-testid={`portal-pay-${r.key}-open`}
               >
                 <i className="fas fa-external-link-alt"/>Open

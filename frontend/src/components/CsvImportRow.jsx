@@ -15,8 +15,8 @@ export default function CsvImportRow({
   testIdPrefix = "csv-import",
   helperText,
   onComplete,
-  borderColor = "border-shGreen/30",
-  accentColor = "text-shGreen",
+  borderColor = "border-shPrimary/30",
+  accentColor = "text-shPrimary",
 }) {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -60,17 +60,17 @@ export default function CsvImportRow({
   };
 
   return (
-    <div className={`bg-bgBase border ${borderColor} rounded-lg p-3 mb-4`} data-testid={`${testIdPrefix}-row`}>
+    <div className={`bg-[var(--sh-card-base)] border ${borderColor} rounded-lg p-3 mb-4`} data-testid={`${testIdPrefix}-row`}>
       <p className={`text-[12px] font-black uppercase tracking-widest ${accentColor} mb-2`}>
         <i className="fas fa-file-csv mr-1"/>Bulk import from CSV
       </p>
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={downloadTemplate}
                 data-testid={`${testIdPrefix}-template`}
-                className="bg-bgPanel border border-bgHover hover:border-shBlue text-gray-200 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
+                className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary text-gray-200 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
           <i className="fas fa-download mr-1"/>Download template
         </button>
-        <label className={`cursor-pointer bg-shBlue text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${busy ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"}`}
+        <label className={`cursor-pointer bg-shSecondary text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${busy ? "opacity-50 cursor-not-allowed" : "hover:opacity-90"}`}
                data-testid={`${testIdPrefix}-upload-label`}>
           {busy ? <><i className="fas fa-circle-notch fa-spin mr-1"/>Importing…</> : <><i className="fas fa-upload mr-1"/>Upload CSV</>}
           <input ref={fileRef} type="file" accept=".csv,text/csv"
@@ -78,7 +78,7 @@ export default function CsvImportRow({
                  data-testid={`${testIdPrefix}-file`}
                  className="hidden"/>
         </label>
-        {helperText && <p className="text-[11px] text-gray-500 italic">{helperText}</p>}
+        {helperText && <p className="text-[11px] text-shTextMuted italic">{helperText}</p>}
       </div>
 
       {error && (
@@ -88,22 +88,22 @@ export default function CsvImportRow({
       )}
 
       {result && (
-        <div className="mt-3 bg-bgPanel rounded p-2 text-[12px]" data-testid={`${testIdPrefix}-result`}>
+        <div className="mt-3 bg-[var(--sh-card-base)] rounded p-2 text-[12px]" data-testid={`${testIdPrefix}-result`}>
           <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-shGreen font-black">
+            <span className="text-shPrimary font-black">
               <i className="fas fa-circle-check mr-1"/>{result.created} created
             </span>
-            <span className="text-shBlue font-black">
+            <span className="text-shSecondary font-black">
               <i className="fas fa-arrows-rotate mr-1"/>{result.updated} updated
             </span>
             {result.skipped_count > 0 && (
-              <span className="text-shOrange font-black">
+              <span className="text-shAccent font-black">
                 <i className="fas fa-triangle-exclamation mr-1"/>{result.skipped_count} skipped
               </span>
             )}
           </div>
           {result.skipped_count > 0 && (
-            <ul className="mt-2 list-disc list-inside text-[11px] text-gray-400 space-y-0.5 max-h-32 overflow-y-auto">
+            <ul className="mt-2 list-disc list-inside text-[11px] text-shTextMuted space-y-0.5 max-h-32 overflow-y-auto">
               {result.skipped.map((s, i) => (
                 <li key={i}>Line {s.line}: {s.reason}</li>
               ))}

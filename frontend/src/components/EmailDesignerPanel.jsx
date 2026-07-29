@@ -79,7 +79,7 @@ function EmailHealthPill() {
 
   if (loading && !health) {
     return (
-      <div className="bg-bgPanel border border-bgHover rounded-xl px-4 py-3 text-[12px] text-gray-400 uppercase tracking-widest font-black">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl px-4 py-3 text-[12px] text-shTextMuted uppercase tracking-widest font-black">
         Checking deliverability…
       </div>
     );
@@ -87,11 +87,11 @@ function EmailHealthPill() {
   if (!health) return null;
 
   const palette = {
-    ok:   { bg: "bg-shGreen/10",  border: "border-shGreen/40",  text: "text-shGreen",  icon: "fa-circle-check",      label: "Healthy" },
-    warn: { bg: "bg-shOrange/10", border: "border-shOrange/40", text: "text-shOrange", icon: "fa-triangle-exclamation", label: "Warning" },
+    ok:   { bg: "bg-shPrimary/10",  border: "border-shPrimary/40",  text: "text-shPrimary",  icon: "fa-circle-check",      label: "Healthy" },
+    warn: { bg: "bg-shAccent/10", border: "border-shAccent/40", text: "text-shAccent", icon: "fa-triangle-exclamation", label: "Warning" },
     down: { bg: "bg-red-500/10",  border: "border-red-500/40",  text: "text-red-400",  icon: "fa-circle-xmark",      label: "Down" },
-    off:  { bg: "bg-bgHover/40",  border: "border-bgHover",     text: "text-gray-400", icon: "fa-power-off",         label: "Off" },
-  }[health.status] || { bg: "bg-bgHover/40", border: "border-bgHover", text: "text-gray-400", icon: "fa-circle-question", label: "Unknown" };
+    off:  { bg: "bg-shSurfaceRaised/40",  border: "border-shBorder",     text: "text-shTextMuted", icon: "fa-power-off",         label: "Off" },
+  }[health.status] || { bg: "bg-shSurfaceRaised/40", border: "border-shBorder", text: "text-shTextMuted", icon: "fa-circle-question", label: "Unknown" };
 
   return (
     <div className={`border ${palette.border} ${palette.bg} rounded-xl px-4 py-3 flex flex-col gap-3`} data-testid="email-health-pill">
@@ -101,27 +101,27 @@ function EmailHealthPill() {
         <div className="flex items-baseline gap-2 flex-wrap">
           <span className={`text-[12px] font-black uppercase tracking-[0.3em] ${palette.text}`}>Email · {palette.label}</span>
           {health.sender_domain && (
-            <span className="text-[11px] font-mono text-gray-400 normal-case">{health.sender_domain}</span>
+            <span className="text-[11px] font-mono text-shTextMuted normal-case">{health.sender_domain}</span>
           )}
         </div>
-        <p className="text-[13px] text-gray-300 mt-1 normal-case leading-snug" data-testid="email-health-message">{health.message}</p>
-        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-widest font-black text-gray-500">
-          <span className={health.has_api_key ? "text-shGreen" : "text-red-400"}>
+        <p className="text-[13px] text-shTextMuted mt-1 normal-case leading-snug" data-testid="email-health-message">{health.message}</p>
+        <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-widest font-black text-shTextMuted">
+          <span className={health.has_api_key ? "text-shPrimary" : "text-red-400"}>
             <i className={`fas ${health.has_api_key ? "fa-check" : "fa-xmark"} mr-1`}/>Resend Key
           </span>
-          <span className={health.spf_includes_resend ? "text-shGreen" : "text-red-400"}>
+          <span className={health.spf_includes_resend ? "text-shPrimary" : "text-red-400"}>
             <i className={`fas ${health.spf_includes_resend ? "fa-check" : "fa-xmark"} mr-1`}/>SPF
           </span>
-          <span className={health.dkim_record_found ? "text-shGreen" : "text-red-400"}>
+          <span className={health.dkim_record_found ? "text-shPrimary" : "text-red-400"}>
             <i className={`fas ${health.dkim_record_found ? "fa-check" : "fa-xmark"} mr-1`}/>DKIM
           </span>
           {health.quiet_hours_active && (
-            <span className="text-shOrange">
+            <span className="text-shAccent">
               <i className="fas fa-moon mr-1"/>Quiet hours
             </span>
           )}
           {health.admin_email && (
-            <span className="normal-case text-gray-400 tracking-normal">Sends to <span className="text-white font-bold">{health.admin_email}</span></span>
+            <span className="normal-case text-shTextMuted tracking-normal">Sends to <span className="text-shText font-bold">{health.admin_email}</span></span>
           )}
         </div>
       </div>
@@ -129,21 +129,21 @@ function EmailHealthPill() {
         onClick={load}
         disabled={loading}
         data-testid="email-health-recheck"
-        className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border ${palette.border} ${palette.text} hover:bg-bgBase/60 disabled:opacity-50`}
+        className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border ${palette.border} ${palette.text} hover:bg-[var(--sh-card-base)]/60 disabled:opacity-50`}
       >
         <i className={`fas fa-rotate ${loading ? "fa-spin" : ""} mr-1`}/>Re-check
       </button>
       <button
         onClick={() => setTestOpen(o => !o)}
         data-testid="email-health-toggle-test"
-        className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border border-shGreen/40 text-shGreen hover:bg-shGreen/10"
+        className="text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded border border-shPrimary/40 text-shPrimary hover:bg-shPrimary/10"
       >
         <i className={`fas ${testOpen ? "fa-xmark" : "fa-paper-plane"} mr-1`}/>{testOpen ? "Close" : "Send test"}
       </button>
     </div>
     {testOpen && (
-      <div className="border-t border-bgHover mt-1 pt-3 flex flex-col gap-2" data-testid="email-health-test-composer">
-        <p className="text-[11px] uppercase tracking-widest font-black text-gray-400 normal-case tracking-normal">
+      <div className="border-t border-shBorder mt-1 pt-3 flex flex-col gap-2" data-testid="email-health-test-composer">
+        <p className="text-[11px] uppercase tracking-widest font-black text-shTextMuted normal-case tracking-normal">
           Send a one-off diagnostic email to any address — useful for spot-checking that your sender domain is actually delivering.
         </p>
         <div className="flex flex-col sm:flex-row gap-2">
@@ -153,13 +153,13 @@ function EmailHealthPill() {
             onChange={e => setTestTo(e.target.value)}
             placeholder="recipient@example.com"
             data-testid="email-health-test-to"
-            className="flex-1 bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-[14px] text-white focus:border-shBlue/60 outline-none"
+            className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded-lg px-3 py-2 text-[14px] text-shText focus:border-shSecondary/60 outline-none"
           />
           <button
             onClick={sendTest}
             disabled={testBusy}
             data-testid="email-health-test-send"
-            className="bg-shGreen text-bgBase font-black text-[12px] uppercase tracking-widest px-4 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-shPrimary text-bgBase font-black text-[12px] uppercase tracking-widest px-4 py-2 rounded-lg hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {testBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Sending…</> : <><i className="fas fa-paper-plane mr-1"/>Send</>}
           </button>
@@ -170,13 +170,13 @@ function EmailHealthPill() {
           onChange={e => setTestNote(e.target.value)}
           placeholder="Optional note to include in the test email (e.g. 'staff onboarding check')"
           data-testid="email-health-test-note"
-          className="bg-bgBase border border-bgHover rounded-lg px-3 py-2 text-[13px] text-white focus:border-shBlue/60 outline-none"
+          className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg px-3 py-2 text-[13px] text-shText focus:border-shSecondary/60 outline-none"
         />
         {testMsg && (
           <p
             data-testid="email-health-test-msg"
             className={`text-[12px] font-bold normal-case ${
-              testMsg.startsWith("Sent to") ? "text-shGreen" : "text-red-400"
+              testMsg.startsWith("Sent to") ? "text-shPrimary" : "text-red-400"
             }`}
           >
             <i className={`fas ${testMsg.startsWith("Sent to") ? "fa-circle-check" : "fa-circle-xmark"} mr-1`}/>
@@ -215,7 +215,7 @@ function BrandingCard() {
       .catch(() => setDraft({ ...DEFAULT_BRAND }));
   }, []);
 
-  if (!draft) return <div className="text-gray-400 text-sm">Loading branding…</div>;
+  if (!draft) return <div className="text-shTextMuted text-sm">Loading branding…</div>;
 
   const save = async () => {
     setSaving(true);
@@ -233,17 +233,17 @@ function BrandingCard() {
   const update = (k, v) => setDraft({ ...draft, [k]: v });
 
   return (
-    <div className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-xl" data-testid="email-branding-card">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-xl" data-testid="email-branding-card">
       <div className="flex items-baseline justify-between mb-4">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary mb-1">
             <i className="fas fa-brush mr-1.5"/>Global Branding
           </p>
-          <h3 className="text-xl font-black text-white">Email Look & Feel</h3>
-          <p className="text-xs text-gray-400 mt-1">Applied automatically to every email Sit Happens sends.</p>
+          <h3 className="text-xl font-black text-shText">Email Look & Feel</h3>
+          <p className="text-xs text-shTextMuted mt-1">Applied automatically to every email Sit Happens sends.</p>
         </div>
         {msg && (
-          <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${msg === "Saved" ? "bg-shGreen/15 text-shGreen border border-shGreen/30" : "bg-red-500/15 text-red-400 border border-red-500/30"}`}>
+          <span className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded ${msg === "Saved" ? "bg-shPrimary/15 text-shPrimary border border-shPrimary/30" : "bg-red-500/15 text-red-400 border border-red-500/30"}`}>
             {msg === "Saved" && <i className="fas fa-check mr-1"/>}{msg}
           </span>
         )}
@@ -274,10 +274,10 @@ function BrandingCard() {
       </div>
 
       <div className="mt-4">
-        <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+        <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">
           Signature
         </label>
-        <p className="text-[11px] text-gray-500 mb-2">Appears above the footer of every email. Type your name, contact info, anything you&apos;d normally write at the bottom of an email.</p>
+        <p className="text-[11px] text-shTextMuted mb-2">Appears above the footer of every email. Type your name, contact info, anything you&apos;d normally write at the bottom of an email.</p>
         <RichTextEditor
           value={draft.signature_html}
           onChange={v => update("signature_html", v)}
@@ -288,10 +288,10 @@ function BrandingCard() {
       </div>
 
       <div className="mt-4">
-        <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+        <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">
           Footer text
         </label>
-        <p className="text-[11px] text-gray-500 mb-2">Small fine-print text at the very bottom of every email.</p>
+        <p className="text-[11px] text-shTextMuted mb-2">Small fine-print text at the very bottom of every email.</p>
         <RichTextEditor
           value={draft.footer_html}
           onChange={v => update("footer_html", v)}
@@ -304,12 +304,12 @@ function BrandingCard() {
       <BrandPreview draft={draft}/>
 
       {/* Sprint 110cq — Share/review knobs that drive the report-card email footer */}
-      <div className="mt-6 border-t border-bgHover/70 pt-5 space-y-4">
+      <div className="mt-6 border-t border-shBorder/70 pt-5 space-y-4">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange mb-1">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shAccent mb-1">
             <i className="fas fa-share-nodes mr-1.5"/>Report-card email footer
           </p>
-          <p className="text-xs text-gray-400">Auto-attached to every check-out email — boarding/daycare clients are at peak gratitude when they open it, so this is your highest-converting moment for reviews + referrals.</p>
+          <p className="text-xs text-shTextMuted">Auto-attached to every check-out email — boarding/daycare clients are at peak gratitude when they open it, so this is your highest-converting moment for reviews + referrals.</p>
         </div>
         <Field label="Google review link (paste from Google Business Profile)"
                value={draft.google_review_url}
@@ -317,15 +317,15 @@ function BrandingCard() {
                testId="google-review-url"
                placeholder="https://g.page/r/.../review"/>
         <div>
-          <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">
+          <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">
             Pre-filled share message
           </label>
-          <p className="text-[11px] text-gray-500 mb-1">Shown when clients tap &ldquo;Share on Facebook&rdquo; or &ldquo;Share on X&rdquo;. Leave blank for the default (&ldquo;My dog had the best day at &lt;brand&gt;! 🐾&rdquo;).</p>
+          <p className="text-[11px] text-shTextMuted mb-1">Shown when clients tap &ldquo;Share on Facebook&rdquo; or &ldquo;Share on X&rdquo;. Leave blank for the default (&ldquo;My dog had the best day at &lt;brand&gt;! 🐾&rdquo;).</p>
           <input value={draft.report_card_share_message || ""}
                  onChange={(e) => update("report_card_share_message", e.target.value)}
                  data-testid="report-card-share-message"
                  placeholder="My pup had the best day at Sit Happens! 🐾"
-                 className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-white text-sm"/>
+                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-shText text-sm"/>
         </div>
       </div>
 
@@ -334,14 +334,14 @@ function BrandingCard() {
           onClick={save}
           disabled={saving}
           data-testid="save-branding"
-          className="bg-shBlue hover:bg-shBlue/80 text-white px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50"
+          className="bg-shSecondary hover:bg-shSecondary/80 text-shText px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest shadow disabled:opacity-50"
         >
           {saving ? "Saving…" : "Save Branding"}
         </button>
         <button
           onClick={() => setDraft({ ...DEFAULT_BRAND })}
           data-testid="reset-branding"
-          className="bg-bgHover hover:bg-bgBase text-gray-300 px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest"
+          className="bg-shSurfaceRaised hover:bg-[var(--sh-card-base)] text-shTextMuted px-5 py-2 rounded font-black text-[13px] uppercase tracking-widest"
         >
           Reset to Defaults
         </button>
@@ -353,7 +353,7 @@ function BrandingCard() {
 function BrandPreview({ draft }) {
   return (
     <div className="mt-5">
-      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-400 mb-2">Live Preview</p>
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shTextMuted mb-2">Live Preview</p>
       <div className="bg-gray-100 rounded-lg p-4">
         <div className="max-w-[480px] mx-auto bg-white rounded-lg overflow-hidden shadow-lg" style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" }}>
           <div style={{ background: draft.brand_dark, padding: "20px 26px" }}>
@@ -409,14 +409,14 @@ function TemplatesCard() {
   };
 
   return (
-    <div className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-xl" data-testid="email-templates-card">
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-xl" data-testid="email-templates-card">
       <div className="flex flex-wrap items-baseline justify-between mb-3 gap-3">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
             <i className="fas fa-envelope mr-1.5"/>Per-email customization
           </p>
-          <h3 className="text-xl font-black text-white">Email Templates</h3>
-          <p className="text-xs text-gray-400 mt-1">Edit the subject, intro body, and CTA for each email Sit Happens sends. Variables like <code className="bg-bgHover px-1 rounded text-shBlue">{`{{first_name}}`}</code> are replaced automatically.</p>
+          <h3 className="text-xl font-black text-shText">Email Templates</h3>
+          <p className="text-xs text-shTextMuted mt-1">Edit the subject, intro body, and CTA for each email Sit Happens sends. Variables like <code className="bg-shSurfaceRaised px-1 rounded text-shSecondary">{`{{first_name}}`}</code> are replaced automatically.</p>
         </div>
         <div className="flex gap-1 items-center flex-wrap">
           {[
@@ -426,12 +426,12 @@ function TemplatesCard() {
             { id: "custom", label: "Custom" },
           ].map(f => (
             <button key={f.id} onClick={() => setFilter(f.id)} data-testid={`template-filter-${f.id}`}
-              className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === f.id ? "bg-shBlue text-white" : "bg-bgHover text-gray-400 hover:text-white"}`}>
+              className={`px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest ${filter === f.id ? "bg-shSecondary text-shText" : "bg-shSurfaceRaised text-shTextMuted hover:text-shText"}`}>
               {f.label}
             </button>
           ))}
           <button onClick={() => setCreateOpen(true)} data-testid="template-create-btn"
-            className="ml-2 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest bg-shGreen text-bgHeader hover:bg-shGreen/80">
+            className="ml-2 px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader hover:bg-shPrimary/80">
             <i className="fas fa-plus mr-1"/>Create Custom
           </button>
         </div>
@@ -440,36 +440,36 @@ function TemplatesCard() {
       <div className="space-y-2">
         {filtered.map(t => (
           <div key={t.slug} data-testid={`template-row-${t.slug}`}
-               className="w-full bg-bgBase hover:bg-bgHover border border-bgHover hover:border-shBlue/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4">
+               className="w-full bg-[var(--sh-card-base)] hover:bg-shSurfaceRaised border border-shBorder hover:border-shSecondary/50 rounded-lg px-4 py-3 transition flex items-center justify-between gap-4">
             <button onClick={() => setEditing(t.slug)} className="min-w-0 flex-1 text-left">
               <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-sm font-black text-white truncate">{t.name}</span>
+                <span className="text-sm font-black text-shText truncate">{t.name}</span>
                 {t.kind === "custom" && (
                   <span className="text-[9px] font-black uppercase tracking-widest bg-purple-500/15 text-purple-300 border border-purple-500/30 rounded px-1.5 py-0.5">
                     Custom
                   </span>
                 )}
                 {t.is_customized && t.kind !== "custom" && (
-                  <span className="text-[9px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen border border-shGreen/30 rounded px-1.5 py-0.5">
+                  <span className="text-[9px] font-black uppercase tracking-widest bg-shPrimary/15 text-shPrimary border border-shPrimary/30 rounded px-1.5 py-0.5">
                     Customized
                   </span>
                 )}
-                <span className={`text-[9px] font-black uppercase tracking-widest rounded px-1.5 py-0.5 ${t.audience === "client" ? "bg-shBlue/15 text-shBlue border border-shBlue/30" : "bg-shOrange/15 text-shOrange border border-shOrange/30"}`}>
+                <span className={`text-[9px] font-black uppercase tracking-widest rounded px-1.5 py-0.5 ${t.audience === "client" ? "bg-shSecondary/15 text-shSecondary border border-shSecondary/30" : "bg-shAccent/15 text-shAccent border border-shAccent/30"}`}>
                   {t.audience === "client" ? "To Client" : "To You"}
                 </span>
               </div>
-              <div className="text-xs text-gray-400 truncate">{t.description}</div>
+              <div className="text-xs text-shTextMuted truncate">{t.description}</div>
             </button>
             {t.kind === "custom" ? (
               <button onClick={() => handleDelete(t.slug, t.name)} data-testid={`template-delete-${t.slug}`}
                       className="text-red-400 hover:text-red-300 px-2"><i className="fas fa-trash"/></button>
             ) : (
-              <i className="fas fa-chevron-right text-gray-500"/>
+              <i className="fas fa-chevron-right text-shTextMuted"/>
             )}
           </div>
         ))}
         {filtered.length === 0 && (
-          <div className="text-center text-gray-500 text-sm py-6">No templates in this category.</div>
+          <div className="text-center text-shTextMuted text-sm py-6">No templates in this category.</div>
         )}
       </div>
 
@@ -542,60 +542,60 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
          onMouseDown={(e)=>{ if (e.target===e.currentTarget) onClose(); }}
          data-testid="template-create-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
-        <h3 className="text-xl font-black text-white uppercase tracking-tight mb-1">
-          <i className="fas fa-envelope-open-text text-shGreen mr-2"/>Create Custom Template
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-3xl p-6 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
+        <h3 className="text-xl font-black text-shText uppercase tracking-tight mb-1">
+          <i className="fas fa-envelope-open-text text-shPrimary mr-2"/>Create Custom Template
         </h3>
-        <p className="text-[13px] text-gray-400 mb-4">
+        <p className="text-[13px] text-shTextMuted mb-4">
           Build a custom email template that can be assigned to fire when a program or pack is sold.
         </p>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Template name</label>
+        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">Template name</label>
         <input value={name} onChange={(e)=>setName(e.target.value)}
                data-testid="template-create-name" placeholder="Welcome to Puppy Basics"
-               className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Audience</label>
+               className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">Audience</label>
         <select value={audience} onChange={(e)=>setAudience(e.target.value)} data-testid="template-create-audience"
-                className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           <option value="client">To Client</option>
           <option value="admin">To Admin</option>
           <option value="staff">To Staff</option>
         </select>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">Subject line</label>
+        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">Subject line</label>
         <input value={subject} onChange={(e)=>{setSubject(e.target.value); setPreview(null);}}
                data-testid="template-create-subject" placeholder="Welcome to {{program_name}}, {{first_name}}!"
-               className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
-        <label className="text-[11px] uppercase tracking-widest font-black text-gray-500">
-          Body (HTML allowed · use <code className="text-shBlue">{`{{first_name}}`}</code>, <code className="text-shBlue">{`{{program_name}}`}</code>, <code className="text-shBlue">{`{{pack_name}}`}</code>, <code className="text-shBlue">{`{{dog_name}}`}</code>)
+               className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
+        <label className="text-[11px] uppercase tracking-widest font-black text-shTextMuted">
+          Body (HTML allowed · use <code className="text-shSecondary">{`{{first_name}}`}</code>, <code className="text-shSecondary">{`{{program_name}}`}</code>, <code className="text-shSecondary">{`{{pack_name}}`}</code>, <code className="text-shSecondary">{`{{dog_name}}`}</code>)
         </label>
         <textarea value={introHtml} onChange={(e)=>{setIntroHtml(e.target.value); setPreview(null);}} rows={8}
                   data-testid="template-create-body"
                   placeholder="<p>Hi {{first_name}} — welcome to {{program_name}}! Here is what to expect in the coming weeks...</p>"
-                  className="w-full mt-1 mb-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono"/>
+                  className="w-full mt-1 mb-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-mono"/>
 
         {/* Sprint 110di-63 — Preview + Send Test */}
-        <div className="border-t border-bgHover/70 mt-2 pt-4 mb-3">
+        <div className="border-t border-shBorder/70 mt-2 pt-4 mb-3">
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary">
               <i className="fas fa-eye mr-1.5"/>Preview &amp; Test
             </p>
             <button onClick={loadPreview} disabled={!canPreview || previewBusy}
                     data-testid="template-create-preview-btn"
-                    className="bg-shBlue/15 text-shBlue border border-shBlue/40 px-3 py-1.5 rounded font-black text-[11px] uppercase tracking-widest disabled:opacity-50 hover:bg-shBlue/25">
+                    className="bg-shSecondary/15 text-shSecondary border border-shSecondary/40 px-3 py-1.5 rounded font-black text-[11px] uppercase tracking-widest disabled:opacity-50 hover:bg-shSecondary/25">
               {previewBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Rendering…</> : <><i className="fas fa-magnifying-glass mr-1"/>Render preview</>}
             </button>
           </div>
           {preview && (
-            <div className="border border-bgHover rounded-lg overflow-hidden mb-3" data-testid="template-create-preview">
-              <div className="bg-bgBase px-3 py-2 border-b border-bgHover">
-                <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">Rendered subject</p>
-                <p className="text-sm text-white font-bold truncate" data-testid="template-create-preview-subject">{preview.subject}</p>
+            <div className="border border-shBorder rounded-lg overflow-hidden mb-3" data-testid="template-create-preview">
+              <div className="bg-[var(--sh-card-base)] px-3 py-2 border-b border-shBorder">
+                <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">Rendered subject</p>
+                <p className="text-sm text-shText font-bold truncate" data-testid="template-create-preview-subject">{preview.subject}</p>
               </div>
               <div className="bg-gray-100 max-h-[280px] overflow-y-auto p-2">
                 <iframe title="email-preview" srcDoc={preview.html} sandbox=""
                         className="w-full bg-white" style={{height: 260, border: 0}}/>
               </div>
-              <p className="text-[10px] text-gray-500 px-3 py-2 normal-case">
-                Variables substituted with sample values · <code className="text-shBlue">first_name=Alex</code>, <code className="text-shBlue">program_name=Puppy Basics</code>, <code className="text-shBlue">pack_name=10-Day Daycare Pack</code>, <code className="text-shBlue">dog_name=Buddy</code>.
+              <p className="text-[10px] text-shTextMuted px-3 py-2 normal-case">
+                Variables substituted with sample values · <code className="text-shSecondary">first_name=Alex</code>, <code className="text-shSecondary">program_name=Puppy Basics</code>, <code className="text-shSecondary">pack_name=10-Day Daycare Pack</code>, <code className="text-shSecondary">dog_name=Buddy</code>.
               </p>
             </div>
           )}
@@ -603,16 +603,16 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
             <input type="email" value={testTo} onChange={(e)=>setTestTo(e.target.value)}
                    placeholder="Send test to (your inbox)…"
                    data-testid="template-create-test-to"
-                   className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
+                   className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"/>
             <button onClick={sendTest} disabled={!canPreview || testBusy}
                     data-testid="template-create-test-send"
-                    className="bg-shGreen text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50 hover:bg-shGreen/80">
+                    className="bg-shPrimary text-bgHeader px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50 hover:bg-shPrimary/80">
               {testBusy ? <><i className="fas fa-spinner fa-spin mr-1"/>Sending…</> : <><i className="fas fa-paper-plane mr-1"/>Send test</>}
             </button>
           </div>
           {testMsg && (
             <p data-testid="template-create-test-msg"
-               className={`text-[12px] mt-2 font-bold ${testMsg.startsWith("Sent to") ? "text-shGreen" : "text-red-400"}`}>
+               className={`text-[12px] mt-2 font-bold ${testMsg.startsWith("Sent to") ? "text-shPrimary" : "text-red-400"}`}>
               <i className={`fas ${testMsg.startsWith("Sent to") ? "fa-circle-check" : "fa-circle-xmark"} mr-1`}/>{testMsg}
             </p>
           )}
@@ -620,10 +620,10 @@ function CreateCustomTemplateModal({ onClose, onCreated }) {
 
         {err && <p className="text-red-400 text-[13px] mb-3">{err}</p>}
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="text-gray-400 px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+          <button onClick={onClose} className="text-shTextMuted px-4 py-2 font-black uppercase text-[13px] tracking-widest">Cancel</button>
           <button onClick={submit} disabled={busy || !name.trim() || !subject.trim() || !introHtml.trim()}
                   data-testid="template-create-submit"
-                  className="bg-shGreen text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
+                  className="bg-shPrimary text-bgHeader px-6 py-2 rounded font-black uppercase text-[13px] tracking-widest disabled:opacity-50">
             {busy ? "Creating…" : "Create template"}
           </button>
         </div>
@@ -659,7 +659,7 @@ function TemplateEditorModal({ slug, onClose }) {
   if (!tpl || !draft) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-        <div className="text-white text-sm">Loading…</div>
+        <div className="text-shText text-sm">Loading…</div>
       </div>
     );
   }
@@ -727,27 +727,27 @@ function TemplateEditorModal({ slug, onClose }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div
-        className="bg-bgPanel border border-bgHover rounded-xl shadow-2xl max-w-3xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
+        className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl shadow-2xl max-w-3xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
         onClick={e => e.stopPropagation()}
         data-testid={`template-editor-${slug}`}
       >
-        <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-6 py-4 flex items-baseline justify-between z-10">
+        <div className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder px-6 py-4 flex items-baseline justify-between z-10">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-0.5">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shSecondary mb-0.5">
               <i className="fas fa-envelope mr-1.5"/>Editing template
             </p>
-            <h2 className="text-xl font-black text-white">{tpl.name}</h2>
-            <p className="text-xs text-gray-400 mt-1">{tpl.description}</p>
+            <h2 className="text-xl font-black text-shText">{tpl.name}</h2>
+            <p className="text-xs text-shTextMuted mt-1">{tpl.description}</p>
           </div>
           <button onClick={onClose} data-testid="close-template-editor"
-                  className="text-gray-400 hover:text-white text-2xl leading-none">
+                  className="text-shTextMuted hover:text-shText text-2xl leading-none">
             ×
           </button>
         </div>
 
         <div className="px-6 py-5 space-y-5">
           {msg && (
-            <div className={`text-[12px] font-black uppercase tracking-widest p-2 rounded ${msg.startsWith("Saved") || msg.startsWith("Test sent") || msg.startsWith("Reset") ? "bg-shGreen/15 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
+            <div className={`text-[12px] font-black uppercase tracking-widest p-2 rounded ${msg.startsWith("Saved") || msg.startsWith("Test sent") || msg.startsWith("Reset") ? "bg-shPrimary/15 text-shPrimary" : "bg-red-500/15 text-red-400"}`}>
               {msg}
             </div>
           )}
@@ -769,10 +769,10 @@ function TemplateEditorModal({ slug, onClose }) {
           />
 
           <div>
-            <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+            <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">
               Email body
             </label>
-            <p className="text-[11px] text-gray-500 mb-2">
+            <p className="text-[11px] text-shTextMuted mb-2">
               The main message. Use the toolbar to bold/italicize, add lists, or insert links. Click a variable chip to drop in the client&apos;s name, dog name, etc.
             </p>
             <RichTextEditor
@@ -794,10 +794,10 @@ function TemplateEditorModal({ slug, onClose }) {
           />
 
           <div>
-            <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-2">
+            <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-2">
               Sign-off (optional)
             </label>
-            <p className="text-[11px] text-gray-500 mb-2">Extra text below the data rows — like &ldquo;Need help? Reply to this email anytime.&rdquo; Leave blank to skip.</p>
+            <p className="text-[11px] text-shTextMuted mb-2">Extra text below the data rows — like &ldquo;Need help? Reply to this email anytime.&rdquo; Leave blank to skip.</p>
             <RichTextEditor
               value={draft.signoff_html}
               onChange={v => setDraft({ ...draft, signoff_html: v })}
@@ -809,8 +809,8 @@ function TemplateEditorModal({ slug, onClose }) {
 
           <EmailPreview tpl={tpl} subject={effectiveSubject} intro={effectiveIntro} cta={draft.cta_text || tpl.defaults.cta_text}/>
 
-          <div className="border-t border-bgHover pt-4">
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-2">
+          <div className="border-t border-shBorder pt-4">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-2">
               <i className="fas fa-paper-plane mr-1.5"/>Send a test
             </p>
             <div className="flex gap-2">
@@ -820,13 +820,13 @@ function TemplateEditorModal({ slug, onClose }) {
                 onChange={e => setTestTo(e.target.value)}
                 placeholder="Recipient (blank = your admin email)"
                 data-testid="tpl-test-to"
-                className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
+                className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText"
               />
               <button
                 onClick={sendTest}
                 disabled={busy}
                 data-testid="tpl-send-test"
-                className="bg-shGreen hover:bg-shGreen/80 text-bgDark px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50"
+                className="bg-shPrimary hover:bg-shPrimary/80 text-bgDark px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50"
               >
                 Send Test
               </button>
@@ -834,12 +834,12 @@ function TemplateEditorModal({ slug, onClose }) {
           </div>
         </div>
 
-        <div className="sticky bottom-0 bg-bgPanel border-t border-bgHover px-6 py-3 flex justify-between gap-2 z-10">
+        <div className="sticky bottom-0 bg-[var(--sh-card-base)] border-t border-shBorder px-6 py-3 flex justify-between gap-2 z-10">
           <button
             onClick={reset}
             disabled={busy || !tpl.is_customized}
             data-testid="tpl-reset"
-            className="bg-bgHover hover:bg-red-500/20 text-red-400 disabled:text-gray-600 disabled:hover:bg-bgHover px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
+            className="bg-shSurfaceRaised hover:bg-red-500/20 text-red-400 disabled:text-gray-600 disabled:hover:bg-shSurfaceRaised px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
           >
             Reset to Default
           </button>
@@ -847,7 +847,7 @@ function TemplateEditorModal({ slug, onClose }) {
             <button
               onClick={onClose}
               data-testid="tpl-cancel"
-              className="bg-bgHover hover:bg-bgBase text-gray-300 px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
+              className="bg-shSurfaceRaised hover:bg-[var(--sh-card-base)] text-shTextMuted px-4 py-2 rounded font-black text-[12px] uppercase tracking-widest"
             >
               Close
             </button>
@@ -855,7 +855,7 @@ function TemplateEditorModal({ slug, onClose }) {
               onClick={save}
               disabled={busy}
               data-testid="tpl-save"
-              className="bg-shBlue hover:bg-shBlue/80 text-white px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50"
+              className="bg-shSecondary hover:bg-shSecondary/80 text-shText px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest disabled:opacity-50"
             >
               {busy ? "Saving…" : "Save Changes"}
             </button>
@@ -868,8 +868,8 @@ function TemplateEditorModal({ slug, onClose }) {
 
 function EmailPreview({ subject, intro, cta }) {
   return (
-    <div className="border border-bgHover rounded-lg overflow-hidden">
-      <div className="bg-bgHover px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-gray-400">
+    <div className="border border-shBorder rounded-lg overflow-hidden">
+      <div className="bg-shSurfaceRaised px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-shTextMuted">
         <i className="fas fa-eye mr-1.5"/>Preview
       </div>
       <div className="bg-gray-100 p-4">
@@ -895,14 +895,14 @@ function EmailPreview({ subject, intro, cta }) {
 function Field({ label, value, onChange, testId, placeholder, type = "text" }) {
   return (
     <div>
-      <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">{label}</label>
+      <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">{label}</label>
       <input
         type={type}
         value={value || ""}
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder || ""}
         data-testid={testId}
-        className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
+        className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText"
       />
     </div>
   );
@@ -911,21 +911,21 @@ function Field({ label, value, onChange, testId, placeholder, type = "text" }) {
 function ColorField({ label, value, onChange, testId }) {
   return (
     <div>
-      <label className="block text-[12px] font-black text-gray-300 uppercase tracking-widest mb-1">{label}</label>
+      <label className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">{label}</label>
       <div className="flex gap-2">
         <input
           type="color"
           value={value || "#000000"}
           onChange={e => onChange(e.target.value)}
           data-testid={`${testId}-picker`}
-          className="h-10 w-14 bg-bgBase border border-bgHover rounded cursor-pointer"
+          className="h-10 w-14 bg-[var(--sh-card-base)] border border-shBorder rounded cursor-pointer"
         />
         <input
           type="text"
           value={value || ""}
           onChange={e => onChange(e.target.value)}
           data-testid={testId}
-          className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white font-mono uppercase"
+          className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText font-mono uppercase"
         />
       </div>
     </div>

@@ -36,10 +36,10 @@ function fmtMoney(n) {
 
 function Pill({ icon, label, value, tone = "default", ...rest }) {
   const tones = {
-    default: "bg-bgBase/60 border-bgHover text-gray-300",
-    green: "bg-shGreen/10 border-shGreen/40 text-shGreen",
-    blue: "bg-shBlue/10 border-shBlue/40 text-shBlue",
-    orange: "bg-shOrange/10 border-shOrange/40 text-shOrange",
+    default: "bg-[var(--sh-card-base)]/60 border-shBorder text-shTextMuted",
+    green: "bg-shPrimary/10 border-shPrimary/40 text-shPrimary",
+    blue: "bg-shSecondary/10 border-shSecondary/40 text-shSecondary",
+    orange: "bg-shAccent/10 border-shAccent/40 text-shAccent",
     red: "bg-red-500/10 border-red-500/40 text-red-300",
     amber: "bg-amber-500/10 border-amber-500/40 text-amber-300",
     purple: "bg-purple-500/10 border-purple-500/40 text-purple-300",
@@ -205,12 +205,12 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
       data-testid="booking-detail-modal"
     >
-      <div className="bg-bgCard border border-bgHover rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e)=>e.stopPropagation()}>
+      <div className="bg-bgCard border border-shBorder rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e)=>e.stopPropagation()}>
         {/* Header */}
-        <div className={`px-6 py-5 rounded-t-2xl border-b border-bgHover ${
+        <div className={`px-6 py-5 rounded-t-2xl border-b border-shBorder ${
           done ? "bg-gradient-to-r from-gray-700/30 to-gray-900/30"
-               : onPremises ? "bg-gradient-to-r from-shGreen/20 to-shGreen/5"
-                            : "bg-gradient-to-r from-shOrange/20 to-shOrange/5"
+               : onPremises ? "bg-gradient-to-r from-shPrimary/20 to-shPrimary/5"
+                            : "bg-gradient-to-r from-shAccent/20 to-shAccent/5"
         }`}>
           <div className="flex items-start gap-4">
             <div className="flex-shrink-0">
@@ -218,8 +218,8 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                 <img src={dog.photo} alt={booking.dog_name}
                      className="w-20 h-20 rounded-full object-cover border-4 border-bgPanel shadow-lg"/>
               ) : (
-                <div className="w-20 h-20 rounded-full bg-bgPanel border-4 border-bgHover grid place-items-center shadow-lg">
-                  <i className="fas fa-dog text-3xl text-gray-500"/>
+                <div className="w-20 h-20 rounded-full bg-[var(--sh-card-base)] border-4 border-shBorder grid place-items-center shadow-lg">
+                  <i className="fas fa-dog text-3xl text-shTextMuted"/>
                 </div>
               )}
             </div>
@@ -228,18 +228,18 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                 <i className={`fas fa-${done ? "circle-check" : onPremises ? "house-circle-check" : "calendar"} mr-1`}/>
                 {statusLabel}
               </div>
-              <h2 className="text-3xl font-black tracking-tight text-white">{booking.dog_name || "Dog"}</h2>
-              <p className="text-[14px] text-gray-300 mt-0.5">
+              <h2 className="text-3xl font-black tracking-tight text-shText">{booking.dog_name || "Dog"}</h2>
+              <p className="text-[14px] text-shTextMuted mt-0.5">
                 {dog?.breed || ""}
                 {(dog?.age_y > 0 || dog?.age_m > 0) ? ` · ${dog.age_y || 0}y ${dog.age_m || 0}m` : ""}
                 {dog?.sex ? ` · ${dog.sex}` : ""}
               </p>
-              <p className="text-[13px] text-gray-400 mt-1 uppercase tracking-widest font-black">
+              <p className="text-[13px] text-shTextMuted mt-1 uppercase tracking-widest font-black">
                 {booking.client_name || client?.name || "Client"}
               </p>
             </div>
             <button onClick={onClose} data-testid="booking-detail-close"
-                    className="text-gray-400 hover:text-white text-xl">
+                    className="text-shTextMuted hover:text-shText text-xl">
               <i className="fas fa-times"/>
             </button>
           </div>
@@ -247,19 +247,19 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
             {booking.dog_id && (
               <button onClick={()=>{ onClose?.(); onJumpToDog?.(booking.dog_id); }}
                       data-testid="booking-detail-jump-dog"
-                      className="text-[12px] font-black uppercase tracking-widest bg-shBlue/15 border border-shBlue/40 text-shBlue px-3 py-1.5 rounded hover:bg-shBlue/25">
+                      className="text-[12px] font-black uppercase tracking-widest bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded hover:bg-shSecondary/25">
                 <i className="fas fa-paw mr-1"/>Dog profile
               </button>
             )}
             {booking.client_id && client?.phone && (
               <a href={`tel:${client.phone}`}
-                 className="text-[12px] font-black uppercase tracking-widest bg-shGreen/15 border border-shGreen/40 text-shGreen px-3 py-1.5 rounded hover:bg-shGreen/25">
+                 className="text-[12px] font-black uppercase tracking-widest bg-shPrimary/15 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded hover:bg-shPrimary/25">
                 <i className="fas fa-phone mr-1"/>{client.phone}
               </a>
             )}
             {client?.email && (
               <a href={`mailto:${client.email}`}
-                 className="text-[12px] font-black uppercase tracking-widest bg-bgBase/60 border border-bgHover text-gray-300 px-3 py-1.5 rounded hover:bg-bgPanel/60">
+                 className="text-[12px] font-black uppercase tracking-widest bg-[var(--sh-card-base)]/60 border border-shBorder text-shTextMuted px-3 py-1.5 rounded hover:bg-[var(--sh-card-base)]/60">
                 <i className="fas fa-envelope mr-1"/>{client.email}
               </a>
             )}
@@ -269,11 +269,11 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
         {/* Body */}
         <div className="p-6 space-y-5">
           {err && <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded text-sm">{err}</div>}
-          {loading && <div className="text-center text-gray-500 text-sm py-2">Loading details…</div>}
+          {loading && <div className="text-center text-shTextMuted text-sm py-2">Loading details…</div>}
 
           {/* Service summary */}
           <section>
-            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Service</h3>
+            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">Service</h3>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
               <Pill icon="fa-tag" label="Service" value={
                 <span className="capitalize">{booking.service_type}{booking.grooming_type ? ` · ${booking.grooming_type.replace("_"," ")}` : ""}</span>
@@ -288,15 +288,15 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
 
           {/* Status timeline */}
           <section>
-            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Timeline</h3>
-            <ol className="relative border-l-2 border-bgHover ml-3 space-y-3" data-testid="booking-detail-timeline">
-              <TimelineItem dot="bg-shBlue" label="Booked" time={booking.created_at && fmtDateTime(booking.created_at)} sub={booking.created_by_name && `by ${booking.created_by_name}`}/>
-              {booking.approved_at && <TimelineItem dot="bg-shGreen" label="Approved" time={fmtDateTime(booking.approved_at)} sub={booking.approved_by_name && `by ${booking.approved_by_name}`}/>}
+            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">Timeline</h3>
+            <ol className="relative border-l-2 border-shBorder ml-3 space-y-3" data-testid="booking-detail-timeline">
+              <TimelineItem dot="bg-shSecondary" label="Booked" time={booking.created_at && fmtDateTime(booking.created_at)} sub={booking.created_by_name && `by ${booking.created_by_name}`}/>
+              {booking.approved_at && <TimelineItem dot="bg-shPrimary" label="Approved" time={fmtDateTime(booking.approved_at)} sub={booking.approved_by_name && `by ${booking.approved_by_name}`}/>}
               {booking.checked_in_at && (
-                <TimelineItem dot="bg-shGreen" label="Checked in" time={fmtDateTime(booking.checked_in_at)} sub={
+                <TimelineItem dot="bg-shPrimary" label="Checked in" time={fmtDateTime(booking.checked_in_at)} sub={
                   <>
                     {booking.checked_in_by_name && <span>by {booking.checked_in_by_name}</span>}
-                    {booking.checked_in_lat && <span> · <i className="fas fa-location-dot text-shGreen mr-1"/>{booking.checked_in_lat.toFixed(4)}, {booking.checked_in_lng.toFixed(4)}</span>}
+                    {booking.checked_in_lat && <span> · <i className="fas fa-location-dot text-shPrimary mr-1"/>{booking.checked_in_lat.toFixed(4)}, {booking.checked_in_lng.toFixed(4)}</span>}
                   </>
                 }/>
               )}
@@ -304,7 +304,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                 <TimelineItem dot="bg-gray-400" label="Checked out" time={fmtDateTime(booking.checked_out_at)} sub={
                   <>
                     {booking.checked_out_by_name && <span>by {booking.checked_out_by_name}</span>}
-                    {booking.checked_out_lat && <span> · <i className="fas fa-location-dot text-shGreen mr-1"/>{booking.checked_out_lat.toFixed(4)}, {booking.checked_out_lng.toFixed(4)}</span>}
+                    {booking.checked_out_lat && <span> · <i className="fas fa-location-dot text-shPrimary mr-1"/>{booking.checked_out_lat.toFixed(4)}, {booking.checked_out_lng.toFixed(4)}</span>}
                   </>
                 }/>
               )}
@@ -315,12 +315,12 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           {/* Care needs */}
           {(careNotes.length > 0 || dog?.notes || dog?.tags?.length > 0) && (
             <section>
-              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Care needs</h3>
-              <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 text-[13px] space-y-2">
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">Care needs</h3>
+              <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-3 text-[13px] space-y-2">
                 {dog?.feeding_schedule?.length > 0 && (
                   <div>
-                    <span className="text-shGreen font-black"><i className="fas fa-bowl-food mr-1"/>Feeding</span>
-                    <ul className="ml-5 list-disc text-gray-300 mt-1">
+                    <span className="text-shPrimary font-black"><i className="fas fa-bowl-food mr-1"/>Feeding</span>
+                    <ul className="ml-5 list-disc text-shTextMuted mt-1">
                       {dog.feeding_schedule.map((f,i) => <li key={i}>{typeof f === "string" ? f : `${f.time || ""} — ${f.amount || ""} ${f.notes ? `(${f.notes})` : ""}`}</li>)}
                     </ul>
                   </div>
@@ -328,7 +328,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                 {dog?.medications?.length > 0 && (
                   <div>
                     <span className="text-purple-400 font-black"><i className="fas fa-pills mr-1"/>Medications</span>
-                    <ul className="ml-5 list-disc text-gray-300 mt-1">
+                    <ul className="ml-5 list-disc text-shTextMuted mt-1">
                       {dog.medications.map((m,i) => <li key={i}>{typeof m === "string" ? m : `${m.name || ""} — ${m.dose || ""} ${m.schedule || ""} ${m.notes ? `(${m.notes})` : ""}`}</li>)}
                     </ul>
                   </div>
@@ -343,7 +343,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                   </div>
                 )}
                 {dog?.notes && (
-                  <div><span className="text-amber-300 font-black"><i className="fas fa-circle-info mr-1"/>Notes:</span> <span className="text-gray-300 whitespace-pre-wrap">{dog.notes}</span></div>
+                  <div><span className="text-amber-300 font-black"><i className="fas fa-circle-info mr-1"/>Notes:</span> <span className="text-shTextMuted whitespace-pre-wrap">{dog.notes}</span></div>
                 )}
               </div>
             </section>
@@ -355,11 +355,11 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
               <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-amber-400 mb-2">
                 <i className="fas fa-plus-circle mr-1"/>Add-ons
               </h3>
-              <ul className="bg-bgBase/40 border border-amber-500/30 rounded-lg divide-y divide-bgHover/40" data-testid="booking-detail-addons">
+              <ul className="bg-[var(--sh-card-base)]/40 border border-amber-500/30 rounded-lg divide-y divide-shBorder/40" data-testid="booking-detail-addons">
                 {addOns.map((ao,i) => (
                   <li key={i} className="px-3 py-2 flex items-center justify-between text-[13px]">
-                    <span className="text-white"><i className={`fas ${ao.icon || "fa-plus"} text-amber-400 mr-1.5`}/>{ao.name} × {ao.qty || 1}</span>
-                    <span className="text-shGreen font-black">{fmtMoney(Number(ao.price || 0) * (ao.qty || 1))}</span>
+                    <span className="text-shText"><i className={`fas ${ao.icon || "fa-plus"} text-amber-400 mr-1.5`}/>{ao.name} × {ao.qty || 1}</span>
+                    <span className="text-shPrimary font-black">{fmtMoney(Number(ao.price || 0) * (ao.qty || 1))}</span>
                   </li>
                 ))}
                 <li className="px-3 py-2 flex items-center justify-between bg-amber-500/5 text-[13px]">
@@ -373,16 +373,16 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           {/* Notes */}
           {booking.notes && (
             <section>
-              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">Notes from booking</h3>
-              <div className="bg-bgBase/40 border border-bgHover rounded-lg p-3 text-[13px] text-gray-200 whitespace-pre-wrap">{booking.notes}</div>
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">Notes from booking</h3>
+              <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-3 text-[13px] text-gray-200 whitespace-pre-wrap">{booking.notes}</div>
             </section>
           )}
 
           {/* Pricing */}
           <section>
-            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-gray-500 mb-2">
+            <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shTextMuted mb-2">
               Pricing{isGrouped && (
-                <span className="ml-2 text-shGreen normal-case tracking-normal">
+                <span className="ml-2 text-shPrimary normal-case tracking-normal">
                   · Group of {groupMembers.length} dogs
                 </span>
               )}
@@ -420,7 +420,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
 
             {/* Group breakdown — shows each dog's line + multi-dog discount */}
             {isGrouped && !hasActualPrice && (
-              <div className="mt-3 bg-bgBase/40 border border-bgHover rounded-lg p-3 space-y-1.5 text-[13px]"
+              <div className="mt-3 bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-3 space-y-1.5 text-[13px]"
                    data-testid="booking-detail-group-breakdown">
                 {[...groupMembers]
                   .sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""))
@@ -430,33 +430,33 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                     return (
                       <div key={m.id} className="flex justify-between items-center"
                            data-testid={`booking-detail-group-member-${m.id}`}>
-                        <span className="text-gray-300">
-                          <i className="fas fa-dog text-shGreen mr-1.5 opacity-70"/>
+                        <span className="text-shTextMuted">
+                          <i className="fas fa-dog text-shPrimary mr-1.5 opacity-70"/>
                           {m.dog_name || `Dog ${idx + 1}`}
-                          {idx === 0 && <span className="text-[10px] text-gray-500 uppercase tracking-widest ml-2">(primary)</span>}
-                          {ao > 0 && <span className="text-gray-500 ml-1">· {fmtMoney(b)} base + {fmtMoney(ao)} add-ons</span>}
+                          {idx === 0 && <span className="text-[10px] text-shTextMuted uppercase tracking-widest ml-2">(primary)</span>}
+                          {ao > 0 && <span className="text-shTextMuted ml-1">· {fmtMoney(b)} base + {fmtMoney(ao)} add-ons</span>}
                         </span>
-                        <span className="text-white font-black">{fmtMoney(b + ao)}</span>
+                        <span className="text-shText font-black">{fmtMoney(b + ao)}</span>
                       </div>
                     );
                   })}
-                <div className="flex justify-between border-t border-bgHover pt-1.5"
+                <div className="flex justify-between border-t border-shBorder pt-1.5"
                      data-testid="booking-detail-group-subtotal">
-                  <span className="text-gray-400 uppercase tracking-widest font-black text-[11px]">Standard price</span>
-                  <span className="text-white font-black">{fmtMoney(groupSubtotal)}</span>
+                  <span className="text-shTextMuted uppercase tracking-widest font-black text-[11px]">Standard price</span>
+                  <span className="text-shText font-black">{fmtMoney(groupSubtotal)}</span>
                 </div>
                 {groupMdDiscount > 0 && (
                   <div className="flex justify-between"
                        data-testid="booking-detail-group-md-discount">
-                    <span className="text-shGreen">
+                    <span className="text-shPrimary">
                       <i className="fas fa-tag mr-1.5"/>{"Additional dog discount"}
                     </span>
-                    <span className="text-shGreen font-black">−{fmtMoney(groupMdDiscount)}</span>
+                    <span className="text-shPrimary font-black">−{fmtMoney(groupMdDiscount)}</span>
                   </div>
                 )}
-                <div className="flex justify-between border-t border-bgHover pt-1.5">
-                  <span className="text-white font-black uppercase tracking-widest text-[12px]">Group total (est.)</span>
-                  <span className="text-shGreen font-black text-[15px]">{fmtMoney(groupTotal)}</span>
+                <div className="flex justify-between border-t border-shBorder pt-1.5">
+                  <span className="text-shText font-black uppercase tracking-widest text-[12px]">Group total (est.)</span>
+                  <span className="text-shPrimary font-black text-[15px]">{fmtMoney(groupTotal)}</span>
                 </div>
               </div>
             )}
@@ -465,14 +465,14 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           {/* Report card */}
           {reportCard && (
             <section>
-              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shOrange mb-2 flex items-center gap-2 flex-wrap">
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shAccent mb-2 flex items-center gap-2 flex-wrap">
                 <span><i className="fas fa-clipboard-list mr-1"/>Report card</span>
                 <ReportCardEmailStatus booking={booking} onResent={onClose}/>
               </h3>
-              <div className="bg-shOrange/5 border border-shOrange/30 rounded-lg p-3 space-y-2">
+              <div className="bg-shAccent/5 border border-shAccent/30 rounded-lg p-3 space-y-2">
                 {reportCard.mood && (
                   <div className="text-[13px] text-gray-200">
-                    <span className="text-shOrange font-black uppercase tracking-widest mr-2">Mood:</span>
+                    <span className="text-shAccent font-black uppercase tracking-widest mr-2">Mood:</span>
                     {reportCard.mood}
                   </div>
                 )}
@@ -482,7 +482,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
                 {Array.isArray(reportCard.photos) && reportCard.photos.length > 0 && (
                   <div className="flex gap-2 flex-wrap" data-testid="booking-detail-report-photos">
                     {reportCard.photos.map((p,i) => (
-                      <img key={i} src={p} alt={`photo ${i+1}`} className="w-16 h-16 rounded object-cover border border-bgHover"/>
+                      <img key={i} src={p} alt={`photo ${i+1}`} className="w-16 h-16 rounded object-cover border border-shBorder"/>
                     ))}
                   </div>
                 )}
@@ -494,7 +494,7 @@ export default function BookingDetailModal({ booking: initial, onClose, onJumpTo
           {/* Show care log standalone if no report card was filed yet. */}
           {!reportCard && ((booking.feeding_log?.length || 0) + (booking.medication_log?.length || 0) + ((booking.bathroom_log?.pee || 0) + (booking.bathroom_log?.poop || 0)) > 0) && (
             <section>
-              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shGreen mb-2">
+              <h3 className="text-[11px] uppercase tracking-[0.3em] font-black text-shPrimary mb-2">
                 <i className="fas fa-clipboard-check mr-1"/>Care log
               </h3>
               <CareLogStrip feedings={booking.feeding_log} medications={booking.medication_log} bathroom={booking.bathroom_log} />
@@ -511,10 +511,10 @@ function TimelineItem({ dot, label, time, sub }) {
     <li className="ml-4">
       <span className={`absolute -left-[7px] mt-1.5 w-3 h-3 rounded-full ring-2 ring-bgCard ${dot}`}/>
       <div className="text-[13px]">
-        <span className="font-black text-white uppercase tracking-widest text-[12px]">{label}</span>
-        <span className="text-gray-400 ml-2">· {time || "—"}</span>
+        <span className="font-black text-shText uppercase tracking-widest text-[12px]">{label}</span>
+        <span className="text-shTextMuted ml-2">· {time || "—"}</span>
       </div>
-      {sub && <div className="text-[12px] text-gray-500 mt-0.5">{sub}</div>}
+      {sub && <div className="text-[12px] text-shTextMuted mt-0.5">{sub}</div>}
     </li>
   );
 }
@@ -563,14 +563,14 @@ function ReportCardEmailStatus({ booking, onResent: _onResent }) {
   if (sentAt) {
     return (
       <span className="inline-flex items-center gap-2" data-testid="report-card-email-status-sent">
-        <span className="bg-shGreen/15 border border-shGreen/40 text-shGreen px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest">
+        <span className="bg-shPrimary/15 border border-shPrimary/40 text-shPrimary px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest">
           <i className="fas fa-paper-plane mr-1"/>Emailed {_fmtAgo(sentAt)}
         </span>
         <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
-                className="text-gray-500 hover:text-shBlue text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
+                className="text-shTextMuted hover:text-shSecondary text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
           {busy ? "Sending…" : "Re-send"}
         </button>
-        {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
+        {msg && <span className="text-[10px] text-shTextMuted">{msg}</span>}
       </span>
     );
   }
@@ -581,16 +581,16 @@ function ReportCardEmailStatus({ booking, onResent: _onResent }) {
           <i className="fas fa-triangle-exclamation mr-1"/>Email failed
         </span>
         <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
-                className="text-shBlue hover:text-white text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
+                className="text-shSecondary hover:text-shText text-[10px] font-black uppercase tracking-widest underline-offset-2 hover:underline disabled:opacity-50">
           {busy ? "Retrying…" : "Retry"}
         </button>
-        {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
+        {msg && <span className="text-[10px] text-shTextMuted">{msg}</span>}
       </span>
     );
   }
   return (
     <button onClick={resend} disabled={busy} data-testid="report-card-resend-btn"
-            className="text-shBlue hover:text-white text-[10px] font-black uppercase tracking-widest hover:underline underline-offset-2 disabled:opacity-50">
+            className="text-shSecondary hover:text-shText text-[10px] font-black uppercase tracking-widest hover:underline underline-offset-2 disabled:opacity-50">
       <i className="fas fa-paper-plane mr-1"/>{busy ? "Sending…" : "Send to client"}
     </button>
   );

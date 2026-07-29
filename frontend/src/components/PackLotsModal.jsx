@@ -81,28 +81,28 @@ export default function PackLotsModal({ client, onClose }) {
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 overflow-y-auto"
          data-testid="pack-lots-modal" onClick={onClose}>
       <div onClick={(e)=>e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-xl p-5 max-w-2xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
+           className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 max-w-2xl w-full max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto">
         <div className="flex justify-between items-start mb-1">
           <div>
-            <h2 className="text-[20px] font-black text-white uppercase italic tracking-tight">Pack Lots</h2>
-            <p className="text-[13px] text-gray-400 font-black uppercase tracking-widest">{client.name}</p>
+            <h2 className="text-[20px] font-black text-shText uppercase italic tracking-tight">Pack Lots</h2>
+            <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest">{client.name}</p>
           </div>
           <button onClick={onClose} data-testid="pack-lots-close"
-                  className="text-gray-400 hover:text-white text-xl px-2"><i className="fas fa-times"/></button>
+                  className="text-shTextMuted hover:text-shText text-xl px-2"><i className="fas fa-times"/></button>
         </div>
 
-        <p className="text-[12px] text-gray-400 mt-2 mb-4 leading-relaxed">
-          <i className="fas fa-circle-info mr-1 text-shBlue"/>
-          <strong className="text-shBlue">Paid at sale</strong> = revenue already counted, no $ at checkout.
+        <p className="text-[12px] text-shTextMuted mt-2 mb-4 leading-relaxed">
+          <i className="fas fa-circle-info mr-1 text-shSecondary"/>
+          <strong className="text-shSecondary">Paid at sale</strong> = revenue already counted, no $ at checkout.
           <strong className="text-amber-400 ml-2">Legacy</strong> = pre-existing pack — system uses the per-credit value stored at sell-time.
         </p>
 
         {loading ? (
-          <p className="text-gray-500 text-sm italic" data-testid="pack-lots-loading">Loading lots…</p>
+          <p className="text-shTextMuted text-sm italic" data-testid="pack-lots-loading">Loading lots…</p>
         ) : err ? (
           <p className="text-red-400 text-[14px]" data-testid="pack-lots-error">{err}</p>
         ) : visible.length === 0 ? (
-          <p className="text-gray-500 text-[14px] italic" data-testid="pack-lots-empty">
+          <p className="text-shTextMuted text-[14px] italic" data-testid="pack-lots-empty">
             No active credit lots. {!showDrained && lots.length > 0 && "Toggle below to see fully drained lots."}
           </p>
         ) : (
@@ -110,8 +110,8 @@ export default function PackLotsModal({ client, onClose }) {
             {paidAtSale.length > 0 && (
               <LotGroup
                 title="Paid at Sale (Sprint 110cs+)"
-                color="text-shBlue"
-                badgeClass="bg-shBlue/15 text-shBlue border-shBlue/40"
+                color="text-shSecondary"
+                badgeClass="bg-shSecondary/15 text-shSecondary border-shSecondary/40"
                 badgeLabel="✓ Paid at sale"
                 lots={paidAtSale}
                 testidPrefix="lot-paid-at-sale"
@@ -148,9 +148,9 @@ export default function PackLotsModal({ client, onClose }) {
           </div>
         )}
 
-        <label className="mt-5 flex items-center gap-2 text-[12px] text-gray-400 font-black uppercase tracking-widest cursor-pointer">
+        <label className="mt-5 flex items-center gap-2 text-[12px] text-shTextMuted font-black uppercase tracking-widest cursor-pointer">
           <input type="checkbox" checked={showDrained} onChange={(e)=>setShowDrained(e.target.checked)}
-                 data-testid="pack-lots-show-drained" className="accent-shBlue"/>
+                 data-testid="pack-lots-show-drained" className="accent-shSecondary"/>
           Show fully drained lots
         </label>
       </div>
@@ -176,16 +176,16 @@ function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix, to
           const isBusy = busyLotId === lot.id;
           return (
             <div key={lot.id}
-                 className={`bg-bgBase border rounded-lg p-3 ${drained ? "border-bgHover/40 opacity-60" : "border-bgHover"}`}
+                 className={`bg-[var(--sh-card-base)] border rounded-lg p-3 ${drained ? "border-shBorder/40 opacity-60" : "border-shBorder"}`}
                  data-testid={`${testidPrefix}-${lot.id}`}>
               <div className="flex items-start gap-3 justify-between">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[14px] text-white font-black truncate">{lot.pack_name || lot.pack_id || "Pack"}</p>
-                  <p className="text-[12px] text-gray-400 mt-0.5">
+                  <p className="text-[14px] text-shText font-black truncate">{lot.pack_name || lot.pack_id || "Pack"}</p>
+                  <p className="text-[12px] text-shTextMuted mt-0.5">
                     <span className="font-black">{remaining}</span> of {totalQty} {lot.service_type || "credits"} remaining
-                    {valueEach > 0 && <span className="text-gray-500"> · {fmt(valueEach)}/credit</span>}
+                    {valueEach > 0 && <span className="text-shTextMuted"> · {fmt(valueEach)}/credit</span>}
                   </p>
-                  <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest mt-1">
+                  <p className="text-[11px] text-shTextMuted font-black uppercase tracking-widest mt-1">
                     Sold {(lot.purchased_at || "").slice(0, 10)}
                     {lot.payment_method && ` · ${lot.payment_method}`}
                     {Number(lot.price_paid || 0) > 0 && ` · ${fmt(lot.price_paid)}`}
@@ -196,13 +196,13 @@ function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix, to
                 </span>
               </div>
               {totalQty > 0 && (
-                <div className="mt-2 h-1.5 bg-bgHover/60 rounded overflow-hidden">
-                  <div className={`h-full ${drained ? "bg-gray-600" : "bg-shGreen"}`}
+                <div className="mt-2 h-1.5 bg-shSurfaceRaised/60 rounded overflow-hidden">
+                  <div className={`h-full ${drained ? "bg-gray-600" : "bg-shPrimary"}`}
                        style={{ width: `${pct}%` }}/>
                 </div>
               )}
               {used > 0 && (
-                <p className="text-[10px] text-gray-500 mt-1 italic">
+                <p className="text-[10px] text-shTextMuted mt-1 italic">
                   {used} used · {pct}% remaining
                 </p>
               )}
@@ -211,7 +211,7 @@ function LotGroup({ title, color, badgeClass, badgeLabel, lots, testidPrefix, to
                   onClick={() => onToggle(lot)}
                   disabled={isBusy}
                   data-testid={`${testidPrefix}-toggle-${lot.id}`}
-                  className="mt-2 w-full bg-bgHover/40 border border-bgHover text-gray-300 hover:border-shOrange hover:text-shOrange py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                  className="mt-2 w-full bg-shSurfaceRaised/40 border border-shBorder text-shTextMuted hover:border-shAccent hover:text-shAccent py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                   {isBusy ? "Switching…" : toggleLabel}
                 </button>
               )}

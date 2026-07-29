@@ -78,25 +78,25 @@ export default function ServicesSettings() {
     <div className="space-y-6" data-testid="services-settings">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Services &amp; Programs Catalog</h4>
-          <p className="text-[15px] text-gray-500 font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
+          <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Services &amp; Programs Catalog</h4>
+          <p className="text-[15px] text-shTextMuted font-black uppercase tracking-widest mt-1">All services + training programs you offer — grouped by category.</p>
         </div>
         <div className="flex gap-2">
           {services.length === 0 && (
             <button onClick={seedAll} data-testid="seed-services-btn"
-                    className="bg-shBlue/15 text-shBlue px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shBlue/25">
+                    className="bg-shSecondary/15 text-shSecondary px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shSecondary/25">
               <i className="fas fa-magic-wand-sparkles mr-1"/>Seed Standard 7
             </button>
           )}
           <button onClick={openNew} data-testid="new-service-btn"
-                  className="bg-shGreen text-black px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shGreen/80">
+                  className="bg-shPrimary text-black px-4 py-2 rounded text-[15px] font-black uppercase tracking-widest hover:bg-shPrimary/80">
             + New Service
           </button>
         </div>
       </div>
 
       {services.length === 0 && (
-        <div className="bg-bgBase border border-bgHover rounded-lg p-8 text-center text-[15px] text-gray-500 uppercase font-black tracking-widest">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-8 text-center text-[15px] text-shTextMuted uppercase font-black tracking-widest">
           No services yet — seed the standard 7 or add your own.
         </div>
       )}
@@ -105,20 +105,20 @@ export default function ServicesSettings() {
         const list = services.filter(s => s.service_type === cat.key);
         if (list.length === 0) return null;
         return (
-          <div key={cat.key} className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid={`services-category-${cat.key}`}>
-            <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: `linear-gradient(90deg, ${cat.color}1f, transparent 60%)` }}>
+          <div key={cat.key} className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg overflow-hidden" data-testid={`services-category-${cat.key}`}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-shBorder" style={{ background: `linear-gradient(90deg, ${cat.color}1f, transparent 60%)` }}>
               <i className={`fas ${cat.icon}`} style={{ color: cat.color }}/>
-              <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">{cat.label}</h5>
-              <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">· {list.length}</span>
+              <h5 className="text-shText font-black text-[14px] uppercase italic tracking-tight">{cat.label}</h5>
+              <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">· {list.length}</span>
             </div>
-            <div className="divide-y divide-bgHover/40">
+            <div className="divide-y divide-shBorder/40">
               {list.map(s => (
                 <div key={s.id} className={`p-3 flex items-center gap-3 ${s.active ? "" : "opacity-50"}`} data-testid={`service-row-${s.id}`}>
                   <div className="w-10 h-10 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: `${s.color}20`, color: s.color }}>
                     <i className={`fas ${s.icon || "fa-tag"}`} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-white font-black text-[14px] tracking-tight truncate">
+                    <p className="text-shText font-black text-[14px] tracking-tight truncate">
                       {s.name}
                       {s.is_addon && (
                         <span className="ml-2 inline-block bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded text-[10px] uppercase tracking-widest align-middle">
@@ -126,7 +126,7 @@ export default function ServicesSettings() {
                         </span>
                       )}
                     </p>
-                    <p className="text-[14px] text-gray-500 font-black uppercase tracking-widest">
+                    <p className="text-[14px] text-shTextMuted font-black uppercase tracking-widest">
                       {s.is_default ? "default" : "custom"}
                       {!s.active ? " · inactive" : ""}
                       {s.is_addon && (s.addon_for || []).length > 0 && (
@@ -134,8 +134,8 @@ export default function ServicesSettings() {
                       )}
                     </p>
                   </div>
-                  <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${s.base_price?.toFixed(2)}</p>
-                  <button onClick={()=>openEdit(s)} className="text-shBlue text-[14px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
+                  <p className="text-shPrimary font-black text-[18px] whitespace-nowrap">${s.base_price?.toFixed(2)}</p>
+                  <button onClick={()=>openEdit(s)} className="text-shSecondary text-[14px] font-black uppercase tracking-widest hover:underline px-2" data-testid={`edit-service-${s.id}`}>Edit</button>
                   <button onClick={()=>remove(s)} className="text-red-400 text-[14px] font-black uppercase tracking-widest hover:underline px-2">Remove</button>
                 </div>
               ))}
@@ -150,68 +150,68 @@ export default function ServicesSettings() {
              onClick={closeModal}
              data-testid="service-form-modal">
           <div onClick={(e)=>e.stopPropagation()}
-               className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
-            <div className="sticky top-0 bg-bgPanel border-b border-bgHover px-5 py-4 flex items-center justify-between gap-3 z-10">
-              <h5 className="text-white font-black text-[16px] uppercase italic tracking-tight">{editing ? `Edit · ${editing.name}` : "New Service"}</h5>
-              <button onClick={closeModal} className="text-gray-500 hover:text-white" data-testid="service-form-close">
+               className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-xl shadow-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto">
+            <div className="sticky top-0 bg-[var(--sh-card-base)] border-b border-shBorder px-5 py-4 flex items-center justify-between gap-3 z-10">
+              <h5 className="text-shText font-black text-[16px] uppercase italic tracking-tight">{editing ? `Edit · ${editing.name}` : "New Service"}</h5>
+              <button onClick={closeModal} className="text-shTextMuted hover:text-shText" data-testid="service-form-close">
                 <i className="fas fa-xmark text-xl"/>
               </button>
             </div>
             <div className="p-5" data-testid="service-form-panel">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Name</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Name</label>
                   <input value={form.name} onChange={(e)=>setForm({...form, name:e.target.value})} placeholder="e.g., Private Behavioral Consultation" data-testid="service-name-input"
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 </div>
                 <div>
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Base price (USD)</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Base price (USD)</label>
                   <input type="number" step="0.01" value={form.base_price} onChange={(e)=>setForm({...form, base_price: parseFloat(e.target.value) || 0})} data-testid="service-price-input"
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 </div>
                 <div>
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Category</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Category</label>
                   <select value={form.service_type} onChange={(e)=>{
                              const t = e.target.value;
                              const meta = SERVICE_TYPES.find(x=>x.key===t);
                              setForm({...form, service_type: t, color: meta?.color || form.color});
                            }}
-                          className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                          className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                     {SERVICE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
                   </select>
                 </div>
                 {["training","grooming","photography"].includes(form.service_type) && (
                   <>
                     <div>
-                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Duration (minutes)</label>
+                      <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Duration (minutes)</label>
                       <input type="number" min="15" step="15" value={form.duration_minutes ?? 60}
                              onChange={(e)=>setForm({...form, duration_minutes: parseInt(e.target.value) || 60})}
                              data-testid="service-duration-input"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-                      <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Blocks this much time on the schedule.</p>
+                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                      <p className="text-[13px] text-shTextMuted mt-1.5 normal-case">Blocks this much time on the schedule.</p>
                     </div>
                     <div>
-                      <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dogs per time slot</label>
+                      <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dogs per time slot</label>
                       <input type="number" min="1" max="100" step="1" value={form.capacity_per_slot ?? 1}
                              onChange={(e)=>setForm({...form, capacity_per_slot: Math.max(1, parseInt(e.target.value) || 1)})}
                              data-testid="service-slot-capacity-input"
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-                      <p className="text-[13px] text-gray-500 mt-1.5 normal-case">Use 1 for private appointments. Raise this for group classes.</p>
+                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                      <p className="text-[13px] text-shTextMuted mt-1.5 normal-case">Use 1 for private appointments. Raise this for group classes.</p>
                     </div>
                   </>
                 )}
                 <div>
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Icon (font-awesome name)</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Icon (font-awesome name)</label>
                   <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} />
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Color</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Color</label>
                   <div className="mt-2">
                     <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="service-color-row" />
                   </div>
                 </div>
                 <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">
                     Description <span className="text-gray-600 normal-case tracking-normal font-normal">— shown to clients</span>
                   </label>
                   <textarea
@@ -221,9 +221,9 @@ export default function ServicesSettings() {
                     maxLength={500}
                     data-testid="service-description-input"
                     placeholder="One or two sentences clients see on the portal. e.g., 'Group socialization in our 4,000 sq ft indoor play space. Half-day or full-day.'"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shGreen outline-none resize-none"
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shPrimary outline-none resize-none"
                   />
-                  <p className="text-[13px] text-gray-500 mt-1 normal-case">{(form.description || "").length}/500 — appears on client portal under the service name.</p>
+                  <p className="text-[13px] text-shTextMuted mt-1 normal-case">{(form.description || "").length}/500 — appears on client portal under the service name.</p>
                 </div>
                 {/* Sprint 110an — flag this service as an add-on the client/admin
                     can tack on to another base booking. When checked, the catalog
@@ -241,7 +241,7 @@ export default function ServicesSettings() {
                       <span className="text-[14px] font-black text-amber-400 uppercase tracking-widest">
                         <i className="fas fa-plus-circle mr-1"/>Show as add-on
                       </span>
-                      <p className="text-[13px] text-gray-500 mt-0.5 normal-case">
+                      <p className="text-[13px] text-shTextMuted mt-0.5 normal-case">
                         When checked, this service is hidden from the main bookable list and offered as an upsell under the base services you pick below (booking, quick check-in, and check-out).
                       </p>
                     </div>
@@ -249,7 +249,7 @@ export default function ServicesSettings() {
                 </div>
                 {form.is_addon && (
                   <div className="md:col-span-2" data-testid="service-addon-for-picker">
-                    <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">
+                    <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">
                       Show under these base services
                     </label>
                     <div className="flex flex-wrap gap-2 mt-2">
@@ -269,7 +269,7 @@ export default function ServicesSettings() {
                             className={`px-3 py-1.5 rounded-full text-[13px] font-black uppercase tracking-widest border transition ${
                               picked
                                 ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
-                                : "bg-bgBase border-bgHover text-gray-500 hover:border-amber-500/40 hover:text-amber-400"
+                                : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:border-amber-500/40 hover:text-amber-400"
                             }`}
                           >
                             {picked && <i className="fas fa-check mr-1"/>}
@@ -295,27 +295,27 @@ export default function ServicesSettings() {
               </div>
               {/* Live preview — exactly how this row will render in the catalog. */}
               <div className="mt-4">
-                <p className="text-[13px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Preview</p>
-                <div className="bg-bgBase border border-bgHover rounded-lg p-3 flex items-start gap-3" data-testid="service-preview">
+                <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-1.5">Preview</p>
+                <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-start gap-3" data-testid="service-preview">
                   <div className="w-10 h-10 rounded grid place-items-center shrink-0"
                        style={{ backgroundColor: `${form.color || "#64748b"}20`, color: form.color || "#64748b" }}>
                     <i className={`fas ${form.icon || "fa-tag"}`}/>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-white font-black text-[14px] tracking-tight truncate">{form.name || "Untitled service"}</p>
-                    <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest">{form.service_type}</p>
+                    <p className="text-shText font-black text-[14px] tracking-tight truncate">{form.name || "Untitled service"}</p>
+                    <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest">{form.service_type}</p>
                     {form.description && (
-                      <p className="text-[13px] text-gray-300 leading-relaxed mt-1.5" data-testid="service-preview-description">{form.description}</p>
+                      <p className="text-[13px] text-shTextMuted leading-relaxed mt-1.5" data-testid="service-preview-description">{form.description}</p>
                     )}
                   </div>
-                  <p className="text-shGreen font-black text-[18px] whitespace-nowrap">${(form.base_price || 0).toFixed(2)}</p>
+                  <p className="text-shPrimary font-black text-[18px] whitespace-nowrap">${(form.base_price || 0).toFixed(2)}</p>
                 </div>
               </div>
               {err && <p className="text-red-400 text-[15px] mt-2">{err}</p>}
               <div className="flex justify-end gap-2 mt-4">
-                <button onClick={closeModal} className="text-gray-400 text-[14px] uppercase font-black tracking-widest px-3 py-2 hover:text-white">Cancel</button>
+                <button onClick={closeModal} className="text-shTextMuted text-[14px] uppercase font-black tracking-widest px-3 py-2 hover:text-shText">Cancel</button>
                 <button onClick={save} data-testid="save-service-btn"
-                        className="bg-shGreen text-black px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shGreen/80">
+                        className="bg-shPrimary text-black px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shPrimary/80">
                   {editing ? "Save Changes" : "Add Service"}
                 </button>
               </div>
@@ -323,14 +323,14 @@ export default function ServicesSettings() {
           </div>
         </div>
       )}
-      {seeded && <p className="text-shGreen text-[14px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
+      {seeded && <p className="text-shPrimary text-[14px] mt-2 font-black uppercase tracking-widest"><i className="fas fa-check mr-1"/>Seeded</p>}
 
       {/* Training Programs — surfaced as a sixth category inside the unified catalog. */}
-      <div className="bg-bgBase border border-bgHover rounded-lg overflow-hidden" data-testid="services-category-programs">
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-bgHover" style={{ background: "linear-gradient(90deg, #a855f71f, transparent 60%)" }}>
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg overflow-hidden" data-testid="services-category-programs">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-shBorder" style={{ background: "linear-gradient(90deg, #a855f71f, transparent 60%)" }}>
           <i className="fas fa-list-check" style={{ color: "#a855f7" }}/>
-          <h5 className="text-white font-black text-[14px] uppercase italic tracking-tight">Training Programs</h5>
-          <span className="text-[13px] font-black uppercase tracking-widest text-gray-500">multi-week curricula with goals &amp; sessions</span>
+          <h5 className="text-shText font-black text-[14px] uppercase italic tracking-tight">Training Programs</h5>
+          <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">multi-week curricula with goals &amp; sessions</span>
         </div>
         <div className="p-4">
           <ProgramsPanel />
@@ -356,12 +356,12 @@ function BoardAndTrainPicker({ value, onChange }) {
       <label className="text-[14px] font-black text-purple-400 uppercase tracking-widest">
         <i className="fas fa-graduation-cap mr-1"/>Board-and-Train · auto-enroll program
       </label>
-      <p className="text-[13px] text-gray-500 mt-0.5 normal-case mb-2">
+      <p className="text-[13px] text-shTextMuted mt-0.5 normal-case mb-2">
         Booking this service auto-enrolls the dog in the chosen training program (with curriculum + homework ready by drop-off). Leave blank for a normal service.
       </p>
       <select value={value || ""} onChange={(e)=>onChange(e.target.value)}
               data-testid="board-and-train-program-select"
-              className="bg-bgBase border border-bgHover rounded p-2 text-white text-sm w-full">
+              className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm w-full">
         <option value="">— none (regular service) —</option>
         {(programs || []).map(p => (
           <option key={p.id} value={p.id}>{p.name}{p.type ? ` · ${p.type}` : ""}</option>

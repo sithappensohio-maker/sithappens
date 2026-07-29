@@ -9,6 +9,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
+import NeonEdge from "./premium/NeonEdge";
+import PremiumButton from "./premium/PremiumButton";
+import { accentRgb } from "./premium/tokens";
 
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
@@ -107,13 +110,13 @@ export default function PortalInvoices() {
   if (loading || invoices.length === 0) return null;
 
   return (
-    <div className="mb-4 sm:mb-6 bg-bgPanel border border-bgHover rounded-xl p-4 sm:p-5 shadow-2xl" data-testid="portal-invoices">
-      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-3">
+    <NeonEdge accentRgb={accentRgb("purple")} intensity="standard" className="mb-4 sm:mb-6 p-4 sm:p-5" data-testid="portal-invoices">
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-purple-300 mb-3">
         <i className="fas fa-file-invoice mr-2" />Your Invoices
       </p>
 
       {returning && (
-        <div className="mb-3 bg-bgBase border border-bgHover rounded-lg p-3 text-sm" data-testid="portal-stripe-return-status">
+        <div className="mb-3 border border-shBorder rounded-lg p-3 text-sm" style={{ background: "var(--sh-card-base)" }} data-testid="portal-stripe-return-status">
           {returning.status === "processing" || returning.status === "pending" ? (
             <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Processing your payment…</span>
           ) : returning.status === "applied" ? (
@@ -131,24 +134,23 @@ export default function PortalInvoices() {
           const balance = Number(inv.balance || 0);
           const payable = balance > 0.005 && enabled;
           return (
-            <div key={inv.id} className="bg-bgBase border border-bgHover rounded-lg p-3" data-testid={`portal-invoice-${inv.id}`}>
+            <div key={inv.id} className="border border-shBorder rounded-lg p-3" style={{ background: "var(--sh-card-base)" }} data-testid={`portal-invoice-${inv.id}`}>
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
-                  <p className="text-white font-black text-sm">Invoice #{inv.invoice_number}</p>
-                  <p className="text-[11px] text-gray-500">{inv.date} · {STATUS_LABELS[inv.status] || inv.status}</p>
+                  <p className="text-shText font-bold text-sm">Invoice #{inv.invoice_number}</p>
+                  <p className="text-[11px] text-shTextMuted">{inv.date} · {STATUS_LABELS[inv.status] || inv.status}</p>
                 </div>
-                <div className="text-right text-[12px] text-gray-300 space-y-0.5">
-                  <div>Total: <span className="text-white font-bold">{money(inv.total)}</span></div>
-                  {Number(inv.credit_applied || 0) > 0.005 && <div>Credits: <span className="text-shGreen">{money(inv.credit_applied)}</span></div>}
-                  <div>Paid: <span className="text-white">{money(inv.amount_paid)}</span></div>
-                  <div>Balance: <span className={balance > 0.005 ? "text-shOrange font-black" : "text-shGreen font-black"}>{money(balance)}</span></div>
+                <div className="text-right text-[12px] text-shTextMuted space-y-0.5">
+                  <div>Total: <span className="text-shText font-bold">{money(inv.total)}</span></div>
+                  {Number(inv.credit_applied || 0) > 0.005 && <div>Credits: <span className="text-shPrimary">{money(inv.credit_applied)}</span></div>}
+                  <div>Paid: <span className="text-shText">{money(inv.amount_paid)}</span></div>
+                  <div>Balance: <span className={balance > 0.005 ? "text-shAccent font-black" : "text-shPrimary font-black"}>{money(balance)}</span></div>
                 </div>
               </div>
               {payable && (
-                <button onClick={() => openPay(inv)} data-testid={`portal-pay-online-${inv.id}`}
-                        className="mt-2 w-full sm:w-auto bg-shGreen text-bgHeader rounded px-4 py-2 text-[12px] font-black uppercase tracking-widest">
-                  <i className="fas fa-credit-card mr-2" />Pay Online
-                </button>
+                <PremiumButton variant="primary" onClick={() => openPay(inv)} data-testid={`portal-pay-online-${inv.id}`} className="mt-2 w-full sm:w-auto justify-center">
+                  <i className="fas fa-credit-card" />Pay Online
+                </PremiumButton>
               )}
             </div>
           );
@@ -157,37 +159,39 @@ export default function PortalInvoices() {
 
       {payModal && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-sm p-5 space-y-3">
-            <p className="text-white font-black uppercase tracking-widest">Pay Invoice #{payModal.invoice_number}</p>
-            <p className="text-gray-400 text-sm">Balance due: {money(payModal.balance)}</p>
+          <div className="border border-shBorder rounded-2xl w-full max-w-sm p-5 space-y-3 shadow-sh" style={{ background: "var(--sh-card-base)" }}>
+            <p className="text-shText font-bold uppercase tracking-widest">Pay Invoice #{payModal.invoice_number}</p>
+            <p className="text-shTextMuted text-sm">Balance due: {money(payModal.balance)}</p>
             <div className="flex gap-2">
               <button onClick={() => setPayMode("full")}
-                      className={`flex-1 py-2 rounded text-[12px] font-black uppercase ${payMode === "full" ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                      className={`flex-1 py-2 rounded-md text-[12px] font-bold uppercase border ${payMode === "full" ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted"}`}
+                      style={payMode === "full" ? undefined : { background: "var(--sh-card-base)" }}>
                 Pay Full Balance
               </button>
               <button onClick={() => setPayMode("other")}
-                      className={`flex-1 py-2 rounded text-[12px] font-black uppercase ${payMode === "other" ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                      className={`flex-1 py-2 rounded-md text-[12px] font-bold uppercase border ${payMode === "other" ? "bg-shPrimary text-bgHeader border-shPrimary" : "border-shBorder text-shTextMuted"}`}
+                      style={payMode === "other" ? undefined : { background: "var(--sh-card-base)" }}>
                 Pay Other Amount
               </button>
             </div>
             {payMode === "other" && (
               <input type="number" value={otherAmount} onChange={(e) => setOtherAmount(e.target.value)}
                      placeholder={`Up to ${money(payModal.balance)}`}
-                     className="w-full bg-bgBase border border-bgHover rounded p-3 text-white" />
+                     className="w-full border border-shBorder rounded p-3 text-shText focus:outline-none focus:border-shPrimary/60"
+                     style={{ background: "var(--sh-card-base)" }} />
             )}
-            <p className="text-[11px] text-gray-500">You&apos;ll be taken to Stripe&apos;s secure checkout to enter your card. Sit Happens never sees or stores your card details.</p>
+            <p className="text-[11px] text-shTextMuted">You&apos;ll be taken to Stripe&apos;s secure checkout to enter your card. Sit Happens never sees or stores your card details.</p>
             <div className="flex gap-3 pt-1">
-              <button onClick={() => setPayModal(null)} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
+              <PremiumButton variant="ghost" onClick={() => setPayModal(null)} className="flex-1 justify-center py-3">
                 Cancel
-              </button>
-              <button onClick={submitPay} disabled={busy}
-                      className="flex-1 bg-shGreen text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+              </PremiumButton>
+              <PremiumButton variant="primary" onClick={submitPay} disabled={busy} className="flex-1 justify-center py-3">
                 {busy ? "Redirecting…" : "Continue to Payment"}
-              </button>
+              </PremiumButton>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </NeonEdge>
   );
 }

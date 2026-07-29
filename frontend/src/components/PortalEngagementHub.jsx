@@ -1,4 +1,15 @@
 import { useMemo } from "react";
+import NeonEdge from "./premium/NeonEdge";
+import NeonIconStage from "./premium/NeonIconStage";
+import MiniActionCard from "./premium/MiniActionCard";
+import EmptyState from "./premium/EmptyState";
+import { accentRgb, HOVER_BORDER_CLASS } from "./premium/tokens";
+
+/* Existing "tone" names (green/blue/orange/purple/gray) predate the
+ * premium accent system's names (lime/cyan/orange/purple/neutral) — this
+ * maps one to the other so TONES-driven content can feed the new shared
+ * components without renaming every call site that already passes tone. */
+const TONE_ACCENT = { green: "lime", blue: "cyan", orange: "orange", purple: "purple", gray: "neutral" };
 
 const REQUIRED_VACCINES = ["rabies", "bordetella", "dhpp"];
 
@@ -122,16 +133,10 @@ export function buildPortalPriority({
   const firstDog = dogs[0];
   const portalBookings = scopeBookingsToDogs(bookings, dogs);
 
-  if (setupStatus?.booking_locked) {
-    return {
-      kind: "setup", tone: "orange", icon: "fa-list-check",
-      eyebrow: "Action needed",
-      title: "Finish your setup",
-      text: "Complete the checklist so you can book services without getting stopped later.",
-      button: "Continue setup",
-    };
-  }
-
+  // The compact "Action Needed" banner in Portal.jsx already owns this
+  // message when setup is locked — falling through here (instead of
+  // returning early) avoids showing the same "Finish your setup" copy
+  // twice on Home.
   if (showMessages && messagesUnread > 0) {
     return {
       kind: "messages", tone: "orange", icon: "fa-comments",
@@ -283,11 +288,26 @@ export function buildPortalActivity({ bookings = [], dogs = null, homework = [],
 }
 
 const TONES = {
-  green: { text: "text-shGreen", border: "border-shGreen/45", bg: "from-shGreen/20", button: "bg-shGreen text-bgHeader" },
-  blue: { text: "text-shBlue", border: "border-shBlue/45", bg: "from-shBlue/20", button: "bg-shBlue text-white" },
-  orange: { text: "text-shOrange", border: "border-shOrange/45", bg: "from-shOrange/20", button: "bg-shOrange text-bgHeader" },
-  purple: { text: "text-purple-300", border: "border-purple-500/45", bg: "from-purple-500/20", button: "bg-purple-500 text-white" },
-  gray: { text: "text-gray-300", border: "border-bgHover", bg: "from-bgHover/40", button: "bg-bgHover text-white" },
+  green: {
+    text: "text-shGreen", border: "border-shGreen/45", bg: "from-shGreen/20", button: "bg-shGreen text-bgHeader",
+    hover: "hover:border-shGreen/60 hover:shadow-[0_0_18px_-6px_rgba(140,198,63,0.35)]", glow: "140,198,63",
+  },
+  blue: {
+    text: "text-shBlue", border: "border-shBlue/45", bg: "from-shBlue/20", button: "bg-shBlue text-white",
+    hover: "hover:border-shBlue/60 hover:shadow-[0_0_18px_-6px_rgba(0,169,224,0.35)]", glow: "0,169,224",
+  },
+  orange: {
+    text: "text-shOrange", border: "border-shOrange/45", bg: "from-shOrange/20", button: "bg-shOrange text-bgHeader",
+    hover: "hover:border-shOrange/60 hover:shadow-[0_0_18px_-6px_rgba(242,101,34,0.35)]", glow: "242,101,34",
+  },
+  purple: {
+    text: "text-purple-300", border: "border-purple-500/45", bg: "from-purple-500/20", button: "bg-purple-500 text-white",
+    hover: "hover:border-purple-400/60 hover:shadow-[0_0_18px_-6px_rgba(168,85,247,0.35)]", glow: "168,85,247",
+  },
+  gray: {
+    text: "text-gray-300", border: "border-bgHover", bg: "from-bgHover/40", button: "bg-bgHover text-white",
+    hover: "hover:border-gray-400/40", glow: "148,163,184",
+  },
 };
 
 function runPriorityAction(kind, actions) {
@@ -327,130 +347,119 @@ export default function PortalEngagementHub({
 
   return (
     <section className="mb-6 space-y-4" data-testid="portal-engagement-hub" aria-label="Your portal overview">
-      <div className={`relative overflow-hidden rounded-2xl border ${tone.border} bg-gradient-to-br ${tone.bg} via-bgPanel to-bgPanel p-5 sm:p-6 shadow-2xl`} data-testid="portal-priority-card">
-        <div className="absolute inset-0 pointer-events-none opacity-30" style={{ background: "radial-gradient(circle at 100% 0%, rgba(255,255,255,0.18) 0%, transparent 45%)" }}/>
-        <div className="relative flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className={`w-12 h-12 rounded-2xl border ${tone.border} bg-bgBase/70 ${tone.text} grid place-items-center text-xl shrink-0`}>
-            <i className={`fas ${priority.icon}`}/>
-          </div>
+      <NeonEdge accentRgb={accentRgb(TONE_ACCENT[priority.tone] || "lime")} intensity="hero"
+                className="p-5 sm:p-6" data-testid="portal-priority-card">
+        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
+          <NeonIconStage icon={priority.icon} accentRgb={accentRgb(TONE_ACCENT[priority.tone] || "lime")} strong
+                         sizeClass="w-16 h-16 sm:w-24 sm:h-24" iconSizeClass="text-2xl sm:text-4xl" />
           <div className="min-w-0 flex-1">
-            <p className={`text-[11px] font-black uppercase tracking-[0.3em] ${tone.text}`}>{priority.eyebrow}</p>
-            <h2 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight mt-1 leading-tight">{priority.title}</h2>
-            <p className="text-[14px] text-gray-300 mt-1.5 leading-relaxed">{priority.text}</p>
+            <p className={`text-[11px] font-black uppercase tracking-[0.2em] ${tone.text}`}>{priority.eyebrow}</p>
+            <h2 className="text-xl sm:text-2xl font-bold text-shText mt-1 leading-tight">{priority.title}</h2>
+            <p className="text-[14px] text-shTextMuted mt-1.5 leading-relaxed">{priority.text}</p>
           </div>
           <button type="button" onClick={() => runPriorityAction(priority.kind, actions)} data-testid={`portal-priority-${priority.kind}`}
-                  className={`${tone.button} min-h-[46px] px-5 py-3 rounded-xl font-black uppercase tracking-widest text-[13px] shadow-lg hover:brightness-110 active:scale-[0.98] transition shrink-0`}>
+                  className={`${tone.button} min-h-[46px] px-5 py-3 rounded-xl font-black uppercase tracking-widest text-[13px] shadow-sh hover:brightness-110 hover:-translate-y-0.5 active:scale-[0.98] transition duration-200 shrink-0`}>
             {priority.button}<i className="fas fa-arrow-right ml-2"/>
           </button>
         </div>
-      </div>
+      </NeonEdge>
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-3 bg-bgPanel border border-bgHover rounded-2xl p-4 sm:p-5 shadow-xl" data-testid="portal-dog-overview">
-          <div className="flex items-center justify-between gap-3 mb-3">
+        <NeonEdge accentRgb={accentRgb("lime")} intensity="standard" className="relative lg:col-span-3 p-4 sm:p-5" data-testid="portal-dog-overview">
+          <i className="fas fa-paw absolute -right-4 -bottom-6 text-[110px] leading-none opacity-[0.04] text-shPrimary pointer-events-none select-none" aria-hidden="true"/>
+          <div className="relative z-10 flex items-center justify-between gap-3 mb-3">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">At a glance</p>
-              <h3 className="text-lg font-black text-white uppercase italic tracking-tight">My Dogs</h3>
+              <h3 className="text-[15px] font-bold text-shText">My Dogs</h3>
             </div>
             <button type="button" onClick={() => document.getElementById("portal-dogs-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                    className="text-[11px] font-black uppercase tracking-widest text-shGreen hover:underline">
-              View details <i className="fas fa-arrow-down ml-1"/>
+                    className="text-[11px] font-black uppercase tracking-widest text-shPrimary hover:underline">
+              Manage
             </button>
           </div>
           {dogSnapshots.length === 0 ? (
-            <button type="button" onClick={onBook} className="w-full border border-dashed border-bgHover rounded-xl p-5 text-center hover:border-shGreen/50 transition">
-              <i className="fas fa-paw text-shGreen text-2xl"/>
-              <p className="text-white font-black uppercase tracking-widest text-[13px] mt-2">Add your first dog</p>
-              <p className="text-[13px] text-gray-400 mt-1">The portal will guide you through setup.</p>
-            </button>
+            <div className="relative z-10">
+              <EmptyState
+                icon="fa-paw" accent="lime" onClick={onBook}
+                title="You haven't added any dogs yet."
+                description="Add your dog to book services, manage records and track their progress."
+                ctaLabel="Add Your First Dog"
+              />
+            </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {dogSnapshots.slice(0, 4).map((row) => {
-                const dogTone = TONES[row.tone] || TONES.green;
+                const dogAccent = TONE_ACCENT[row.tone] || "lime";
                 return (
-                  <button key={row.dog.id} type="button" onClick={() => onDogOpen?.(row.dog)} data-testid={`portal-overview-dog-${row.dog.id}`}
-                          className="min-w-0 text-left bg-bgBase border border-bgHover hover:border-shGreen/45 rounded-xl p-3 flex items-center gap-3 transition">
+                  <NeonEdge key={row.dog.id} as="button" onClick={() => onDogOpen?.(row.dog)} data-testid={`portal-overview-dog-${row.dog.id}`}
+                            accentRgb={accentRgb(dogAccent)} intensity="subtle"
+                            className={`min-w-0 text-left p-3 flex items-center gap-3 transition duration-200 hover:-translate-y-0.5 ${HOVER_BORDER_CLASS[dogAccent] || ""}`}>
                     {row.dog.photo ? (
-                      <img src={row.dog.photo} alt="" className="w-11 h-11 rounded-full object-cover border border-bgHover shrink-0"/>
+                      <img src={row.dog.photo} alt="" className="relative z-10 w-11 h-11 rounded-full object-cover border border-shBorder shrink-0"/>
                     ) : (
-                      <span className="w-11 h-11 rounded-full bg-shGreen/15 text-shGreen grid place-items-center shrink-0"><i className="fas fa-paw"/></span>
+                      <span className="relative z-10 shrink-0">
+                        <NeonIconStage icon="fa-paw" accentRgb={accentRgb(dogAccent)} rings={false} sizeClass="w-11 h-11" iconSizeClass="text-base" />
+                      </span>
                     )}
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-white font-black uppercase italic tracking-tight truncate">{row.dog.name}</span>
-                      <span className={`block text-[12px] font-bold mt-0.5 truncate ${dogTone.text}`}><i className={`fas ${row.icon} mr-1.5`}/>{row.status}</span>
+                    <span className="relative z-10 min-w-0 flex-1">
+                      <span className="block text-shText font-bold truncate">{row.dog.name}</span>
+                      <span className="block text-[12px] font-semibold mt-0.5 truncate" style={{ color: `rgb(${accentRgb(dogAccent)})` }}><i className={`fas ${row.icon} mr-1.5`}/>{row.status}</span>
                     </span>
-                    <i className="fas fa-chevron-right text-gray-600 text-xs shrink-0"/>
-                  </button>
+                    <i className="relative z-10 fas fa-chevron-right text-shTextMuted text-xs shrink-0"/>
+                  </NeonEdge>
                 );
               })}
             </div>
           )}
-        </div>
+        </NeonEdge>
 
-        <div className="lg:col-span-2 bg-bgPanel border border-bgHover rounded-2xl p-4 sm:p-5 shadow-xl" data-testid="portal-essential-actions">
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">Simple shortcuts</p>
-          <h3 className="text-lg font-black text-white uppercase italic tracking-tight mb-3">What do you need?</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <ActionButton icon={dogs.length ? "fa-calendar-plus" : "fa-paw"} label={dogs.length ? "Book" : "Add Dog"} onClick={onBook} tone="green" testid="portal-action-book"/>
-            {showMessages && <ActionButton icon="fa-comments" label="Message Us" onClick={onMessages} tone="blue" badge={messagesUnread} testid="portal-action-messages"/>}
-            {showUpload && <ActionButton icon="fa-file-arrow-up" label="Upload Records" onClick={onUpload} tone="orange" testid="portal-action-upload"/>}
-            {showCredits && <ActionButton icon="fa-wallet" label="Credits" onClick={onCredits} tone="purple" testid="portal-action-credits"/>}
+        <NeonEdge accentRgb={accentRgb("cyan")} intensity="standard" className="relative lg:col-span-2 p-4 sm:p-5" data-testid="portal-essential-actions">
+          <h3 className="relative z-10 text-[15px] font-bold text-shText mb-3">Quick Actions</h3>
+          <div className="relative z-10 grid grid-cols-2 gap-2">
+            <MiniActionCard icon={dogs.length ? "fa-calendar-plus" : "fa-paw"} label={dogs.length ? "Book" : "Add Dog"} onClick={onBook} accent="lime" testid="portal-action-book"/>
+            {showMessages && <MiniActionCard icon="fa-comments" label="Message Us" onClick={onMessages} accent="cyan" badge={messagesUnread} testid="portal-action-messages"/>}
+            {showUpload && <MiniActionCard icon="fa-file-arrow-up" label="Upload Records" onClick={onUpload} accent="cyan" testid="portal-action-upload"/>}
+            {showCredits && <MiniActionCard icon="fa-wallet" label="Credits" onClick={onCredits} accent="purple" testid="portal-action-credits"/>}
             {/* Sprint 110ff — Rewards and Refer-a-Friend were already wired
                 through as props (used by the priority card + activity feed)
                 but never actually got a button here, so they had no real
                 entry point on the page a client would ever see. */}
-            {showRewards && <ActionButton icon="fa-trophy" label="Rewards" onClick={onRewards} tone="purple" testid="portal-action-rewards"/>}
-            {showReferral && <ActionButton icon="fa-gift" label="Refer a Friend" onClick={onRefer} tone="orange" testid="portal-action-refer"/>}
-            {onHelp && <ActionButton icon="fa-circle-question" label="Get Help" onClick={onHelp} tone="gray" testid="portal-action-help" wide={actionCount % 2 === 1}/>}
+            {showRewards && <MiniActionCard icon="fa-trophy" label="Rewards" onClick={onRewards} accent="amber" testid="portal-action-rewards"/>}
+            {showReferral && <MiniActionCard icon="fa-gift" label="Refer a Friend" onClick={onRefer} accent="orange" testid="portal-action-refer"/>}
+            {onHelp && <MiniActionCard icon="fa-circle-question" label="Get Help" onClick={onHelp} accent="neutral" testid="portal-action-help" wide={actionCount % 2 === 1}/>}
           </div>
-        </div>
+        </NeonEdge>
       </div>
 
-      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 sm:p-5 shadow-xl" data-testid="portal-recent-activity">
+      <NeonEdge accentRgb={accentRgb("neutral")} intensity="subtle" className="p-4 sm:p-5" data-testid="portal-recent-activity">
         <div className="flex items-center justify-between gap-3 mb-3">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">Latest updates</p>
-            <h3 className="text-lg font-black text-white uppercase italic tracking-tight">Recent Activity</h3>
-          </div>
-          <button type="button" onClick={onBookings} className="text-[11px] font-black uppercase tracking-widest text-shBlue hover:underline">All bookings <i className="fas fa-arrow-right ml-1"/></button>
+          <h3 className="text-[15px] font-bold text-shText">Recent Activity</h3>
+          <button type="button" onClick={onBookings} className="text-[11px] font-black uppercase tracking-widest text-shSecondary hover:underline">All bookings <i className="fas fa-arrow-right ml-1"/></button>
         </div>
         {activity.length === 0 ? (
-          <div className="border border-dashed border-bgHover rounded-xl p-5 text-center">
-            <i className="fas fa-bell text-gray-600 text-2xl"/>
-            <p className="text-white font-black uppercase tracking-widest text-[13px] mt-2">Nothing new yet</p>
-            <p className="text-[13px] text-gray-400 mt-1">Booking updates, report cards, training progress, and rewards will appear here.</p>
+          <div className="border border-dashed border-shBorder rounded-xl p-5 text-center">
+            <i className="fas fa-bell text-shTextMuted text-2xl"/>
+            <p className="text-shText font-bold text-[14px] mt-2">Nothing new yet</p>
+            <p className="text-[13px] text-shTextMuted mt-1">Booking updates, report cards, training progress, and rewards will appear here.</p>
           </div>
         ) : (
-          <div className="divide-y divide-bgHover/70">
+          <div className="divide-y divide-shBorder">
             {activity.map((item) => {
               const itemTone = TONES[item.tone] || TONES.gray;
               return (
                 <button key={item.id} type="button" onClick={() => runPriorityAction(item.kind, actions)}
-                        className="w-full text-left py-3 first:pt-0 last:pb-0 flex items-start gap-3 group">
-                  <span className={`w-9 h-9 rounded-full bg-bgBase border ${itemTone.border} ${itemTone.text} grid place-items-center shrink-0 mt-0.5`}><i className={`fas ${item.icon}`}/></span>
+                        className="w-full text-left py-3 first:pt-0 last:pb-0 flex items-start gap-3 group transition duration-200 hover:-translate-y-0.5">
+                  <span className={`w-9 h-9 rounded-full bg-[var(--sh-card-base)] border ${itemTone.border} ${itemTone.text} grid place-items-center shrink-0 mt-0.5`}><i className={`fas ${item.icon}`}/></span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[14px] text-white font-black leading-snug group-hover:text-shGreen transition">{item.title}</span>
-                    <span className="block text-[12px] text-gray-500 mt-0.5 truncate">{item.text}</span>
+                    <span className="block text-[14px] text-shText font-semibold leading-snug group-hover:text-shPrimary transition">{item.title}</span>
+                    <span className="block text-[12px] text-shTextMuted mt-0.5 truncate">{item.text}</span>
                   </span>
-                  <span className="text-[11px] text-gray-600 whitespace-nowrap mt-1">{relativeTime(item.ts)}</span>
+                  <span className="text-[11px] text-shTextMuted whitespace-nowrap mt-1">{relativeTime(item.ts)}</span>
                 </button>
               );
             })}
           </div>
         )}
-      </div>
+      </NeonEdge>
     </section>
-  );
-}
-
-function ActionButton({ icon, label, onClick, tone = "gray", badge = 0, testid, wide = false }) {
-  const style = TONES[tone] || TONES.gray;
-  return (
-    <button type="button" onClick={onClick} data-testid={testid}
-            className={`${wide ? "col-span-2" : ""} relative min-h-[62px] rounded-xl border ${style.border} bg-bgBase hover:bg-bgHover/70 px-3 py-2.5 flex flex-col items-center justify-center gap-1 transition active:scale-[0.98]`}>
-      <i className={`fas ${icon} ${style.text}`}/>
-      <span className="text-[11px] sm:text-[12px] text-white font-black uppercase tracking-wider text-center leading-tight">{label}</span>
-      {badge > 0 && <span className="absolute -top-1 -right-1 min-w-[19px] h-[19px] px-1 rounded-full bg-shOrange text-bgHeader text-[10px] font-black grid place-items-center">{badge}</span>}
-    </button>
   );
 }

@@ -19,12 +19,12 @@ const Field = ({ label, type = "text", value, onChange, hint, testId, options, p
   if (type === "select") {
     return (
       <label className="block">
-        <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">{label}</span>
+        <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">{label}</span>
         <select value={value ?? ""} onChange={(e) => onChange(e.target.value)} data-testid={testId}
-                className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
           {(options || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
-        {hint && <span className="block text-[11px] text-gray-500 mt-1">{hint}</span>}
+        {hint && <span className="block text-[11px] text-shTextMuted mt-1">{hint}</span>}
       </label>
     );
   }
@@ -32,39 +32,39 @@ const Field = ({ label, type = "text", value, onChange, hint, testId, options, p
     return (
       <label className="flex items-center gap-3 cursor-pointer py-1">
         <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)}
-               data-testid={testId} className="accent-shGreen w-4 h-4" />
-        <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">{label}</span>
-        {hint && <span className="text-[11px] text-gray-500 normal-case font-normal">{hint}</span>}
+               data-testid={testId} className="accent-shPrimary w-4 h-4" />
+        <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted">{label}</span>
+        {hint && <span className="text-[11px] text-shTextMuted normal-case font-normal">{hint}</span>}
       </label>
     );
   }
   const isNum = type === "number";
   return (
     <label className="block">
-      <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">{label}</span>
+      <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">{label}</span>
       <input type={type} value={value ?? ""}
              placeholder={placeholder || ""}
              onChange={(e) => onChange(isNum ? (e.target.value === "" ? "" : parseFloat(e.target.value)) : e.target.value)}
              data-testid={testId}
-             className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-      {hint && <span className="block text-[11px] text-gray-500 mt-1">{hint}</span>}
+             className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+      {hint && <span className="block text-[11px] text-shTextMuted mt-1">{hint}</span>}
     </label>
   );
 };
 
 const Sub = ({ id, title, icon, color, open, onToggle, children, hideHeader }) => (
-  <div className="bg-bgBase/40 border border-bgHover rounded-lg overflow-hidden" data-testid={`d2d-sub-${id}`}>
+  <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg overflow-hidden" data-testid={`d2d-sub-${id}`}>
     {!hideHeader && (
       <button type="button" onClick={onToggle}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-bgBase/70 transition">
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-[var(--sh-card-base)]/70 transition">
         <span className="flex items-center gap-3">
           <i className={`fas ${icon} ${color} text-base`} />
           <span className={`text-[15px] font-black uppercase tracking-widest ${color}`}>{title}</span>
         </span>
-        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] text-gray-500`} />
+        <i className={`fas fa-chevron-${open ? "up" : "down"} text-[12px] text-shTextMuted`} />
       </button>
     )}
-    {open && <div className={`p-4 space-y-4 ${hideHeader ? "" : "border-t border-bgHover"}`}>{children}</div>}
+    {open && <div className={`p-4 space-y-4 ${hideHeader ? "" : "border-t border-shBorder"}`}>{children}</div>}
   </div>
 );
 
@@ -131,7 +131,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
     <div className="space-y-3" data-testid="day-to-day-controls">
       {/* MONEY ───────────────────────────────────────────────── */}
       {showSec("money") && (
-      <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shGreen" {...subProps("money")}>
+      <Sub id="money" title="Money rules" icon="fa-dollar-sign" color="text-shPrimary" {...subProps("money")}>
         <Field label="Show tipping prompt at checkout" type="toggle" value={m.tipping_enabled}
                onChange={(v) => set("money", "tipping_enabled", v)} testId="d2d-tipping-enabled"
                hint="Adds a tip step in the check-out flow with quick-pick percentages." />
@@ -180,70 +180,70 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
 
       {/* SEASONAL ─────────────────────────────────────────────── */}
       {showSec("seasonal") && (
-      <Sub id="seasonal" title="Holiday & peak-season pricing" icon="fa-calendar-star" color="text-shOrange" {...subProps("seasonal")}>
+      <Sub id="seasonal" title="Holiday & peak-season pricing" icon="fa-calendar-star" color="text-shAccent" {...subProps("seasonal")}>
         <div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[13px] font-black uppercase tracking-widest text-gray-300">Holiday surcharges</span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Holiday surcharges</span>
             <button type="button" onClick={addHolidaySurcharge} data-testid="d2d-holiday-add"
-                    className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white">+ Holiday</button>
+                    className="text-[12px] font-black uppercase tracking-widest text-shPrimary hover:text-shText">+ Holiday</button>
           </div>
           <div className="space-y-2">
             {(s.holiday_surcharges || []).map((h, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 bg-bgPanel/40 rounded p-2 border border-bgHover" data-testid={`d2d-holiday-row-${i}`}>
+              <div key={i} className="grid grid-cols-12 gap-2 bg-[var(--sh-card-base)]/40 rounded p-2 border border-shBorder" data-testid={`d2d-holiday-row-${i}`}>
                 <input type="date" value={h.date || ""} onChange={(e) => updateHoliday(i, "date", e.target.value)}
-                       className="col-span-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="text" placeholder="Label (e.g. Christmas)" value={h.label || ""} onChange={(e) => updateHoliday(i, "label", e.target.value)}
-                       className="col-span-5 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-5 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="number" step="0.05" placeholder="1.5" value={h.multiplier ?? ""} onChange={(e) => updateHoliday(i, "multiplier", parseFloat(e.target.value))}
-                       className="col-span-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <button type="button" onClick={() => removeHoliday(i)} className="col-span-1 text-red-400 hover:text-red-300">
                   <i className="fas fa-trash text-sm" />
                 </button>
               </div>
             ))}
-            {(s.holiday_surcharges || []).length === 0 && <p className="text-[12px] text-gray-500 italic">No holidays yet — click + to add one.</p>}
+            {(s.holiday_surcharges || []).length === 0 && <p className="text-[12px] text-shTextMuted italic">No holidays yet — click + to add one.</p>}
           </div>
         </div>
         <div>
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[13px] font-black uppercase tracking-widest text-gray-300">Peak season ranges</span>
+            <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">Peak season ranges</span>
             <button type="button" onClick={addPeak} data-testid="d2d-peak-add"
-                    className="text-[12px] font-black uppercase tracking-widest text-shGreen hover:text-white">+ Range</button>
+                    className="text-[12px] font-black uppercase tracking-widest text-shPrimary hover:text-shText">+ Range</button>
           </div>
           <div className="space-y-2">
             {(s.peak_season_ranges || []).map((p, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 bg-bgPanel/40 rounded p-2 border border-bgHover" data-testid={`d2d-peak-row-${i}`}>
+              <div key={i} className="grid grid-cols-12 gap-2 bg-[var(--sh-card-base)]/40 rounded p-2 border border-shBorder" data-testid={`d2d-peak-row-${i}`}>
                 <input type="date" value={p.start || ""} onChange={(e) => updatePeak(i, "start", e.target.value)}
-                       className="col-span-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="date" value={p.end || ""} onChange={(e) => updatePeak(i, "end", e.target.value)}
-                       className="col-span-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="text" placeholder="Label" value={p.label || ""} onChange={(e) => updatePeak(i, "label", e.target.value)}
-                       className="col-span-3 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-3 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="number" step="0.05" placeholder="1.25" value={p.multiplier ?? ""} onChange={(e) => updatePeak(i, "multiplier", parseFloat(e.target.value))}
-                       className="col-span-2 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-2 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <button type="button" onClick={() => removePeak(i)} className="col-span-1 text-red-400 hover:text-red-300">
                   <i className="fas fa-trash text-sm" />
                 </button>
               </div>
             ))}
-            {(s.peak_season_ranges || []).length === 0 && <p className="text-[12px] text-gray-500 italic">No peak ranges yet — click + to add one.</p>}
+            {(s.peak_season_ranges || []).length === 0 && <p className="text-[12px] text-shTextMuted italic">No peak ranges yet — click + to add one.</p>}
           </div>
         </div>
         <Field label="Block bookings within N days before any holiday" type="number" value={s.holiday_lockout_days}
                onChange={(v) => set("seasonal", "holiday_lockout_days", v)} testId="d2d-holiday-lockout"
                hint="0 = no lockout." />
         <div>
-          <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">Owner vacation auto-message</span>
+          <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Owner vacation auto-message</span>
           <textarea value={s.vacation_message || ""}
                     onChange={(e) => set("seasonal", "vacation_message", e.target.value)}
                     data-testid="d2d-vac-msg"
                     placeholder="Closed Aug 1-7. See you Aug 8!"
-                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm h-20" />
+                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20" />
           <div className="grid grid-cols-2 gap-3 mt-2">
             <input type="date" value={s.vacation_start || ""} onChange={(e) => set("seasonal", "vacation_start", e.target.value)}
-                   data-testid="d2d-vac-start" className="bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                   data-testid="d2d-vac-start" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
             <input type="date" value={s.vacation_end || ""} onChange={(e) => set("seasonal", "vacation_end", e.target.value)}
-                   data-testid="d2d-vac-end" className="bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                   data-testid="d2d-vac-end" className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
         </div>
       </Sub>
@@ -251,7 +251,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
 
       {/* GUARDRAILS ─────────────────────────────────────────── */}
       {showSec("guardrails") && (
-      <Sub id="guardrails" title="Booking & capacity guardrails" icon="fa-shield" color="text-shBlue" {...subProps("guardrails")}>
+      <Sub id="guardrails" title="Booking & capacity guardrails" icon="fa-shield" color="text-shSecondary" {...subProps("guardrails")}>
         <div className="grid grid-cols-3 gap-3">
           <Field label="Min advance booking (hours)" type="number" value={g.min_advance_booking_hours}
                  onChange={(v) => set("guardrails", "min_advance_booking_hours", v)} testId="d2d-min-adv" />
@@ -318,11 +318,11 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
         <Field label="Reply-to address (blank = system from address)" type="email" value={c.reply_to_address || ""}
                onChange={(v) => set("comms", "reply_to_address", v)} testId="d2d-replyto" />
         <div>
-          <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">Email footer signature</span>
+          <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">Email footer signature</span>
           <textarea value={c.email_footer_signature || ""}
                     onChange={(e) => set("comms", "email_footer_signature", e.target.value)}
                     data-testid="d2d-footer-sig"
-                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm h-20" />
+                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm h-20" />
         </div>
       </Sub>
       )}
@@ -366,13 +366,13 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       {showSec("compliance") && (
       <Sub id="compliance" title="Vaccines & waiver compliance" icon="fa-syringe" color="text-red-400" {...subProps("compliance")}>
         <div>
-          <span className="block text-[12px] font-black text-gray-400 uppercase tracking-widest mb-1">
+          <span className="block text-[12px] font-black text-shTextMuted uppercase tracking-widest mb-1">
             Vaccines required PER service (comma-separated; blank = use global required-vaccines list)
           </span>
           <div className="grid grid-cols-1 gap-2">
             {["daycare","boarding","training","grooming","photography"].map(svc => (
               <div key={svc} className="grid grid-cols-12 gap-2 items-center">
-                <span className="col-span-2 text-[13px] font-black uppercase tracking-widest text-shBlue">{svc}</span>
+                <span className="col-span-2 text-[13px] font-black uppercase tracking-widest text-shSecondary">{svc}</span>
                 <input type="text"
                        value={((co.vaccines_per_service || {})[svc] || []).join(", ")}
                        onChange={(e) => set("compliance", "vaccines_per_service", {
@@ -381,7 +381,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
                        })}
                        data-testid={`d2d-vax-${svc}`}
                        placeholder="rabies, dhpp, bordetella"
-                       className="col-span-10 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                       className="col-span-10 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
               </div>
             ))}
           </div>
@@ -403,7 +403,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
 
       {/* SERVICES ──────────────────────────────────────────── */}
       {showSec("services") && (
-      <Sub id="services" title="Service-specific defaults" icon="fa-paw" color="text-shGreen" {...subProps("services")}>
+      <Sub id="services" title="Service-specific defaults" icon="fa-paw" color="text-shPrimary" {...subProps("services")}>
         <Field label="Boarding price includes daycare hours" type="toggle" value={sv.boarding_includes_daycare}
                onChange={(v) => set("services", "boarding_includes_daycare", v)} testId="d2d-b-inc-d"
                hint="When ON, a boarding night covers daytime daycare too." />
@@ -430,7 +430,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
 
       {/* FINANCE ────────────────────────────────────────────── */}
       {showSec("finance") && (
-      <Sub id="finance" title="Finance & bookkeeping" icon="fa-chart-pie" color="text-shBlue" {...subProps("finance")}>
+      <Sub id="finance" title="Finance & bookkeeping" icon="fa-chart-pie" color="text-shSecondary" {...subProps("finance")}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Fiscal year start month (1-12)" type="number" value={f.fiscal_year_start_month}
                  onChange={(v) => set("finance", "fiscal_year_start_month", v)} testId="d2d-fy" />
@@ -448,7 +448,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
 
       {/* UI ─────────────────────────────────────────────────── */}
       {showSec("ui") && (
-      <Sub id="ui" title="Branding & UI polish" icon="fa-palette" color="text-shOrange" {...subProps("ui")}>
+      <Sub id="ui" title="Branding & UI polish" icon="fa-palette" color="text-shAccent" {...subProps("ui")}>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Splatter intensity" type="select" value={u.splatter_intensity}
                  onChange={(v) => set("ui", "splatter_intensity", v)} testId="d2d-splatter"
@@ -482,7 +482,7 @@ export default function DayToDayControls({ d2d, setD2d, section }) {
       </Sub>
       )}
 
-      <div className="text-[12px] text-gray-500 italic pt-2 px-1">
+      <div className="text-[12px] text-shTextMuted italic pt-2 px-1">
         <i className="fas fa-info-circle mr-1" />
         Every setting above defaults to current behavior — flipping a toggle is opt-in.
         High-impact rules (money, guardrails, holidays, vaccines, quiet hours) are wired live;
@@ -521,37 +521,37 @@ function OperatorQuickControls({ d2d }) {
     {
       label: "Today's Operating Rules",
       lines: [
-        ["Same-day bookings", g.same_day_booking_allowed ? "Allowed" : "Blocked", g.same_day_booking_allowed ? "shGreen" : "shOrange"],
+        ["Same-day bookings", g.same_day_booking_allowed ? "Allowed" : "Blocked", g.same_day_booking_allowed ? "shPrimary" : "shAccent"],
         ["Min advance", `${g.min_advance_booking_hours ?? "—"} h`],
-        ["Block on expired vaccines", g.block_bookings_if_vaccines_expired ? "Yes" : "No", g.block_bookings_if_vaccines_expired ? "shGreen" : "shOrange"],
+        ["Block on expired vaccines", g.block_bookings_if_vaccines_expired ? "Yes" : "No", g.block_bookings_if_vaccines_expired ? "shPrimary" : "shAccent"],
       ],
       cta: { label: "Configure booking rules", cat: "ops", sub: "_d2d_guardrails" },
-      icon: "fa-shield", color: "shBlue",
+      icon: "fa-shield", color: "shSecondary",
     },
     {
       label: "Holiday & Peak Pricing",
       lines: [
         ["Holidays loaded", `${(s.holiday_surcharges || []).length}`],
         ["Peak ranges", `${(s.peak_season_ranges || []).length}`],
-        ["Vacation mode", s.vacation_start && s.vacation_end ? `${s.vacation_start} → ${s.vacation_end}` : "Off", s.vacation_start ? "shOrange" : null],
+        ["Vacation mode", s.vacation_start && s.vacation_end ? `${s.vacation_start} → ${s.vacation_end}` : "Off", s.vacation_start ? "shAccent" : null],
       ],
       cta: { label: "Configure pricing seasons", cat: "pricing", sub: "_d2d_seasonal" },
-      icon: "fa-calendar-star", color: "shOrange",
+      icon: "fa-calendar-star", color: "shAccent",
     },
     {
       label: "Money & Checkout",
       lines: [
-        ["Tipping at checkout", m.tipping_enabled ? "On" : "Off", m.tipping_enabled ? "shGreen" : "shOrange"],
+        ["Tipping at checkout", m.tipping_enabled ? "On" : "Off", m.tipping_enabled ? "shPrimary" : "shAccent"],
         ["Late pickup fee", m.late_pickup_fee_per_15min ? `$${m.late_pickup_fee_per_15min}/15min` : "Off"],
         ["No-show fee", m.no_show_fee_pct ? `${m.no_show_fee_pct}%` : "Off"],
       ],
       cta: { label: "Configure money rules", cat: "pricing", sub: "_d2d_money" },
-      icon: "fa-dollar-sign", color: "shGreen",
+      icon: "fa-dollar-sign", color: "shPrimary",
     },
     {
       label: "Email Quiet Hours",
       lines: [
-        ["Quiet hours", c.quiet_hours_enabled ? `${c.quiet_hours_start || "?"} → ${c.quiet_hours_end || "?"}` : "Off", c.quiet_hours_enabled ? "shGreen" : "shOrange"],
+        ["Quiet hours", c.quiet_hours_enabled ? `${c.quiet_hours_start || "?"} → ${c.quiet_hours_end || "?"}` : "Off", c.quiet_hours_enabled ? "shPrimary" : "shAccent"],
         ["Reminder lead", `${c.reminder_email_hours_before ?? "—"} h before`],
         ["Birthday emails", c.birthday_email_enabled ? "On" : "Off"],
       ],
@@ -586,34 +586,34 @@ function OperatorQuickControls({ d2d }) {
         ["Mileage rate", f.mileage_rate_per_mile ? `$${f.mileage_rate_per_mile}/mi` : "—"],
       ],
       cta: { label: "Configure finance", cat: "finance", sub: "_d2d_finance" },
-      icon: "fa-chart-pie", color: "shBlue",
+      icon: "fa-chart-pie", color: "shSecondary",
     },
   ];
 
   return (
     <div className="space-y-5" data-testid="operator-quick-controls">
-      <div className="bg-shGreen/10 border border-shGreen/30 rounded-lg p-3">
-        <p className="text-[12px] font-black uppercase tracking-[0.25em] text-shGreen mb-1">
+      <div className="bg-shPrimary/10 border border-shPrimary/30 rounded-lg p-3">
+        <p className="text-[12px] font-black uppercase tracking-[0.25em] text-shPrimary mb-1">
           <i className="fas fa-bolt mr-1.5"/>Operator Quick Controls
         </p>
-        <p className="text-[13px] text-gray-300 normal-case leading-snug">
-          One-glance status of the rules you tweak most often. <strong className="text-white">Every editable control lives in its true home category</strong> — tap &ldquo;Configure&rdquo; on any card to jump there.
+        <p className="text-[13px] text-shTextMuted normal-case leading-snug">
+          One-glance status of the rules you tweak most often. <strong className="text-shText">Every editable control lives in its true home category</strong> — tap &ldquo;Configure&rdquo; on any card to jump there.
         </p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {cards.map((card, i) => (
-          <div key={i} className="bg-bgBase/50 border border-bgHover rounded-xl p-4 flex flex-col gap-3" data-testid={`qc-card-${card.cta.sub}`}>
+          <div key={i} className="bg-[var(--sh-card-base)]/50 border border-shBorder rounded-xl p-4 flex flex-col gap-3" data-testid={`qc-card-${card.cta.sub}`}>
             <div className="flex items-start gap-3">
               <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-[16px] shrink-0 bg-${card.color}/15 text-${card.color}`}>
                 <i className={`fas ${card.icon}`}/>
               </div>
-              <h3 className="text-[14px] font-black uppercase tracking-widest text-white">{card.label}</h3>
+              <h3 className="text-[14px] font-black uppercase tracking-widest text-shText">{card.label}</h3>
             </div>
             <dl className="space-y-1 text-[13px] pl-1">
               {card.lines.map(([k, val, accent], j) => (
                 <div key={j} className="flex items-baseline justify-between gap-3 normal-case">
-                  <dt className="text-gray-400">{k}</dt>
-                  <dd className={`font-bold ${accent === "shGreen" ? "text-shGreen" : accent === "shOrange" ? "text-shOrange" : "text-white"}`}>{val}</dd>
+                  <dt className="text-shTextMuted">{k}</dt>
+                  <dd className={`font-bold ${accent === "shPrimary" ? "text-shPrimary" : accent === "shAccent" ? "text-shAccent" : "text-shText"}`}>{val}</dd>
                 </div>
               ))}
             </dl>
@@ -621,7 +621,7 @@ function OperatorQuickControls({ d2d }) {
               type="button"
               onClick={() => goto(card.cta.cat, card.cta.sub)}
               data-testid={`qc-goto-${card.cta.sub}`}
-              className="self-start text-[11px] font-black uppercase tracking-widest text-shBlue hover:text-shGreen transition inline-flex items-center gap-1"
+              className="self-start text-[11px] font-black uppercase tracking-widest text-shSecondary hover:text-shPrimary transition inline-flex items-center gap-1"
             >
               {card.cta.label} <i className="fas fa-arrow-right text-[10px]"/>
             </button>

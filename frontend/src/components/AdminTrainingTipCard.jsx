@@ -21,14 +21,14 @@ export default function AdminTrainingTipCard() {
 
   return (
     <div data-testid="dashboard-training-tip-card"
-         className="bg-bgPanel border-l-4 border-shGreen rounded-r-xl p-4 sm:p-5 shadow-md card-info">
-      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-1">
+         className="bg-[var(--sh-card-base)] border-l-4 border-shPrimary rounded-r-xl p-4 sm:p-5 shadow-md card-info">
+      <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-1">
         <i className="fas fa-lightbulb mr-1.5"/>Training tip of the day
         {tip.category ? ` · ${tip.category.replace(/_/g, " ")}` : ""}
       </p>
-      <p className="text-white text-[15px] leading-relaxed">{tip.tip}</p>
+      <p className="text-shText text-[15px] leading-relaxed">{tip.tip}</p>
       {tip.source && (
-        <p className="text-gray-500 text-[11px] mt-1">— {tip.source}</p>
+        <p className="text-shTextMuted text-[11px] mt-1">— {tip.source}</p>
       )}
     </div>
   );

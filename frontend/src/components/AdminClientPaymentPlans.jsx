@@ -83,21 +83,21 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
   };
 
   return (
-    <div className="bg-bgBase/40 border border-bgHover rounded-lg p-4"
+    <div className="bg-[var(--sh-card-base)]/40 border border-shBorder rounded-lg p-4"
          data-testid={`admin-plans-${clientId}`}>
       <div className="flex items-baseline justify-between mb-3">
-        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">
+        <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary">
           <i className="fas fa-file-signature mr-1.5"/>Payment Plans · {plans.length}
         </p>
         <button onClick={() => setCreating(true)}
                 data-testid="create-plan-btn"
-                className="text-[11px] font-black uppercase tracking-widest text-shGreen border border-shGreen/40 rounded px-3 py-1.5 hover:bg-shGreen/20">
+                className="text-[11px] font-black uppercase tracking-widest text-shPrimary border border-shPrimary/40 rounded px-3 py-1.5 hover:bg-shPrimary/20">
           <i className="fas fa-plus mr-1"/>New plan
         </button>
       </div>
 
       {plans.length === 0 ? (
-        <p className="text-gray-500 text-xs italic">No plans yet.</p>
+        <p className="text-shTextMuted text-xs italic">No plans yet.</p>
       ) : (
         <div className="space-y-2">
           {plans.map(p => <AdminPlanRow key={p.id} plan={p} onMarkPaid={markPaid} onCancel={cancelPlan} onReverse={reversePayment} />)}
@@ -118,11 +118,11 @@ export default function AdminClientPaymentPlans({ clientId, plans: plansFromPare
 function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
   const sm = STATUS_META[plan.status] || STATUS_META.active;
   return (
-    <div className="bg-bgPanel border border-bgHover rounded p-3" data-testid={`admin-plan-row-${plan.id}`}>
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3" data-testid={`admin-plan-row-${plan.id}`}>
       <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
         <div className="min-w-0">
-          <p className="text-sm font-black text-white">{plan.program_name}</p>
-          <p className="text-[12px] text-gray-400">
+          <p className="text-sm font-black text-shText">{plan.program_name}</p>
+          <p className="text-[12px] text-shTextMuted">
             {fmt(plan.paid_total)} of {fmt(plan.total_amount)}
             {plan.overdue_count > 0 && (
               <span className="ml-2 text-red-400 font-black uppercase text-[11px] tracking-widest">
@@ -140,16 +140,16 @@ function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
         {plan.installments.map(i => (
           <div key={i.id} className="flex items-center justify-between text-[12px]"
                data-testid={`admin-inst-${i.id}`}>
-            <span className={i.status === "paid" ? "text-gray-500 line-through" : "text-gray-300"}>
+            <span className={i.status === "paid" ? "text-shTextMuted line-through" : "text-shTextMuted"}>
               {i.due_date} · {fmt(i.amount)}
-              {i.paid_method && <span className="text-gray-500 ml-1">· {i.paid_method}</span>}
+              {i.paid_method && <span className="text-shTextMuted ml-1">· {i.paid_method}</span>}
             </span>
             {i.status === "due" && plan.status === "active" && (
               <div className="flex gap-1">
                 {["cash", "card", "venmo", "check"].map(m => (
                   <button key={m} onClick={() => onMarkPaid(plan.id, i.id, m)}
                           data-testid={`mark-paid-${i.id}-${m}`}
-                          className="text-[10px] font-black uppercase tracking-widest text-shGreen border border-shGreen/40 rounded px-1.5 py-0.5 hover:bg-shGreen/20">
+                          className="text-[10px] font-black uppercase tracking-widest text-shPrimary border border-shPrimary/40 rounded px-1.5 py-0.5 hover:bg-shPrimary/20">
                     {m}
                   </button>
                 ))}
@@ -157,7 +157,7 @@ function AdminPlanRow({ plan, onMarkPaid, onCancel, onReverse }) {
             )}
             {i.status === "paid" && (
               <div className="flex items-center gap-2">
-                <i className="fas fa-check-circle text-shGreen text-xs" />
+                <i className="fas fa-check-circle text-shPrimary text-xs" />
                 <button onClick={() => onReverse(plan.id, i.id)}
                         data-testid={`reverse-payment-${i.id}`}
                         title="Reverse this payment — removes it from your P&L"
@@ -268,67 +268,67 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
           scrolls inside the card on small screens. Previously the bottom
           action row (Cancel / Create Plan) overflowed past the bottom and
           visually bled into the page underneath. */}
-      <div className="bg-bgPanel border border-bgHover rounded-xl w-full max-w-lg shadow-2xl flex flex-col min-h-0 max-h-[calc(var(--app-height)_-_2rem)]"
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl w-full max-w-lg shadow-2xl flex flex-col min-h-0 max-h-[calc(var(--app-height)_-_2rem)]"
            onClick={e => e.stopPropagation()}
            data-testid="create-plan-modal">
-        <div className="px-6 py-4 border-b border-bgHover flex items-baseline justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-shBorder flex items-baseline justify-between shrink-0">
           <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen mb-0.5">
+            <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shPrimary mb-0.5">
               <i className="fas fa-plus mr-1.5"/>New payment plan
             </p>
-            <h2 className="text-xl font-black text-white">Big-ticket installment plan</h2>
+            <h2 className="text-xl font-black text-shText">Big-ticket installment plan</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl leading-none">×</button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-2xl leading-none">×</button>
         </div>
         <div className="px-6 py-5 space-y-3 overflow-y-auto flex-1 min-h-0">
           <label className="block">
-            <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Program / Item Name</span>
+            <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Program / Item Name</span>
             <input value={programName} onChange={e => setProgramName(e.target.value)}
                    data-testid="plan-name"
                    placeholder="e.g. Service Dog Foundation Program"
-                   className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                   className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Total amount</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Total amount</span>
               <input type="number" min={0} step="0.01" value={total} onChange={e => setTotal(e.target.value)}
                      data-testid="plan-total"
                      placeholder="2000.00"
-                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
             </label>
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-400"># of installments</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted"># of installments</span>
               <input type="number" min={1} max={24} value={n} onChange={e => setN(e.target.value)}
                      data-testid="plan-count"
-                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
             </label>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">Cadence</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">Cadence</span>
               <select value={cadence} onChange={e => setCadence(e.target.value)}
                       data-testid="plan-cadence"
-                      className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white">
+                      className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText">
                 <option value="weekly">Weekly</option>
                 <option value="biweekly">Bi-weekly</option>
                 <option value="monthly">Monthly</option>
               </select>
             </label>
             <label className="block">
-              <span className="text-[11px] font-black uppercase tracking-widest text-gray-400">First payment date</span>
+              <span className="text-[11px] font-black uppercase tracking-widest text-shTextMuted">First payment date</span>
               <input type="date" value={start} onChange={e => setStart(e.target.value)}
                      data-testid="plan-start"
-                     className="mt-1 w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white" />
+                     className="mt-1 w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText" />
             </label>
           </div>
 
           {installments.length > 0 && total && (
-            <div className="bg-bgBase/60 border border-bgHover rounded p-2"
+            <div className="bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-2"
                  data-testid="plan-preview">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-1">
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shTextMuted mb-1">
                 <i className="fas fa-eye mr-1"/>Schedule · {installments.length} payments
               </p>
-              <div className="space-y-0.5 text-[12px] text-gray-300">
+              <div className="space-y-0.5 text-[12px] text-shTextMuted">
                 {installments.map((i, idx) => (
                   <div key={idx} className="flex justify-between">
                     <span>{idx + 1}. {i.due_date}</span>
@@ -343,11 +343,11 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
               values populated. Operator can also click "Customize" to edit
               the agreement just for this client. */}
           {client && settings && tplToUse && (
-            <div className="border border-shGreen/30 rounded">
-              <div className="px-3 py-2 bg-shGreen/10 border-b border-shGreen/30 flex items-baseline justify-between">
-                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shGreen">
+            <div className="border border-shPrimary/30 rounded">
+              <div className="px-3 py-2 bg-shPrimary/10 border-b border-shPrimary/30 flex items-baseline justify-between">
+                <p className="text-[10px] font-black uppercase tracking-[0.3em] text-shPrimary">
                   <i className="fas fa-file-signature mr-1"/>
-                  Agreement preview · <span className="text-white">{client.name}</span> will see this
+                  Agreement preview · <span className="text-shText">{client.name}</span> will see this
                 </p>
                 <button type="button"
                         onClick={() => {
@@ -355,14 +355,14 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
                           setCustomizing(!customizing);
                         }}
                         data-testid="customize-agreement-toggle"
-                        className="text-[10px] font-black uppercase tracking-widest text-shBlue hover:text-white">
+                        className="text-[10px] font-black uppercase tracking-widest text-shSecondary hover:text-shText">
                   {customizing ? "✓ Customizing" : <><i className="fas fa-pen mr-1"/>Customize for this client</>}
                 </button>
               </div>
               {customizing ? (
                 <div className="p-2">
-                  <p className="text-[11px] text-gray-400 mb-2">
-                    Edit the agreement text below. Use the toolbar buttons + auto-fill chips at the bottom — they&apos;ll be replaced with <strong className="text-white">{client.name}</strong>&apos;s real info when sent. The preview will update as you type.
+                  <p className="text-[11px] text-shTextMuted mb-2">
+                    Edit the agreement text below. Use the toolbar buttons + auto-fill chips at the bottom — they&apos;ll be replaced with <strong className="text-shText">{client.name}</strong>&apos;s real info when sent. The preview will update as you type.
                   </p>
                   <RichTextEditor
                     value={customAgreement}
@@ -389,14 +389,14 @@ function CreatePlanModal({ clientId, onClose, onCreated }) {
           )}
         </div>
         {/* Sticky footer — buttons always visible regardless of scroll position. */}
-        <div className="px-6 py-3 border-t border-bgHover bg-bgPanel flex gap-2 shrink-0 rounded-b-xl">
+        <div className="px-6 py-3 border-t border-shBorder bg-[var(--sh-card-base)] flex gap-2 shrink-0 rounded-b-xl">
           <button onClick={onClose}
-                  className="flex-1 text-gray-400 hover:text-white py-2 text-[12px] font-black uppercase tracking-widest">
+                  className="flex-1 text-shTextMuted hover:text-shText py-2 text-[12px] font-black uppercase tracking-widest">
             Cancel
           </button>
           <button onClick={submit} disabled={busy}
                   data-testid="create-plan-submit"
-                  className="flex-1 bg-shGreen hover:bg-shGreen/80 text-bgDark py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
+                  className="flex-1 bg-shPrimary hover:bg-shPrimary/80 text-bgDark py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-50">
             {busy ? "Creating…" : "Create Plan & Email Client"}
           </button>
         </div>

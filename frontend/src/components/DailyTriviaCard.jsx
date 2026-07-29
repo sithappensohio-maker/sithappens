@@ -38,7 +38,7 @@ function CategoryBadge({ tag, size = 44, withLabel = false }) {
            className="drop-shadow-[0_4px_10px_rgba(0,169,224,0.45)]"
            style={{ width: size, height: size, objectFit: "contain" }} />
       {withLabel && (
-        <span className="text-[11px] font-black uppercase tracking-widest text-shGreen">
+        <span className="text-[11px] font-black uppercase tracking-widest text-shPrimary">
           {labelForTag(tag)}
         </span>
       )}
@@ -47,7 +47,7 @@ function CategoryBadge({ tag, size = 44, withLabel = false }) {
 }
 
 // ─── Inline SVG decorations (Sprint 110bm) ──────────────────────────────────
-// Sticking with the Sit Happens shBlue / shOrange / shGreen palette. No image
+// Sticking with the Sit Happens shSecondary / shAccent / shPrimary palette. No image
 // assets — everything is inline SVG so it's themable + zero network cost.
 
 function PawIcon({ className = "", size = 14 }) {
@@ -134,7 +134,7 @@ function PawBackdrop() {
     <div className="absolute inset-0 pointer-events-none overflow-hidden">
       {paws.map((p, i) => (
         <div key={i}
-             className="absolute text-shBlue"
+             className="absolute text-shSecondary"
              style={{ left: `${p.x}%`, top: `${p.y}%`, transform: `rotate(${p.rot}deg)`, opacity: p.op }}>
           <PawIcon size={p.size} />
         </div>
@@ -193,9 +193,9 @@ function DifficultyPaws({ d }) {
 }
 
 const DIFFICULTY_COLOR = {
-  easy:   "text-shGreen bg-shGreen/15 border-shGreen/30",
+  easy:   "text-shPrimary bg-shPrimary/15 border-shPrimary/30",
   medium: "text-amber-300 bg-amber-500/15 border-amber-500/30",
-  hard:   "text-shOrange bg-shOrange/15 border-shOrange/30",
+  hard:   "text-shAccent bg-shAccent/15 border-shAccent/30",
 };
 
 function diffClass(d) { return DIFFICULTY_COLOR[d] || DIFFICULTY_COLOR.medium; }
@@ -244,8 +244,8 @@ export function DailyTriviaCard() {
 
   if (error && !data) {
     return (
-      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 text-gray-400 text-sm" data-testid="trivia-error">
-        <i className="fas fa-circle-info text-shOrange mr-2"/>{error}
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 text-shTextMuted text-sm" data-testid="trivia-error">
+        <i className="fas fa-circle-info text-shAccent mr-2"/>{error}
       </div>
     );
   }
@@ -255,7 +255,7 @@ export function DailyTriviaCard() {
   const answered = !!result;
 
   return (
-    <div className="relative overflow-hidden bg-bgPanel card-pop rounded-2xl border border-bgHover shadow-2xl card-fact" data-testid="daily-trivia-card">
+    <div className="relative overflow-hidden bg-[var(--sh-card-base)] card-pop rounded-2xl border border-shBorder shadow-2xl card-fact" data-testid="daily-trivia-card">
       <div className="absolute inset-0 pointer-events-none opacity-30"
            style={{ background: "radial-gradient(circle at 100% 0%, rgba(0,169,224,0.45) 0%, transparent 55%)" }}/>
       <PawBackdrop />
@@ -265,10 +265,10 @@ export function DailyTriviaCard() {
           <div className="flex items-center gap-3">
             <CategoryBadge tag={q.tag} size={48}/>
             <div className="flex flex-col">
-              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shBlue">
+              <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shSecondary">
                 Dog Trivia of the Day
               </p>
-              <p className="text-[10px] font-black uppercase tracking-widest text-shGreen/80">
+              <p className="text-[10px] font-black uppercase tracking-widest text-shPrimary/80">
                 {labelForTag(q.tag)}
               </p>
             </div>
@@ -279,25 +279,25 @@ export function DailyTriviaCard() {
               <span>{q.difficulty}</span>
             </span>
             {data.current_streak > 0 && (
-              <span className="inline-flex items-center gap-1 bg-shOrange/15 text-shOrange border border-shOrange/30 px-2 py-0.5 rounded" data-testid="trivia-streak">
-                <BoneIcon className="text-shOrange" size={12}/>
+              <span className="inline-flex items-center gap-1 bg-shAccent/15 text-shAccent border border-shAccent/30 px-2 py-0.5 rounded" data-testid="trivia-streak">
+                <BoneIcon className="text-shAccent" size={12}/>
                 <i className="fas fa-fire"/>{data.current_streak}d streak
               </span>
             )}
           </div>
         </div>
 
-        <p className="text-white text-lg font-black leading-snug mb-4" data-testid="trivia-question">{q.question}</p>
+        <p className="text-shText text-lg font-black leading-snug mb-4" data-testid="trivia-question">{q.question}</p>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="trivia-choices">
           {q.choices.map((c, idx) => {
-            let cls = "bg-bgBase border-bgHover text-gray-200 hover:border-shBlue hover:bg-shBlue/10";
+            let cls = "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:border-shSecondary hover:bg-shSecondary/10";
             if (answered) {
-              if (idx === result.correct_index) cls = "bg-shGreen/20 border-shGreen text-shGreen";
-              else if (idx === chosen) cls = "bg-red-500/20 border-red-400 text-red-300";
-              else cls = "bg-bgBase border-bgHover text-gray-500";
+              if (idx === result.correct_index) cls = "bg-shPrimary/20 border-shPrimary text-shPrimary";
+              else if (idx === chosen) cls = "bg-red-500/20 border-shDanger text-red-300";
+              else cls = "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted";
             } else if (chosen === idx) {
-              cls = "bg-shBlue/20 border-shBlue text-white";
+              cls = "bg-shSecondary/20 border-shSecondary text-shText";
             }
             return (
               <button key={idx} onClick={()=> !answered && setChosen(idx)}
@@ -315,10 +315,10 @@ export function DailyTriviaCard() {
 
         {!answered ? (
           <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
-            <p className="text-[11px] text-gray-500 italic">Same question for everyone today — build your streak!</p>
+            <p className="text-[11px] text-shTextMuted italic">Same question for everyone today — build your streak!</p>
             <button onClick={submit} disabled={chosen === null || submitting}
                     data-testid="trivia-submit"
-                    className="bg-shBlue text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
+                    className="bg-shSecondary text-bgHeader px-4 py-2 rounded text-[12px] font-black uppercase tracking-widest disabled:opacity-40">
               {submitting ? "Submitting…" : <><i className="fas fa-paper-plane mr-1"/>Submit answer</>}
             </button>
           </div>
@@ -326,12 +326,12 @@ export function DailyTriviaCard() {
           <div className="mt-4 space-y-2" data-testid="trivia-result">
             <div className="flex items-center gap-3">
               <DogMascot mood={result.correct ? "happy" : "sad"} size={48}/>
-              <p className={`text-base font-black ${result.correct ? "text-shGreen" : "text-shOrange"}`}>
+              <p className={`text-base font-black ${result.correct ? "text-shPrimary" : "text-shAccent"}`}>
                 {result.correct ? "Correct! 🐾" : "Not quite — keep your streak going tomorrow!"}
               </p>
             </div>
             {result.milestone && (
-              <div className="bg-shGreen/10 border border-shGreen rounded p-2 text-sm text-shGreen font-bold" data-testid="trivia-milestone">
+              <div className="bg-shPrimary/10 border border-shPrimary rounded p-2 text-sm text-shPrimary font-bold" data-testid="trivia-milestone">
                 {result.milestone.label}
               </div>
             )}
@@ -343,18 +343,18 @@ export function DailyTriviaCard() {
             <div className="flex gap-2 pt-2 flex-wrap">
               <button onClick={()=>setView(view==="leaderboard"?"daily":"leaderboard")}
                       data-testid="trivia-leaderboard-btn"
-                      className="bg-bgBase border border-bgHover text-gray-200 hover:border-shBlue px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
-                <i className="fas fa-trophy mr-1 text-shOrange"/>Leaderboard
+                      className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:border-shSecondary px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-trophy mr-1 text-shAccent"/>Leaderboard
               </button>
               <button onClick={()=>setView(view==="prizes"?"daily":"prizes")}
                       data-testid="trivia-prizes-btn"
-                      className="bg-bgBase border border-bgHover text-gray-200 hover:border-shOrange px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
-                <i className="fas fa-gift mr-1 text-shOrange"/>Prizes
+                      className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:border-shAccent px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-gift mr-1 text-shAccent"/>Prizes
               </button>
               <button onClick={()=>setView(view==="quiz"?"daily":"quiz")}
                       data-testid="trivia-quiz-btn"
-                      className="bg-bgBase border border-bgHover text-gray-200 hover:border-shGreen px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
-                <i className="fas fa-dice mr-1 text-shGreen"/>Quiz me more
+                      className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:border-shPrimary px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest">
+                <i className="fas fa-dice mr-1 text-shPrimary"/>Quiz me more
               </button>
             </div>
           </div>
@@ -370,9 +370,9 @@ export function DailyTriviaCard() {
 
 function Stat({ label, value, testId }) {
   return (
-    <div className="bg-bgBase rounded-lg p-2 text-center border border-bgHover" data-testid={testId}>
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
-      <p className="text-white text-lg font-black mt-0.5">{value}</p>
+    <div className="bg-[var(--sh-card-base)] rounded-lg p-2 text-center border border-shBorder" data-testid={testId}>
+      <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{label}</p>
+      <p className="text-shText text-lg font-black mt-0.5">{value}</p>
     </div>
   );
 }
@@ -384,42 +384,42 @@ function LeaderboardPanel() {
       try { const r = await api.get("/portal/trivia/leaderboard"); setData(r.data); } catch {}
     })();
   }, []);
-  if (!data) return <p className="text-gray-500 text-sm mt-3">Loading leaderboard…</p>;
+  if (!data) return <p className="text-shTextMuted text-sm mt-3">Loading leaderboard…</p>;
   const me = data.me;
   // Decide whether to show the separate "your rank" footer: only when the
   // user isn't already highlighted in the top-10 list above.
   const meAlreadyInTop = me && me.rank && data.top.some(r => r.is_me);
   return (
-    <div className="mt-4 bg-bgBase rounded-lg border border-bgHover p-3" data-testid="trivia-leaderboard">
+    <div className="mt-4 bg-[var(--sh-card-base)] rounded-lg border border-shBorder p-3" data-testid="trivia-leaderboard">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-[11px] font-black uppercase tracking-widest text-shOrange">
+        <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">
           <i className="fas fa-trophy mr-1"/>Top streaks
         </p>
-        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500" data-testid="trivia-lb-activity-hint">
+        <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted" data-testid="trivia-lb-activity-hint">
           Active in last {data.inactive_after_days || 7}d · {data.total_players || 0} player{data.total_players === 1 ? "" : "s"}
         </p>
       </div>
       {data.top.length === 0 ? (
-        <p className="text-gray-500 text-sm">Be the first to play! 🐾</p>
+        <p className="text-shTextMuted text-sm">Be the first to play! 🐾</p>
       ) : (
         <div className="space-y-1">
           {data.top.map(r => (
-            <div key={r.client_id} className={`flex items-center gap-2 text-[13px] ${r.is_me ? "bg-shBlue/10 border border-shBlue/40 rounded px-2 py-1" : "px-2 py-1"}`}
+            <div key={r.client_id} className={`flex items-center gap-2 text-[13px] ${r.is_me ? "bg-shSecondary/10 border border-shSecondary/40 rounded px-2 py-1" : "px-2 py-1"}`}
                  data-testid={`trivia-lb-row-${r.rank}`}>
-              <span className="text-gray-400 w-7 font-black flex items-center gap-0.5">
+              <span className="text-shTextMuted w-7 font-black flex items-center gap-0.5">
                 <span>#{r.rank}</span>
-                {r.rank <= 3 && <PawIcon className={r.rank === 1 ? "text-shOrange" : r.rank === 2 ? "text-shGreen" : "text-shBlue"} size={9}/>}
+                {r.rank <= 3 && <PawIcon className={r.rank === 1 ? "text-shAccent" : r.rank === 2 ? "text-shPrimary" : "text-shSecondary"} size={9}/>}
               </span>
-              <span className={`flex-1 truncate ${r.is_me ? "text-white font-black" : "text-gray-300"}`}>
+              <span className={`flex-1 truncate ${r.is_me ? "text-shText font-black" : "text-shTextMuted"}`}>
                 {r.display_name}
                 {r.dogs && r.dogs.length > 0 && (
-                  <span className="text-gray-500 normal-case ml-1 text-[11px]"> · {r.dogs.join(", ")}</span>
+                  <span className="text-shTextMuted normal-case ml-1 text-[11px]"> · {r.dogs.join(", ")}</span>
                 )}
-                {r.is_me && <span className="ml-2 text-[10px] text-shBlue">YOU</span>}
+                {r.is_me && <span className="ml-2 text-[10px] text-shSecondary">YOU</span>}
               </span>
-              <span className="text-shOrange font-black text-[12px]"><i className="fas fa-fire mr-1"/>{r.current_streak}d</span>
-              <span className="text-gray-500 text-[11px] hidden sm:inline">best {r.best_streak}d</span>
-              <span className="text-gray-400 text-[11px] w-12 text-right">{r.total_correct} ✓</span>
+              <span className="text-shAccent font-black text-[12px]"><i className="fas fa-fire mr-1"/>{r.current_streak}d</span>
+              <span className="text-shTextMuted text-[11px] hidden sm:inline">best {r.best_streak}d</span>
+              <span className="text-shTextMuted text-[11px] w-12 text-right">{r.total_correct} ✓</span>
             </div>
           ))}
         </div>
@@ -428,22 +428,22 @@ function LeaderboardPanel() {
           in the visible top-10 (rank is either >10 or null because they're
           inactive / never played). */}
       {me && !meAlreadyInTop && (
-        <div className="mt-3 pt-3 border-t border-bgHover" data-testid="trivia-lb-me">
-          <p className="text-[10px] font-black uppercase tracking-widest text-shBlue mb-1.5">Your rank</p>
-          <div className="flex items-center gap-2 text-[13px] bg-shBlue/10 border border-shBlue/40 rounded px-2 py-1.5">
-            <span className="text-gray-400 w-12 font-black">
-              {me.rank ? `#${me.rank}` : <span className="text-gray-500 text-[11px]">—</span>}
+        <div className="mt-3 pt-3 border-t border-shBorder" data-testid="trivia-lb-me">
+          <p className="text-[10px] font-black uppercase tracking-widest text-shSecondary mb-1.5">Your rank</p>
+          <div className="flex items-center gap-2 text-[13px] bg-shSecondary/10 border border-shSecondary/40 rounded px-2 py-1.5">
+            <span className="text-shTextMuted w-12 font-black">
+              {me.rank ? `#${me.rank}` : <span className="text-shTextMuted text-[11px]">—</span>}
             </span>
-            <span className="flex-1 truncate text-white font-black">
+            <span className="flex-1 truncate text-shText font-black">
               {me.display_name || "You"}
-              <span className="ml-2 text-[10px] text-shBlue">YOU</span>
+              <span className="ml-2 text-[10px] text-shSecondary">YOU</span>
             </span>
-            <span className="text-shOrange font-black text-[12px]"><i className="fas fa-fire mr-1"/>{me.current_streak}d</span>
-            <span className="text-gray-500 text-[11px] hidden sm:inline">best {me.best_streak}d</span>
-            <span className="text-gray-400 text-[11px] w-12 text-right">{me.total_correct} ✓</span>
+            <span className="text-shAccent font-black text-[12px]"><i className="fas fa-fire mr-1"/>{me.current_streak}d</span>
+            <span className="text-shTextMuted text-[11px] hidden sm:inline">best {me.best_streak}d</span>
+            <span className="text-shTextMuted text-[11px] w-12 text-right">{me.total_correct} ✓</span>
           </div>
           {!me.rank && (
-            <p className="text-[11px] text-gray-500 mt-1.5 italic">
+            <p className="text-[11px] text-shTextMuted mt-1.5 italic">
               {me.current_streak > 0
                 ? `Play today to climb the active board.`
                 : `Answer today's question to claim your spot.`}
@@ -462,35 +462,35 @@ function PrizesPanel() {
       try { const r = await api.get("/portal/trivia/rewards-progress"); setData(r.data); } catch {}
     })();
   }, []);
-  if (!data) return <p className="text-gray-500 text-sm mt-3">Loading prizes…</p>;
+  if (!data) return <p className="text-shTextMuted text-sm mt-3">Loading prizes…</p>;
   const rewards = data.rewards || [];
   const cur = data.current_streak || 0;
   const earnedDays = new Set(data.earned_days || []);
   const next = data.next_milestone;
   return (
-    <div className="mt-4 bg-bgBase rounded-lg border border-shOrange/40 p-3" data-testid="trivia-prizes">
+    <div className="mt-4 bg-[var(--sh-card-base)] rounded-lg border border-shAccent/40 p-3" data-testid="trivia-prizes">
       <div className="flex items-center justify-between mb-2">
-        <p className="text-[11px] font-black uppercase tracking-widest text-shOrange">
+        <p className="text-[11px] font-black uppercase tracking-widest text-shAccent">
           <i className="fas fa-gift mr-1"/>How to win prizes
         </p>
-        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+        <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">
           🔥 {cur}-day streak
         </p>
       </div>
-      <p className="text-[12px] text-gray-400 leading-relaxed mb-3">
+      <p className="text-[12px] text-shTextMuted leading-relaxed mb-3">
         Answer today's trivia question correctly every day to build a streak. Hit any of the milestones below and you'll get the perk at your next pickup — we'll remember for you.
       </p>
       {next && (
-        <div className="bg-shOrange/10 border border-shOrange/30 rounded px-3 py-2 mb-3" data-testid="trivia-next-milestone">
-          <p className="text-[10px] font-black uppercase tracking-widest text-shOrange mb-0.5">Next reward</p>
-          <p className="text-[13px] text-white font-black">{next.label}</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            <span className="text-shGreen font-black">{next.days_remaining} more day{next.days_remaining === 1 ? "" : "s"}</span> to unlock (at {next.days}-day streak)
+        <div className="bg-shAccent/10 border border-shAccent/30 rounded px-3 py-2 mb-3" data-testid="trivia-next-milestone">
+          <p className="text-[10px] font-black uppercase tracking-widest text-shAccent mb-0.5">Next reward</p>
+          <p className="text-[13px] text-shText font-black">{next.label}</p>
+          <p className="text-[11px] text-shTextMuted mt-0.5">
+            <span className="text-shPrimary font-black">{next.days_remaining} more day{next.days_remaining === 1 ? "" : "s"}</span> to unlock (at {next.days}-day streak)
           </p>
         </div>
       )}
       {rewards.length === 0 ? (
-        <p className="text-[12px] text-gray-500 italic">Your trainer hasn't set up trivia rewards yet — check back soon!</p>
+        <p className="text-[12px] text-shTextMuted italic">Your trainer hasn't set up trivia rewards yet — check back soon!</p>
       ) : (
         <div className="space-y-1.5" data-testid="trivia-prizes-ladder">
           {rewards.map(r => {
@@ -499,25 +499,25 @@ function PrizesPanel() {
             const reached = cur >= days;
             return (
               <div key={days}
-                   className={`flex items-start gap-2 px-2 py-1.5 rounded border ${earned ? "bg-shGreen/10 border-shGreen/40" : reached ? "bg-shBlue/10 border-shBlue/40" : "bg-transparent border-bgHover"}`}
+                   className={`flex items-start gap-2 px-2 py-1.5 rounded border ${earned ? "bg-shPrimary/10 border-shPrimary/40" : reached ? "bg-shSecondary/10 border-shSecondary/40" : "bg-transparent border-shBorder"}`}
                    data-testid={`trivia-prize-${days}`}>
-                <span className={`text-[11px] font-black w-12 shrink-0 ${earned ? "text-shGreen" : reached ? "text-shBlue" : "text-gray-500"}`}>
+                <span className={`text-[11px] font-black w-12 shrink-0 ${earned ? "text-shPrimary" : reached ? "text-shSecondary" : "text-shTextMuted"}`}>
                   {days}d
                 </span>
-                <span className={`flex-1 text-[12px] leading-snug ${earned ? "text-shGreen font-black" : reached ? "text-white" : "text-gray-300"}`}>
+                <span className={`flex-1 text-[12px] leading-snug ${earned ? "text-shPrimary font-black" : reached ? "text-shText" : "text-shTextMuted"}`}>
                   {r.label}
                 </span>
                 {earned ? (
-                  <span className="text-[10px] font-black text-shGreen uppercase tracking-widest shrink-0">✓ Earned</span>
+                  <span className="text-[10px] font-black text-shPrimary uppercase tracking-widest shrink-0">✓ Earned</span>
                 ) : reached ? (
-                  <span className="text-[10px] font-black text-shBlue uppercase tracking-widest shrink-0">Ready</span>
+                  <span className="text-[10px] font-black text-shSecondary uppercase tracking-widest shrink-0">Ready</span>
                 ) : null}
               </div>
             );
           })}
         </div>
       )}
-      <p className="text-[10px] text-gray-500 italic mt-3 leading-relaxed">
+      <p className="text-[10px] text-shTextMuted italic mt-3 leading-relaxed">
         Streak resets if you miss a day. Daily question shows up on your portal home every morning.
       </p>
     </div>
@@ -553,8 +553,8 @@ function QuizPanel() {
 
   const next = () => { setChosen(null); setIdx(i => i + 1); };
 
-  if (!questions) return <p className="text-gray-500 text-sm mt-3">Loading quiz…</p>;
-  if (questions.length === 0) return <p className="text-gray-500 text-sm mt-3">No quiz questions yet — admin needs to seed the pool.</p>;
+  if (!questions) return <p className="text-shTextMuted text-sm mt-3">Loading quiz…</p>;
+  if (questions.length === 0) return <p className="text-shTextMuted text-sm mt-3">No quiz questions yet — admin needs to seed the pool.</p>;
 
   const done = idx >= questions.length;
   const cur = questions[idx];
@@ -563,17 +563,17 @@ function QuizPanel() {
   if (done) {
     const perfect = score.right === questions.length;
     return (
-      <div className="mt-4 bg-bgBase rounded-lg border border-shGreen/40 p-4 text-center relative overflow-hidden" data-testid="trivia-quiz-done">
+      <div className="mt-4 bg-[var(--sh-card-base)] rounded-lg border border-shPrimary/40 p-4 text-center relative overflow-hidden" data-testid="trivia-quiz-done">
         {perfect && <PawConfetti />}
         <div className="relative">
           <div className="flex justify-center mb-2">
             <DogMascot mood={perfect ? "happy" : score.right >= Math.ceil(questions.length / 2) ? "happy" : "thinking"} size={56}/>
           </div>
-          <p className="text-[11px] font-black uppercase tracking-widest text-shGreen mb-2">Quiz complete</p>
-          <p className="text-white text-3xl font-black">{score.right} / {questions.length}</p>
-          <p className="text-[12px] text-gray-400 mt-1">{perfect ? "Perfect score! 🐶" : score.right >= Math.ceil(questions.length / 2) ? "Nice work — go again?" : "Keep going — practice makes perfect!"}</p>
+          <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary mb-2">Quiz complete</p>
+          <p className="text-shText text-3xl font-black">{score.right} / {questions.length}</p>
+          <p className="text-[12px] text-shTextMuted mt-1">{perfect ? "Perfect score! 🐶" : score.right >= Math.ceil(questions.length / 2) ? "Nice work — go again?" : "Keep going — practice makes perfect!"}</p>
           <button onClick={reload} data-testid="trivia-quiz-restart"
-                  className="mt-3 bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
+                  className="mt-3 bg-shPrimary text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
             <i className="fas fa-rotate-right mr-1"/>Play again
           </button>
         </div>
@@ -582,21 +582,21 @@ function QuizPanel() {
   }
 
   return (
-    <div className="mt-4 bg-bgBase rounded-lg border border-bgHover p-3" data-testid="trivia-quiz-panel">
+    <div className="mt-4 bg-[var(--sh-card-base)] rounded-lg border border-shBorder p-3" data-testid="trivia-quiz-panel">
       <div className="flex justify-between items-center mb-2 text-[11px] font-black uppercase tracking-widest">
-        <span className="text-gray-500">Question {idx + 1} of {questions.length}</span>
+        <span className="text-shTextMuted">Question {idx + 1} of {questions.length}</span>
         <span className={`px-2 py-0.5 rounded border ${diffClass(cur.difficulty)}`}>{cur.difficulty}</span>
-        <span className="text-shGreen">{score.right} ✓</span>
+        <span className="text-shPrimary">{score.right} ✓</span>
       </div>
-      <p className="text-white text-base font-bold mb-3">{cur.question}</p>
+      <p className="text-shText text-base font-bold mb-3">{cur.question}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {cur.choices.map((c, i) => {
-          let cls = "bg-bgPanel border-bgHover text-gray-200 hover:border-shGreen";
+          let cls = "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:border-shPrimary";
           if (curRes) {
-            if (i === curRes.correct_index) cls = "bg-shGreen/20 border-shGreen text-shGreen";
-            else if (i === curRes.chosen) cls = "bg-red-500/20 border-red-400 text-red-300";
-            else cls = "bg-bgPanel border-bgHover text-gray-500";
-          } else if (chosen === i) cls = "bg-shGreen/15 border-shGreen text-white";
+            if (i === curRes.correct_index) cls = "bg-shPrimary/20 border-shPrimary text-shPrimary";
+            else if (i === curRes.chosen) cls = "bg-red-500/20 border-shDanger text-red-300";
+            else cls = "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted";
+          } else if (chosen === i) cls = "bg-shPrimary/15 border-shPrimary text-shText";
           return (
             <button key={i} onClick={()=> !curRes && setChosen(i)}
                     disabled={!!curRes} data-testid={`trivia-quiz-choice-${i}`}
@@ -609,12 +609,12 @@ function QuizPanel() {
       <div className="flex justify-end mt-3">
         {!curRes ? (
           <button onClick={submit} disabled={chosen === null} data-testid="trivia-quiz-submit"
-                  className="bg-shGreen text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
+                  className="bg-shPrimary text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-40">
             <i className="fas fa-paper-plane mr-1"/>Submit
           </button>
         ) : (
           <button onClick={next} data-testid="trivia-quiz-next"
-                  className="bg-shBlue text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
+                  className="bg-shSecondary text-bgHeader px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest">
             {idx + 1 < questions.length ? <><i className="fas fa-arrow-right mr-1"/>Next</> : <><i className="fas fa-flag-checkered mr-1"/>See results</>}
           </button>
         )}

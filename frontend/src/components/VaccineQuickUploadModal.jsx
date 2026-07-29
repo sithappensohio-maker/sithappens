@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { api } from "../lib/api";
 import { compressImage } from "../lib/imageCompress";
+import PremiumButton from "./premium/PremiumButton";
 
 /**
  * Vaccine Quick Upload — surfaced from the portal "Upload Vaccine Records" tile.
@@ -102,44 +103,44 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
     <div className="fixed inset-0 z-50 bg-black/85 flex items-end sm:items-center justify-center p-0 sm:p-4"
          data-testid="vaccine-quick-upload-modal" onClick={onClose}>
       <div onClick={(e)=>e.stopPropagation()}
-           className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto pb-safe">
+           className="border border-shBorder rounded-t-2xl sm:rounded-2xl w-full sm:max-w-2xl shadow-sh animate-slide-in max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto pb-safe" style={{ background: "var(--sh-card-base)" }}>
         {/* Header */}
-        <div className="sticky top-0 z-10 px-5 sm:px-6 py-4 bg-bgPanel/95 backdrop-blur border-b border-bgHover flex items-start justify-between gap-3">
+        <div className="sticky top-0 z-10 px-5 sm:px-6 py-4 backdrop-blur border-b border-shBorder flex items-start justify-between gap-3" style={{ background: "var(--sh-card-base)" }}>
           <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shGreen mb-1">
+            <p className="text-[11px] font-bold uppercase tracking-[0.35em] text-shPrimary mb-1">
               <i className="fas fa-shield-virus mr-1.5"/>Vaccine Records
             </p>
-            <h4 className="text-xl sm:text-2xl font-black text-white uppercase italic tracking-tight">Upload vaccine records</h4>
-            <p className="text-[13px] text-gray-400 mt-1">Pick the dog, then complete each red missing/expired vaccine. Each vaccine needs an expiry date and a clear photo/PDF.</p>
+            <h4 className="text-xl sm:text-2xl font-bold text-shText tracking-tight">Upload vaccine records</h4>
+            <p className="text-[13px] text-shTextMuted mt-1">Pick the dog, then complete each red missing/expired vaccine. Each vaccine needs an expiry date and a clear photo/PDF.</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white p-1" data-testid="vquick-close">
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText p-1" data-testid="vquick-close">
             <i className="fas fa-times text-xl"/>
           </button>
         </div>
 
         <div className="p-5 sm:p-6 space-y-5">
-          <div className="bg-shOrange/10 border border-shOrange/35 rounded-lg p-3" data-testid="vquick-clear-instructions">
-            <p className="text-[13px] text-white font-black uppercase tracking-widest leading-snug">
+          <div className="bg-shAccent/10 border border-shAccent/35 rounded-lg p-3" data-testid="vquick-clear-instructions">
+            <p className="text-[13px] text-shText font-black uppercase tracking-widest leading-snug">
               Do every needed vaccine before submitting
             </p>
-            <p className="text-[12px] text-gray-300 mt-1 leading-snug">
+            <p className="text-[12px] text-shTextMuted mt-1 leading-snug">
               Missing/expired vaccines are red. Enter the expiry date and attach the certificate for each one. Uploads go to Sit Happens for approval, so booking stays locked until we approve them.
             </p>
           </div>
 
           {/* Dog picker */}
           <div>
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest block mb-2">
-              Which dog? {dogs.length > 1 && <span className="text-shOrange">*</span>}
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest block mb-2">
+              Which dog? {dogs.length > 1 && <span className="text-shAccent">*</span>}
             </label>
             {dogs.length <= 1 ? (
-              <div className="bg-bgBase border border-bgHover rounded p-3 flex items-center gap-3" data-testid="vquick-dog-locked">
+              <div className="border border-shBorder rounded p-3 flex items-center gap-3" style={{ background: "var(--sh-card-base)" }} data-testid="vquick-dog-locked">
                 {dog?.photo
-                  ? <img src={dog.photo} alt={dog.name} className="w-10 h-10 rounded-full object-cover border border-bgHover"/>
-                  : <span className="w-10 h-10 rounded-full bg-shGreen/15 text-shGreen flex items-center justify-center"><i className="fas fa-paw"/></span>}
+                  ? <img src={dog.photo} alt={dog.name} className="w-10 h-10 rounded-full object-cover border border-shBorder"/>
+                  : <span className="w-10 h-10 rounded-full bg-shPrimary/15 text-shPrimary flex items-center justify-center"><i className="fas fa-paw"/></span>}
                 <div className="min-w-0">
-                  <p className="text-sm font-black text-white truncate">{dog?.name || "No dogs on file"}</p>
-                  <p className="text-[11px] text-gray-500 uppercase tracking-widest">{dog?.breed || "—"}</p>
+                  <p className="text-sm font-black text-shText truncate">{dog?.name || "No dogs on file"}</p>
+                  <p className="text-[11px] text-shTextMuted uppercase tracking-widest">{dog?.breed || "—"}</p>
                 </div>
               </div>
             ) : (
@@ -149,13 +150,14 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                   return (
                     <button key={d.id} onClick={()=>setDogId(d.id)} type="button"
                             data-testid={`vquick-dog-${d.id}`}
-                            className={`text-left rounded-lg border p-3 transition flex items-center gap-2 ${sel ? "bg-shGreen/10 border-shGreen" : "bg-bgBase border-bgHover hover:border-shGreen/50"}`}>
+                            style={sel ? undefined : { background: "var(--sh-card-base)" }}
+                            className={`text-left rounded-lg border p-3 transition flex items-center gap-2 ${sel ? "bg-shPrimary/10 border-shPrimary" : "border-shBorder hover:border-shPrimary/50"}`}>
                       {d.photo
-                        ? <img src={d.photo} alt={d.name} className="w-9 h-9 rounded-full object-cover border border-bgHover shrink-0"/>
-                        : <span className="w-9 h-9 rounded-full bg-shGreen/15 text-shGreen flex items-center justify-center shrink-0"><i className="fas fa-paw"/></span>}
+                        ? <img src={d.photo} alt={d.name} className="w-9 h-9 rounded-full object-cover border border-shBorder shrink-0"/>
+                        : <span className="w-9 h-9 rounded-full bg-shPrimary/15 text-shPrimary flex items-center justify-center shrink-0"><i className="fas fa-paw"/></span>}
                       <div className="min-w-0">
-                        <p className={`text-sm font-black truncate ${sel ? "text-shGreen" : "text-white"}`}>{d.name}</p>
-                        <p className="text-[10px] text-gray-500 uppercase tracking-widest truncate">{d.breed || "—"}</p>
+                        <p className={`text-sm font-black truncate ${sel ? "text-shPrimary" : "text-shText"}`}>{d.name}</p>
+                        <p className="text-[10px] text-shTextMuted uppercase tracking-widest truncate">{d.breed || "—"}</p>
                       </div>
                     </button>
                   );
@@ -167,22 +169,22 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
           {/* Vaccine rows */}
           {dog && (
             <div className="space-y-3" data-testid="vquick-vax-rows">
-              <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Required vaccines</p>
+              <p className="text-[11px] font-black text-shTextMuted uppercase tracking-widest">Required vaccines</p>
               {REQ_VAX.map((v) => {
                 const current = dog.vaccines?.[v.key] || "";
                 const expired = current && current < today();
                 const missing = !current;
                 const row = rows[v.key] || { expires_on: "", photos: [] };
                 const status = missing ? "Missing" : expired ? "Expired" : "Current";
-                const cls = missing || expired ? "text-red-400 border-red-500/40 bg-red-500/10"
-                                               : "text-shGreen border-shGreen/40 bg-shGreen/10";
+                const cls = missing || expired ? "text-shDanger border-shDanger/40 bg-shDanger/10"
+                                               : "text-shPrimary border-shPrimary/40 bg-shPrimary/10";
                 return (
-                  <div key={v.key} className="rounded-lg border border-bgHover bg-bgBase/60 p-4"
+                  <div key={v.key} className="rounded-lg border border-shBorder p-4" style={{ background: "var(--sh-card-base)" }}
                        data-testid={`vquick-row-${v.key}`}>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
-                        <p className="text-sm font-black text-white uppercase italic tracking-tight">{v.label}</p>
-                        <p className="text-[12px] text-gray-400">On file: <span className="text-gray-200">{fmtDate(current)}</span></p>
+                        <p className="text-sm font-bold text-shText tracking-tight">{v.label}</p>
+                        <p className="text-[12px] text-shTextMuted">On file: <span className="text-shTextMuted">{fmtDate(current)}</span></p>
                       </div>
                       <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${cls}`}>
                         <i className={`fas ${missing || expired ? "fa-triangle-exclamation" : "fa-circle-check"} mr-1`}/>{status}
@@ -191,30 +193,30 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
 
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-start">
                       <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                        <label className="text-[10px] font-black text-shTextMuted uppercase tracking-widest block mb-1">
                           New expiry date
                         </label>
                         <input type="date" value={row.expires_on}
                                onChange={(e)=>setField(v.key, { expires_on: e.target.value })}
                                data-testid={`vquick-date-${v.key}`}
-                               className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
-                               style={{ colorScheme: "dark" }}/>
+                               className="w-full border border-shBorder rounded px-3 py-2 text-sm text-shText focus:outline-none focus:border-shPrimary/60"
+                               style={{ colorScheme: "dark", background: "var(--sh-card-base)" }}/>
                       </div>
                       <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-1">
+                        <label className="text-[10px] font-black text-shTextMuted uppercase tracking-widest block mb-1">
                           Certificate photo/PDF required
                         </label>
                         <div className="flex flex-wrap gap-2">
                           {/* Sprint 110ff — camera-first: tap to snap the vet
                               paperwork directly instead of browsing files first. */}
-                          <label className="inline-flex items-center gap-2 cursor-pointer bg-shBlue/15 hover:bg-shBlue/25 text-shBlue text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shBlue/30 transition">
+                          <label className="inline-flex items-center gap-2 cursor-pointer bg-shSecondary/15 hover:bg-shSecondary/25 text-shSecondary text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded border border-shSecondary/30 transition">
                             <i className="fas fa-camera"/> Take Photo
                             <input type="file" accept="image/*" capture="environment"
                                    onChange={(e)=>onAddPhotos(v.key, e)}
                                    data-testid={`vquick-camera-${v.key}`}
                                    className="hidden"/>
                           </label>
-                          <label className="inline-flex items-center gap-2 cursor-pointer bg-bgBase border border-bgHover text-gray-300 hover:text-white hover:border-shBlue/40 text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded transition">
+                          <label className="inline-flex items-center gap-2 cursor-pointer border border-shBorder text-shTextMuted hover:text-shText hover:border-shSecondary/40 text-[11px] font-black uppercase tracking-widest px-3 py-2 rounded transition" style={{ background: "var(--sh-card-base)" }}>
                             <i className="fas fa-paperclip"/> Choose Files
                             <input type="file" accept="image/*,application/pdf" multiple
                                    onChange={(e)=>onAddPhotos(v.key, e)}
@@ -231,19 +233,19 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
                         {row.photos.map((p, i) => (
                           <div key={i} className="relative">
                             <img src={p} alt={`${v.label} cert ${i+1}`}
-                                 className="w-16 h-16 object-cover rounded border border-bgHover"/>
+                                 className="w-16 h-16 object-cover rounded border border-shBorder"/>
                             <button type="button" onClick={()=>removePhoto(v.key, i)}
                                     data-testid={`vquick-remove-${v.key}-${i}`}
-                                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-black flex items-center justify-center hover:bg-red-600">
+                                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-shDanger text-shText text-[10px] font-black flex items-center justify-center hover:bg-red-600">
                               <i className="fas fa-xmark"/>
                             </button>
                           </div>
                         ))}
-                        <p className="w-full text-[10px] text-shGreen"><i className="fas fa-circle-check mr-1"/>{row.photos.length} file{row.photos.length === 1 ? "" : "s"} attached.</p>
+                        <p className="w-full text-[10px] text-shPrimary"><i className="fas fa-circle-check mr-1"/>{row.photos.length} file{row.photos.length === 1 ? "" : "s"} attached.</p>
                       </div>
                     )}
                     {row.expires_on && (!row.photos || row.photos.length === 0) && (
-                      <p className="mt-2 text-[11px] text-shOrange font-black uppercase tracking-widest" data-testid={`vquick-photo-needed-${v.key}`}>
+                      <p className="mt-2 text-[11px] text-shAccent font-black uppercase tracking-widest" data-testid={`vquick-photo-needed-${v.key}`}>
                         <i className="fas fa-triangle-exclamation mr-1"/>Add the certificate photo/PDF for {v.label} before submitting.
                       </p>
                     )}
@@ -254,36 +256,32 @@ export default function VaccineQuickUploadModal({ dogs = [], initialDogId = "", 
           )}
 
           {filledRows.length > 0 && rowsMissingPhotos.length > 0 && (
-            <p className="text-[12px] text-shOrange font-black uppercase tracking-widest" data-testid="vquick-missing-photo-warning">
+            <p className="text-[12px] text-shAccent font-black uppercase tracking-widest" data-testid="vquick-missing-photo-warning">
               <i className="fas fa-triangle-exclamation mr-1"/>Attach proof for every vaccine before submitting.
             </p>
           )}
 
           {err && (
-            <p className="text-[12px] text-red-400" data-testid="vquick-error">
+            <p className="text-[12px] text-shDanger" data-testid="vquick-error">
               <i className="fas fa-circle-exclamation mr-1"/>{err}
             </p>
           )}
 
           {saving && filledRows.length > 1 && (
-            <p className="text-[12px] text-shGreen" data-testid="vquick-progress">
+            <p className="text-[12px] text-shPrimary" data-testid="vquick-progress">
               <i className="fas fa-spinner fa-spin mr-1"/>Uploading {done} / {filledRows.length}…
             </p>
           )}
 
           {/* Footer */}
-          <div className="flex gap-2 justify-end pt-2 border-t border-bgHover">
-            <button onClick={onClose} disabled={saving}
-                    className="text-[13px] font-black uppercase tracking-widest px-3 py-2 text-gray-400 hover:text-white disabled:opacity-40"
-                    data-testid="vquick-cancel">
+          <div className="flex gap-2 justify-end pt-2 border-t border-shBorder">
+            <PremiumButton variant="ghost" onClick={onClose} disabled={saving} data-testid="vquick-cancel">
               Cancel
-            </button>
-            <button onClick={submit} disabled={!canSubmit}
-                    data-testid="vquick-submit"
-                    className="text-[13px] font-black uppercase tracking-widest px-5 py-2 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 disabled:opacity-40 transition">
+            </PremiumButton>
+            <PremiumButton variant="primary" onClick={submit} disabled={!canSubmit} data-testid="vquick-submit">
               {saving ? <><i className="fas fa-spinner fa-spin mr-2"/>Saving…</>
                       : <><i className="fas fa-cloud-arrow-up mr-2"/>Submit for Review {filledRows.length > 0 ? `(${filledRows.length})` : ""}</>}
-            </button>
+            </PremiumButton>
           </div>
         </div>
       </div>

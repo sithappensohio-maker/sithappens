@@ -173,35 +173,44 @@ function AdminShell() {
     { id: "tutorials", label: "How to Use", icon: "fa-circle-question" },
   ];
 
+  // Admin redesign — group existing nav items for scannability. No new
+  // routes/ids are introduced; this only changes how the same flat
+  // `navItems` list above is presented in the sidebar.
+  const NAV_GROUPS = [
+    { label: "Operations", ids: ["dashboard", "pos", "action_center", "schedule", "runsheet", "care", "kennel", "bookings", "waitlist", "recurring"] },
+    { label: "Clients", ids: ["clients", "dogs", "messages", "intake", "incidents", "duplicate_check"] },
+    { label: "Business", ids: ["income", "credit_reconciliation", "pipeline", "homework", "rewards_center", "trophies"] },
+    { label: "Team", ids: ["staff"] },
+    { label: "System", ids: ["announcements", "bulkemail", "audit", "settings", "tutorials"] },
+  ];
+  const navById = Object.fromEntries(navItems.map(n => [n.id, n]));
+  const visibleGroups = NAV_GROUPS
+    .map(g => ({ ...g, items: g.ids.map(id => navById[id]).filter(n => n && (!n.perm || can(n.perm)) && (!n.feature || featureOn(n.feature))) }))
+    .filter(g => g.items.length > 0);
+  const currentNavLabel = navById[tab]?.label || tab;
+
+  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const toggleGroup = (label) => setCollapsedGroups(g => ({ ...g, [label]: !g[label] }));
+
   const handleNav = (id) => { setTab(id); setDrawerOpen(false); };
 
   const sidebarContent = (prefix, collapsed = false) => (
     <>
-      {/* Sprint 110u — branded sidebar header. Logo gets a soft brand-color
-          halo so it pops the way the landing-page hero logo does.
-          Sprint 110di-41 — collapsed mode drops the marketing tagline + tall
-          logo halo to claw back vertical real estate.
-          Sprint 110di-42 — top action row: close (×) on the mobile drawer
-          (so the user has an in-drawer way out, not just backdrop-tap), and
-          a collapse chevron on the desktop sidebar (always visible at the
-          top regardless of viewport height). */}
-      <div className={`relative shrink-0 border-b border-bgHover overflow-hidden ${collapsed ? "p-2" : "p-3"}`}>
+      {/* Real logo, subtle lime/cyan halo — unchanged from before, just
+          converted to the new near-black/border tokens. */}
+      <div className={`relative shrink-0 border-b border-shBorder overflow-hidden ${collapsed ? "p-2" : "p-3"}`}>
         <div className="flex items-center justify-between gap-2 mb-2">
-          {/* Desktop-only collapse toggle (chevron). Hidden in mobile
-              drawer because the mobile drawer uses the close × instead. */}
           {prefix === "" && (
             <button onClick={toggleSidebar} data-testid="sidebar-toggle-collapse"
                     title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                    className="hidden md:inline-flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-shGreen hover:bg-bgPanel transition">
+                    className="hidden md:inline-flex items-center justify-center w-8 h-8 rounded text-shTextMuted hover:text-shPrimary hover:bg-shSurfaceRaised transition">
               <i className={`fas ${collapsed ? "fa-chevron-right" : "fa-chevron-left"} text-[14px]`}/>
             </button>
           )}
-          {/* Mobile drawer close button — only rendered for the mobile
-              drawer instance so the desktop sidebar isn't littered. */}
           {prefix === "mobile-" && (
             <button onClick={()=>setDrawerOpen(false)} data-testid="drawer-close"
                     title="Close menu"
-                    className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded text-gray-400 hover:text-shGreen hover:bg-bgPanel transition">
+                    className="ml-auto inline-flex items-center justify-center w-8 h-8 rounded text-shTextMuted hover:text-shPrimary hover:bg-shSurfaceRaised transition">
               <i className="fas fa-times text-[16px]"/>
             </button>
           )}
@@ -213,7 +222,7 @@ function AdminShell() {
             <img src="/logo.png" alt="Sit Happens"
                  className="relative h-16 mx-auto drop-shadow-[0_6px_18px_rgba(0,0,0,0.55)]"
                  data-testid={`${prefix}sidebar-logo`} />
-            <p className="relative text-[10px] text-gray-400 font-black uppercase tracking-[0.25em] mt-1.5 leading-tight">
+            <p className="relative text-[10px] text-shTextMuted font-bold uppercase tracking-[0.25em] mt-1.5 leading-tight">
               Dog Training · Daycare · Boarding · Photography
             </p>
           </div>
@@ -224,36 +233,62 @@ function AdminShell() {
                data-testid={`${prefix}sidebar-logo`} />
         )}
       </div>
-      <nav className={`flex-grow space-y-1 overflow-y-auto ${collapsed ? "p-2" : "p-3"}`}>
-        {navItems.filter(n => (!n.perm || can(n.perm)) && (!n.feature || featureOn(n.feature))).map(n => (
-          <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
-                  title={collapsed ? n.label : undefined}
-                  className={`group w-full ${collapsed ? "text-center py-2.5 px-0" : "text-left py-2.5 px-3"} rounded-lg text-[14px] font-black uppercase tracking-widest transition-all ${tab===n.id?"bg-gradient-to-r from-shBlue/25 to-transparent border-l-4 border-shGreen text-white shadow-inner":"hover:bg-bgPanel/60 hover:translate-x-0.5 text-gray-400 hover:text-white border-l-4 border-transparent"}`}>
-            <i className={`fas ${n.icon} ${collapsed ? "" : "mr-3 w-4"} ${tab===n.id?"text-shGreen":"text-gray-500 group-hover:text-shBlue"}`} />
-            {!collapsed && n.label}
-            {n.id === "messages" && messagesUnread > 0 && (
-              <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle`}
-                    data-testid={`${prefix}nav-messages-badge`}>{collapsed ? "•" : messagesUnread}</span>
-            )}
-            {n.id === "pos" && shopOrdersUnseen > 0 && (
-              <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle`}
-                    data-testid={`${prefix}nav-pos-badge`}>{collapsed ? "•" : shopOrdersUnseen}</span>
-            )}
-          </button>
-        ))}
+      <nav className={`flex-grow space-y-3 overflow-y-auto ${collapsed ? "p-2" : "p-3"}`}>
+        {visibleGroups.map(g => {
+          const isCollapsed = !!collapsedGroups[g.label];
+          return (
+            <div key={g.label}>
+              {!collapsed && (
+                <button onClick={() => toggleGroup(g.label)} data-testid={`${prefix}nav-group-${g.label.toLowerCase()}`}
+                        className="w-full flex items-center justify-between px-2 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-shTextMuted/70 hover:text-shTextMuted transition">
+                  <span>{g.label}</span>
+                  <i className={`fas fa-chevron-${isCollapsed ? "right" : "down"} text-[9px]`}/>
+                </button>
+              )}
+              {(collapsed || !isCollapsed) && (
+                <div className="space-y-0.5 mt-0.5">
+                  {g.items.map(n => {
+                    const active = tab === n.id;
+                    return (
+                      <button key={n.id} onClick={() => handleNav(n.id)} data-testid={`${prefix}nav-${n.id}`}
+                              title={collapsed ? n.label : undefined}
+                              style={active ? {
+                                background: "linear-gradient(90deg, rgba(140,198,63,0.14), rgba(140,198,63,0.02))",
+                                borderLeft: "3px solid rgb(140,198,63)",
+                                boxShadow: "0 0 18px -8px rgba(140,198,63,0.5)",
+                              } : { borderLeft: "3px solid transparent" }}
+                              className={`group relative w-full ${collapsed ? "text-center py-2.5 px-0" : "text-left py-2 px-2.5"} rounded-md text-[13px] font-semibold transition-all ${active ? "text-shText" : "text-shTextMuted hover:text-shText hover:bg-shSurfaceRaised"}`}>
+                        <i className={`fas ${n.icon} ${collapsed ? "" : "mr-2.5 w-4"} ${active ? "text-shPrimary" : "text-shTextMuted group-hover:text-shSecondary"}`} />
+                        {!collapsed && n.label}
+                        {n.id === "messages" && messagesUnread > 0 && (
+                          <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
+                                data-testid={`${prefix}nav-messages-badge`}>{collapsed ? "•" : messagesUnread}</span>
+                        )}
+                        {n.id === "pos" && shopOrdersUnseen > 0 && (
+                          <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shAccent text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle`}
+                                data-testid={`${prefix}nav-pos-badge`}>{collapsed ? "•" : shopOrdersUnseen}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
-      <div className={`border-t border-bgHover ${collapsed ? "p-2 space-y-2" : "p-4 space-y-3"}`}>
+      <div className={`border-t border-shBorder ${collapsed ? "p-2 space-y-2" : "p-4 space-y-3"}`}>
         {!collapsed && (
           <>
             <TextSizePicker testid={`${prefix}text-size`} compact />
             <InstallAppButton testid={`${prefix}install-app-nav`} />
-            <div className="bg-bgPanel rounded-lg p-3 border border-bgHover">
-              <p className="text-[11px] text-gray-500 font-black uppercase tracking-widest">
-                <i className="fas fa-user-shield text-shGreen mr-1"/>Signed in
+            <div className="rounded-lg p-3 border border-shBorder" style={{ background: "var(--sh-card-base)" }}>
+              <p className="text-[11px] text-shTextMuted font-bold uppercase tracking-widest">
+                <i className="fas fa-user-shield text-shPrimary mr-1"/>Signed in
               </p>
-              <p className="text-xs text-white font-black truncate mt-0.5">{user.name}</p>
+              <p className="text-xs text-shText font-bold truncate mt-0.5">{user.name}</p>
               <button onClick={logout} data-testid={`${prefix}admin-logout`}
-                      className="mt-2 w-full text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 transition">
+                      className="mt-2 w-full text-[12px] font-bold uppercase tracking-widest text-shDanger hover:text-shDanger/80 transition text-left">
                 <i className="fas fa-right-from-bracket mr-1"/>Logout
               </button>
             </div>
@@ -262,7 +297,7 @@ function AdminShell() {
         {collapsed && (
           <button onClick={logout} data-testid={`${prefix}admin-logout-collapsed`}
                   title="Logout"
-                  className="w-full py-2 rounded-lg text-red-400 hover:bg-red-500/10 hover:text-red-300 transition">
+                  className="w-full py-2 rounded-lg text-shDanger hover:bg-shDanger/10 transition">
             <i className="fas fa-right-from-bracket"/>
           </button>
         )}
@@ -271,11 +306,11 @@ function AdminShell() {
   );
 
   return (
-    <div className="app-shell h-screen w-screen flex bg-bgBase overflow-hidden">
-      {/* Desktop sidebar — Sprint 110di-41: width responds to collapsed
-          state (w-16 icon-only / w-64 full). Transition kept short so the
-          page reflow feels snappy. */}
-      <aside className={`bg-bgHeader border-r border-bgHover flex-col hidden md:flex transition-[width] duration-200 ${sidebarCollapsed ? "w-16" : "w-64"}`}>
+    <div className="app-shell h-screen w-screen flex overflow-hidden" style={{ background: "var(--sh-card-base)" }}>
+      {/* Desktop sidebar — width responds to collapsed state (w-16 icon-only
+          / w-64 full). Transition kept short so the page reflow feels snappy. */}
+      <aside className={`border-r border-shBorder flex-col hidden md:flex transition-[width] duration-200 ${sidebarCollapsed ? "w-16" : "w-64"}`}
+             style={{ background: "var(--sh-card-base)" }}>
         {sidebarContent("", sidebarCollapsed)}
       </aside>
 
@@ -284,37 +319,39 @@ function AdminShell() {
            onClick={()=>setDrawerOpen(false)} data-testid="drawer-backdrop">
         <div className="absolute inset-0 bg-black/70" />
       </div>
-      <aside className={`app-mobile-drawer md:hidden fixed top-0 left-0 bottom-0 z-50 w-64 bg-bgHeader border-r border-bgHover flex flex-col min-h-0 transition-transform duration-200 ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
+      <aside className={`app-mobile-drawer md:hidden fixed top-0 left-0 bottom-0 z-50 w-72 max-w-[85vw] border-r border-shBorder flex flex-col min-h-0 transition-transform duration-200 ${drawerOpen?"translate-x-0":"-translate-x-full"}`}
+             style={{ background: "var(--sh-card-base)" }}
              data-testid="mobile-drawer">
         {sidebarContent("mobile-")}
       </aside>
 
       <main className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
-        {/* Sprint 110u — top header gets the same backdrop-blur + accent glow
-            treatment as the landing page nav. Page title becomes a big
-            uppercase-italic-black badge instead of a tiny label. */}
-        <header className="relative shrink-0 bg-bgHeader/95 backdrop-blur border-b border-bgHover h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden">
-          <div className="absolute inset-0 pointer-events-none opacity-25"
-               style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.35) 0%, transparent 40%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.25) 0%, transparent 45%)" }}/>
+        {/* Persistent top header — near-black w/ restrained accent glow,
+            friendly page label (from nav metadata, not the raw tab id). */}
+        <header className="relative shrink-0 border-b border-shBorder h-16 flex items-center justify-between px-4 md:px-8 gap-3 overflow-hidden"
+                style={{ background: "rgba(7,8,13,0.95)", backdropFilter: "blur(8px)" }}>
+          <div className="absolute inset-0 pointer-events-none opacity-20"
+               style={{ background: "radial-gradient(circle at 0% 50%, rgba(0,169,224,0.3) 0%, transparent 40%), radial-gradient(circle at 100% 50%, rgba(140,198,63,0.22) 0%, transparent 45%)" }}/>
           <div className="relative flex items-center gap-3 min-w-0">
             <button onClick={()=>setDrawerOpen(true)} data-testid="drawer-toggle"
-                    className="md:hidden text-gray-200 hover:text-shGreen p-2 -ml-2 text-lg transition">
+                    className="md:hidden text-shText hover:text-shPrimary p-2 -ml-2 text-lg transition">
               <i className="fas fa-bars" />
             </button>
             <img src="/logo.png" alt="Sit Happens"
                  className="h-11 md:hidden drop-shadow-[0_0_10px_rgba(140,198,63,0.4)]" />
-            <h2 className="text-base sm:text-lg font-black uppercase italic text-white tracking-tight truncate pr-1"
+            <h2 className="text-base sm:text-lg font-bold text-shText tracking-tight truncate pr-1"
                 data-testid="header-title">
-              <span className="text-shGreen">·</span> {tab}
+              <span className="text-shPrimary">·</span> {currentNavLabel}
             </h2>
           </div>
           <button onClick={()=>setSearchOpen(true)} data-testid="open-search"
-                  className="relative hidden md:flex items-center gap-2 bg-bgPanel border border-bgHover rounded-lg px-3 py-1.5 text-xs text-gray-400 hover:border-shGreen hover:text-white transition">
+                  className="relative hidden md:flex items-center gap-2 border border-shBorder rounded-lg px-3 py-1.5 text-xs text-shTextMuted hover:border-shPrimary/40 hover:text-shText transition"
+                  style={{ background: "var(--sh-card-base)" }}>
             <i className="fas fa-search text-[14px]" />
             <span>Search clients, dogs…</span>
-            <kbd className="text-[12px] font-black bg-bgBase border border-bgHover rounded px-1.5 py-0.5">⌘K</kbd>
+            <kbd className="text-[12px] font-bold border border-shBorder rounded px-1.5 py-0.5" style={{ background: "rgba(255,255,255,0.04)" }}>⌘K</kbd>
           </button>
-          <button onClick={()=>setSearchOpen(true)} className="relative md:hidden text-gray-300 p-2 hover:text-shGreen transition"><i className="fas fa-search" /></button>
+          <button onClick={()=>setSearchOpen(true)} className="relative md:hidden text-shTextMuted p-2 hover:text-shPrimary transition"><i className="fas fa-search" /></button>
         </header>
         <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 md:p-8 relative" data-scroll-root>
           {tab === "dashboard" && <Dashboard
@@ -367,7 +404,7 @@ function AdminShell() {
 
 function Gate() {
   const { user } = useAuth();
-  if (user === null) return <div className="h-screen w-screen flex items-center justify-center bg-bgBase text-gray-400 text-sm font-black uppercase tracking-widest">Loading…</div>;
+  if (user === null) return <div className="h-screen w-screen flex items-center justify-center text-shTextMuted text-sm font-bold uppercase tracking-widest" style={{ background: "var(--sh-card-base)" }}>Loading…</div>;
   if (!user) return <Login />;
   if (user.must_change_password) return <ForcedPasswordChange />;
   if (user.role === "admin") return <AdminShell />;

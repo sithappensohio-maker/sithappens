@@ -96,17 +96,17 @@ export default function SendClientEmailModal({ client, onClose }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/80 p-3 sm:p-6 overflow-y-auto"
          data-testid="send-client-email-modal" onClick={onClose}>
-      <div className="bg-bgPanel rounded-xl border border-bgHover max-w-2xl mx-auto"
+      <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder max-w-2xl mx-auto"
            onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-bgHover">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-shBorder">
           <div className="min-w-0">
-            <p className="text-xs font-black text-shGreen uppercase tracking-widest">
+            <p className="text-xs font-black text-shPrimary uppercase tracking-widest">
               <i className="fas fa-paper-plane mr-2"/>Send Email
             </p>
-            <p className="text-sm text-white font-black truncate mt-1">{client.name}</p>
-            <p className="text-[12px] text-gray-500 truncate">{client.email || "— no email on file —"}</p>
+            <p className="text-sm text-shText font-black truncate mt-1">{client.name}</p>
+            <p className="text-[12px] text-shTextMuted truncate">{client.email || "— no email on file —"}</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white text-xl shrink-0"
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl shrink-0"
                   data-testid="send-client-email-close">
             <i className="fas fa-xmark"/>
           </button>
@@ -114,7 +114,7 @@ export default function SendClientEmailModal({ client, onClose }) {
 
         <div className="p-5 space-y-3">
           {!client.email && (
-            <div className="bg-shOrange/15 text-shOrange border border-shOrange/30 rounded p-3 text-[12px]"
+            <div className="bg-shAccent/15 text-shAccent border border-shAccent/30 rounded p-3 text-[12px]"
                  data-testid="send-client-email-no-email">
               <i className="fas fa-triangle-exclamation mr-2"/>
               This client has no email address on file — add one to the profile before sending.
@@ -123,14 +123,14 @@ export default function SendClientEmailModal({ client, onClose }) {
 
           {templatesLoaded ? (
             <div>
-              <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1 block">
+              <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">
                 Start from a template <span className="text-gray-600 normal-case">({templates.length} available)</span>
               </label>
               <select
                 onChange={e => applyTemplate(e.target.value)}
                 data-testid="send-client-email-template"
                 defaultValue=""
-                className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
+                className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText"
               >
                 <option value="">— Blank email —</option>
                 {templates.filter(t => t.kind === "system").length > 0 && (
@@ -150,74 +150,74 @@ export default function SendClientEmailModal({ client, onClose }) {
               </select>
             </div>
           ) : (
-            <div className="text-[11px] text-gray-500"><i className="fas fa-spinner fa-spin mr-1"/>Loading templates…</div>
+            <div className="text-[11px] text-shTextMuted"><i className="fas fa-spinner fa-spin mr-1"/>Loading templates…</div>
           )}
 
           <div>
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1 block">
-              Subject <span className="text-gray-600 normal-case">(supports <code className="text-shBlue">{`{{client_first_name}}`}</code>, <code className="text-shBlue">{`{{dog_names}}`}</code>)</span>
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">
+              Subject <span className="text-gray-600 normal-case">(supports <code className="text-shSecondary">{`{{client_first_name}}`}</code>, <code className="text-shSecondary">{`{{dog_names}}`}</code>)</span>
             </label>
             <input
               value={subject}
               onChange={e => setSubject(e.target.value)}
               data-testid="send-client-email-subject"
               placeholder="e.g. Quick update for {{client_first_name}}"
-              className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white"
+              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText"
             />
           </div>
 
           <div>
-            <label className="text-[11px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Body</label>
+            <label className="text-[11px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">Body</label>
             <textarea
               value={body}
               onChange={e => setBody(e.target.value)}
               rows={8}
               data-testid="send-client-email-body"
               placeholder="Write the message — same merge tags supported."
-              className="w-full bg-bgBase border border-bgHover rounded px-3 py-2 text-sm text-white font-mono"
+              className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-2 text-sm text-shText font-mono"
             />
           </div>
 
           {(subject || body) && (
-            <div className="bg-bgBase rounded border border-bgHover p-3" data-testid="send-client-email-preview">
-              <p className="text-[10px] text-gray-500 uppercase tracking-widest font-black">
-                Preview for <span className="text-shGreen">{client.name}</span>
+            <div className="bg-[var(--sh-card-base)] rounded border border-shBorder p-3" data-testid="send-client-email-preview">
+              <p className="text-[10px] text-shTextMuted uppercase tracking-widest font-black">
+                Preview for <span className="text-shPrimary">{client.name}</span>
               </p>
-              <p className="text-sm font-black text-white mt-1">{renderPreview(subject) || <em className="text-gray-500">(empty subject)</em>}</p>
-              <pre className="text-[13px] text-gray-200 mt-1 whitespace-pre-wrap font-sans">{renderPreview(body) || <em className="text-gray-500">(empty body)</em>}</pre>
+              <p className="text-sm font-black text-shText mt-1">{renderPreview(subject) || <em className="text-shTextMuted">(empty subject)</em>}</p>
+              <pre className="text-[13px] text-gray-200 mt-1 whitespace-pre-wrap font-sans">{renderPreview(body) || <em className="text-shTextMuted">(empty body)</em>}</pre>
             </div>
           )}
 
-          <div className="flex items-center gap-2 pt-2 border-t border-bgHover">
+          <div className="flex items-center gap-2 pt-2 border-t border-shBorder">
             <input
               value={templateName}
               onChange={e => setTemplateName(e.target.value)}
               placeholder="Save this as a template…"
               data-testid="send-client-email-template-name"
-              className="flex-1 bg-bgBase border border-bgHover rounded px-3 py-1.5 text-sm text-white"
+              className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded px-3 py-1.5 text-sm text-shText"
             />
             <button
               onClick={saveCurrentAsTemplate}
               disabled={savingTemplate || !templateName.trim() || !subject.trim() || !body.trim()}
               data-testid="send-client-email-save-template"
-              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shBlue/15 text-shBlue hover:bg-shBlue/25 disabled:opacity-40 transition shrink-0">
+              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shSecondary/15 text-shSecondary hover:bg-shSecondary/25 disabled:opacity-40 transition shrink-0">
               {savingTemplate ? <><i className="fas fa-spinner fa-spin mr-1"/>Saving…</> : <><i className="fas fa-bookmark mr-1"/>Save</>}
             </button>
           </div>
 
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[11px] text-shTextMuted">
             <i className="fas fa-circle-info mr-1"/>This send is logged on {client.name}&apos;s communication timeline and shows up in Bulk Email → History.
           </p>
         </div>
 
-        <div className="flex gap-2 justify-end px-5 py-4 border-t border-bgHover">
+        <div className="flex gap-2 justify-end px-5 py-4 border-t border-shBorder">
           <button onClick={onClose} disabled={busy} data-testid="send-client-email-cancel"
-                  className="text-[12px] font-black uppercase tracking-widest px-3 py-2 text-gray-400 hover:text-white disabled:opacity-50">
+                  className="text-[12px] font-black uppercase tracking-widest px-3 py-2 text-shTextMuted hover:text-shText disabled:opacity-50">
             Cancel
           </button>
           <button onClick={send} disabled={busy || !client.email || !subject.trim() || !body.trim()}
                   data-testid="send-client-email-send"
-                  className="text-[13px] font-black uppercase tracking-widest px-4 py-2 rounded bg-shGreen text-bgHeader hover:bg-shGreen/90 disabled:opacity-40 transition">
+                  className="text-[13px] font-black uppercase tracking-widest px-4 py-2 rounded bg-shPrimary text-bgHeader hover:bg-shPrimary/90 disabled:opacity-40 transition">
             {busy ? <><i className="fas fa-spinner fa-spin mr-2"/>Sending…</> : <><i className="fas fa-paper-plane mr-2"/>Send</>}
           </button>
         </div>

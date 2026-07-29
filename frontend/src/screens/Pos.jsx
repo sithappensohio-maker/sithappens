@@ -425,31 +425,31 @@ export default function Pos() {
     const s = saleResult.sale;
     return (
       <div className="max-w-xl mx-auto space-y-4 animate-slide-in" data-testid="pos-sale-complete">
-        <div className="bg-bgPanel border border-shGreen/40 rounded-2xl p-6 text-center">
-          <i className="fas fa-circle-check text-shGreen text-4xl mb-3" />
-          <p className="text-white text-xl font-black uppercase tracking-widest">Sale Complete</p>
-          <p className="text-gray-400 mt-1">Receipt #{s.receipt_number} · {money(s.total)}</p>
+        <div className="bg-[var(--sh-card-base)] border border-shPrimary/40 rounded-2xl p-6 text-center">
+          <i className="fas fa-circle-check text-shPrimary text-4xl mb-3" />
+          <p className="text-shText text-xl font-black uppercase tracking-widest">Sale Complete</p>
+          <p className="text-shTextMuted mt-1">Receipt #{s.receipt_number} · {money(s.total)}</p>
         </div>
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-2">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-gray-400 text-sm">Print receipt</span>
+            <span className="text-shTextMuted text-sm">Print receipt</span>
             <button onClick={() => retryHardware("print_receipt")} disabled={hwBusy.print_receipt}
-                    className="text-shGreen text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                    className="text-shPrimary text-sm font-black uppercase tracking-widest disabled:opacity-50">
               {hwBusy.print_receipt ? "Sending…" : "Reprint"}
             </button>
           </div>
           {s.cash_component > 0 && (
             <div className="flex items-center justify-between">
-              <span className="text-gray-400 text-sm">Cash drawer</span>
+              <span className="text-shTextMuted text-sm">Cash drawer</span>
               <button onClick={() => retryHardware("open_drawer")} disabled={hwBusy.open_drawer}
-                      className="text-shGreen text-sm font-black uppercase tracking-widest disabled:opacity-50">
+                      className="text-shPrimary text-sm font-black uppercase tracking-widest disabled:opacity-50">
                 {hwBusy.open_drawer ? "Opening…" : "Retry Open"}
               </button>
             </div>
           )}
         </div>
         <button onClick={newSale} data-testid="pos-new-sale"
-                className="w-full bg-shGreen text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg">
+                className="w-full bg-shPrimary text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg">
           New Sale
         </button>
       </div>
@@ -460,22 +460,22 @@ export default function Pos() {
   if (tenderOpen) {
     return (
       <div className="max-w-xl mx-auto space-y-4 animate-slide-in" data-testid="pos-tender-screen">
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-6 text-center">
-          <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">Total Due</p>
-          <p className="text-white text-4xl font-black">{money(total)}</p>
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-6 text-center">
+          <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Total Due</p>
+          <p className="text-shText text-4xl font-black">{money(total)}</p>
           {tenders.length > 0 && (
-            <p className="text-shGreen text-sm mt-1">Remaining: {money(remaining)}</p>
+            <p className="text-shPrimary text-sm mt-1">Remaining: {money(remaining)}</p>
           )}
         </div>
 
         {tenders.length > 0 && (
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-1">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-1">
             {tenders.map((t, i) => (
               <div key={i} className="flex items-center justify-between text-sm">
-                <span className="text-gray-300">{TENDER_LABELS[t.method]}{t.notes ? ` — ${t.notes}` : ""}</span>
+                <span className="text-shTextMuted">{TENDER_LABELS[t.method]}{t.notes ? ` — ${t.notes}` : ""}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-white font-bold">{money(t.amount)}</span>
-                  <button onClick={() => removeTender(i)} className="text-gray-500 hover:text-red-400"><i className="fas fa-times" /></button>
+                  <span className="text-shText font-bold">{money(t.amount)}</span>
+                  <button onClick={() => removeTender(i)} className="text-shTextMuted hover:text-shDanger"><i className="fas fa-times" /></button>
                 </div>
               </div>
             ))}
@@ -483,58 +483,58 @@ export default function Pos() {
         )}
 
         {remaining > 0.005 && (
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-3">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-3">
             <div className="grid grid-cols-5 gap-2">
               {Object.entries(TENDER_LABELS).map(([k, label]) => (
                 <button key={k} onClick={() => setTenderMethod(k)}
-                        className={`py-2 rounded text-[11px] font-black uppercase tracking-wide ${tenderMethod === k ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                        className={`py-2 rounded text-[11px] font-black uppercase tracking-wide ${tenderMethod === k ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                   {label}
                 </button>
               ))}
             </div>
 
             <div>
-              <label className="text-[11px] text-gray-500 uppercase tracking-widest">Amount to apply</label>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Amount to apply</label>
               <input type="number" value={tenderAmount} onChange={(e) => setTenderAmount(e.target.value)}
-                     className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-xl font-black" />
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-xl font-black" />
             </div>
 
             {tenderMethod === "cash" && (
               <div>
-                <label className="text-[11px] text-gray-500 uppercase tracking-widest">Cash received</label>
+                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cash received</label>
                 <input type="number" value={cashReceived} onChange={(e) => setCashReceived(e.target.value)}
-                       placeholder={tenderAmount} className="w-full bg-bgBase border border-bgHover rounded p-3 text-white text-xl font-black" />
+                       placeholder={tenderAmount} className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText text-xl font-black" />
                 <div className="flex gap-2 mt-2">
                   {[Number(tenderAmount) || 0, 50, 60, 100].filter((v, i, arr) => arr.indexOf(v) === i && v > 0).map((v) => (
                     <button key={v} onClick={() => setCashReceived(String(v))}
-                            className="flex-1 bg-bgBase border border-bgHover rounded py-2 text-white text-sm font-bold">
+                            className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded py-2 text-shText text-sm font-bold">
                       {v === Number(tenderAmount) ? "Exact" : `$${v}`}
                     </button>
                   ))}
                 </div>
                 {cashReceived && Number(cashReceived) >= Number(tenderAmount || 0) && (
-                  <p className="text-shGreen text-sm mt-1">Change due: {money(Number(cashReceived) - Number(tenderAmount || 0))}</p>
+                  <p className="text-shPrimary text-sm mt-1">Change due: {money(Number(cashReceived) - Number(tenderAmount || 0))}</p>
                 )}
               </div>
             )}
 
             {tenderMethod === "other" && (
               <input value={tenderNotes} onChange={(e) => setTenderNotes(e.target.value)} placeholder="Note (required, e.g. Zelle)"
-                     className="w-full bg-bgBase border border-bgHover rounded p-3 text-white" />
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText" />
             )}
 
-            <button onClick={addTender} className="w-full bg-bgBase border border-shGreen/50 text-shGreen rounded-xl py-3 font-black uppercase tracking-widest">
+            <button onClick={addTender} className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest">
               Add Tender
             </button>
           </div>
         )}
 
         <div className="flex gap-3">
-          <button onClick={() => setTenderOpen(false)} className="flex-1 text-gray-400 font-black uppercase text-sm tracking-widest py-3">
+          <button onClick={() => setTenderOpen(false)} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
             Cancel
           </button>
           <button onClick={completeSale} disabled={remaining > 0.005 || saleBusy} data-testid="pos-complete-sale"
-                  className="flex-1 bg-shGreen text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+                  className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
             {saleBusy ? "Completing…" : "Complete Sale"}
           </button>
         </div>
@@ -546,7 +546,7 @@ export default function Pos() {
   return (
     <div className="space-y-4 animate-slide-in" data-testid="pos-screen">
       <PageHero
-        eyebrow={{ icon: "fa-cash-register", text: "Front desk", color: "text-shGreen" }}
+        eyebrow={{ icon: "fa-cash-register", text: "Front desk", color: "text-shPrimary" }}
         title="Front Desk."
         highlight="Where all the money stuff happens."
         subtitle="Checkout, retail, invoice payments, register, and till tools — one screen."
@@ -554,47 +554,47 @@ export default function Pos() {
       />
 
       {/* Register + hardware status header */}
-      <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 flex flex-wrap items-center gap-3 justify-between">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 flex flex-wrap items-center gap-3 justify-between">
         <div className="flex items-center gap-3">
-          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${registerOpen ? "text-shGreen bg-shGreen/10" : "text-shOrange bg-shOrange/10"}`}>
+          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${registerOpen ? "text-shPrimary bg-shPrimary/10" : "text-shAccent bg-shAccent/10"}`}>
             Register: {registerStatus?.status || "…"}
           </span>
-          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${printerReady ? "text-shGreen bg-shGreen/10" : "text-gray-500 bg-bgHover"}`}>
+          <span className={`text-[11px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${printerReady ? "text-shPrimary bg-shPrimary/10" : "text-shTextMuted bg-shBorder/40"}`}>
             Printer: {printerReady === null ? "Checking…" : printerReady ? "Ready" : "Unavailable"}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center flex-wrap gap-2">
           {isAdmin && (
             <button onClick={() => setDrawerFormOpen((o) => !o)} data-testid="pos-open-drawer-toggle"
-                    className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
             </button>
           )}
           <button onClick={() => setRecentOpen((o) => !o)}
-                  className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
             Recent Sales
           </button>
           {isAdmin && (
             <button onClick={() => setManageProductsOpen(true)} data-testid="pos-manage-products-toggle"
-                    className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               Manage Products
             </button>
           )}
           <button onClick={() => setRegisterToolsOpen((o) => !o)} data-testid="pos-register-tools-toggle"
-                  className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
             Register Tools
           </button>
           {isAdmin && (
             <button onClick={() => setOnlinePaymentsOpen((o) => !o)} data-testid="pos-online-payments-toggle"
-                    className="bg-bgBase border border-bgHover hover:border-shBlue/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                    className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               Online Payments
             </button>
           )}
           <button onClick={() => setOnlineOrdersOpen((o) => !o)} data-testid="pos-online-orders-toggle"
-                  className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
+                  className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
             Online Orders
             {onlineOrdersUnseenCount > 0 && (
-              <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+              <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
                     data-testid="pos-online-orders-unseen-badge">{onlineOrdersUnseenCount} NEW</span>
             )}
           </button>
@@ -602,64 +602,64 @@ export default function Pos() {
       </div>
 
       {!registerOpen && (
-        <div className="bg-bgPanel border border-shOrange/40 rounded-2xl p-4 flex items-center gap-3 flex-wrap">
-          <span className="text-shOrange font-black uppercase text-sm tracking-widest">Register Closed</span>
+        <div className="bg-[var(--sh-card-base)] border border-shAccent/40 rounded-2xl p-4 flex items-center gap-3 flex-wrap">
+          <span className="text-shAccent font-black uppercase text-sm tracking-widest">Register Closed</span>
           <input type="number" value={openingCash} onChange={(e) => setOpeningCash(e.target.value)} placeholder="Opening cash"
-                 className="bg-bgBase border border-bgHover rounded p-2 text-white w-40" />
+                 className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText w-40" />
           <button onClick={doOpenRegister} disabled={openBusy}
-                  className="bg-shGreen text-bgHeader rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
+                  className="bg-shPrimary text-bgHeader rounded px-4 py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
             {openBusy ? "Opening…" : "Open Register"}
           </button>
         </div>
       )}
 
       {drawerFormOpen && (
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 space-y-2">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 space-y-2">
           <select value={drawerReason} onChange={(e) => setDrawerReason(e.target.value)}
-                  className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                  className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             {["Make change", "Count drawer", "Register open/close", "Other"].map((r) => <option key={r}>{r}</option>)}
           </select>
           {drawerReason === "Other" && (
             <input value={drawerCustomReason} onChange={(e) => setDrawerCustomReason(e.target.value)} placeholder="Reason"
-                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           )}
           <button onClick={submitManualDrawer} disabled={drawerBusy}
-                  className="w-full bg-shGreen text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
+                  className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest disabled:opacity-50">
             {drawerBusy ? "Opening…" : "Confirm Open Drawer"}
           </button>
         </div>
       )}
 
       {recentOpen && (
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4">
-          <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+          <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Recent Sales</p>
           <div className="space-y-1 max-h-64 overflow-y-auto">
-            {recentSales.length === 0 && <p className="text-gray-500 text-sm">No sales yet today.</p>}
+            {recentSales.length === 0 && <p className="text-shTextMuted text-sm">No sales yet today.</p>}
             {recentSales.map((s) => (
-              <div key={s.id} className="border-b border-bgHover py-1.5">
+              <div key={s.id} className="border-b border-shBorder py-1.5">
                 <div className="flex items-center justify-between text-sm">
                   <div>
-                    <span className="text-white font-bold">#{s.receipt_number}</span>{" "}
-                    <span className="text-gray-400">{s.client_name || "Walk-in"} · {s.status === "voided" ? "VOIDED" : new Date(s.created_at).toLocaleTimeString()}</span>
+                    <span className="text-shText font-bold">#{s.receipt_number}</span>{" "}
+                    <span className="text-shTextMuted">{s.client_name || "Walk-in"} · {s.status === "voided" ? "VOIDED" : new Date(s.created_at).toLocaleTimeString()}</span>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className={s.status === "voided" ? "text-gray-500 line-through" : "text-white font-bold"}>{money(s.total)}</span>
-                    <button onClick={() => reprintSale(s)} className="text-shGreen text-[11px] font-black uppercase tracking-widest">Reprint</button>
+                    <span className={s.status === "voided" ? "text-shTextMuted line-through" : "text-shText font-bold"}>{money(s.total)}</span>
+                    <button onClick={() => reprintSale(s)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Reprint</button>
                     {isAdmin && s.status !== "voided" && (
                       <button onClick={() => { setVoidingSaleId(s.id); setVoidReason(""); }}
-                              className="text-shOrange text-[11px] font-black uppercase tracking-widest">Void</button>
+                              className="text-shAccent text-[11px] font-black uppercase tracking-widest">Void</button>
                     )}
                   </div>
                 </div>
                 {voidingSaleId === s.id && (
                   <div className="mt-2 flex items-center gap-2">
                     <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} placeholder="Reason for void (required)"
-                           className="flex-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                           className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                     <button onClick={() => submitVoid(s.id)} disabled={voidBusy}
-                            className="bg-shOrange text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                            className="bg-shAccent text-bgHeader rounded px-3 py-2 text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                       {voidBusy ? "Voiding…" : "Confirm"}
                     </button>
-                    <button onClick={() => { setVoidingSaleId(null); setVoidReason(""); }} className="text-gray-500 text-[11px] font-black uppercase tracking-widest">
+                    <button onClick={() => { setVoidingSaleId(null); setVoidReason(""); }} className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">
                       Cancel
                     </button>
                   </div>
@@ -671,48 +671,48 @@ export default function Pos() {
       )}
 
       {onlinePaymentsOpen && (
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4" data-testid="pos-online-payments-panel">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-payments-panel">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
-            <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-gray-400 hover:text-shBlue">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Payments (Stripe)</p>
+            <button onClick={loadOnlinePayments} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shSecondary">
               <i className="fas fa-rotate-right mr-1" />Refresh
             </button>
           </div>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {onlinePayments.length === 0 && <p className="text-gray-500 text-sm">No Stripe Online payments yet.</p>}
+            {onlinePayments.length === 0 && <p className="text-shTextMuted text-sm">No Stripe Online payments yet.</p>}
             {onlinePayments.map((p) => {
               const fullyRefunded = p.remaining_refundable <= 0.005;
               const card = p.card_brand ? `${p.card_brand[0].toUpperCase()}${p.card_brand.slice(1)}${p.card_last4 ? ` •••• ${p.card_last4}` : ""}` : null;
               return (
-                <div key={p.payment_id} className="border border-bgHover rounded-lg p-3" data-testid={`online-payment-${p.payment_id}`}>
+                <div key={p.payment_id} className="border border-shBorder rounded-lg p-3" data-testid={`online-payment-${p.payment_id}`}>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <p className="text-white font-bold text-sm">{p.client_name || "Unknown client"}</p>
-                      <p className="text-gray-500 text-[12px]">
+                      <p className="text-shText font-bold text-sm">{p.client_name || "Unknown client"}</p>
+                      <p className="text-shTextMuted text-[12px]">
                         {p.shop_order_id ? `Order #${p.shop_order_id.slice(0, 8)}` : `Invoice #${(p.invoice_id || "").slice(0, 8)}`}
                         {" · "}{p.created_at ? new Date(p.created_at).toLocaleString() : "—"}
                         {card ? ` · ${card}` : ""}
                       </p>
                     </div>
-                    <div className="text-right text-[12px] text-gray-400">
-                      <p>Paid: <span className="text-white font-bold">{money(p.amount)}</span></p>
-                      <p>Refunded: <span className="text-white font-bold">{money(p.refunded_amount)}</span></p>
-                      <p>Refundable: <span className="text-shGreen font-bold">{money(p.remaining_refundable)}</span></p>
+                    <div className="text-right text-[12px] text-shTextMuted">
+                      <p>Paid: <span className="text-shText font-bold">{money(p.amount)}</span></p>
+                      <p>Refunded: <span className="text-shText font-bold">{money(p.refunded_amount)}</span></p>
+                      <p>Refundable: <span className="text-shPrimary font-bold">{money(p.remaining_refundable)}</span></p>
                     </div>
                     <div>
                       {p.shop_order_id ? (
                         // Client Shop Phase 2 — refunds for Shop orders aren't
                         // built yet (Phase 3). Display-only for now.
-                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Shop Order</span>
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Shop Order</span>
                       ) : fullyRefunded ? (
-                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Fully Refunded</span>
                       ) : p.refund_in_progress ? (
-                        <button disabled className="bg-bgBase border border-bgHover text-shOrange px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
+                        <button disabled className="bg-[var(--sh-card-base)] border border-shBorder text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest opacity-70 cursor-not-allowed">
                           <i className="fas fa-circle-notch fa-spin mr-1" />Refund Processing
                         </button>
                       ) : (
                         <button onClick={() => setRefundingPayment(p)} data-testid={`refund-via-stripe-${p.payment_id}`}
-                                className="bg-shBlue/15 border border-shBlue/40 text-shBlue px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shBlue/25 transition">
+                                className="bg-shSecondary/15 border border-shSecondary/40 text-shSecondary px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shSecondary/25 transition">
                           Refund via Stripe
                         </button>
                       )}
@@ -726,33 +726,33 @@ export default function Pos() {
       )}
 
       {onlineOrdersOpen && (
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4" data-testid="pos-online-orders-panel">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4" data-testid="pos-online-orders-panel">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
-            <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-gray-400 hover:text-shGreen">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Online Orders (Shop)</p>
+            <button onClick={loadOnlineOrders} className="text-[11px] uppercase tracking-widest font-black text-shTextMuted hover:text-shPrimary">
               <i className="fas fa-rotate-right mr-1" />Refresh
             </button>
           </div>
           <div className="space-y-2 max-h-96 overflow-y-auto">
-            {onlineOrders.length === 0 && <p className="text-gray-500 text-sm">No paid Shop orders yet.</p>}
+            {onlineOrders.length === 0 && <p className="text-shTextMuted text-sm">No paid Shop orders yet.</p>}
             {onlineOrders.map((o) => {
               const busy = orderActionBusyId === o.id;
               const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
               return (
-                <div key={o.id} className="border border-bgHover rounded-lg p-3" data-testid={`online-order-${o.id}`}>
+                <div key={o.id} className="border border-shBorder rounded-lg p-3" data-testid={`online-order-${o.id}`}>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <p className="text-white font-bold text-sm">
+                      <p className="text-shText font-bold text-sm">
                         Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}
                         {o.admin_unseen === true && (
-                          <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                          <span className="ml-2 inline-block bg-shAccent text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
                                 data-testid={`online-order-new-${o.id}`}>NEW</span>
                         )}
                       </p>
-                      <p className="text-gray-500 text-[12px]">
+                      <p className="text-shTextMuted text-[12px]">
                         {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
                       </p>
-                      <p className="text-[11px] text-gray-500 mt-1">
+                      <p className="text-[11px] text-shTextMuted mt-1">
                         {(o.lines || []).map((l) => `${l.quantity}× ${l.name}`).join(", ")}
                       </p>
                     </div>
@@ -762,24 +762,24 @@ export default function Pos() {
                           prominent label here. Non-physical orders have no pickup concept,
                           so fulfillment_status stays primary for those. */}
                       {o.fulfillment_status === "needs_attention" ? (
-                        <span className="text-shOrange text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
+                        <span className="text-shAccent text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
                       ) : hasPhysical ? (
                         o.pickup_status === "picked_up" ? (
-                          <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Completed</span>
+                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Completed</span>
                         ) : o.pickup_status === "ready_for_pickup" ? (
-                          <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Ready for Pickup</span>
+                          <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Ready for Pickup</span>
                         ) : o.pickup_status === "preparing" ? (
-                          <span className="text-gray-300 text-[11px] font-black uppercase tracking-widest">Preparing</span>
+                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Preparing</span>
                         ) : (
-                          <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Processing</span>
+                          <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
                         )
                       ) : o.fulfillment_status === "fulfilled" ? (
-                        <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
+                        <span className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
                       ) : (
-                        <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Processing</span>
+                        <span className="text-shTextMuted text-[11px] font-black uppercase tracking-widest">Processing</span>
                       )}
                       {hasPhysical && (
-                        <p className="text-[10px] text-gray-600 mt-1">
+                        <p className="text-[10px] text-shTextMuted mt-1">
                           Payment: Paid · Fulfillment: {o.fulfillment_status === "fulfilled" ? "Complete" : o.fulfillment_status === "needs_attention" ? "Attention" : "Processing"}
                         </p>
                       )}
@@ -789,21 +789,21 @@ export default function Pos() {
                     {o.fulfillment_status === "needs_attention" && (
                       <button onClick={() => runOrderAction(o.id, "retry_fulfillment")} disabled={busy}
                               data-testid={`online-order-retry-${o.id}`}
-                              className="bg-shOrange/15 border border-shOrange/40 text-shOrange px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shOrange/25 transition disabled:opacity-50">
+                              className="bg-shAccent/15 border border-shAccent/40 text-shAccent px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest hover:bg-shAccent/25 transition disabled:opacity-50">
                         {busy ? "Retrying…" : "Retry Fulfillment"}
                       </button>
                     )}
                     {o.pickup_status === "preparing" && (
                       <button onClick={() => runOrderAction(o.id, "mark_ready")} disabled={busy}
                               data-testid={`online-order-mark-ready-${o.id}`}
-                              className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                         Mark Ready
                       </button>
                     )}
                     {o.pickup_status === "ready_for_pickup" && (
                       <button onClick={() => runOrderAction(o.id, "mark_picked_up")} disabled={busy}
                               data-testid={`online-order-mark-picked-up-${o.id}`}
-                              className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
+                              className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 text-shText px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                         Mark Picked Up
                       </button>
                     )}
@@ -816,7 +816,7 @@ export default function Pos() {
       )}
 
       {registerToolsOpen && (
-        <div className="bg-bgPanel border border-bgHover rounded-2xl p-4">
+        <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
           <RegisterTab excludeTabs={["sale"]} />
         </div>
       )}
@@ -825,20 +825,20 @@ export default function Pos() {
         {/* Left: client + products */}
         <div className="lg:col-span-3 space-y-4">
           {/* Client panel */}
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-4">
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
             {!selectedClient ? (
               <>
-                <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black mb-2">Client</p>
+                <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Client</p>
                 <input value={clientQuery} onChange={(e) => setClientQuery(e.target.value)}
                        placeholder="Search client (or leave blank for Walk-in)"
                        data-testid="pos-client-search"
-                       className="w-full bg-bgBase border border-bgHover rounded p-3 text-white" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-3 text-shText" />
                 {clientResults.length > 0 && (
                   <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
                     {clientResults.map((c) => (
                       <button key={c.id} onClick={() => pickClient(c)}
-                              className="w-full text-left bg-bgBase hover:border-shGreen/50 border border-bgHover rounded p-2 text-white text-sm">
-                        {c.name} <span className="text-gray-500">{c.email}</span>
+                              className="w-full text-left bg-[var(--sh-card-base)] hover:border-shPrimary/50 border border-shBorder rounded p-2 text-shText text-sm">
+                        {c.name} <span className="text-shTextMuted">{c.email}</span>
                       </button>
                     ))}
                   </div>
@@ -847,20 +847,20 @@ export default function Pos() {
             ) : (
               <div>
                 <div className="flex items-center justify-between">
-                  <p className="text-white font-black text-lg">{selectedClient.name}</p>
-                  <button onClick={clearClient} className="text-gray-500 hover:text-white text-sm">
+                  <p className="text-shText font-black text-lg">{selectedClient.name}</p>
+                  <button onClick={clearClient} className="text-shTextMuted hover:text-shText text-sm">
                     <i className="fas fa-times mr-1" />Walk-in
                   </button>
                 </div>
                 {selectedClient.dogs?.length > 0 && (
-                  <p className="text-gray-400 text-sm mt-1">Dogs: {selectedClient.dogs.map((d) => d.name).join(", ")}</p>
+                  <p className="text-shTextMuted text-sm mt-1">Dogs: {selectedClient.dogs.map((d) => d.name).join(", ")}</p>
                 )}
                 <div className="flex flex-wrap gap-3 mt-2 text-sm">
-                  {Number(selectedClient.credits || 0) > 0 && <span className="text-shGreen">{selectedClient.credits} daycare credits</span>}
-                  {Number(selectedClient.boarding_credits || 0) > 0 && <span className="text-shGreen">{selectedClient.boarding_credits} boarding credits</span>}
-                  {Number(selectedClient.training_credits || 0) > 0 && <span className="text-shGreen">{selectedClient.training_credits} training credits</span>}
+                  {Number(selectedClient.credits || 0) > 0 && <span className="text-shPrimary">{selectedClient.credits} daycare credits</span>}
+                  {Number(selectedClient.boarding_credits || 0) > 0 && <span className="text-shPrimary">{selectedClient.boarding_credits} boarding credits</span>}
+                  {Number(selectedClient.training_credits || 0) > 0 && <span className="text-shPrimary">{selectedClient.training_credits} training credits</span>}
                   {Number(selectedClient.account_balance || 0) !== 0 && (
-                    <span className={selectedClient.account_balance > 0 ? "text-shOrange" : "text-shGreen"}>
+                    <span className={selectedClient.account_balance > 0 ? "text-shAccent" : "text-shPrimary"}>
                       Tab: {money(selectedClient.account_balance)}
                     </span>
                   )}
@@ -869,19 +869,19 @@ export default function Pos() {
                 <div className="mt-3 space-y-2">
                   {clientInvoice && (
                     <button onClick={() => setShowTakePayment(true)} data-testid="pos-pay-invoice"
-                            className="w-full bg-bgBase border border-shGreen/50 text-shGreen rounded-xl py-3 font-black uppercase tracking-widest text-sm">
+                            className="w-full bg-[var(--sh-card-base)] border border-shPrimary/50 text-shPrimary rounded-xl py-3 font-black uppercase tracking-widest text-sm">
                       Pay Invoice — {money(clientInvoice.balance)}
                     </button>
                   )}
                   {!clientInvoice && (
                     <button onClick={() => setShowTakePayment(true)}
-                            className="w-full bg-bgBase border border-bgHover text-gray-300 rounded-xl py-3 font-black uppercase tracking-widest text-sm">
+                            className="w-full bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-xl py-3 font-black uppercase tracking-widest text-sm">
                       Pay Account / Tab
                     </button>
                   )}
                   {clientBookings.map((b) => (
                     <button key={b.id} onClick={() => setCheckoutBooking(b)}
-                            className="w-full bg-bgBase border border-bgHover hover:border-shGreen/50 rounded-xl py-3 font-black uppercase tracking-widest text-sm text-white">
+                            className="w-full bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl py-3 font-black uppercase tracking-widest text-sm text-shText">
                       Check Out {b.dog_name} ({b.service_type})
                     </button>
                   ))}
@@ -891,19 +891,19 @@ export default function Pos() {
           </div>
 
           {/* Product panel */}
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-4">
-            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black mb-2">Products</p>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Products</p>
             <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Search products"
-                   className="w-full bg-bgBase border border-bgHover rounded p-2 text-white mb-2" />
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText mb-2" />
             {categories.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-3">
                 <button onClick={() => setActiveCategory("")}
-                        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${!activeCategory ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                        className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${!activeCategory ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                   All
                 </button>
                 {categories.map((c) => (
                   <button key={c} onClick={() => setActiveCategory(c)}
-                          className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${activeCategory === c ? "bg-shGreen text-bgHeader" : "bg-bgBase text-gray-400"}`}>
+                          className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${activeCategory === c ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
                     {c}
                   </button>
                 ))}
@@ -916,34 +916,34 @@ export default function Pos() {
                   Number(p.stock_on_hand || 0) <= Number(p.low_stock_threshold) + 0.0005;
                 return (
                   <button key={p.id} onClick={() => addProduct(p)} disabled={outOfStock} data-testid={`pos-product-${p.id}`}
-                          className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-bgHover">
-                    <p className="text-white font-bold text-sm truncate">{p.name}</p>
-                    <p className="text-shGreen font-black">{money(p.price)}</p>
+                          className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-shBorder">
+                    <p className="text-shText font-bold text-sm truncate">{p.name}</p>
+                    <p className="text-shPrimary font-black">{money(p.price)}</p>
                     {p.track_inventory && (
-                      <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-red-400" : lowStock ? "text-shOrange" : "text-gray-500"}`}>
+                      <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-shDanger" : lowStock ? "text-shAccent" : "text-shTextMuted"}`}>
                         {outOfStock ? "Out of Stock" : lowStock ? `${p.stock_on_hand} left • Low Stock` : `${p.stock_on_hand} in stock`}
                       </p>
                     )}
                   </button>
                 );
               })}
-              {filteredProducts.length === 0 && <p className="text-gray-500 text-sm col-span-full">No products found.</p>}
+              {filteredProducts.length === 0 && <p className="text-shTextMuted text-sm col-span-full">No products found.</p>}
             </div>
             {isAdmin && (
               <button onClick={() => setCustomOpen((o) => !o)}
-                      className="mt-3 w-full bg-bgBase border border-bgHover text-gray-300 rounded-xl py-2 text-sm font-black uppercase tracking-widest">
+                      className="mt-3 w-full bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-xl py-2 text-sm font-black uppercase tracking-widest">
                 + Custom Item
               </button>
             )}
             {customOpen && (
-              <div className="mt-2 space-y-2 bg-bgBase border border-bgHover rounded-xl p-3">
+              <div className="mt-2 space-y-2 bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3">
                 <input value={customDesc} onChange={(e) => setCustomDesc(e.target.value)} placeholder="Description"
-                       className="w-full bg-bgHeader border border-bgHover rounded p-2 text-white text-sm" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input type="number" value={customAmount} onChange={(e) => setCustomAmount(e.target.value)} placeholder="Amount"
-                       className="w-full bg-bgHeader border border-bgHover rounded p-2 text-white text-sm" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input value={customReason} onChange={(e) => setCustomReason(e.target.value)} placeholder="Reason (required)"
-                       className="w-full bg-bgHeader border border-bgHover rounded p-2 text-white text-sm" />
-                <button onClick={addCustom} className="w-full bg-shGreen text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <button onClick={addCustom} className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">
                   Add to Cart
                 </button>
               </div>
@@ -953,25 +953,25 @@ export default function Pos() {
 
         {/* Right: cart */}
         <div className="lg:col-span-2">
-          <div className="bg-bgPanel border border-bgHover rounded-2xl p-4 sticky top-4">
-            <p className="text-gray-400 text-[13px] uppercase tracking-widest font-black mb-2">Cart</p>
+          <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 sticky top-4">
+            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Cart</p>
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {cartLines.length === 0 && <p className="text-gray-500 text-sm">Cart is empty.</p>}
+              {cartLines.length === 0 && <p className="text-shTextMuted text-sm">Cart is empty.</p>}
               {cartLines.map((l, i) => (
-                <div key={i} className="flex items-center justify-between text-sm border-b border-bgHover pb-2">
+                <div key={i} className="flex items-center justify-between text-sm border-b border-shBorder pb-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-white truncate">{l.kind === "custom" ? l.description : l.name}</p>
+                    <p className="text-shText truncate">{l.kind === "custom" ? l.description : l.name}</p>
                     {l.kind === "retail" && (
                       <div className="flex items-center gap-2 mt-1">
-                        <button onClick={() => updateQty(i, -1)} className="w-6 h-6 bg-bgBase rounded text-white">-</button>
-                        <span className="text-gray-300 w-6 text-center">{l.qty}</span>
-                        <button onClick={() => updateQty(i, 1)} className="w-6 h-6 bg-bgBase rounded text-white">+</button>
+                        <button onClick={() => updateQty(i, -1)} className="w-6 h-6 bg-[var(--sh-card-base)] rounded text-shText">-</button>
+                        <span className="text-shTextMuted w-6 text-center">{l.qty}</span>
+                        <button onClick={() => updateQty(i, 1)} className="w-6 h-6 bg-[var(--sh-card-base)] rounded text-shText">+</button>
                       </div>
                     )}
                   </div>
                   <div className="text-right">
-                    <p className="text-white font-bold">{money(l.kind === "custom" ? l.custom_amount : l.unit_price * l.qty)}</p>
-                    <button onClick={() => removeLine(i)} className="text-gray-500 hover:text-red-400 text-xs">Remove</button>
+                    <p className="text-shText font-bold">{money(l.kind === "custom" ? l.custom_amount : l.unit_price * l.qty)}</p>
+                    <button onClick={() => removeLine(i)} className="text-shTextMuted hover:text-shDanger text-xs">Remove</button>
                   </div>
                 </div>
               ))}
@@ -979,39 +979,39 @@ export default function Pos() {
 
             {isAdmin && cartLines.length > 0 && !discount && (
               <button onClick={() => setDiscountOpen((o) => !o)}
-                      className="mt-2 text-shGreen text-[12px] font-black uppercase tracking-widest">
+                      className="mt-2 text-shPrimary text-[12px] font-black uppercase tracking-widest">
                 + Discount
               </button>
             )}
             {discountOpen && (
-              <div className="mt-2 space-y-2 bg-bgBase border border-bgHover rounded-xl p-3">
+              <div className="mt-2 space-y-2 bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-3">
                 <div className="flex gap-2">
-                  <button onClick={() => setDiscountKind("fixed")} className={`flex-1 py-1 rounded text-[11px] font-black uppercase ${discountKind === "fixed" ? "bg-shGreen text-bgHeader" : "bg-bgHeader text-gray-400"}`}>$ Fixed</button>
-                  <button onClick={() => setDiscountKind("percent")} className={`flex-1 py-1 rounded text-[11px] font-black uppercase ${discountKind === "percent" ? "bg-shGreen text-bgHeader" : "bg-bgHeader text-gray-400"}`}>% Percent</button>
+                  <button onClick={() => setDiscountKind("fixed")} className={`flex-1 py-1 rounded text-[11px] font-black uppercase ${discountKind === "fixed" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>$ Fixed</button>
+                  <button onClick={() => setDiscountKind("percent")} className={`flex-1 py-1 rounded text-[11px] font-black uppercase ${discountKind === "percent" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>% Percent</button>
                 </div>
                 <input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} placeholder="Value"
-                       className="w-full bg-bgHeader border border-bgHover rounded p-2 text-white text-sm" />
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
                 <input value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="Reason (required)"
-                       className="w-full bg-bgHeader border border-bgHover rounded p-2 text-white text-sm" />
-                <button onClick={applyDiscount} className="w-full bg-shGreen text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">Apply</button>
+                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+                <button onClick={applyDiscount} className="w-full bg-shPrimary text-bgHeader rounded py-2 font-black uppercase text-[12px] tracking-widest">Apply</button>
               </div>
             )}
             {discount && (
               <div className="mt-2 flex items-center justify-between text-sm">
-                <span className="text-gray-400">Discount ({discount.reason})</span>
-                <button onClick={() => setDiscount(null)} className="text-gray-500 hover:text-red-400 text-xs">Remove</button>
+                <span className="text-shTextMuted">Discount ({discount.reason})</span>
+                <button onClick={() => setDiscount(null)} className="text-shTextMuted hover:text-shDanger text-xs">Remove</button>
               </div>
             )}
 
-            <div className="mt-3 pt-3 border-t border-bgHover space-y-1 text-sm">
-              <div className="flex justify-between text-gray-400"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
-              {priced?.discount_amount > 0 && <div className="flex justify-between text-gray-400"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
-              {priced?.tax_amount > 0 && <div className="flex justify-between text-gray-400"><span>Tax</span><span>{money(priced.tax_amount)}</span></div>}
-              <div className="flex justify-between text-white font-black text-lg"><span>Total</span><span>{money(priced?.total)}</span></div>
+            <div className="mt-3 pt-3 border-t border-shBorder space-y-1 text-sm">
+              <div className="flex justify-between text-shTextMuted"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
+              {priced?.discount_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
+              {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax</span><span>{money(priced.tax_amount)}</span></div>}
+              <div className="flex justify-between text-shText font-black text-lg"><span>Total</span><span>{money(priced?.total)}</span></div>
             </div>
 
             <button onClick={openTender} disabled={cartLines.length === 0 || !priced} data-testid="pos-checkout-button"
-                    className="mt-4 w-full bg-shGreen text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg disabled:opacity-40">
+                    className="mt-4 w-full bg-shPrimary text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg disabled:opacity-40">
               Checkout
             </button>
           </div>

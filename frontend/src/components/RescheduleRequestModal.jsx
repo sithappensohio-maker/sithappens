@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, formatErr } from "../lib/api";
+import PremiumButton from "./premium/PremiumButton";
 
 /**
  * Sprint 110cf — Client-portal reschedule request modal.
@@ -51,16 +52,17 @@ export default function RescheduleRequestModal({ booking, onClose, onSubmitted }
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50"
          onClick={onClose}>
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 md:p-7 shadow-2xl max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
+      <div className="border border-shBorder rounded-2xl w-full max-w-md p-6 md:p-7 shadow-sh max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto"
+           style={{ background: "var(--sh-card-base)" }}
            onClick={(e) => e.stopPropagation()}
            data-testid="reschedule-request-modal">
         <div className="mb-4">
-          <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shBlue mb-1">
+          <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-shSecondary mb-1">
             <i className="fas fa-calendar-pen mr-1.5"/>Reschedule request
           </p>
-          <h2 className="text-xl font-black text-white">Move {booking.dog_name}&apos;s session</h2>
-          <p className="text-[13px] text-gray-400 mt-1">
-            Currently <strong className="text-white">{currentLabel}</strong>. Pick up to 3 alternate slots that work — we&apos;ll confirm the one that fits our schedule.
+          <h2 className="text-xl font-bold text-shText">Move {booking.dog_name}&apos;s session</h2>
+          <p className="text-[13px] text-shTextMuted mt-1">
+            Currently <strong className="text-shText">{currentLabel}</strong>. Pick up to 3 alternate slots that work — we&apos;ll confirm the one that fits our schedule.
           </p>
         </div>
 
@@ -68,54 +70,55 @@ export default function RescheduleRequestModal({ booking, onClose, onSubmitted }
           {slots.map((s, i) => (
             <div key={i}
                  data-testid={`reschedule-slot-${i}`}
-                 className="bg-bgBase/60 border border-bgHover rounded p-2">
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-500 mb-1">
+                 className="border border-shBorder rounded p-2"
+                 style={{ background: "var(--sh-card-base)" }}>
+              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-shTextMuted mb-1">
                 Option {i + 1}{i > 0 ? " · optional" : ""}
               </p>
               <div className="grid grid-cols-3 gap-2">
                 <input type="date" value={s.date}
                        onChange={(e) => updateSlot(i, { date: e.target.value })}
                        data-testid={`reschedule-date-${i}`}
-                       className="col-span-2 bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-white text-sm" />
+                       style={{ background: "var(--sh-card-base)", colorScheme: "dark" }}
+                       className="col-span-2 border border-shBorder rounded px-2 py-1.5 text-shText text-sm focus:outline-none focus:border-shSecondary/60" />
                 <input type="time" value={s.time}
                        onChange={(e) => updateSlot(i, { time: e.target.value })}
                        data-testid={`reschedule-time-${i}`}
-                       className="bg-bgPanel border border-bgHover rounded px-2 py-1.5 text-white text-sm" />
+                       style={{ background: "var(--sh-card-base)", colorScheme: "dark" }}
+                       className="border border-shBorder rounded px-2 py-1.5 text-shText text-sm focus:outline-none focus:border-shSecondary/60" />
               </div>
             </div>
           ))}
         </div>
 
         <label className="block mb-4">
-          <span className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500">
-            Note for the trainer <span className="normal-case font-normal text-gray-600">(optional)</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.3em] text-shTextMuted">
+            Note for the trainer <span className="normal-case font-normal text-shTextMuted/70">(optional)</span>
           </span>
           <textarea value={note} onChange={(e) => setNote(e.target.value)}
                     rows={2}
                     placeholder="Why are you moving this session? Any preference?"
                     data-testid="reschedule-note"
-                    className="mt-1 w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                    style={{ background: "var(--sh-card-base)" }}
+                    className="mt-1 w-full border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60" />
         </label>
 
         {error && (
-          <p className="text-red-400 text-[13px] font-black uppercase tracking-widest mb-3"
+          <p className="text-shDanger text-[13px] font-bold uppercase tracking-widest mb-3"
              data-testid="reschedule-error">
             <i className="fas fa-circle-exclamation mr-1"/>{error}
           </p>
         )}
 
-        <div className="flex gap-2 pt-2 border-t border-bgHover">
-          <button onClick={onClose}
-                  data-testid="reschedule-cancel"
-                  className="flex-1 text-gray-400 hover:text-white py-2.5 text-[13px] font-black uppercase tracking-widest">
+        <div className="flex gap-2 pt-2 border-t border-shBorder">
+          <PremiumButton variant="ghost" onClick={onClose} data-testid="reschedule-cancel" className="flex-1 justify-center py-2.5">
             Never mind
-          </button>
-          <button onClick={submit}
+          </PremiumButton>
+          <PremiumButton variant="cyan" onClick={submit}
                   disabled={busy || filled.length === 0}
-                  data-testid="reschedule-submit"
-                  className="flex-1 bg-shBlue hover:bg-shBlue/80 text-white py-2.5 rounded text-[13px] font-black uppercase tracking-widest disabled:opacity-50">
+                  data-testid="reschedule-submit" className="flex-1 justify-center py-2.5">
             {busy ? "Sending…" : `Send ${filled.length || ""} slot${filled.length === 1 ? "" : "s"}`}
-          </button>
+          </PremiumButton>
         </div>
       </div>
     </div>

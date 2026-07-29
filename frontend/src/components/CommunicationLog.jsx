@@ -7,17 +7,17 @@ import { useConfirm } from "../lib/useConfirm";
 import { toast } from "sonner";
 
 const TYPE_META = {
-  phone_call:      { label: "Phone",     icon: "fa-phone",         cls: "bg-shGreen/15 text-shGreen" },
-  voicemail:       { label: "Voicemail", icon: "fa-voicemail",     cls: "bg-shBlue/15 text-shBlue" },
-  text:            { label: "Text",      icon: "fa-message",       cls: "bg-shGreen/15 text-shGreen" },
-  email:           { label: "Email",     icon: "fa-envelope",      cls: "bg-shBlue/15 text-shBlue" },
+  phone_call:      { label: "Phone",     icon: "fa-phone",         cls: "bg-shPrimary/15 text-shPrimary" },
+  voicemail:       { label: "Voicemail", icon: "fa-voicemail",     cls: "bg-shSecondary/15 text-shSecondary" },
+  text:            { label: "Text",      icon: "fa-message",       cls: "bg-shPrimary/15 text-shPrimary" },
+  email:           { label: "Email",     icon: "fa-envelope",      cls: "bg-shSecondary/15 text-shSecondary" },
   in_person:       { label: "In-person", icon: "fa-handshake",     cls: "bg-purple-500/15 text-purple-300" },
-  behavior:        { label: "Behavior",  icon: "fa-paw",           cls: "bg-shOrange/15 text-shOrange" },
-  schedule_change: { label: "Schedule",  icon: "fa-calendar",      cls: "bg-shBlue/15 text-shBlue" },
-  payment:         { label: "Payment",   icon: "fa-dollar-sign",   cls: "bg-shGreen/15 text-shGreen" },
+  behavior:        { label: "Behavior",  icon: "fa-paw",           cls: "bg-shAccent/15 text-shAccent" },
+  schedule_change: { label: "Schedule",  icon: "fa-calendar",      cls: "bg-shSecondary/15 text-shSecondary" },
+  payment:         { label: "Payment",   icon: "fa-dollar-sign",   cls: "bg-shPrimary/15 text-shPrimary" },
   complaint:       { label: "Complaint", icon: "fa-triangle-exclamation", cls: "bg-red-500/15 text-red-300" },
-  follow_up:       { label: "Follow-up", icon: "fa-bell",          cls: "bg-shOrange/15 text-shOrange" },
-  general:         { label: "Note",      icon: "fa-note-sticky",   cls: "bg-bgHover text-gray-300" },
+  follow_up:       { label: "Follow-up", icon: "fa-bell",          cls: "bg-shAccent/15 text-shAccent" },
+  general:         { label: "Note",      icon: "fa-note-sticky",   cls: "bg-shSurfaceRaised text-shTextMuted" },
 };
 
 function todayISO() {
@@ -99,16 +99,16 @@ export default function CommunicationLog({ clientId, dogId = null }) {
   };
 
   return (
-    <div className="mt-3 pt-3 border-t border-bgHover" data-testid={`comm-log-${clientId}-${dogId || ""}`}>
+    <div className="mt-3 pt-3 border-t border-shBorder" data-testid={`comm-log-${clientId}-${dogId || ""}`}>
       <div className="flex items-center justify-between mb-2">
-        <div className="text-[13px] font-black uppercase tracking-widest text-gray-500">
+        <div className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">
           <i className="fas fa-comments mr-1"/>Communication · {entries.length}
           {counts.open_followups > 0 && (
-            <span className="ml-2 text-shOrange">{counts.open_followups} open follow-up{counts.open_followups===1?"":"s"}</span>
+            <span className="ml-2 text-shAccent">{counts.open_followups} open follow-up{counts.open_followups===1?"":"s"}</span>
           )}
         </div>
         <button onClick={()=>setShowAdd(true)} data-testid={`add-comm-${clientId}`}
-                className="text-[13px] font-black uppercase tracking-widest text-shGreen hover:text-shGreen/80">
+                className="text-[13px] font-black uppercase tracking-widest text-shPrimary hover:text-shPrimary/80">
           + Log
         </button>
       </div>
@@ -117,7 +117,7 @@ export default function CommunicationLog({ clientId, dogId = null }) {
         <div className="flex flex-wrap gap-1 mb-2">
           <Pill active={filter==="all"} onClick={()=>setFilter("all")} label={`All · ${counts.all}`}/>
           {counts.open_followups > 0 && (
-            <Pill active={filter==="open_followups"} onClick={()=>setFilter("open_followups")} label={`Open follow-up · ${counts.open_followups}`} accent="shOrange"/>
+            <Pill active={filter==="open_followups"} onClick={()=>setFilter("open_followups")} label={`Open follow-up · ${counts.open_followups}`} accent="shAccent"/>
           )}
           {Object.entries(TYPE_META).filter(([k]) => counts[k] > 0).map(([k, m]) => (
             <Pill key={k} active={filter===k} onClick={()=>setFilter(k)} label={`${m.label} · ${counts[k]}`}/>
@@ -126,32 +126,32 @@ export default function CommunicationLog({ clientId, dogId = null }) {
       )}
 
       {visible.length === 0 ? (
-        <p className="text-[13px] text-gray-500 italic">No communication logged yet.</p>
+        <p className="text-[13px] text-shTextMuted italic">No communication logged yet.</p>
       ) : (
         <ul className="space-y-1.5">
           {visible.slice(0, 10).map(e => {
             const meta = TYPE_META[e.type] || TYPE_META.general;
             const isOpenFu = e.follow_up_required && !e.follow_up_resolved_at;
             return (
-              <li key={e.id} className={`bg-bgBase border border-bgHover rounded-lg p-2 ${isOpenFu ? "border-l-4 border-l-shOrange" : ""}`}
+              <li key={e.id} className={`bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-2 ${isOpenFu ? "border-l-4 border-l-shAccent" : ""}`}
                   data-testid={`comm-entry-${e.id}`}>
                 <div className="flex items-start gap-2 flex-wrap">
                   <span className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${meta.cls}`}>
                     <i className={`fas ${meta.icon} mr-1`}/>{meta.label}
                   </span>
-                  <span className="text-[12px] text-gray-300 flex-1 min-w-0">{e.summary}</span>
-                  <span className="text-[11px] text-gray-500 font-mono">{(e.occurred_at || "").slice(0, 10)}</span>
+                  <span className="text-[12px] text-shTextMuted flex-1 min-w-0">{e.summary}</span>
+                  <span className="text-[11px] text-shTextMuted font-mono">{(e.occurred_at || "").slice(0, 10)}</span>
                 </div>
                 {(e.created_by_name || isOpenFu) && (
                   <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px]">
-                    {e.created_by_name && <span className="text-gray-500">by {e.created_by_name}</span>}
+                    {e.created_by_name && <span className="text-shTextMuted">by {e.created_by_name}</span>}
                     {isOpenFu && (
                       <>
-                        <span className="text-shOrange font-black uppercase tracking-widest">
+                        <span className="text-shAccent font-black uppercase tracking-widest">
                           <i className="fas fa-bell mr-1"/>Follow-up{e.follow_up_date ? ` · ${e.follow_up_date}` : ""}
                         </span>
                         <button onClick={()=>resolveFollowup(e)} data-testid={`resolve-${e.id}`}
-                                className="text-shGreen font-black uppercase tracking-widest hover:underline ml-auto">
+                                className="text-shPrimary font-black uppercase tracking-widest hover:underline ml-auto">
                           Mark resolved
                         </button>
                       </>
@@ -167,7 +167,7 @@ export default function CommunicationLog({ clientId, dogId = null }) {
               </li>
             );
           })}
-          {visible.length > 10 && <li className="text-[12px] text-gray-500 italic">+ {visible.length - 10} more.</li>}
+          {visible.length > 10 && <li className="text-[12px] text-shTextMuted italic">+ {visible.length - 10} more.</li>}
         </ul>
       )}
 
@@ -178,12 +178,12 @@ export default function CommunicationLog({ clientId, dogId = null }) {
   );
 }
 
-function Pill({ active, onClick, label, accent = "shGreen" }) {
-  const activeCls = accent === "shOrange" ? "bg-shOrange text-bgBase border-shOrange" : "bg-shGreen text-bgBase border-shGreen";
+function Pill({ active, onClick, label, accent = "shPrimary" }) {
+  const activeCls = accent === "shAccent" ? "bg-shAccent text-bgBase border-shAccent" : "bg-shPrimary text-bgBase border-shPrimary";
   return (
     <button onClick={onClick}
             className={`px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest border transition
-                       ${active ? activeCls : "bg-bgPanel text-gray-400 border-bgHover hover:text-white"}`}>
+                       ${active ? activeCls : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:text-shText"}`}>
       {label}
     </button>
   );
@@ -192,20 +192,20 @@ function Pill({ active, onClick, label, accent = "shGreen" }) {
 function AddModal({ form, setForm, onSave, onCancel }) {
   return createPortal((
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" data-testid="comm-add-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto" data-testid="comm-add-modal">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Log Communication</h4>
-          <button onClick={onCancel} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Log Communication</h4>
+          <button onClick={onCancel} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
 
         <div className="space-y-3">
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Type</label>
+            <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Type</label>
             <div className="mt-1 grid grid-cols-3 gap-1">
               {Object.entries(TYPE_META).map(([k, m]) => (
                 <button key={k} type="button" onClick={()=>setForm({ ...form, type: k })}
                         data-testid={`comm-type-${k}`}
-                        className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-1.5 rounded border ${form.type===k?"bg-shGreen text-bgBase border-shGreen":"bg-bgBase border-bgHover text-gray-300 hover:text-white"}`}>
+                        className={`text-[10px] font-black uppercase tracking-widest px-1.5 py-1.5 rounded border ${form.type===k?"bg-shPrimary text-bgBase border-shPrimary":"bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:text-shText"}`}>
                   <i className={`fas ${m.icon} mr-1`}/>{m.label}
                 </button>
               ))}
@@ -213,32 +213,32 @@ function AddModal({ form, setForm, onSave, onCancel }) {
           </div>
 
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Summary</label>
+            <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Summary</label>
             <textarea value={form.summary} onChange={(e)=>setForm({ ...form, summary: e.target.value })} rows={3}
                       autoFocus data-testid="comm-summary"
                       placeholder="What was discussed? Keep it short and factual."
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
 
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={form.follow_up_required}
                    onChange={(e)=>setForm({ ...form, follow_up_required: e.target.checked, follow_up_date: e.target.checked ? (form.follow_up_date || todayISO()) : "" })}
-                   className="accent-shOrange w-4 h-4" data-testid="comm-fu-required"/>
-            <span className="text-[12px] font-black uppercase tracking-widest text-gray-300">Follow-up needed</span>
+                   className="accent-shAccent w-4 h-4" data-testid="comm-fu-required"/>
+            <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Follow-up needed</span>
           </label>
           {form.follow_up_required && (
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Follow-up date</label>
+              <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Follow-up date</label>
               <input type="date" value={form.follow_up_date} onChange={(e)=>setForm({ ...form, follow_up_date: e.target.value })}
                      style={{ colorScheme: "dark" }} data-testid="comm-fu-date"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
             </div>
           )}
 
-          <div className="flex justify-end gap-3 pt-2 border-t border-bgHover">
-            <button onClick={onCancel} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+          <div className="flex justify-end gap-3 pt-2 border-t border-shBorder">
+            <button onClick={onCancel} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest">Cancel</button>
             <button onClick={onSave} data-testid="comm-save"
-                    className="bg-shGreen text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">
+                    className="bg-shPrimary text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">
               <i className="fas fa-save mr-1"/>Log entry
             </button>
           </div>

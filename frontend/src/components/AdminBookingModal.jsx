@@ -542,13 +542,13 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-2 sm:p-4 z-50" data-testid="admin-booking-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto overflow-x-hidden animate-slide-in">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-4 sm:p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto overflow-x-hidden animate-slide-in">
         <div className="flex items-center justify-between mb-5">
           <div>
-            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
-            <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mt-1">{isEdit ? "Update notes, kennel & times" : (defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client")}</p>
+            <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">{isEdit ? "Edit Booking" : (defaultCheckIn ? "Quick Check-in" : "New Booking")}</h4>
+            <p className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mt-1">{isEdit ? "Update notes, kennel & times" : (defaultCheckIn ? "Walk-in or unscheduled drop-off" : "Schedule on behalf of a client")}</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times text-xl" /></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times text-xl" /></button>
         </div>
 
         <div className="space-y-4">
@@ -557,7 +557,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
             // faster than narrowing by client at drop-off time.
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
                 <select value={dogId}
                         onChange={(e)=>{
                           const id = e.target.value;
@@ -566,7 +566,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                           if (dog) setClientId(dog.owner_id);
                         }}
                         data-testid="ab-dog"
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                   {allDogsSorted.length === 0 && <option value="">No dogs on file</option>}
                   {allDogsSorted.map(d => (
                     <option key={d.id} value={d.id}>
@@ -576,10 +576,10 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 </select>
               </div>
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
-                <div className="w-full mt-1 bg-bgBase/60 border border-bgHover rounded p-2 text-white text-sm flex items-center justify-between" data-testid="ab-client-readout">
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
+                <div className="w-full mt-1 bg-[var(--sh-card-base)]/60 border border-shBorder rounded p-2 text-shText text-sm flex items-center justify-between" data-testid="ab-client-readout">
                   <span>{clients.find(c => c.id === clientId)?.name || "—"}</span>
-                  <span className="text-[13px] text-shGreen font-black uppercase tracking-widest">
+                  <span className="text-[13px] text-shPrimary font-black uppercase tracking-widest">
                     {clients.find(c => c.id === clientId)?.credits ?? 0} credits
                   </span>
                 </div>
@@ -588,16 +588,16 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Client</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
                 <select value={clientId} onChange={(e)=>setClientId(e.target.value)} data-testid="ab-client"
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                   {clients.map(c => <option key={c.id} value={c.id}>{c.name} · {c.credits} credits</option>)}
                 </select>
               </div>
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Dog</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Dog</label>
                 <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="ab-dog"
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                   {clientDogs.length === 0 && <option value="">No dogs on file</option>}
                   {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
                 </select>
@@ -606,14 +606,14 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           {selectedDog && (
-            <div className={`text-[14px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shGreen/10 text-shGreen" : "bg-red-500/15 text-red-400"}`}>
+            <div className={`text-[14px] font-black uppercase tracking-widest rounded p-2 ${rabiesOk ? "bg-shPrimary/10 text-shPrimary" : "bg-red-500/15 text-red-400"}`}>
               <i className={`fas ${rabiesOk?"fa-shield-virus":"fa-exclamation-triangle"} mr-2`} />
               Rabies: {rabiesOk ? `Valid through ${rabies}` : (rabies ? `Expired ${rabies}` : "Missing")}
             </div>
           )}
 
           {conflicts.length > 0 && (
-            <div className="text-[14px] font-black uppercase tracking-widest rounded p-3 bg-shOrange/15 text-shOrange border border-shOrange/40" data-testid="booking-conflicts">
+            <div className="text-[14px] font-black uppercase tracking-widest rounded p-3 bg-shAccent/15 text-shAccent border border-shAccent/40" data-testid="booking-conflicts">
               <p><i className="fas fa-triangle-exclamation mr-2"/>Heads up — this dog already has {conflicts.length} booking{conflicts.length===1?"":"s"} that day:</p>
               <ul className="mt-2 ml-5 list-disc space-y-1">
                 {conflicts.map(c => <li key={c.id}>{c.service_type} ({c.status}) — {c.date}{c.end_date && c.end_date!==c.date?` → ${c.end_date}`:""}</li>)}
@@ -622,7 +622,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Exact Service</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Exact Service</label>
             <select value={serviceId} onChange={(e) => {
                       const id = e.target.value;
                       const svc = catalogServices.find(s => s.id === id);
@@ -637,26 +637,26 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                     }}
                     disabled={isEdit}
                     data-testid="ab-service-id"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               {!serviceId && <option value="">Choose a service</option>}
               {catalogServices
                 .slice()
                 .sort((a,b) => String(a.service_type).localeCompare(String(b.service_type)) || String(a.name).localeCompare(String(b.name)))
                 .map(s => <option key={s.id} value={s.id}>{s.name} · {s.service_type} · ${Number(s.base_price || 0).toFixed(2)}</option>)}
             </select>
-            <p className="text-[11px] text-gray-500 mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
+            <p className="text-[11px] text-shTextMuted mt-1">Selecting the exact catalog service applies its own price, duration, and booking rules.</p>
           </div>
 
           {serviceType === "grooming" && !serviceId && !isEdit && (
             <div data-testid="ab-grooming-types">
-              <label className="text-[15px] font-black text-gray-500 uppercase tracking-widest">Grooming Service</label>
+              <label className="text-[15px] font-black text-shTextMuted uppercase tracking-widest">Grooming Service</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
                 {[
                   { k: "bath", label: "Bath", icon: "fa-bath" },
                   { k: "nail_trim", label: "Nail Trim", icon: "fa-scissors" },
                 ].map(g => (
                   <button key={g.k} onClick={()=>setGroomingType(g.k)} data-testid={`ab-grooming-${g.k}`}
-                          className={`py-3 rounded text-[14px] font-black uppercase tracking-widest border flex items-center justify-center gap-2 ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-bgBase border-bgHover text-gray-400"}`}>
+                          className={`py-3 rounded text-[14px] font-black uppercase tracking-widest border flex items-center justify-center gap-2 ${groomingType===g.k?"bg-pink-500/15 text-pink-300 border-pink-500/60":"bg-[var(--sh-card-base)] border-shBorder text-shTextMuted"}`}>
                     <i className={`fas ${g.icon}`}/>{g.label}
                   </button>
                 ))}
@@ -666,15 +666,15 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           {/* Multi-date toggle (admin only, non-boarding, not when editing) */}
           {!isEdit && serviceType !== "boarding" && (
-            <label className="flex items-center gap-3 cursor-pointer bg-shGreen/5 border border-shGreen/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
+            <label className="flex items-center gap-3 cursor-pointer bg-shPrimary/5 border border-shPrimary/30 rounded p-2.5" data-testid="ab-multidate-toggle-row">
               <input type="checkbox" checked={isMultiDate} onChange={(e)=>setIsMultiDate(e.target.checked)}
                      data-testid="ab-multidate-toggle"
-                     className="accent-shGreen w-4 h-4" />
-              <span className="text-[14px] font-black uppercase tracking-widest text-shGreen">
+                     className="accent-shPrimary w-4 h-4" />
+              <span className="text-[14px] font-black uppercase tracking-widest text-shPrimary">
                 <i className="fas fa-calendar-days mr-2"/>Book multiple specific days
               </span>
               {isMultiDate && multiDates.length > 0 && (
-                <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-white bg-shGreen/20 px-2 py-0.5 rounded">
+                <span className="ml-auto text-[13px] font-black uppercase tracking-widest text-shText bg-shPrimary/20 px-2 py-0.5 rounded">
                   {multiDates.length} picked
                 </span>
               )}
@@ -693,15 +693,15 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           ) : (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">{serviceType==="boarding"?"Drop-off Date":"Date"}</label>
                 <input type="date" value={date} onChange={(e)=>setDate(e.target.value)} data-testid="ab-date"
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
               </div>
               {serviceType==="boarding" && (
                 <div>
-                  <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Date</label>
+                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Date</label>
                   <input type="date" value={endDate} onChange={(e)=>setEndDate(e.target.value)} data-testid="ab-end-date"
-                         className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
                 </div>
               )}
             </div>
@@ -709,9 +709,9 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           {serviceType==="boarding" && kennels.length > 0 && (
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Kennel / Room (optional)</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Kennel / Room (optional)</label>
               <select value={kennel} onChange={(e)=>setKennel(e.target.value)} data-testid="ab-kennel"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 <option value="">— Unassigned —</option>
                 {kennels.map(k => <option key={k} value={k}>{k}</option>)}
               </select>
@@ -720,35 +720,35 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
 
           {["training", "grooming", "photography"].includes(serviceType) ? (
             <div>
-              <label className="text-[14px] font-black text-shOrange uppercase tracking-widest">
+              <label className="text-[14px] font-black text-shAccent uppercase tracking-widest">
                 <i className="fas fa-clock mr-2"/>Appointment Time
               </label>
               <input type="time" value={appointmentTime}
                      onChange={(e)=>setAppointmentTime(e.target.value)}
                      data-testid="ab-appointment-time"
-                     className="w-full mt-1 bg-bgBase border border-shOrange/40 rounded p-2 text-white text-xs focus:border-shOrange outline-none"
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shAccent/40 rounded p-2 text-shText text-xs focus:border-shAccent outline-none"
                      style={{colorScheme:"dark"}} />
-              <p className="text-[13px] text-gray-500 normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
+              <p className="text-[13px] text-shTextMuted normal-case mt-1">This appears on the calendar at this exact time slot (not a drop-off window).</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Drop-off Time (optional)</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Drop-off Time (optional)</label>
                 <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)} data-testid="ab-dropoff-time"
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
               </div>
               <div>
-                <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Pickup Time (optional)</label>
+                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pickup Time (optional)</label>
                 <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)} data-testid="ab-pickup-time"
-                       className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-xs" style={{colorScheme:"dark"}} />
+                       className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-xs" style={{colorScheme:"dark"}} />
               </div>
             </div>
           )}
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Notes (optional)</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Notes (optional)</label>
             <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} placeholder="Special instructions, food, meds…"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm focus:border-shBlue outline-none" />
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm focus:border-shSecondary outline-none" />
           </div>
 
           {/* Sprint 110di-38 — Multi-dog group booking (admin). Shown only
@@ -756,15 +756,15 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
               client has >1 dog on file. Primary dog is `dogId`; extras are
               tracked in `extraDogs` and share the booking's date/service. */}
           {!isEdit && !isMultiDate && clientDogsForGroup.length > 1 && (
-            <div className="bg-bgBase/40 border border-shGreen/30 rounded-lg p-3 space-y-3" data-testid="ab-multidog">
+            <div className="bg-[var(--sh-card-base)]/40 border border-shPrimary/30 rounded-lg p-3 space-y-3" data-testid="ab-multidog">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
-                  <p className="text-gray-400 text-[14px] mt-0.5">Same date and service. Per-dog add-ons.</p>
+                  <p className="text-shPrimary font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
+                  <p className="text-shTextMuted text-[14px] mt-0.5">Same date and service. Per-dog add-ons.</p>
                 </div>
                 {extraDogs.length + 1 < clientDogsForGroup.length && (
                   <button type="button" onClick={addExtraDog} data-testid="ab-add-dog"
-                          className="bg-shGreen/20 border border-shGreen/40 text-shGreen px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shGreen/30 transition whitespace-nowrap">
+                          className="bg-shPrimary/20 border border-shPrimary/40 text-shPrimary px-3 py-1.5 rounded text-[13px] font-black uppercase tracking-widest hover:bg-shPrimary/30 transition whitespace-nowrap">
                     <i className="fas fa-plus mr-1"/>Add dog
                   </button>
                 )}
@@ -773,12 +773,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 const usedIds = new Set([dogId, ...extraDogs.map((e, i) => i !== idx ? e.dog_id : null).filter(Boolean)]);
                 const available = clientDogsForGroup.filter(d => !usedIds.has(d.id));
                 return (
-                  <div key={idx} className="border-t border-bgHover pt-3 space-y-2" data-testid={`ab-extra-dog-${idx}`}>
+                  <div key={idx} className="border-t border-shBorder pt-3 space-y-2" data-testid={`ab-extra-dog-${idx}`}>
                     <div className="flex gap-2 items-center">
                       <select value={extra.dog_id}
                               onChange={(e)=>updateExtraDog(idx, { dog_id: e.target.value, addon_service_ids: [] })}
                               data-testid={`ab-extra-dog-select-${idx}`}
-                              className="flex-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]">
+                              className="flex-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]">
                         {available.map(d => (
                           <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>
                         ))}
@@ -804,19 +804,19 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                                       className={`flex items-center gap-3 p-3 rounded-lg border transition text-left ${
                                         on
                                           ? "bg-amber-500/15 border-amber-500/60 shadow"
-                                          : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                                          : "bg-[var(--sh-card-base)]/40 border-shBorder hover:border-amber-500/40"
                                       }`}>
                                 <div className="w-9 h-9 rounded grid place-items-center shrink-0"
                                      style={{ background: `${a.color || "#f59e0b"}25`, color: a.color || "#f59e0b" }}>
                                   <i className={`fas ${a.icon || "fa-plus"}`}/>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                  <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                                  <div className="text-[14px] font-black text-shText truncate">{a.name}</div>
                                   {a.description && (
-                                    <div className="text-[12px] text-gray-400 truncate">{a.description}</div>
+                                    <div className="text-[12px] text-shTextMuted truncate">{a.description}</div>
                                   )}
                                 </div>
-                                <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                                <div className="text-shPrimary font-black text-[14px] whitespace-nowrap">
                                   +${(a.base_price || 0).toFixed(2)}
                                 </div>
                                 {on && <i className="fas fa-check-circle text-amber-400"/>}
@@ -830,7 +830,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                 );
               })}
               {extraDogs.length > 0 && (
-                <p className="text-shGreen text-[13px] font-black uppercase tracking-widest pt-1 border-t border-bgHover" data-testid="ab-group-count">
+                <p className="text-shPrimary text-[13px] font-black uppercase tracking-widest pt-1 border-t border-shBorder" data-testid="ab-group-count">
                   <i className="fas fa-link mr-1"/>Group booking · {extraDogs.length + 1} dogs share this booking
                 </p>
               )}
@@ -873,7 +873,7 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                       className={`flex items-center gap-3 p-3 rounded-lg border transition text-left ${
                         picked
                           ? "bg-amber-500/15 border-amber-500/60 shadow"
-                          : "bg-bgBase/40 border-bgHover hover:border-amber-500/40"
+                          : "bg-[var(--sh-card-base)]/40 border-shBorder hover:border-amber-500/40"
                       }`}
                     >
                       <div className="w-9 h-9 rounded grid place-items-center shrink-0"
@@ -881,12 +881,12 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
                         <i className={`fas ${a.icon || "fa-plus"}`}/>
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-[14px] font-black text-white truncate">{a.name}</div>
+                        <div className="text-[14px] font-black text-shText truncate">{a.name}</div>
                         {a.description && (
-                          <div className="text-[12px] text-gray-400 truncate">{a.description}</div>
+                          <div className="text-[12px] text-shTextMuted truncate">{a.description}</div>
                         )}
                       </div>
-                      <div className="text-shGreen font-black text-[14px] whitespace-nowrap">
+                      <div className="text-shPrimary font-black text-[14px] whitespace-nowrap">
                         +${(a.base_price || 0).toFixed(2)}
                       </div>
                       {picked && <i className="fas fa-check-circle text-amber-400"/>}
@@ -898,126 +898,126 @@ export default function AdminBookingModal({ defaultCheckIn = false, defaultDate 
           )}
 
           {!isEdit && (
-            <div className="bg-bgBase border border-shGreen/30 rounded-lg p-4 space-y-3" data-testid="admin-booking-estimate">
+            <div className="bg-[var(--sh-card-base)] border border-shPrimary/30 rounded-lg p-4 space-y-3" data-testid="admin-booking-estimate">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[13px] font-black text-shGreen uppercase tracking-widest">
+                <span className="text-[13px] font-black text-shPrimary uppercase tracking-widest">
                   <i className="fas fa-receipt mr-2"/>Estimated Price
                 </span>
                 {quoteSummary?.serviceName && (
-                  <span className="text-[11px] text-gray-500 font-black uppercase tracking-widest text-right">
+                  <span className="text-[11px] text-shTextMuted font-black uppercase tracking-widest text-right">
                     {quoteSummary.serviceName}
                   </span>
                 )}
               </div>
 
               {quoteSummary?.preferredRateApplied && (
-                <div className="bg-shGreen/10 border border-shGreen/30 rounded px-3 py-2 text-[12px] text-shGreen font-black uppercase tracking-widest" data-testid="admin-booking-estimate-preferred-rate">
+                <div className="bg-shPrimary/10 border border-shPrimary/30 rounded px-3 py-2 text-[12px] text-shPrimary font-black uppercase tracking-widest" data-testid="admin-booking-estimate-preferred-rate">
                   <i className="fas fa-star mr-1.5"/>Preferred client rate applied
                   {quoteSummary.listUnitPrice && quoteSummary.listUnitPrice !== quoteSummary.unitPrice && (
-                    <span className="text-gray-400 ml-1">({fmtUSD(quoteSummary.unitPrice)} instead of {fmtUSD(quoteSummary.listUnitPrice)})</span>
+                    <span className="text-shTextMuted ml-1">({fmtUSD(quoteSummary.unitPrice)} instead of {fmtUSD(quoteSummary.listUnitPrice)})</span>
                   )}
                 </div>
               )}
 
               {quoteLoading ? (
-                <div className="text-[13px] text-gray-400 font-black uppercase tracking-widest">
+                <div className="text-[13px] text-shTextMuted font-black uppercase tracking-widest">
                   <i className="fas fa-circle-notch fa-spin mr-2"/>Calculating estimate…
                 </div>
               ) : quoteError ? (
-                <div className="bg-shOrange/10 border border-shOrange/40 rounded px-3 py-2 text-[13px] text-shOrange font-black uppercase tracking-widest" data-testid="admin-booking-estimate-error">
+                <div className="bg-shAccent/10 border border-shAccent/40 rounded px-3 py-2 text-[13px] text-shAccent font-black uppercase tracking-widest" data-testid="admin-booking-estimate-error">
                   <i className="fas fa-triangle-exclamation mr-2"/>{quoteError}
                 </div>
               ) : quoteSummary ? (
                 <div className="space-y-2 text-[14px]">
                   <div className="flex justify-between" data-testid="admin-booking-estimate-base">
-                    <span className="text-gray-400">
+                    <span className="text-shTextMuted">
                       Base price
                       {quoteSummary.units > 0 && (
-                        <span className="text-gray-500 ml-1">({pluralUnit(quoteSummary.units, quoteSummary.unitLabel)})</span>
+                        <span className="text-shTextMuted ml-1">({pluralUnit(quoteSummary.units, quoteSummary.unitLabel)})</span>
                       )}
                     </span>
-                    <span className="text-white font-black">{fmtUSD(quoteSummary.baseTotal)}</span>
+                    <span className="text-shText font-black">{fmtUSD(quoteSummary.baseTotal)}</span>
                   </div>
 
                   {quoteSummary.addonTotal > 0 && (
                     <div className="flex justify-between" data-testid="admin-booking-estimate-addons">
-                      <span className="text-gray-400"><i className="fas fa-plus-circle text-shGreen mr-1.5 opacity-60"/>Add-ons</span>
-                      <span className="text-white font-black">{fmtUSD(quoteSummary.addonTotal)}</span>
+                      <span className="text-shTextMuted"><i className="fas fa-plus-circle text-shPrimary mr-1.5 opacity-60"/>Add-ons</span>
+                      <span className="text-shText font-black">{fmtUSD(quoteSummary.addonTotal)}</span>
                     </div>
                   )}
 
                   {quoteSummary.multiDogDiscountAmount > 0 && (
-                    <div className="flex justify-between text-shGreen" data-testid="admin-booking-estimate-multi-dog-discount">
+                    <div className="flex justify-between text-shPrimary" data-testid="admin-booking-estimate-multi-dog-discount">
                       <span>
                         <i className="fas fa-tag mr-1.5"/>{quoteSummary.multiDogDiscountLabel}
-                        <span className="text-gray-500 ml-1">({quoteSummary.additionalDogCount} additional dog{quoteSummary.additionalDogCount === 1 ? "" : "s"})</span>
+                        <span className="text-shTextMuted ml-1">({quoteSummary.additionalDogCount} additional dog{quoteSummary.additionalDogCount === 1 ? "" : "s"})</span>
                       </span>
                       <span className="font-black">−{fmtUSD(quoteSummary.multiDogDiscountAmount)}</span>
                     </div>
                   )}
 
-                  <div className="flex justify-between border-t border-bgHover pt-2" data-testid="admin-booking-estimate-total">
-                    <span className="text-white font-black uppercase tracking-widest text-[13px]">Estimated total</span>
-                    <span className="text-white font-black text-[20px]">{fmtUSD(quoteSummary.total)}</span>
+                  <div className="flex justify-between border-t border-shBorder pt-2" data-testid="admin-booking-estimate-total">
+                    <span className="text-shText font-black uppercase tracking-widest text-[13px]">Estimated total</span>
+                    <span className="text-shText font-black text-[20px]">{fmtUSD(quoteSummary.total)}</span>
                   </div>
 
                   {quoteSummary.pool && (
-                    <div className="bg-shBlue/10 border border-shBlue/30 rounded px-3 py-2 text-[12px] text-shBlue font-black uppercase tracking-widest space-y-1" data-testid="admin-booking-estimate-credits">
+                    <div className="bg-shSecondary/10 border border-shSecondary/30 rounded px-3 py-2 text-[12px] text-shSecondary font-black uppercase tracking-widest space-y-1" data-testid="admin-booking-estimate-credits">
                       <div><i className="fas fa-ticket mr-2"/>Credit coverage</div>
-                      <div className="text-gray-300">Needs {fmtCredits(quoteSummary.creditUnitsRequired)} {quoteSummary.pool.label}</div>
-                      <div className="text-gray-300">Available now: {fmtCredits(quoteSummary.creditsAvailable)} credits</div>
+                      <div className="text-shTextMuted">Needs {fmtCredits(quoteSummary.creditUnitsRequired)} {quoteSummary.pool.label}</div>
+                      <div className="text-shTextMuted">Available now: {fmtCredits(quoteSummary.creditsAvailable)} credits</div>
                       {quoteSummary.creditsApplied > 0 && (
-                        <div className="text-shGreen">Uses {fmtCredits(quoteSummary.creditsApplied)} credits · after booking: {fmtCredits(quoteSummary.creditsRemainingAfter)} credits</div>
+                        <div className="text-shPrimary">Uses {fmtCredits(quoteSummary.creditsApplied)} credits · after booking: {fmtCredits(quoteSummary.creditsRemainingAfter)} credits</div>
                       )}
                       {quoteSummary.coveredByCredits ? (
-                        <div className="text-shGreen">Covered by credits · amount due today $0.00</div>
+                        <div className="text-shPrimary">Covered by credits · amount due today $0.00</div>
                       ) : quoteSummary.creditsApplied > 0 ? (
-                        <div className="text-shOrange">Partial credits · estimated cash balance {fmtUSD(quoteSummary.cashDue)}</div>
+                        <div className="text-shAccent">Partial credits · estimated cash balance {fmtUSD(quoteSummary.cashDue)}</div>
                       ) : null}
                     </div>
                   )}
 
                   {quoteLines.length > 1 && (
-                    <div className="text-[12px] text-gray-500 font-black uppercase tracking-widest" data-testid="admin-booking-estimate-line-count">
+                    <div className="text-[12px] text-shTextMuted font-black uppercase tracking-widest" data-testid="admin-booking-estimate-line-count">
                       <i className="fas fa-calculator mr-1.5"/>{quoteLines.length} quoted line item{quoteLines.length === 1 ? "" : "s"} across selected dog/date entries.
                     </div>
                   )}
 
-                  <p className="text-[11px] text-gray-500 leading-relaxed" data-testid="admin-booking-estimate-disclaimer">
+                  <p className="text-[11px] text-shTextMuted leading-relaxed" data-testid="admin-booking-estimate-disclaimer">
                     Estimate only. Checkout can still adjust for credits, discounts, extra services, or manual admin changes.
                   </p>
                 </div>
               ) : (
-                <div className="text-[13px] text-gray-500 font-black uppercase tracking-widest" data-testid="admin-booking-estimate-empty">
+                <div className="text-[13px] text-shTextMuted font-black uppercase tracking-widest" data-testid="admin-booking-estimate-empty">
                   Pick the client, dog, service, and date to see the estimate before creating the booking.
                 </div>
               )}
             </div>
           )}
 
-          <div className="border-t border-bgHover pt-4 space-y-3">
+          <div className="border-t border-shBorder pt-4 space-y-3">
             {!isMultiDate && (
               <label className="flex items-center gap-3 cursor-pointer">
-                <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shGreen w-4 h-4" />
-                <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-clock-rotate-left mr-2 text-shGreen"/>Check in immediately (stamps arrival time)</span>
+                <input type="checkbox" checked={checkInNow} onChange={(e)=>setCheckInNow(e.target.checked)} data-testid="ab-checkin-now" className="accent-shPrimary w-4 h-4" />
+                <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-clock-rotate-left mr-2 text-shPrimary"/>Check in immediately (stamps arrival time)</span>
               </label>
             )}
             <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shOrange w-4 h-4" />
-              <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-shield-virus mr-2 text-shOrange"/>Override vaccine requirements (admin override)</span>
+              <input type="checkbox" checked={overrideVaccines} onChange={(e)=>setOverrideVaccines(e.target.checked)} data-testid="ab-override-vax" className="accent-shAccent w-4 h-4" />
+              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-shield-virus mr-2 text-shAccent"/>Override vaccine requirements (admin override)</span>
             </label>
             <label className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={overrideCapacity} onChange={(e)=>setOverrideCapacity(e.target.checked)} data-testid="ab-override-cap" className="accent-shOrange w-4 h-4" />
-              <span className="text-[15px] font-black uppercase tracking-widest text-gray-300"><i className="fas fa-warehouse mr-2 text-shOrange"/>Override capacity limit</span>
+              <input type="checkbox" checked={overrideCapacity} onChange={(e)=>setOverrideCapacity(e.target.checked)} data-testid="ab-override-cap" className="accent-shAccent w-4 h-4" />
+              <span className="text-[15px] font-black uppercase tracking-widest text-shTextMuted"><i className="fas fa-warehouse mr-2 text-shAccent"/>Override capacity limit</span>
             </label>
           </div>
 
           {err && <div className="text-[15px] text-red-400 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
           <div className="flex justify-end gap-3 pt-2">
-            <button onClick={onClose} className="text-gray-500 font-black uppercase text-[14px] tracking-widest">Cancel</button>
+            <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[14px] tracking-widest">Cancel</button>
             <button onClick={submit} disabled={saving || !dogId || (isMultiDate && multiDates.length === 0)} data-testid="ab-submit"
-                    className="bg-shGreen text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
+                    className="bg-shPrimary text-bgHeader px-8 py-3 rounded font-black text-[14px] uppercase tracking-widest shadow-xl disabled:opacity-50">
               {saving ? "Saving…" : (isEdit
                 ? "Save Changes"
                 : (isMultiDate

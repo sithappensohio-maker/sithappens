@@ -3,8 +3,8 @@ import { api } from "../lib/api";
 
 const PRIORITY_META = {
   urgent: { color: "border-red-500/40 bg-red-500/5",   chip: "bg-red-500/15 text-red-300",   accent: "text-red-300",   icon: "fa-circle-exclamation" },
-  warn:   { color: "border-shOrange/40 bg-shOrange/5", chip: "bg-shOrange/15 text-shOrange", accent: "text-shOrange",  icon: "fa-triangle-exclamation" },
-  info:   { color: "border-shGreen/40 bg-shGreen/5",   chip: "bg-shGreen/15 text-shGreen",   accent: "text-shGreen",   icon: "fa-lightbulb" },
+  warn:   { color: "border-shAccent/40 bg-shAccent/5", chip: "bg-shAccent/15 text-shAccent", accent: "text-shAccent",  icon: "fa-triangle-exclamation" },
+  info:   { color: "border-shPrimary/40 bg-shPrimary/5",   chip: "bg-shPrimary/15 text-shPrimary",   accent: "text-shPrimary",   icon: "fa-lightbulb" },
 };
 
 /**
@@ -56,8 +56,8 @@ export default function TodaysBrainTile({ onCTA }) {
 
   if (err) return null; // silent — don't break dashboard if the endpoint hiccups
   if (!data) return (
-    <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4" data-testid="todays-brain-loading">
-      <p className="text-[13px] text-gray-500 font-black uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Today's tasks · loading…</p>
+    <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-4 mb-4" data-testid="todays-brain-loading">
+      <p className="text-[13px] text-shTextMuted font-black uppercase tracking-widest"><i className="fas fa-list-check mr-2"/>Today's tasks · loading…</p>
     </div>
   );
 
@@ -67,28 +67,28 @@ export default function TodaysBrainTile({ onCTA }) {
 
   if (items.length === 0) {
     return (
-      <div className="rounded-xl border border-shGreen/30 bg-shGreen/5 p-4 mb-4" data-testid="todays-brain-empty">
-        <p className="text-[14px] font-black uppercase tracking-widest text-shGreen">
+      <div className="rounded-xl border border-shPrimary/30 bg-shPrimary/5 p-4 mb-4" data-testid="todays-brain-empty">
+        <p className="text-[14px] font-black uppercase tracking-widest text-shPrimary">
           <i className="fas fa-list-check mr-2"/>Today's tasks · all clear
         </p>
-        <p className="text-[13px] text-gray-400 mt-1">Nothing urgent on the queue. Inbox zero, basically.</p>
+        <p className="text-[13px] text-shTextMuted mt-1">Nothing urgent on the queue. Inbox zero, basically.</p>
       </div>
     );
   }
 
   return (
     <>
-      <div className="rounded-xl border border-bgHover bg-bgPanel p-4 mb-4 shadow-lg" data-testid="todays-brain-tile">
+      <div className="rounded-xl border border-shBorder bg-[var(--sh-card-base)] p-4 mb-4 shadow-lg" data-testid="todays-brain-tile">
         <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-          <p className="text-[14px] font-black uppercase tracking-widest text-white">
-            <i className="fas fa-list-check mr-2 text-shBlue"/>Today's tasks
+          <p className="text-[14px] font-black uppercase tracking-widest text-shText">
+            <i className="fas fa-list-check mr-2 text-shSecondary"/>Today's tasks
           </p>
           <div className="flex items-center gap-2 text-[12px] font-black uppercase tracking-widest">
             {counts.urgent > 0 && <span className="bg-red-500/15 text-red-300 px-2 py-0.5 rounded" data-testid="brain-count-urgent">{counts.urgent} urgent</span>}
-            {counts.warn > 0   && <span className="bg-shOrange/15 text-shOrange px-2 py-0.5 rounded" data-testid="brain-count-warn">{counts.warn} warn</span>}
-            {counts.info > 0   && <span className="bg-shGreen/15 text-shGreen px-2 py-0.5 rounded" data-testid="brain-count-info">{counts.info} info</span>}
+            {counts.warn > 0   && <span className="bg-shAccent/15 text-shAccent px-2 py-0.5 rounded" data-testid="brain-count-warn">{counts.warn} warn</span>}
+            {counts.info > 0   && <span className="bg-shPrimary/15 text-shPrimary px-2 py-0.5 rounded" data-testid="brain-count-info">{counts.info} info</span>}
             <button onClick={clearAll} disabled={busy} data-testid="brain-clear-all"
-                    className="text-gray-500 hover:text-red-300 disabled:opacity-40 border border-bgHover hover:border-red-400/40 rounded px-2 py-0.5 transition"
+                    className="text-shTextMuted hover:text-red-300 disabled:opacity-40 border border-shBorder hover:border-red-400/40 rounded px-2 py-0.5 transition"
                     title="Hide every task on the list (they'll reappear if the state changes)">
               <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-broom"} mr-1`}/>Clear all
             </button>
@@ -99,7 +99,7 @@ export default function TodaysBrainTile({ onCTA }) {
         </div>
         {hasMore && (
           <button onClick={() => setShowAll(true)} data-testid="brain-see-all"
-                  className="mt-3 w-full text-center text-[13px] font-black uppercase tracking-widest text-shBlue hover:text-white py-2 border-t border-bgHover">
+                  className="mt-3 w-full text-center text-[13px] font-black uppercase tracking-widest text-shSecondary hover:text-shText py-2 border-t border-shBorder">
             See all {items.length} · <i className="fas fa-arrow-right ml-1"/>
           </button>
         )}
@@ -122,15 +122,15 @@ function BrainRow({ item, onClick, onDismiss, dismissBusy }) {
   return (
     <div
       data-testid={`brain-row-${item.id}`}
-      className={`relative w-full flex items-start gap-3 p-3 pr-10 rounded-lg border ${pm.color} hover:ring-1 hover:ring-shBlue/40 transition`}
+      className={`relative w-full flex items-start gap-3 p-3 pr-10 rounded-lg border ${pm.color} hover:ring-1 hover:ring-shSecondary/40 transition`}
     >
       <button onClick={onClick} className="flex items-start gap-3 flex-1 text-left min-w-0" data-testid={`brain-row-cta-${item.id}`}>
         <span className={`shrink-0 w-9 h-9 rounded-full grid place-items-center ${pm.chip}`}>
           <i className={`fas ${item.icon || pm.icon}`}/>
         </span>
         <div className="flex-1 min-w-0">
-          <p className="text-[14px] font-black text-white truncate">{item.title}</p>
-          {item.subtitle && <p className="text-[13px] text-gray-400 truncate">{item.subtitle}</p>}
+          <p className="text-[14px] font-black text-shText truncate">{item.title}</p>
+          {item.subtitle && <p className="text-[13px] text-shTextMuted truncate">{item.subtitle}</p>}
         </div>
         <i className={`fas fa-chevron-right ${pm.accent} text-xs mt-2.5`}/>
       </button>
@@ -139,7 +139,7 @@ function BrainRow({ item, onClick, onDismiss, dismissBusy }) {
                 disabled={dismissBusy}
                 data-testid={`brain-dismiss-${item.id}`}
                 title="Hide this task (it'll reappear if the underlying state changes)"
-                className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full grid place-items-center text-gray-500 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40 transition">
+                className="absolute top-1.5 right-1.5 w-7 h-7 rounded-full grid place-items-center text-shTextMuted hover:text-red-300 hover:bg-red-500/10 disabled:opacity-40 transition">
           <i className="fas fa-times text-xs"/>
         </button>
       )}
@@ -154,37 +154,37 @@ function TodaysBrainModal({ items, counts, onClose, onCTA, onDismiss, onClearAll
 
   return (
     <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-3" onClick={onClose} data-testid="todays-brain-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-hidden flex flex-col min-h-0 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-bgHover gap-2 flex-wrap">
-          <h4 className="text-lg font-black uppercase italic tracking-tight text-white">
-            <i className="fas fa-list-check text-shBlue mr-2"/>Today's tasks · {items.length}
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl max-h-[calc(var(--app-height)_-_1.5rem)] overflow-hidden flex flex-col min-h-0 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-shBorder gap-2 flex-wrap">
+          <h4 className="text-lg font-black uppercase italic tracking-tight text-shText">
+            <i className="fas fa-list-check text-shSecondary mr-2"/>Today's tasks · {items.length}
           </h4>
           <div className="flex items-center gap-2">
             {onClearAll && items.length > 0 && (
               <button onClick={onClearAll} disabled={busy} data-testid="brain-modal-clear-all"
-                      className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-red-300 disabled:opacity-40 border border-bgHover hover:border-red-400/40 rounded px-2.5 py-1.5 transition">
+                      className="text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-red-300 disabled:opacity-40 border border-shBorder hover:border-red-400/40 rounded px-2.5 py-1.5 transition">
                 <i className={`fas ${busy ? "fa-spinner fa-spin" : "fa-broom"} mr-1`}/>Clear all
               </button>
             )}
-            <button onClick={onClose} className="text-gray-500 hover:text-white" data-testid="brain-modal-close"><i className="fas fa-times"/></button>
+            <button onClick={onClose} className="text-shTextMuted hover:text-shText" data-testid="brain-modal-close"><i className="fas fa-times"/></button>
           </div>
         </div>
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-bgHover flex-wrap">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-shBorder flex-wrap">
           {[
-            { id: "all",    label: `All · ${counts.total}`,   color: "text-white" },
+            { id: "all",    label: `All · ${counts.total}`,   color: "text-shText" },
             { id: "urgent", label: `Urgent · ${counts.urgent}`, color: "text-red-300" },
-            { id: "warn",   label: `Warn · ${counts.warn}`,     color: "text-shOrange" },
-            { id: "info",   label: `Info · ${counts.info}`,     color: "text-shGreen" },
+            { id: "warn",   label: `Warn · ${counts.warn}`,     color: "text-shAccent" },
+            { id: "info",   label: `Info · ${counts.info}`,     color: "text-shPrimary" },
           ].map(f => (
             <button key={f.id} onClick={() => setFilter(f.id)} data-testid={`brain-filter-${f.id}`}
-                    className={`text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded transition ${filter === f.id ? "bg-bgHover " + f.color : "bg-bgBase text-gray-500 hover:text-white"}`}>
+                    className={`text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded transition ${filter === f.id ? "bg-shSurfaceRaised " + f.color : "bg-[var(--sh-card-base)] text-shTextMuted hover:text-shText"}`}>
               {f.label}
             </button>
           ))}
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           {filtered.length === 0 ? (
-            <p className="text-[14px] text-gray-500 italic text-center py-8">Nothing in this group.</p>
+            <p className="text-[14px] text-shTextMuted italic text-center py-8">Nothing in this group.</p>
           ) : filtered.map(it => <BrainRow key={it.id} item={it} onClick={() => onCTA?.(it)} onDismiss={() => onDismiss?.(it)} dismissBusy={busy} />)}
         </div>
       </div>

@@ -1,5 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api";
+import NeonEdge from "./premium/NeonEdge";
+import NeonIconStage from "./premium/NeonIconStage";
+import StatusBadge from "./premium/StatusBadge";
+import { accentRgb } from "./premium/tokens";
 
 /**
  * Sprint 110di-4 — Client portal Announcements card.
@@ -20,10 +24,10 @@ const fmtDate = (iso) => {
   } catch { return ""; }
 };
 
-export default function PortalAnnouncementsCard({ refreshKey = 0 }) {
+export default function PortalAnnouncementsCard({ refreshKey = 0, defaultCollapsed = false }) {
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -48,41 +52,45 @@ export default function PortalAnnouncementsCard({ refreshKey = 0 }) {
 
   if (!items || items.length === 0) return null;
 
+  const latest = items[0];
+
   return (
-    <div className="mb-4 sm:mb-6 rounded-xl border border-shBlue/40 bg-gradient-to-br from-shBlue/15 via-shBlue/5 to-transparent shadow-2xl overflow-hidden"
-         data-testid="portal-announcements-card">
+    <NeonEdge accentRgb={accentRgb("cyan")} intensity="standard" className="mb-4 sm:mb-6" data-testid="portal-announcements-card">
       <button onClick={()=>setCollapsed(v=>!v)} type="button"
               data-testid="portal-announcements-toggle"
-              className="w-full flex items-center justify-between gap-3 px-4 sm:px-5 py-3 hover:bg-shBlue/10 transition">
+              className="relative z-10 w-full flex items-center justify-between gap-3 px-4 sm:px-5 py-3 hover:bg-shSurfaceRaised transition">
         <div className="flex items-center gap-3 min-w-0">
-          <span className="w-10 h-10 rounded-full bg-shBlue/20 border border-shBlue/50 text-shBlue flex items-center justify-center shrink-0">
-            <i className="fas fa-bullhorn"/>
-          </span>
+          <NeonIconStage icon="fa-bullhorn" accentRgb={accentRgb("cyan")} rings={false} sizeClass="w-9 h-9" iconSizeClass="text-sm" />
           <div className="min-w-0 text-left">
-            <p className="text-[10px] sm:text-[11px] font-black uppercase tracking-[0.3em] text-shBlue">
-              From the Sit Happens Team
-            </p>
-            <p className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight truncate">
-              Announcements <span className="text-gray-400 normal-case font-normal tracking-normal text-sm">({items.length})</span>
+            <p className="text-[15px] font-bold text-shText truncate">
+              Announcements <span className="text-shTextMuted font-medium text-[13px]">({items.length})</span>
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {unread > 0 && (
-            <span className="bg-shOrange text-bgHeader text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-full"
-                  data-testid="portal-announcements-unread-badge">
+            <StatusBadge tone="warning" glow data-testid="portal-announcements-unread-badge">
               {unread} new
-            </span>
+            </StatusBadge>
           )}
-          <i className={`fas ${collapsed ? "fa-chevron-down" : "fa-chevron-up"} text-gray-400`}/>
+          <i className={`fas ${collapsed ? "fa-chevron-down" : "fa-chevron-up"} text-shTextMuted text-xs`}/>
         </div>
       </button>
 
+      {collapsed && latest && (
+        <button onClick={()=>setCollapsed(false)} type="button" data-testid="portal-announcements-preview"
+                className="relative z-10 w-full text-left px-4 sm:px-5 pb-3 -mt-1 hover:bg-shSurfaceRaised transition">
+          <p className="text-[13px] font-bold text-shText truncate">{latest.title}</p>
+          {latest.body && <p className="text-[12px] text-shTextMuted truncate">{latest.body}</p>}
+          <span className="text-[11px] font-black uppercase tracking-widest text-shSecondary">View All →</span>
+        </button>
+      )}
+
       {!collapsed && (
-        <div className="border-t border-shBlue/20 divide-y divide-shBlue/15" data-testid="portal-announcements-list">
+        <div className="relative z-10 border-t border-shBorder divide-y divide-shBorder max-h-96 overflow-y-auto" data-testid="portal-announcements-list">
           {items.map((a) => (
             <article key={a.id}
-                     className={`px-4 sm:px-5 py-4 transition ${a.read ? "opacity-70 hover:opacity-100" : "bg-shBlue/5"}`}
+                     className={`px-4 sm:px-5 py-3 transition ${a.read ? "opacity-70 hover:opacity-100" : "bg-shSecondary/5"}`}
                      data-testid={`portal-ann-${a.id}`}>
               <div className="flex items-start justify-between gap-2 mb-1.5">
                 <div className="min-w-0">
@@ -101,7 +109,7 @@ export default function PortalAnnouncementsCard({ refreshKey = 0 }) {
                       {fmtDate(a.created_at)}{a.created_by ? ` · ${a.created_by}` : ""}
                     </p>
                   </div>
-                  <h4 className="text-base sm:text-lg font-black text-white uppercase italic tracking-tight">
+                  <h4 className="text-[14px] font-bold text-shText">
                     {a.title}
                   </h4>
                 </div>
@@ -127,6 +135,6 @@ export default function PortalAnnouncementsCard({ refreshKey = 0 }) {
           ))}
         </div>
       )}
-    </div>
+    </NeonEdge>
   );
 }

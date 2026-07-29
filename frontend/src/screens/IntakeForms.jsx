@@ -39,12 +39,12 @@ const FIELD_TYPE_LABELS = {
 };
 
 const STATUS_STYLE = {
-  draft: "bg-bgHover text-gray-300",
-  sent: "bg-shBlue/15 text-shBlue",
-  submitted: "bg-shGreen/15 text-shGreen",
+  draft: "bg-shSurfaceRaised text-shTextMuted",
+  sent: "bg-shSecondary/15 text-shSecondary",
+  submitted: "bg-shPrimary/15 text-shPrimary",
   reviewed: "bg-purple-500/15 text-purple-300",
-  needs_follow_up: "bg-shOrange/15 text-shOrange",
-  archived: "bg-bgHover text-gray-500",
+  needs_follow_up: "bg-shAccent/15 text-shAccent",
+  archived: "bg-shSurfaceRaised text-shTextMuted",
 };
 const STATUS_LABEL = {
   draft: "Draft", sent: "Sent", submitted: "Submitted",
@@ -211,26 +211,26 @@ export default function IntakeForms() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="intake-forms-screen">
       <PageHero
-        eyebrow={{ icon: "fa-clipboard-list", text: `${templates.length} templates · ${submissions.length} submissions`, color: "text-shBlue" }}
+        eyebrow={{ icon: "fa-clipboard-list", text: `${templates.length} templates · ${submissions.length} submissions`, color: "text-shSecondary" }}
         title="Intake Forms."
         highlight="Build, send, review."
         subtitle="Custom intake for new clients, dogs, daycare, boarding, training — anything you need on paper."
         right={(
           <button onClick={newTemplate} data-testid="new-template-btn"
-                  className="bg-shGreen text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90 transition">
+                  className="bg-shPrimary text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90 transition">
             <i className="fas fa-plus mr-2"/>New Form
           </button>
         )}
         testid="intake-hero"
       />
 
-      <div className="flex gap-2 border-b border-bgHover">
+      <div className="flex gap-2 border-b border-shBorder">
         <button onClick={()=>setTab("templates")} data-testid="tab-templates"
-                className={`px-4 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 ${tab==="templates"?"border-shGreen text-white":"border-transparent text-gray-400 hover:text-white"}`}>
+                className={`px-4 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 ${tab==="templates"?"border-shPrimary text-shText":"border-transparent text-shTextMuted hover:text-shText"}`}>
           Templates · {templates.length}
         </button>
         <button onClick={()=>setTab("submissions")} data-testid="tab-submissions"
-                className={`px-4 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 ${tab==="submissions"?"border-shGreen text-white":"border-transparent text-gray-400 hover:text-white"}`}>
+                className={`px-4 py-2 text-[13px] font-black uppercase tracking-widest border-b-2 ${tab==="submissions"?"border-shPrimary text-shText":"border-transparent text-shTextMuted hover:text-shText"}`}>
           Submissions · {submissions.length}
         </button>
       </div>
@@ -250,51 +250,51 @@ export default function IntakeForms() {
             })}
           </div>
 
-          {loading ? <p className="text-gray-500 text-sm">Loading…</p> : visibleTemplates.length === 0 ? (
-            <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center">
-              <p className="text-gray-400 text-sm">No templates match this filter. Create a new one or clear the filter.</p>
+          {loading ? <p className="text-shTextMuted text-sm">Loading…</p> : visibleTemplates.length === 0 ? (
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center">
+              <p className="text-shTextMuted text-sm">No templates match this filter. Create a new one or clear the filter.</p>
             </div>
           ) : (
             <div className="grid gap-3" data-testid="templates-list">
               {visibleTemplates.map(t => (
-                <div key={t.id} className="bg-bgPanel border border-bgHover rounded-xl p-5 shadow-lg card-intake" data-testid={`template-${t.id}`}>
+                <div key={t.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-5 shadow-lg card-intake" data-testid={`template-${t.id}`}>
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
-                        <span className="text-base text-white font-black uppercase tracking-tight">{t.name}</span>
-                        <span className="text-[11px] font-black uppercase tracking-widest bg-shBlue/15 text-shBlue px-2 py-0.5 rounded">
+                        <span className="text-base text-shText font-black uppercase tracking-tight">{t.name}</span>
+                        <span className="text-[11px] font-black uppercase tracking-widest bg-shSecondary/15 text-shSecondary px-2 py-0.5 rounded">
                           {FORM_TYPE_LABELS[t.form_type] || t.form_type}
                         </span>
                         {t.is_starter && <span className="text-[11px] font-black uppercase tracking-widest bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded">Starter</span>}
-                        {t.active ? <span className="text-[11px] font-black uppercase tracking-widest bg-shGreen/15 text-shGreen px-2 py-0.5 rounded">Active</span>
-                                  : <span className="text-[11px] font-black uppercase tracking-widest bg-bgHover text-gray-400 px-2 py-0.5 rounded">Inactive</span>}
+                        {t.active ? <span className="text-[11px] font-black uppercase tracking-widest bg-shPrimary/15 text-shPrimary px-2 py-0.5 rounded">Active</span>
+                                  : <span className="text-[11px] font-black uppercase tracking-widest bg-shSurfaceRaised text-shTextMuted px-2 py-0.5 rounded">Inactive</span>}
                       </div>
-                      {t.description && <p className="text-[13px] text-gray-400">{t.description}</p>}
-                      <p className="text-[12px] text-gray-500 font-black uppercase tracking-widest mt-2">
+                      {t.description && <p className="text-[13px] text-shTextMuted">{t.description}</p>}
+                      <p className="text-[12px] text-shTextMuted font-black uppercase tracking-widest mt-2">
                         {t.fields?.length || 0} field{(t.fields?.length||0)===1?"":"s"}
                         {(() => {
                           const subs = submissions.filter(s => s.template_id === t.id);
-                          return subs.length ? <span className="ml-3 text-shBlue">· {subs.length} submission{subs.length===1?"":"s"}</span> : null;
+                          return subs.length ? <span className="ml-3 text-shSecondary">· {subs.length} submission{subs.length===1?"":"s"}</span> : null;
                         })()}
                       </p>
                     </div>
                     <div className="flex gap-2 flex-wrap">
                       <button onClick={()=>sendToClient(t.id)} disabled={!t.active}
                               data-testid={`send-${t.id}`}
-                              className={`text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${t.active?"bg-shBlue text-white hover:bg-shBlue/90":"bg-bgHover text-gray-500 cursor-not-allowed"}`}
+                              className={`text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded ${t.active?"bg-shSecondary text-shText hover:bg-shSecondary/90":"bg-shSurfaceRaised text-shTextMuted cursor-not-allowed"}`}
                               title={t.active ? "Send to a client" : "Activate first"}>
                         <i className="fas fa-paper-plane mr-1"/>Send
                       </button>
                       <button onClick={()=>editTemplate(t)} data-testid={`edit-${t.id}`}
-                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-bgHover text-gray-300 hover:text-white">
+                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shSurfaceRaised text-shTextMuted hover:text-shText">
                         <i className="fas fa-pen mr-1"/>Edit
                       </button>
                       <button onClick={()=>duplicateTemplate(t)} data-testid={`dup-${t.id}`}
-                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-bgHover text-gray-300 hover:text-white">
+                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shSurfaceRaised text-shTextMuted hover:text-shText">
                         <i className="fas fa-copy mr-1"/>Duplicate
                       </button>
                       <button onClick={()=>toggleActive(t)} data-testid={`toggle-${t.id}`}
-                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-bgHover text-gray-300 hover:text-white">
+                              className="text-[12px] font-black uppercase tracking-widest px-3 py-1.5 rounded bg-shSurfaceRaised text-shTextMuted hover:text-shText">
                         {t.active ? <><i className="fas fa-pause mr-1"/>Deactivate</> : <><i className="fas fa-play mr-1"/>Activate</>}
                       </button>
                       <button onClick={()=>deleteTemplate(t)} data-testid={`del-${t.id}`}
@@ -320,9 +320,9 @@ export default function IntakeForms() {
             })}
           </div>
 
-          {loading ? <p className="text-gray-500 text-sm">Loading…</p> : visibleSubmissions.length === 0 ? (
-            <div className="bg-bgPanel border border-bgHover rounded-xl p-10 text-center">
-              <p className="text-gray-400 text-sm">No submissions yet. Send an active form to a client from the Templates tab.</p>
+          {loading ? <p className="text-shTextMuted text-sm">Loading…</p> : visibleSubmissions.length === 0 ? (
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-10 text-center">
+              <p className="text-shTextMuted text-sm">No submissions yet. Send an active form to a client from the Templates tab.</p>
             </div>
           ) : (
             <div className="grid gap-2" data-testid="submissions-list">
@@ -331,17 +331,17 @@ export default function IntakeForms() {
                 const dog = dogs.find(d => d.id === s.dog_id);
                 return (
                   <button key={s.id} onClick={()=>setReviewer(s)} data-testid={`sub-${s.id}`}
-                          className="text-left bg-bgPanel border border-bgHover rounded-xl p-4 hover:border-shBlue transition flex items-center gap-3 flex-wrap card-intake">
-                    <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${STATUS_STYLE[s.status] || "bg-bgHover"}`}>
+                          className="text-left bg-[var(--sh-card-base)] border border-shBorder rounded-xl p-4 hover:border-shSecondary transition flex items-center gap-3 flex-wrap card-intake">
+                    <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded ${STATUS_STYLE[s.status] || "bg-shSurfaceRaised"}`}>
                       {STATUS_LABEL[s.status] || s.status}
                     </span>
-                    <span className="text-sm text-white font-black uppercase tracking-tight">{s.template_name}</span>
-                    <span className="text-[11px] font-black uppercase tracking-widest bg-shBlue/15 text-shBlue px-2 py-0.5 rounded">
+                    <span className="text-sm text-shText font-black uppercase tracking-tight">{s.template_name}</span>
+                    <span className="text-[11px] font-black uppercase tracking-widest bg-shSecondary/15 text-shSecondary px-2 py-0.5 rounded">
                       {FORM_TYPE_LABELS[s.form_type] || s.form_type}
                     </span>
-                    <span className="text-[13px] text-gray-400 ml-auto">
+                    <span className="text-[13px] text-shTextMuted ml-auto">
                       {client?.name || "—"}{dog ? ` · ${dog.name}` : ""}
-                      <span className="text-gray-500 ml-2">{s.created_at?.slice(0,10)}</span>
+                      <span className="text-shTextMuted ml-2">{s.created_at?.slice(0,10)}</span>
                     </span>
                   </button>
                 );
@@ -372,7 +372,7 @@ function FilterPill({ active, onClick, label }) {
   return (
     <button onClick={onClick}
             className={`px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest border transition
-                       ${active ? "bg-shGreen text-bgBase border-shGreen" : "bg-bgPanel text-gray-400 border-bgHover hover:text-white"}`}>
+                       ${active ? "bg-shPrimary text-bgBase border-shPrimary" : "bg-[var(--sh-card-base)] text-shTextMuted border-shBorder hover:text-shText"}`}>
       {label}
     </button>
   );
@@ -397,46 +397,46 @@ function TemplateEditorModal({ tpl, setTpl, onCancel, onSave }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="template-editor">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-3xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="template-editor">
         <div className="flex items-center justify-between mb-5">
-          <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{tpl.id ? "Edit Form Template" : "New Form Template"}</h4>
-          <button onClick={onCancel} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">{tpl.id ? "Edit Form Template" : "New Form Template"}</h4>
+          <button onClick={onCancel} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
 
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Form name</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Form name</label>
               <input value={tpl.name} onChange={(e)=>set({ name: e.target.value })} data-testid="tpl-name"
-                     className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" placeholder="e.g. New Client Intake" />
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" placeholder="e.g. New Client Intake" />
             </div>
             <div>
-              <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Form type</label>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Form type</label>
               <select value={tpl.form_type} onChange={(e)=>set({ form_type: e.target.value })} data-testid="tpl-type"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 {Object.entries(FORM_TYPE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </div>
           </div>
 
           <div>
-            <label className="text-[14px] font-black text-gray-500 uppercase tracking-widest">Description (optional)</label>
+            <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Description (optional)</label>
             <textarea value={tpl.description || ""} onChange={(e)=>set({ description: e.target.value })} rows={2}
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm"
                       placeholder="Short note about when this form is used…" />
           </div>
 
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={!!tpl.active} onChange={(e)=>set({ active: e.target.checked })}
-                   className="accent-shGreen w-4 h-4" data-testid="tpl-active"/>
-            <span className="text-[14px] font-black uppercase tracking-widest text-gray-300">Active</span>
+                   className="accent-shPrimary w-4 h-4" data-testid="tpl-active"/>
+            <span className="text-[14px] font-black uppercase tracking-widest text-shTextMuted">Active</span>
           </label>
 
-          <div className="border-t border-bgHover pt-4">
+          <div className="border-t border-shBorder pt-4">
             <div className="flex items-center justify-between mb-2">
-              <h5 className="text-[14px] font-black text-gray-300 uppercase tracking-widest">Fields ({tpl.fields?.length || 0})</h5>
+              <h5 className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Fields ({tpl.fields?.length || 0})</h5>
               <button onClick={addField} data-testid="add-field"
-                      className="text-[12px] font-black uppercase tracking-widest bg-shGreen text-bgBase px-3 py-1.5 rounded">
+                      className="text-[12px] font-black uppercase tracking-widest bg-shPrimary text-bgBase px-3 py-1.5 rounded">
                 <i className="fas fa-plus mr-1"/>Add field
               </button>
             </div>
@@ -445,14 +445,14 @@ function TemplateEditorModal({ tpl, setTpl, onCancel, onSave }) {
               {(tpl.fields || []).map((f, idx) => (
                 <FieldRow key={f.id || idx} f={f} idx={idx} setField={setField} removeField={removeField} moveField={moveField} total={tpl.fields.length} />
               ))}
-              {(tpl.fields || []).length === 0 && <p className="text-[13px] text-gray-500 italic">No fields yet — add one above.</p>}
+              {(tpl.fields || []).length === 0 && <p className="text-[13px] text-shTextMuted italic">No fields yet — add one above.</p>}
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 pt-2 border-t border-bgHover">
-            <button onClick={onCancel} className="text-gray-500 font-black uppercase text-[13px] tracking-widest">Cancel</button>
+          <div className="flex justify-end gap-3 pt-2 border-t border-shBorder">
+            <button onClick={onCancel} className="text-shTextMuted font-black uppercase text-[13px] tracking-widest">Cancel</button>
             <button onClick={()=>onSave(tpl)} data-testid="save-template-btn"
-                    className="bg-shGreen text-bgBase px-8 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-xl">
+                    className="bg-shPrimary text-bgBase px-8 py-2.5 rounded font-black text-[13px] uppercase tracking-widest shadow-xl">
               <i className="fas fa-save mr-2"/>Save Template
             </button>
           </div>
@@ -465,21 +465,21 @@ function TemplateEditorModal({ tpl, setTpl, onCancel, onSave }) {
 function FieldRow({ f, idx, setField, removeField, moveField, total }) {
   const hasOptions = ["dropdown", "multi_select", "checkbox"].includes(f.field_type);
   return (
-    <div className="bg-bgBase border border-bgHover rounded-lg p-3 space-y-2" data-testid={`field-row-${idx}`}>
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 space-y-2" data-testid={`field-row-${idx}`}>
       <div className="flex items-start gap-2">
         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-2">
           <input value={f.label} onChange={(e)=>setField(idx, { label: e.target.value })} placeholder="Field label"
-                 className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm" data-testid={`field-label-${idx}`} />
+                 className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" data-testid={`field-label-${idx}`} />
           <select value={f.field_type} onChange={(e)=>setField(idx, { field_type: e.target.value })} data-testid={`field-type-${idx}`}
-                  className="bg-bgPanel border border-bgHover rounded p-2 text-white text-sm">
+                  className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
             {Object.entries(FIELD_TYPE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
           </select>
         </div>
         <div className="flex flex-col gap-1">
           <button onClick={()=>moveField(idx, -1)} disabled={idx===0}
-                  className="text-gray-400 hover:text-white disabled:opacity-30 px-1.5"><i className="fas fa-arrow-up text-xs"/></button>
+                  className="text-shTextMuted hover:text-shText disabled:opacity-30 px-1.5"><i className="fas fa-arrow-up text-xs"/></button>
           <button onClick={()=>moveField(idx, 1)} disabled={idx===total-1}
-                  className="text-gray-400 hover:text-white disabled:opacity-30 px-1.5"><i className="fas fa-arrow-down text-xs"/></button>
+                  className="text-shTextMuted hover:text-shText disabled:opacity-30 px-1.5"><i className="fas fa-arrow-down text-xs"/></button>
         </div>
         <button onClick={()=>removeField(idx)} className="text-red-400 hover:text-red-300 px-2" data-testid={`field-remove-${idx}`}>
           <i className="fas fa-trash text-xs"/>
@@ -488,31 +488,31 @@ function FieldRow({ f, idx, setField, removeField, moveField, total }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
         <input value={f.placeholder || ""} onChange={(e)=>setField(idx, { placeholder: e.target.value })} placeholder="Placeholder (optional)"
-               className="bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]" />
+               className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]" />
         <input value={f.help_text || ""} onChange={(e)=>setField(idx, { help_text: e.target.value })} placeholder="Help text (optional)"
-               className="bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]" />
+               className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]" />
       </div>
 
       {hasOptions && (
         <div>
-          <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Options (comma-separated)</label>
+          <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Options (comma-separated)</label>
           <input value={(f.options || []).join(", ")} onChange={(e)=>setField(idx, { options: e.target.value.split(",").map(s=>s.trim()).filter(Boolean) })}
                  placeholder="e.g. Daily, Weekly, Monthly"
-                 className="w-full mt-1 bg-bgPanel border border-bgHover rounded p-2 text-white text-[13px]" />
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-[13px]" />
         </div>
       )}
 
       <div className="flex gap-4 flex-wrap">
         <label className="inline-flex items-center gap-2 cursor-pointer">
           <input type="checkbox" checked={!!f.required} onChange={(e)=>setField(idx, { required: e.target.checked })}
-                 className="accent-shGreen w-4 h-4" />
-          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Required</span>
+                 className="accent-shPrimary w-4 h-4" />
+          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Required</span>
         </label>
         <label className="inline-flex items-center gap-2 cursor-pointer" title="Hidden from clients in the portal">
           <input type="checkbox" checked={!!f.staff_only || f.field_type==="staff_only_note"} onChange={(e)=>setField(idx, { staff_only: e.target.checked })}
                  disabled={f.field_type==="staff_only_note"}
-                 className="accent-shOrange w-4 h-4" />
-          <span className="text-[12px] font-black uppercase tracking-widest text-gray-400">Staff-only</span>
+                 className="accent-shAccent w-4 h-4" />
+          <span className="text-[12px] font-black uppercase tracking-widest text-shTextMuted">Staff-only</span>
         </label>
       </div>
     </div>
@@ -530,43 +530,43 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="submission-reviewer">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-6 md:p-8 shadow-2xl max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto animate-slide-in" data-testid="submission-reviewer">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h4 className="text-xl font-black text-white uppercase italic tracking-tight">{sub.template_name}</h4>
-            <p className="text-[13px] text-gray-400 mt-0.5">
+            <h4 className="text-xl font-black text-shText uppercase italic tracking-tight">{sub.template_name}</h4>
+            <p className="text-[13px] text-shTextMuted mt-0.5">
               {client?.name || "—"}{dog ? ` · ${dog.name}` : ""}
-              <span className="text-gray-500 ml-2">{sub.created_at?.slice(0,10)}</span>
+              <span className="text-shTextMuted ml-2">{sub.created_at?.slice(0,10)}</span>
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
 
         <div className="flex flex-wrap gap-2 mb-4">
           {Object.entries(STATUS_LABEL).map(([k, l]) => (
             <button key={k} onClick={()=>onStatusChange(k)} data-testid={`set-status-${k}`}
                     className={`text-[11px] font-black uppercase tracking-widest px-2.5 py-1 rounded border transition
-                               ${sub.status===k ? `${STATUS_STYLE[k]} border-current` : "bg-bgBase border-bgHover text-gray-400 hover:text-white"}`}>
+                               ${sub.status===k ? `${STATUS_STYLE[k]} border-current` : "bg-[var(--sh-card-base)] border-shBorder text-shTextMuted hover:text-shText"}`}>
               {l}
             </button>
           ))}
         </div>
 
         {fields.length === 0 ? (
-          <p className="text-gray-500 text-sm italic">Template was deleted or has no fields.</p>
+          <p className="text-shTextMuted text-sm italic">Template was deleted or has no fields.</p>
         ) : (
           <div className="space-y-3 mb-4">
             {fields.map((f) => {
               const v = sub.answers?.[f.id];
               const displayed = Array.isArray(v) ? v.join(", ") : (typeof v === "boolean" ? (v ? "Yes" : "No") : (v ?? ""));
               return (
-                <div key={f.id} className="bg-bgBase border border-bgHover rounded p-3">
+                <div key={f.id} className="bg-[var(--sh-card-base)] border border-shBorder rounded p-3">
                   <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[12px] font-black text-gray-400 uppercase tracking-widest">{f.label}</span>
+                    <span className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">{f.label}</span>
                     {f.required && <span className="text-[10px] font-black text-red-300 uppercase tracking-widest">Required</span>}
-                    {f.staff_only && <span className="text-[10px] font-black text-shOrange uppercase tracking-widest">Staff-only</span>}
+                    {f.staff_only && <span className="text-[10px] font-black text-shAccent uppercase tracking-widest">Staff-only</span>}
                   </div>
-                  <p className="text-sm text-white whitespace-pre-wrap">{displayed === "" ? <span className="text-gray-500 italic">(blank)</span> : displayed}</p>
+                  <p className="text-sm text-shText whitespace-pre-wrap">{displayed === "" ? <span className="text-shTextMuted italic">(blank)</span> : displayed}</p>
                 </div>
               );
             })}
@@ -574,19 +574,19 @@ function SubmissionReviewerModal({ sub, clients, dogs, templates, onClose, onSta
         )}
 
         <div>
-          <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Admin review notes</label>
+          <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Admin review notes</label>
           <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={3} data-testid="review-notes"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
-          <button onClick={()=>onSaveNotes(notes)} className="mt-2 text-[12px] font-black uppercase tracking-widest bg-shBlue text-white px-3 py-1.5 rounded">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+          <button onClick={()=>onSaveNotes(notes)} className="mt-2 text-[12px] font-black uppercase tracking-widest bg-shSecondary text-shText px-3 py-1.5 rounded">
             <i className="fas fa-save mr-1"/>Save notes
           </button>
         </div>
 
-        <div className="flex justify-between mt-5 pt-4 border-t border-bgHover">
+        <div className="flex justify-between mt-5 pt-4 border-t border-shBorder">
           <button onClick={onDelete} className="text-[12px] font-black uppercase tracking-widest text-red-400 hover:text-red-300">
             <i className="fas fa-trash mr-1"/>Delete
           </button>
-          <button onClick={onClose} className="text-[12px] font-black uppercase tracking-widest text-gray-400 hover:text-white">Close</button>
+          <button onClick={onClose} className="text-[12px] font-black uppercase tracking-widest text-shTextMuted hover:text-shText">Close</button>
         </div>
       </div>
     </div>
@@ -599,38 +599,38 @@ function SendModal({ info, setInfo, clients, dogs, templates, onCancel, onConfir
   const clientDogs = dogs.filter(d => d.owner_id === info.client_id);
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in" data-testid="send-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-md p-6 shadow-2xl animate-slide-in" data-testid="send-modal">
         <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Send &quot;{tpl?.name}&quot;</h4>
-          <button onClick={onCancel} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Send &quot;{tpl?.name}&quot;</h4>
+          <button onClick={onCancel} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Client</label>
+            <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Client</label>
             <select value={info.client_id} onChange={(e)=>setInfo({ ...info, client_id: e.target.value, dog_id: "" })} data-testid="send-client"
-                    className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                    className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
               <option value="">— Select a client —</option>
               {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           {info.client_id && clientDogs.length > 0 && (
             <div>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Dog (optional)</label>
+              <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Dog (optional)</label>
               <select value={info.dog_id} onChange={(e)=>setInfo({ ...info, dog_id: e.target.value })} data-testid="send-dog"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
                 <option value="">— Not dog-specific —</option>
                 {clientDogs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
           )}
-          <p className="text-[12px] text-gray-500 italic">
+          <p className="text-[12px] text-shTextMuted italic">
             <i className="fas fa-circle-info mr-1"/>The client-portal &quot;fill out form&quot; view lands in the next phase — for now this just queues the assignment with status <strong>Sent</strong> so you can record-keep.
           </p>
         </div>
         <div className="flex justify-end gap-3 mt-5">
-          <button onClick={onCancel} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+          <button onClick={onCancel} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest">Cancel</button>
           <button onClick={onConfirm} data-testid="send-confirm"
-                  className="bg-shBlue text-white px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest">
+                  className="bg-shSecondary text-shText px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest">
             <i className="fas fa-paper-plane mr-1"/>Send
           </button>
         </div>

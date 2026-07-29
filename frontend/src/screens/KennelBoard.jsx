@@ -8,12 +8,12 @@ import PageHero from "../components/PageHero";
 import Avatar from "../components/Avatar";
 
 const SERVICE_META = {
-  daycare:     { label: "Daycare",     color: "text-shGreen",   accent: "border-l-shGreen",  icon: "fa-sun"      },
-  boarding:    { label: "Boarding",    color: "text-shOrange",  accent: "border-l-shOrange", icon: "fa-moon"     },
+  daycare:     { label: "Daycare",     color: "text-shPrimary",   accent: "border-l-shPrimary",  icon: "fa-sun"      },
+  boarding:    { label: "Boarding",    color: "text-shAccent",  accent: "border-l-shAccent", icon: "fa-moon"     },
   training:    { label: "Training",    color: "text-purple-300",accent: "border-l-purple-400",icon: "fa-graduation-cap" },
-  grooming:    { label: "Grooming",    color: "text-shBlue",    accent: "border-l-shBlue",   icon: "fa-scissors" },
+  grooming:    { label: "Grooming",    color: "text-shSecondary",    accent: "border-l-shSecondary",   icon: "fa-scissors" },
   photography: { label: "Photography", color: "text-pink-300",  accent: "border-l-pink-400", icon: "fa-camera"   },
-  other:       { label: "Other",       color: "text-gray-300",  accent: "border-l-bgHover",  icon: "fa-paw"      },
+  other:       { label: "Other",       color: "text-shTextMuted",  accent: "border-l-bgHover",  icon: "fa-paw"      },
 };
 
 export default function KennelBoard() {
@@ -57,18 +57,18 @@ export default function KennelBoard() {
   return (
     <div className="space-y-6 animate-slide-in" data-testid="kennel-board-screen">
       <PageHero
-        eyebrow={{ icon: "fa-paw", text: `${board?.on_site_count || 0} dog${(board?.on_site_count||0)===1?"":"s"} scheduled today`, color: "text-shGreen" }}
+        eyebrow={{ icon: "fa-paw", text: `${board?.on_site_count || 0} dog${(board?.on_site_count||0)===1?"":"s"} scheduled today`, color: "text-shPrimary" }}
         title="Kennel Board."
         highlight="Where every dog goes."
         subtitle="Assign kennel, room, crate, yard group, or training group at a glance. Warning badges flag what needs attention."
         right={(
           <div className="flex gap-2">
             <button onClick={()=>setLabelsOpen(true)} data-testid="open-labels"
-                    className="bg-bgPanel border border-bgHover text-gray-300 px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest hover:text-white">
+                    className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted px-4 py-2.5 rounded-lg text-[12px] font-black uppercase tracking-widest hover:text-shText">
               <i className="fas fa-tags mr-2"/>Labels
             </button>
             <button onClick={load} data-testid="kennel-refresh"
-                    className="bg-shGreen text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shGreen/90">
+                    className="bg-shPrimary text-bgBase px-5 py-2.5 rounded-lg text-[13px] font-black uppercase tracking-widest shadow-lg hover:bg-shPrimary/90">
               <i className="fas fa-rotate mr-2"/>Refresh
             </button>
           </div>
@@ -78,8 +78,8 @@ export default function KennelBoard() {
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {Object.entries(SERVICE_META).filter(([k]) => k !== "other").map(([k, m]) => (
-          <div key={k} className="card-kennel rounded-xl p-3 text-center" data-testid={`kennel-stat-${k}`}>
-            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500"><i className={`fas ${m.icon} mr-1`}/>{m.label}</p>
+          <div key={k} className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-3 text-center" data-testid={`kennel-stat-${k}`}>
+            <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted"><i className={`fas ${m.icon} mr-1`}/>{m.label}</p>
             <p className={`text-2xl font-black mt-1 ${m.color}`}>{board?.summary?.[k] || 0}</p>
           </div>
         ))}
@@ -87,10 +87,10 @@ export default function KennelBoard() {
 
       {err && <div className="text-[14px] text-red-300 bg-red-500/10 rounded p-3 uppercase font-black">{err}</div>}
 
-      {loading ? <p className="text-gray-500 text-sm">Loading…</p> :
+      {loading ? <p className="text-shTextMuted text-sm">Loading…</p> :
        (!board || board.on_site_count === 0) ? (
-        <div className="card-kennel rounded-xl p-10 text-center" data-testid="kennel-empty">
-          <p className="text-shGreen font-black uppercase text-xs tracking-widest">
+        <div className="bg-[var(--sh-card-base)] rounded-xl border border-shBorder p-10 text-center" data-testid="kennel-empty">
+          <p className="text-shPrimary font-black uppercase text-xs tracking-widest">
             <i className="fas fa-shield-heart mr-2"/>No dogs scheduled today. Quiet day for the team!
           </p>
         </div>
@@ -134,17 +134,17 @@ function KennelCard({ card, accent, onEdit }) {
   const w = card.warnings || {};
   return (
     <button onClick={onEdit} data-testid={`kennel-card-${card.booking_id}`}
-            className={`bg-bgPanel border border-bgHover ${accent} border-l-4 rounded-xl p-4 shadow-lg text-left hover:border-shBlue transition`}>
+            className={`bg-[var(--sh-card-base)] border border-shBorder ${accent} border-l-4 rounded-xl p-4 shadow-lg text-left hover:border-shSecondary transition`}>
       <div className="flex items-start gap-3">
-        <Avatar src={card.photo} icon="fa-paw" size="md" ring="border-shGreen/40" alt={card.dog_name}/>
+        <Avatar src={card.photo} icon="fa-paw" size="md" ring="border-shPrimary/40" alt={card.dog_name}/>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-base text-white font-black uppercase tracking-tight truncate">{card.dog_name}</span>
-            {card.breed && <span className="text-[11px] text-gray-500 truncate">{card.breed}</span>}
+            <span className="text-base text-shText font-black uppercase tracking-tight truncate">{card.dog_name}</span>
+            {card.breed && <span className="text-[11px] text-shTextMuted truncate">{card.breed}</span>}
           </div>
-          <p className="text-[12px] text-gray-400 truncate">{card.client_name}</p>
+          <p className="text-[12px] text-shTextMuted truncate">{card.client_name}</p>
           {(card.dropoff_time || card.pickup_time) && (
-            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mt-1">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mt-1">
               {card.dropoff_time && <span><i className="fas fa-arrow-down mr-1"/>{card.dropoff_time}</span>}
               {card.pickup_time && <span className="ml-2"><i className="fas fa-arrow-up mr-1"/>{card.pickup_time}</span>}
             </p>
@@ -152,10 +152,10 @@ function KennelCard({ card, accent, onEdit }) {
         </div>
         <div className="flex flex-col gap-1 items-end">
           {w.vaccine_lapsed && <Badge icon="fa-syringe" cls="bg-red-500/15 text-red-300 ring-1 ring-red-400/40" testid={`warn-vaccine-${card.booking_id}`} title="Vaccine lapsed"/>}
-          {w.med_overdue && <Badge icon="fa-pills" cls="bg-shOrange/15 text-shOrange ring-1 ring-shOrange/40" testid={`warn-med-${card.booking_id}`} title="Overdue medication"/>}
+          {w.med_overdue && <Badge icon="fa-pills" cls="bg-shAccent/15 text-shAccent ring-1 ring-shAccent/40" testid={`warn-med-${card.booking_id}`} title="Overdue medication"/>}
           {w.do_not_group && <Badge icon="fa-ban" cls="bg-purple-500/15 text-purple-200 ring-1 ring-purple-400/40" testid={`warn-group-${card.booking_id}`} title="Do not group"/>}
           {(w.open_incidents || 0) > 0 && <Badge icon="fa-triangle-exclamation" cls="bg-red-500/15 text-red-300" testid={`warn-incident-${card.booking_id}`} title={`${w.open_incidents} open incident${w.open_incidents>1?"s":""}`}/>}
-          {w.has_feeding_plan && <Badge icon="fa-bowl-food" cls="bg-shGreen/10 text-shGreen" testid={`feed-${card.booking_id}`} title="Has feeding plan"/>}
+          {w.has_feeding_plan && <Badge icon="fa-bowl-food" cls="bg-shPrimary/10 text-shPrimary" testid={`feed-${card.booking_id}`} title="Has feeding plan"/>}
           {w.has_med_plan && !w.med_overdue && <Badge icon="fa-pills" cls="bg-purple-500/10 text-purple-300" testid={`med-${card.booking_id}`} title="Has medication"/>}
         </div>
       </div>
@@ -178,7 +178,7 @@ function KennelCard({ card, accent, onEdit }) {
         </div>
       )}
 
-      {card.notes && <p className="mt-2 text-[12px] text-gray-400 italic line-clamp-2"><i className="fas fa-quote-left text-gray-600 mr-1 text-[10px]"/>{card.notes}</p>}
+      {card.notes && <p className="mt-2 text-[12px] text-shTextMuted italic line-clamp-2"><i className="fas fa-quote-left text-gray-600 mr-1 text-[10px]"/>{card.notes}</p>}
     </button>
   );
 }
@@ -193,9 +193,9 @@ function Badge({ icon, cls, title, testid }) {
 
 function AssignmentSlot({ label, value }) {
   return (
-    <div className="bg-bgBase border border-bgHover rounded p-2">
-      <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">{label}</p>
-      <p className={`text-[13px] font-black truncate ${value ? "text-white" : "text-gray-600 italic"}`}>{value || "— unassigned"}</p>
+    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded p-2">
+      <p className="text-[10px] font-black uppercase tracking-widest text-shTextMuted">{label}</p>
+      <p className={`text-[13px] font-black truncate ${value ? "text-shText" : "text-gray-600 italic"}`}>{value || "— unassigned"}</p>
     </div>
   );
 }
@@ -212,13 +212,13 @@ function AssignmentModal({ card, labels, onSave, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in" data-testid="assignment-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-lg p-6 shadow-2xl animate-slide-in" data-testid="assignment-modal">
         <div className="flex items-start justify-between mb-3">
           <div>
-            <h4 className="text-lg font-black text-white uppercase italic tracking-tight">{card.dog_name}</h4>
-            <p className="text-[13px] text-gray-400">{card.client_name} · {card.service_type}</p>
+            <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">{card.dog_name}</h4>
+            <p className="text-[13px] text-shTextMuted">{card.client_name} · {card.service_type}</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
 
         <div className="space-y-3">
@@ -228,16 +228,16 @@ function AssignmentModal({ card, labels, onSave, onClose }) {
           <SelectField label="Yard group" value={yardGroup} setValue={setYardGroup} options={labels.yard_groups} testid="assign-yard"/>
           <SelectField label="Training group" value={trainingGroup} setValue={setTrainingGroup} options={labels.training_groups} testid="assign-training"/>
           <div>
-            <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">Notes (replaces booking notes)</label>
+            <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">Notes (replaces booking notes)</label>
             <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2} data-testid="assign-notes"
-                      className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" />
+                      className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
           </div>
         </div>
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-bgHover mt-4">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+        <div className="flex justify-end gap-3 pt-4 border-t border-shBorder mt-4">
+          <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest">Cancel</button>
           <button onClick={submit} data-testid="assign-save"
-                  className="bg-shGreen text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">
+                  className="bg-shPrimary text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl">
             <i className="fas fa-save mr-1"/>Save
           </button>
         </div>
@@ -249,9 +249,9 @@ function AssignmentModal({ card, labels, onSave, onClose }) {
 function SelectField({ label, value, setValue, options, testid }) {
   return (
     <div>
-      <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">{label}</label>
+      <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">{label}</label>
       <select value={value} onChange={(e)=>setValue(e.target.value)} data-testid={testid}
-              className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+              className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
         <option value="">— Unassigned —</option>
         {(options || []).map(o => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -285,27 +285,27 @@ function LabelsModal({ labels, onClose, onSaved }) {
 
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-      <div className="bg-bgPanel border border-bgHover rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto" data-testid="labels-modal">
+      <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl w-full max-w-2xl p-6 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_1rem)] overflow-y-auto" data-testid="labels-modal">
         <div className="flex items-center justify-between mb-3">
-          <h4 className="text-lg font-black text-white uppercase italic tracking-tight">Kennel Board Labels</h4>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><i className="fas fa-times"/></button>
+          <h4 className="text-lg font-black text-shText uppercase italic tracking-tight">Kennel Board Labels</h4>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText"><i className="fas fa-times"/></button>
         </div>
-        <p className="text-[13px] text-gray-400 mb-4">One label per line. These populate the dropdowns on every assignment card.</p>
+        <p className="text-[13px] text-shTextMuted mb-4">One label per line. These populate the dropdowns on every assignment card.</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {Object.entries({kennels: "Kennels", rooms: "Rooms", crates: "Crates", yard_groups: "Yard groups", training_groups: "Training groups"}).map(([k, l]) => (
             <div key={k}>
-              <label className="text-[12px] font-black text-gray-500 uppercase tracking-widest">{l}</label>
+              <label className="text-[12px] font-black text-shTextMuted uppercase tracking-widest">{l}</label>
               <textarea value={draft[k]} onChange={(e)=>setDraft({ ...draft, [k]: e.target.value })} rows={5} data-testid={`labels-${k}`}
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm font-mono" />
+                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm font-mono" />
             </div>
           ))}
         </div>
 
-        <div className="flex justify-end gap-3 pt-4 border-t border-bgHover mt-4">
-          <button onClick={onClose} className="text-gray-500 font-black uppercase text-[12px] tracking-widest">Cancel</button>
+        <div className="flex justify-end gap-3 pt-4 border-t border-shBorder mt-4">
+          <button onClick={onClose} className="text-shTextMuted font-black uppercase text-[12px] tracking-widest">Cancel</button>
           <button onClick={save} disabled={busy} data-testid="labels-save"
-                  className="bg-shGreen text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-60">
+                  className="bg-shPrimary text-bgBase px-5 py-2 rounded font-black text-[12px] uppercase tracking-widest shadow-xl disabled:opacity-60">
             <i className="fas fa-save mr-1"/>Save labels
           </button>
         </div>

@@ -67,21 +67,21 @@ export default function CsvImportButton({
         {sampleText && (
           <button type="button" onClick={downloadSample}
                   data-testid={`${testIdPrefix}-sample`}
-                  className="text-shBlue hover:text-white text-[11px] font-black uppercase tracking-widest underline-offset-2 hover:underline">
+                  className="text-shSecondary hover:text-shText text-[11px] font-black uppercase tracking-widest underline-offset-2 hover:underline">
             <i className="fas fa-download mr-1"/>Download sample
           </button>
         )}
       </div>
-      {helpText && <p className="text-[12px] text-gray-500">{helpText}</p>}
+      {helpText && <p className="text-[12px] text-shTextMuted">{helpText}</p>}
       {msg && (
-        <p data-testid={`${testIdPrefix}-msg`} className="text-[12px] text-shGreen font-bold">
+        <p data-testid={`${testIdPrefix}-msg`} className="text-[12px] text-shPrimary font-bold">
           <i className="fas fa-circle-check mr-1"/>{msg}
         </p>
       )}
       {errors.length > 0 && (
         <ul data-testid={`${testIdPrefix}-errors`} className="text-[12px] text-red-400 list-disc pl-4 max-h-24 overflow-y-auto">
           {errors.slice(0, 20).map((e, i) => <li key={i}>{e}</li>)}
-          {errors.length > 20 && <li className="text-gray-500">…and {errors.length - 20} more</li>}
+          {errors.length > 20 && <li className="text-shTextMuted">…and {errors.length - 20} more</li>}
         </ul>
       )}
     </div>

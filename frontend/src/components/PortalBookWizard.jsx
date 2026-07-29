@@ -5,6 +5,8 @@ import { useEditLock } from "../lib/useLiveRefresh";
 import { todayISO } from "../lib/date";
 import BookingPriceEstimate from "./BookingPriceEstimate";
 import PaymentOptionsCard from "./PaymentOptionsCard";
+import PremiumButton from "./premium/PremiumButton";
+import { accentRgb } from "./premium/tokens";
 
 /**
  * Client-portal Book Service wizard.
@@ -399,24 +401,25 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/80 flex items-center justify-center p-2 sm:p-4" onClick={onClose} data-testid="portal-book-wizard">
-      <div className="bg-bgPanel border border-bgHover rounded-xl max-w-2xl w-full max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5" onClick={(e)=>e.stopPropagation()}>
+      <div className="border border-shBorder shadow-sh rounded-xl max-w-2xl w-full max-h-[calc(var(--app-height)_-_1.5rem)] overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5"
+           style={{ background: "var(--sh-card-base)" }} onClick={(e)=>e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-start justify-between">
           <div>
-            <h3 className="text-xl font-black text-white uppercase italic tracking-tight">
-              <i className="fas fa-calendar-plus text-shBlue mr-2"/>Book a Service
+            <h3 className="text-xl font-bold text-shText tracking-tight">
+              <i className="fas fa-calendar-plus text-shSecondary mr-2"/>Book a Service
             </h3>
-            <p className="text-[14px] font-black text-gray-500 uppercase tracking-widest mt-1">
+            <p className="text-[13px] font-semibold text-shTextMuted uppercase tracking-widest mt-1">
               Step {step} of 3 · {step===1?"Pick service":step===2?"Pick date & time":"Review & confirm"}
             </p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl"><i className="fas fa-times"/></button>
+          <button onClick={onClose} className="text-shTextMuted hover:text-shText text-xl"><i className="fas fa-times"/></button>
         </div>
 
         {/* Progress bar */}
         <div className="grid grid-cols-3 gap-2">
           {[1,2,3].map(i => (
-            <div key={i} className={`h-1 rounded-full ${i<=step?"bg-shBlue":"bg-bgHover"}`}/>
+            <div key={i} className={`h-1 rounded-full ${i<=step?"bg-shSecondary":"bg-shBorder"}`}/>
           ))}
         </div>
 
@@ -427,7 +430,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <div>
                 <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">For which dog?</label>
                 <select value={dogId} onChange={(e)=>setDogId(e.target.value)} data-testid="wiz-dog"
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm">
+                        style={{ background: "var(--sh-card-base)" }}
+                        className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60">
                   {dogs.map(d => <option key={d.id} value={d.id}>{d.name} ({d.breed || "—"})</option>)}
                 </select>
               </div>
@@ -444,6 +448,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                   const desc = isCatalog ? (s.description || fallback?.desc || "") : s.desc;
                   const icon = isCatalog ? (s.icon || fallback?.icon || "fa-paw") : s.icon;
                   const colorClass = fallback?.color || "bg-shBlue/15 text-shBlue border-shBlue/40";
+                  const accentR = accentRgb("cyan");
                   return (
                     <button key={isCatalog ? s.id : s.key}
                             onClick={() => {
@@ -455,26 +460,31 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                               }
                             }}
                             data-testid={`wiz-svc-${isCatalog ? s.id : s.key}`}
-                            className={`text-left p-4 rounded-lg border transition min-w-0 ${selected ? colorClass + " ring-2 ring-shBlue/60" : "bg-bgBase border-bgHover text-gray-300 hover:border-shBlue/40"}`}>
-                      <p className="font-black uppercase tracking-widest text-[15px] break-words"><i className={`fas ${icon} mr-2`}/>{label}</p>
-                      {desc && <p className="text-[13px] mt-1 opacity-80 normal-case break-words">{desc}</p>}
-                      {isCatalog && <p className="text-[12px] mt-2 text-shGreen font-black">${Number(s.base_price || 0).toFixed(2)}</p>}
+                            className="text-left p-4 rounded-lg border transition min-w-0"
+                            style={{
+                              background: "var(--sh-card-base)",
+                              borderColor: selected ? `rgba(${accentR},0.8)` : "var(--sh-border)",
+                              boxShadow: selected ? `0 0 2px rgba(${accentR},0.7), 0 0 16px -6px rgba(${accentR},0.5)` : undefined,
+                              color: selected ? `rgb(${accentR})` : "var(--sh-text-muted)",
+                            }}>
+                      <p className="font-bold text-[15px] break-words text-shText"><i className={`fas ${icon} mr-2`} style={{ color: `rgb(${accentR})` }}/>{label}</p>
+                      {desc && <p className="text-[13px] mt-1 break-words text-shTextMuted">{desc}</p>}
+                      {isCatalog && <p className="text-[12px] mt-2 text-shPrimary font-bold">${Number(s.base_price || 0).toFixed(2)}</p>}
                     </button>
                   );
                 })}
                 {catalogServices.length > 0 && bookableCatalogServices.length === 0 && (
-                  <div className="sm:col-span-2 bg-shOrange/10 border border-shOrange/30 rounded-lg p-4 text-shOrange text-[13px] font-black uppercase tracking-widest text-center">
+                  <div className="sm:col-span-2 bg-shAccent/10 border border-shAccent/30 rounded-lg p-4 text-shAccent text-[13px] font-bold uppercase tracking-widest text-center">
                     No services are currently open for client booking.
                   </div>
                 )}
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-3">
-              <button onClick={onClose} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">Cancel</button>
-              <button onClick={()=>setStep(2)} disabled={!serviceType || !dogId} data-testid="wiz-step1-next"
-                      className="bg-shBlue text-white px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
-                Next <i className="fas fa-arrow-right ml-1.5"/>
-              </button>
+              <PremiumButton variant="secondary" onClick={onClose}>Cancel</PremiumButton>
+              <PremiumButton variant="cyan" onClick={()=>setStep(2)} disabled={!serviceType || !dogId} data-testid="wiz-step1-next">
+                Next <i className="fas fa-arrow-right"/>
+              </PremiumButton>
             </div>
           </div>
         )}
@@ -526,8 +536,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                           // after) value. Same-day drop-off is fine; the
                           // zero-night case is what we guard against.
                           if (newDate && endDate && endDate <= newDate) setEndDate("");
-                        }} style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+                        }} style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
+                             className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60" data-testid="wiz-date" />
                       <p className="text-[11px] text-gray-500 mt-1">Same-day drop-off is fine.</p>
                     </div>
                     <div>
@@ -540,8 +550,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                              min={date ? (new Date(date + "T12:00:00").getTime() + 86400000 > 0
                                   ? new Date(new Date(date + "T12:00:00").getTime() + 86400000).toISOString().slice(0,10)
                                   : date) : minDate}
-                             onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-end" />
+                             onChange={(e)=>setEndDate(e.target.value)} style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
+                             className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60" data-testid="wiz-end" />
                       <p className="text-[11px] text-gray-500 mt-1">Must be after drop-off (at least 1 night).</p>
                     </div>
                   </div>
@@ -553,15 +563,15 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Drop-off time</label>
                       <input type="time" value={dropoffTime} onChange={(e)=>setDropoffTime(e.target.value)}
-                             style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+                             style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
+                             className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60"
                              data-testid="wiz-dropoff-time" />
                     </div>
                     <div>
                       <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Pickup time</label>
                       <input type="time" value={pickupTime} onChange={(e)=>setPickupTime(e.target.value)}
-                             style={{colorScheme:"dark"}}
-                             className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm"
+                             style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
+                             className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60"
                              data-testid="wiz-pickup-time" />
                       <p className="text-[11px] text-gray-500 mt-1">Early pickup may cut the final day in half (admin's rule).</p>
                     </div>
@@ -573,8 +583,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 {serviceType !== "boarding" && (
                   <div>
                     <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Date</label>
-                    <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark"}}
-                           className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm" data-testid="wiz-date" />
+                    <input type="date" value={date} min={minDate} onChange={(e)=>setDate(e.target.value)} style={{colorScheme:"dark", background:"var(--sh-card-base)"}}
+                           className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60" data-testid="wiz-date" />
                   </div>
                 )}
               </>
@@ -716,17 +726,17 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Notes (optional)</label>
               <textarea value={notes} onChange={(e)=>setNotes(e.target.value)} rows={2}
                         placeholder="Anything we should know? Allergies, meds, behavior notes…"
-                        className="w-full mt-1 bg-bgBase border border-bgHover rounded p-2 text-white text-sm resize-none" />
+                        style={{ background: "var(--sh-card-base)" }}
+                        className="w-full mt-1 border border-shBorder rounded p-2 text-shText text-sm focus:outline-none focus:border-shSecondary/60 resize-none" />
             </div>
 
             <div className="flex justify-between gap-2 pt-3">
-              <button onClick={()=>setStep(1)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
-                <i className="fas fa-arrow-left mr-1.5"/>Back
-              </button>
-              <button onClick={()=>setStep(3)} disabled={!canProceedFromStep2} data-testid="wiz-step2-next"
-                      className="bg-shBlue text-white px-5 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shBlue/90 disabled:opacity-50">
-                Review <i className="fas fa-arrow-right ml-1.5"/>
-              </button>
+              <PremiumButton variant="secondary" onClick={()=>setStep(1)}>
+                <i className="fas fa-arrow-left"/>Back
+              </PremiumButton>
+              <PremiumButton variant="cyan" onClick={()=>setStep(3)} disabled={!canProceedFromStep2} data-testid="wiz-step2-next">
+                Review <i className="fas fa-arrow-right"/>
+              </PremiumButton>
             </div>
           </div>
         )}
@@ -734,7 +744,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
         {/* STEP 3 */}
         {step === 3 && (
           <div className="space-y-4">
-            <div className="bg-bgBase border border-bgHover rounded-lg p-4 space-y-2 text-[15px]">
+            <div className="border border-shBorder rounded-lg p-4 space-y-2 text-[15px]" style={{ background: "var(--sh-card-base)" }}>
               <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Dog</span><span className="text-white font-black">{selectedDog?.name}</span></div>
               <div className="flex justify-between"><span className="text-gray-500 font-black uppercase tracking-widest text-[13px]">Service</span><span className="text-white font-black">{svcMeta?.label}</span></div>
               {serviceType === "boarding" ? (
@@ -774,7 +784,7 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                 mode is active (that branch already books N days × 1 dog and
                 we don't want to combine the two complexities). */}
             {(dogs || []).length > 1 && !(isMultiDate && serviceType === "daycare") && (
-              <div className="bg-bgBase border border-bgHover rounded-lg p-4 space-y-3" data-testid="wiz-multidog">
+              <div className="border border-shBorder rounded-lg p-4 space-y-3" style={{ background: "var(--sh-card-base)" }} data-testid="wiz-multidog">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-shGreen font-black uppercase tracking-widest text-[13px]"><i className="fas fa-paw mr-1.5"/>More dogs on this booking?</p>
@@ -912,18 +922,17 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             <p className="text-[14px] text-gray-500 text-center">Your booking will be reviewed and approved by Sit Happens.</p>
 
             <div className="flex justify-between gap-2 pt-3">
-              <button onClick={()=>setStep(2)} className="bg-bgBase border border-bgHover text-gray-300 px-4 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:border-shBlue">
-                <i className="fas fa-arrow-left mr-1.5"/>Back
-              </button>
-              <button onClick={book} disabled={submitting} data-testid="wiz-confirm"
-                      className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90 disabled:opacity-50">
+              <PremiumButton variant="secondary" onClick={()=>setStep(2)}>
+                <i className="fas fa-arrow-left"/>Back
+              </PremiumButton>
+              <PremiumButton variant="primary" onClick={book} disabled={submitting} data-testid="wiz-confirm">
                 {submitting ? "Booking…"
                   : (isMultiDate && serviceType==="daycare"
                       ? `Submit ${multiDates.length} booking${multiDates.length===1?"":"s"}`
                       : extraDogs.length > 0
                         ? `Confirm booking · ${1 + extraDogs.length} dogs`
                         : "Confirm booking")}
-              </button>
+              </PremiumButton>
             </div>
           </div>
         )}
@@ -954,10 +963,9 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             <PaymentOptionsCard compact />
 
             <div className="flex justify-end">
-              <button onClick={onClose} data-testid="wiz-done"
-                      className="bg-shGreen text-bgHeader px-6 py-2 rounded text-[14px] font-black uppercase tracking-widest hover:bg-shGreen/90">
+              <PremiumButton variant="primary" onClick={onClose} data-testid="wiz-done">
                 Done
-              </button>
+              </PremiumButton>
             </div>
           </div>
         )}

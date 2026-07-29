@@ -9215,6 +9215,15 @@ def _default_settings() -> dict:
         "client_portal_links": {
             "website_url": "",
             "photo_gallery_url": "",
+            "shopify_store_url": "",
+            # Public portfolio/showcase gallery (e.g. Pixieset public portfolio)
+            # — distinct from photo_gallery_url, which is each client's own
+            # delivered/finished session gallery.
+            "photography_portfolio_url": "",
+        },
+        # Photography full-page headline (client Photography destination).
+        "photography_page": {
+            "headline": "Capture the moments worth keeping.",
         },
         # Sprint 110aw — Sales tax (single flat rate, configurable scope).
         "sales_tax": {
@@ -9669,6 +9678,15 @@ async def get_settings() -> dict:
             if lk not in s["client_portal_links"]:
                 s["client_portal_links"][lk] = lv
                 changed = True
+    # Backfill photography_page (client Photography full-page headline)
+    if not isinstance(s.get("photography_page"), dict):
+        s["photography_page"] = defaults.get("photography_page", {})
+        changed = True
+    else:
+        for pk, pv in (defaults.get("photography_page") or {}).items():
+            if pk not in s["photography_page"]:
+                s["photography_page"][pk] = pv
+                changed = True
     # Sprint 110dk — backfill new booking_rules keys (stay-pricing thresholds)
     if isinstance(s.get("booking_rules"), dict):
         for bk, bv in (defaults.get("booking_rules") or {}).items():
@@ -9789,6 +9807,7 @@ class SettingsIn(BaseModel):
     waiver_version: Optional[int] = None
     service_descriptions: Optional[dict] = None
     client_portal_links: Optional[dict] = None
+    photography_page: Optional[dict] = None
     closed_dates: Optional[List[str]] = None  # ISO dates the business is closed (holidays, vacations)
     day_to_day: Optional[dict] = None  # Sprint 110dm — free-form day-to-day operator controls
     evaluation: Optional[dict] = None  # {require_evaluation_first}
@@ -9973,6 +9992,7 @@ async def fetch_public_settings():
         "waiver_required_for_booking": s.get("waiver_required_for_booking", True),
         "service_descriptions": s.get("service_descriptions") or {},
         "client_portal_links": s.get("client_portal_links") or {},
+        "photography_page": s.get("photography_page") or {"headline": "Capture the moments worth keeping."},
         "closed_dates": s.get("closed_dates") or [],
         # Sprint 110di-4 — admin-editable "What to expect on your first visit"
         # block rendered on the client portal.
@@ -19879,6 +19899,8 @@ async def startup():
         (db.shop_payment_attempts, "client_id", {}),
         (db.payments, "shop_order_id", {}),
         (db.retail_sales, "shop_order_id", {}),
+        (db.photography_gallery, "sort_order", {}),
+        (db.photography_gallery, "active", {}),
     ]
     for coll, key, opts in perf_indexes:
         try:
@@ -24638,6 +24660,156 @@ async def delete_shop_media(media_id: str, _: dict = Depends(require_admin)):
         raise HTTPException(status_code=409, detail=f"This image is still in use by {referenced_by} and cannot be deleted.")
     await db.shop_media.delete_one({"id": media_id})
     return {"ok": True, "deleted": 1}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Photography Phase 1 — full client-facing Photography page. photography_gallery
+# is a dedicated collection (not shop_media) since a gallery photo IS the row —
+# there's no separate parent record referencing it the way products/packs/
+# programs reference a shop_media image_id, so storing the image data directly
+# on the gallery document is the simpler, cleanest fit. Upload validation
+# mirrors shop_media exactly (image-only MIME allowlist + byte-accurate size
+# cap computed from the actual base64 payload, never trusted from the client).
+# ─────────────────────────────────────────────────────────────────────────────
+PHOTOGRAPHY_ALLOWED_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+MAX_PHOTOGRAPHY_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+class PhotographyGalleryUploadIn(BaseModel):
+    data: str = Field(min_length=10)  # base64 data URL, e.g. data:image/jpeg;base64,...
+    filename: str = Field(min_length=1, max_length=140)
+    title: Optional[str] = Field(default=None, max_length=140)
+    caption: Optional[str] = Field(default=None, max_length=500)
+    featured: bool = False
+
+
+class PhotographyGalleryUpdateIn(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=140)
+    caption: Optional[str] = Field(default=None, max_length=500)
+    featured: Optional[bool] = None
+    active: Optional[bool] = None
+
+
+class PhotographyGalleryMoveIn(BaseModel):
+    direction: Literal["up", "down"]
+
+
+@api.post("/photography/gallery")
+async def upload_photography_photo(body: PhotographyGalleryUploadIn, user: dict = Depends(require_admin)):
+    """Admin-only. Uploads one featured/showcase photography sample. New rows
+    are appended to the end of the sort order (max existing sort_order + 1)."""
+    raw = body.data
+    if not raw.startswith("data:"):
+        raise HTTPException(status_code=400, detail="Expected base64 data URL")
+    try:
+        header, b64 = raw.split(",", 1)
+        mime = header.split(";")[0].replace("data:", "").lower().strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed data URL")
+    if mime not in PHOTOGRAPHY_ALLOWED_MIME:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type ({mime}). Allowed: JPEG, PNG, WEBP.")
+    approx_bytes = (len(b64) * 3) // 4
+    if approx_bytes > MAX_PHOTOGRAPHY_BYTES:
+        raise HTTPException(status_code=400, detail=f"Image too large ({approx_bytes // (1024 * 1024)} MB). Max is 5 MB.")
+    top = await db.photography_gallery.find_one({}, {"_id": 0, "sort_order": 1}, sort=[("sort_order", -1)])
+    next_sort = (top.get("sort_order", -1) + 1) if top else 0
+    photo_id = str(uuid.uuid4())
+    row = {
+        "id": photo_id, "mime": mime, "data": raw,
+        "filename": (body.filename or "image")[:140],
+        "size_bytes": approx_bytes,
+        "title": (body.title or "").strip() or None,
+        "caption": (body.caption or "").strip() or None,
+        "sort_order": next_sort,
+        "featured": bool(body.featured),
+        "active": True,
+        "created_at": now_iso(),
+        "uploaded_by": user.get("id"),
+    }
+    await db.photography_gallery.insert_one(row)
+    # insert_one mutates `row` in place, adding a non-JSON-serializable
+    # ObjectId `_id` — build the response explicitly rather than filtering
+    # the now-mutated dict (matches the shop_media upload response pattern).
+    return {
+        "id": row["id"], "mime": row["mime"], "filename": row["filename"],
+        "size_bytes": row["size_bytes"], "title": row["title"], "caption": row["caption"],
+        "sort_order": row["sort_order"], "featured": row["featured"], "active": row["active"],
+        "created_at": row["created_at"],
+    }
+
+
+@api.get("/photography/gallery")
+async def list_photography_gallery(include_inactive: bool = False, user: dict = Depends(get_current_user)):
+    """Metadata only (no image bytes) — the frontend fetches
+    GET /photography/gallery/{id} separately per photo, same convention as
+    /shop/media. `include_inactive` is admin-only; clients always get the
+    active, sort_order-ascending list."""
+    query: Dict[str, Any] = {}
+    if include_inactive:
+        if user.get("role") not in ("admin", "owner", "employee"):
+            raise HTTPException(status_code=403, detail="Admin access required")
+    else:
+        query["active"] = True
+    rows = await db.photography_gallery.find(query, {"_id": 0, "data": 0}).sort("sort_order", 1).to_list(500)
+    return rows
+
+
+@api.get("/photography/gallery/{photo_id}")
+async def get_photography_photo(photo_id: str, _: dict = Depends(get_current_user)):
+    """Any authenticated user — these are public-facing showcase photos."""
+    m = await db.photography_gallery.find_one({"id": photo_id}, {"_id": 0})
+    if not m:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return {"id": m["id"], "mime": m["mime"], "data": m["data"], "filename": m.get("filename")}
+
+
+@api.put("/photography/gallery/{photo_id}")
+async def update_photography_photo(photo_id: str, body: PhotographyGalleryUpdateIn, _: dict = Depends(require_admin)):
+    update = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
+    if "title" in update:
+        update["title"] = (update["title"] or "").strip() or None
+    if "caption" in update:
+        update["caption"] = (update["caption"] or "").strip() or None
+    if not update:
+        m = await db.photography_gallery.find_one({"id": photo_id}, {"_id": 0, "data": 0})
+        if not m:
+            raise HTTPException(status_code=404, detail="Photo not found")
+        return m
+    result = await db.photography_gallery.find_one_and_update(
+        {"id": photo_id}, {"$set": update}, projection={"_id": 0, "data": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return result
+
+
+@api.post("/photography/gallery/{photo_id}/move")
+async def move_photography_photo(photo_id: str, body: PhotographyGalleryMoveIn, _: dict = Depends(require_admin)):
+    """Swaps sort_order with the immediate neighbor in that direction —
+    a simple, dependency-free reorder mechanism (no drag-and-drop needed)."""
+    photo = await db.photography_gallery.find_one({"id": photo_id}, {"_id": 0})
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    if body.direction == "up":
+        neighbor = await db.photography_gallery.find_one(
+            {"sort_order": {"$lt": photo["sort_order"]}}, {"_id": 0}, sort=[("sort_order", -1)]
+        )
+    else:
+        neighbor = await db.photography_gallery.find_one(
+            {"sort_order": {"$gt": photo["sort_order"]}}, {"_id": 0}, sort=[("sort_order", 1)]
+        )
+    if not neighbor:
+        return {"ok": True, "moved": False}
+    await db.photography_gallery.update_one({"id": photo["id"]}, {"$set": {"sort_order": neighbor["sort_order"]}})
+    await db.photography_gallery.update_one({"id": neighbor["id"]}, {"$set": {"sort_order": photo["sort_order"]}})
+    return {"ok": True, "moved": True}
+
+
+@api.delete("/photography/gallery/{photo_id}")
+async def delete_photography_photo(photo_id: str, _: dict = Depends(require_admin)):
+    result = await db.photography_gallery.delete_one({"id": photo_id})
+    return {"ok": True, "deleted": result.deleted_count}
 
 
 # IMPORTANT — FUTURE MONEY RULE, for whoever builds shop checkout/refunds:
