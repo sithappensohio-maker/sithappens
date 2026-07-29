@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import qrcode
 import resend
+from pymongo.errors import DuplicateKeyError
 
 from email_templates_registry import get_template as _registry_get_template
 
@@ -285,38 +286,53 @@ async def _queue_email(
     on_success: dict | None,
     attachments: list | None,
     error: str,
+    document_id: str | None = None,
 ) -> bool:
     """Persist an automated email for retry. The key is unique so repeated
-    scheduler/check-out attempts update one pending row instead of duplicating it."""
+    scheduler/check-out attempts update one pending row instead of duplicating it.
+
+    `document_id`, when provided, is used as the Mongo `_id` for the upsert
+    filter instead of `key`. Every Mongo collection's `_id` index is
+    ALWAYS uniquely enforced with no schema change required — so two truly
+    concurrent callers passing the SAME document_id can never both create a
+    row: whichever loses the race hits a real DuplicateKeyError on its
+    insert attempt, caught below and treated as "already queued by the
+    other caller." Existing callers that omit document_id keep the exact
+    prior behavior (upsert keyed on `key` alone, no new constraint) —
+    unrelated automated emails are unaffected."""
     if _db is None or not to_email or not outbox_key:
         return False
     now = _utc_now_iso()
+    filter_ = {"_id": document_id} if document_id else {"key": outbox_key}
     try:
-        existing = await _db.email_outbox.find_one({"key": outbox_key}, {"_id": 0, "status": 1})
+        existing = await _db.email_outbox.find_one(filter_, {"_id": 0, "status": 1})
         if existing and existing.get("status") == "delivered_pending_stamp":
             return True
-        await _db.email_outbox.update_one(
-            {"key": outbox_key},
-            {
-                "$setOnInsert": {
-                    "key": outbox_key,
-                    "to_email": to_email,
-                    "subject": subject,
-                    "html": html,
-                    "attachments": _serialize_attachments(attachments),
-                    "on_success": on_success or {},
-                    "created_at": now,
-                    "attempts": 0,
+        try:
+            await _db.email_outbox.update_one(
+                filter_,
+                {
+                    "$setOnInsert": {
+                        "key": outbox_key,
+                        "to_email": to_email,
+                        "subject": subject,
+                        "html": html,
+                        "attachments": _serialize_attachments(attachments),
+                        "on_success": on_success or {},
+                        "created_at": now,
+                        "attempts": 0,
+                    },
+                    "$set": {
+                        "status": "pending",
+                        "last_error": error,
+                        "next_attempt_at": now,
+                        "updated_at": now,
+                    },
                 },
-                "$set": {
-                    "status": "pending",
-                    "last_error": error,
-                    "next_attempt_at": now,
-                    "updated_at": now,
-                },
-            },
-            upsert=True,
-        )
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            pass  # a concurrent call already created this exact _id — the row exists either way
         logger.info("Queued automated email %s to %s (%s)", outbox_key, to_email, error)
         return True
     except Exception as exc:
@@ -420,6 +436,7 @@ async def process_email_outbox(db_handle=None, limit: int = 50) -> dict:
             row.get("to_email") or "",
             row.get("subject") or "",
             row.get("html") or "",
+            outbox_key=row.get("key"),
             attachments=_deserialize_attachments(row.get("attachments")),
             queue_on_failure=False,
         )
@@ -523,7 +540,13 @@ async def _send(
         # Replies land in the admin inbox instead of the unmonitored sender address
         if ADMIN_NOTIFICATION_EMAIL:
             params["reply_to"] = ADMIN_NOTIFICATION_EMAIL
-        result = await asyncio.to_thread(resend.Emails.send, params)
+        # Resend's Idempotency-Key header dedupes provider-side for 24h. We reuse
+        # the durable outbox key (stable across retries of the same row) rather
+        # than generating a per-attempt key, so a crash-after-send-before-stamp
+        # retry can't double-send within that window. Local outbox retry state
+        # remains the real long-term durability mechanism beyond 24h.
+        options = {"idempotency_key": outbox_key} if outbox_key else None
+        result = await asyncio.to_thread(resend.Emails.send, params, options)
         logger.info("Email sent to %s: %s", to_email, result.get("id") if isinstance(result, dict) else result)
         if on_success:
             try:
@@ -545,10 +568,9 @@ async def _send(
         return False
 
 
-async def _dispatch(
+async def _render(
     *,
     slug: str,
-    to_email: str,
     ctx: dict,
     rows: list,
     cta_url: str | None = None,
@@ -558,20 +580,18 @@ async def _dispatch(
     fallback_title: str | None = None,
     fallback_intro: str | None = None,
     fallback_cta_text: str | None = None,
-    outbox_key: str | None = None,
-    on_success: dict | None = None,
-    queue_on_failure: bool = False,
-) -> bool:
-    """Slug-aware send: looks up admin overrides + branding, applies `{{var}}`
-    substitution, renders branded HTML, then sends via Resend.
+) -> tuple[str, str]:
+    """Slug-aware render only — looks up admin overrides + branding, applies
+    `{{var}}` substitution, renders branded HTML. Returns (subject, html) and
+    never touches the network. Split out of `_dispatch` so a caller that
+    needs to durably QUEUE an email (see `_queue_email`) can build the
+    subject/html up front without also triggering a synchronous send.
 
     `fallback_*` args are used when both (a) no admin override exists and (b)
     the registry has no default for that field. In practice the registry
     always provides defaults — these fallbacks are belt-and-suspenders for
     legacy callers that pre-date the registry.
     """
-    if not to_email:
-        return False
     reg = _registry_get_template(slug) or {}
     override = await _get_template_override(slug)
     subject = _substitute(
@@ -605,6 +625,36 @@ async def _dispatch(
         show_install=show_install,
         body_html=(body_html or "") + (signoff_html or ""),
         settings=settings,
+    )
+    return subject, html
+
+
+async def _dispatch(
+    *,
+    slug: str,
+    to_email: str,
+    ctx: dict,
+    rows: list,
+    cta_url: str | None = None,
+    body_html: str = "",
+    show_install: bool = True,
+    fallback_subject: str | None = None,
+    fallback_title: str | None = None,
+    fallback_intro: str | None = None,
+    fallback_cta_text: str | None = None,
+    outbox_key: str | None = None,
+    on_success: dict | None = None,
+    queue_on_failure: bool = False,
+) -> bool:
+    """Render then send via Resend — unchanged behavior for every existing
+    caller (see `_render` for the rendering half)."""
+    if not to_email:
+        return False
+    subject, html = await _render(
+        slug=slug, ctx=ctx, rows=rows, cta_url=cta_url, body_html=body_html,
+        show_install=show_install, fallback_subject=fallback_subject,
+        fallback_title=fallback_title, fallback_intro=fallback_intro,
+        fallback_cta_text=fallback_cta_text,
     )
     return await _send(
         to_email, subject, html,
@@ -649,6 +699,73 @@ async def notify_admin_new_booking(booking: dict, client: dict) -> None:
         rows=rows,
         cta_url=cta_url,
         show_install=False,
+    )
+
+
+async def queue_admin_new_shop_order(order: dict, client: dict | None = None) -> bool:
+    """A client Shop order just became PAID — durably QUEUE the operator
+    alert into email_outbox with a deterministic key, before any network
+    call. This is never a synchronous Resend send: rendering the template
+    is pure computation, and _queue_email only ever touches Mongo. A crash
+    right after this returns still leaves the row in email_outbox for
+    process_email_outbox to pick up and eventually deliver — there is no
+    window where queuing succeeds but the email is silently lost.
+
+    Deduplication is the SAME mechanism every other automated email in this
+    module already relies on: `_queue_email`'s upsert on `outbox_key` (see
+    its docstring) — calling this again while the row is still
+    pending/undelivered just re-affirms the same document, never creating a
+    second one. Once delivered, `on_success` stamps notification_log with
+    this order's key; callers should treat that as the ONLY signal that
+    it's safe to skip queuing again (never a pre-send gate — see server.py's
+    _queue_new_shop_order_notification)."""
+    if not ADMIN_NOTIFICATION_EMAIL:
+        return False
+    order_id = order.get("id") or ""
+    order_number = order_id[:8].upper()
+    lines = order.get("lines") or []
+    items_label = ", ".join(f"{l.get('quantity')}× {l.get('name')}" for l in lines) or "—"
+    has_physical = any(l.get("kind") == "product" for l in lines)
+    needs_attention = order.get("fulfillment_status") == "needs_attention"
+    client_name = order.get("client_name") or (client or {}).get("name") or "—"
+    rows = [
+        ("Client", client_name),
+        ("Order #", order_number),
+        ("Total", f"${float(order.get('total') or 0):.2f}"),
+        ("Items", items_label),
+        ("Pickup required", "Yes" if has_physical else "No"),
+        ("Needs attention", "Yes" if needs_attention else "No"),
+    ]
+    cta_url = f"{APP_PUBLIC_URL}/" if APP_PUBLIC_URL else None
+    subject, html = await _render(
+        slug="admin_new_shop_order",
+        ctx={
+            "client_name": client_name,
+            "order_number": order_number,
+            "total": f"{float(order.get('total') or 0):.2f}",
+            "items": items_label,
+        },
+        rows=rows,
+        cta_url=cta_url,
+        show_install=False,
+        fallback_subject=f"New Sit Happens Shop Order — Order #{order_number}",
+        fallback_title="🛍️ New Shop order",
+        fallback_intro=f"{client_name} just paid for a Shop order.",
+    )
+    outbox_key = f"shop:new-order:{order_id}"
+    return await _queue_email(
+        to_email=ADMIN_NOTIFICATION_EMAIL,
+        subject=subject,
+        html=html,
+        outbox_key=outbox_key,
+        on_success={"type": "notification_log", "key": f"shop_order_new:{order_id}"},
+        attachments=None,
+        error="queued_at_payment_time",
+        # Deterministic Mongo _id — every collection's _id index is always
+        # uniquely enforced, so two truly concurrent queue attempts for the
+        # SAME order can never both create a row, with no new index needed
+        # on this shared legacy collection.
+        document_id=outbox_key,
     )
 
 

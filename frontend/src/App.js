@@ -71,6 +71,7 @@ function AdminShell() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchTarget, setSearchTarget] = useState(null);
   const [messagesUnread, setMessagesUnread] = useState(0);
+  const [shopOrdersUnseen, setShopOrdersUnseen] = useState(0);
 
   // Poll the admin messages-unread badge every 60s and on tab change so
   // the sidebar dot stays roughly fresh without hammering the API.
@@ -86,6 +87,27 @@ function AdminShell() {
     tick();
     const h = setInterval(tick, 60000);
     return () => { alive = false; clearInterval(h); };
+  }, [can, tab]);
+
+  // Same pattern for the new-Shop-order badge on Front Desk. Pos.jsx
+  // dispatches "sh:shop-orders-seen" right after it successfully marks
+  // displayed orders seen, so the sidebar badge drops immediately instead
+  // of waiting up to 60s for the next poll — mirrors the existing "sh:nav"
+  // cross-component event convention rather than prop-drilling into Pos.
+  useEffect(() => {
+    if (!can || !can("take_payments")) return;
+    let alive = true;
+    const tick = async () => {
+      try {
+        const { data } = await api.get("/admin/shop-orders/unseen-count");
+        if (alive) setShopOrdersUnseen(data?.unseen || 0);
+      } catch { /* ignore */ }
+    };
+    tick();
+    const h = setInterval(tick, 60000);
+    const onSeen = () => tick();
+    window.addEventListener("sh:shop-orders-seen", onSeen);
+    return () => { alive = false; clearInterval(h); window.removeEventListener("sh:shop-orders-seen", onSeen); };
   }, [can, tab]);
 
   // Cmd/Ctrl+K to open global search
@@ -212,6 +234,10 @@ function AdminShell() {
             {n.id === "messages" && messagesUnread > 0 && (
               <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle`}
                     data-testid={`${prefix}nav-messages-badge`}>{collapsed ? "•" : messagesUnread}</span>
+            )}
+            {n.id === "pos" && shopOrdersUnseen > 0 && (
+              <span className={`${collapsed ? "absolute top-0 right-0 -mt-1 -mr-1" : "ml-2"} inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle`}
+                    data-testid={`${prefix}nav-pos-badge`}>{collapsed ? "•" : shopOrdersUnseen}</span>
             )}
           </button>
         ))}

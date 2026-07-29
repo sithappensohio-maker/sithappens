@@ -963,6 +963,13 @@ def test_e_mark_ready_and_picked_up_pickup_status(admin_headers, fresh_client):
     order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
         _make_line("product", product["id"], product["name"], 10.0, 1),
     ], status="paid")
+    # _seed_shop_order predates the pickup_status state machine and always
+    # seeds pickup_status=None — a real paid physical order would already be
+    # "preparing" by the time staff can act on it (see Group G), so seed
+    # that here too rather than weakening mark_ready's precondition.
+    async def _set_preparing(db):
+        await db.shop_orders.update_one({"id": order_id}, {"$set": {"pickup_status": "preparing"}})
+    _mongo_run(_set_preparing)
 
     r1 = requests.post(f"{API}/admin/shop-orders/{order_id}/fulfillment", headers=admin_headers,
                         json={"action": "mark_ready"}, timeout=15)
@@ -1228,3 +1235,716 @@ def test_h_retry_fulfillment_never_creates_new_stripe_attempt(admin_headers, fre
     assert r.status_code == 400, r.text
     after = _mongo_run(_count_attempts)
     assert after == before == 0
+
+
+# ===========================================================================
+# GROUP F — legacy product reservation compatibility + checkout idempotency
+# key lifetime (found via a real manual TEST-mode checkout attempt against a
+# product created before stock_reserved/shop_reservations existed on the
+# schema; see the investigation report for the traced root cause).
+# ===========================================================================
+
+def _strip_legacy_reservation_fields(product_id):
+    """Simulates a product created before stock_reserved/shop_reservations
+    existed on the schema — exactly the real-world state found on the
+    STRIPE TEST LEASH product that triggered the original 409."""
+    async def _strip(db):
+        await db.pos_products.update_one(
+            {"id": product_id},
+            {"$unset": {"stock_reserved": "", "shop_reservations": ""}},
+        )
+    _mongo_run(_strip)
+
+
+def test_f_legacy_product_first_reservation_succeeds_past_stripe(admin_headers, fresh_client):
+    """A. A legacy product with NO stock_reserved/shop_reservations fields
+    at all must still be able to reserve its first unit. Proven the same
+    way test_h_checkout_ignores_client_id_in_request_body proves order
+    creation: this environment has no real Stripe test keys, so a
+    successful reservation is observed as a 502 (Stripe unreachable) —
+    if the legacy-compatibility fix were missing, the request would instead
+    fail earlier with 409 ("Stock changed too many times concurrently"),
+    since the reservation's atomic filter would never match a document
+    missing the field."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=2.0,
+                                     track_inventory=True, starting_stock=2)
+    _strip_legacy_reservation_fields(product["id"])
+    legacy = _get_product(product["id"])
+    assert "stock_reserved" not in legacy
+    assert "shop_reservations" not in legacy
+
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
+        "idempotency_key": str(uuid.uuid4()),
+    }, timeout=15)
+    assert r.status_code == 502, r.text  # got PAST reservation — only Stripe itself failed
+    assert "concurrently" not in r.text.lower()
+
+
+def test_f_legacy_first_reservation_creates_fields(admin_headers, fresh_client):
+    """B. The first successful reservation against a legacy product must
+    create stock_reserved/shop_reservations via the atomic update itself —
+    no manual backfill required. (The Stripe-unreachable cleanup path then
+    releases the reservation again, so the entry ends up state=released and
+    stock_reserved back at 0 — but the FIELDS themselves now exist, proving
+    the atomic upsert created them.)"""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=2.0,
+                                     track_inventory=True, starting_stock=2)
+    _strip_legacy_reservation_fields(product["id"])
+
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
+        "idempotency_key": str(uuid.uuid4()),
+    }, timeout=15)
+    assert r.status_code == 502, r.text
+
+    after = _get_product(product["id"])
+    assert "stock_reserved" in after
+    assert "shop_reservations" in after
+    assert len(after["shop_reservations"]) == 1
+    assert after["shop_reservations"][0]["state"] == "released"  # Stripe cleanup released it
+    assert after["stock_reserved"] == 0
+    assert after["stock_on_hand"] == 2  # never committed — no payment ever happened
+
+
+def test_f_legacy_product_last_unit_still_blocks_second_reservation(admin_headers, fresh_client):
+    """C. The legacy-compatibility OR-filter must never weaken the
+    optimistic-lock guarantee: once a legacy product's last unit is
+    reserved, a second concurrent reservation attempt must still fail,
+    never oversell. Mirrors test_b_reserve_blocks_overselling_same_product
+    exactly, starting from a product with NO stock_reserved/
+    shop_reservations fields at all."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=9.0,
+                                    track_inventory=True, starting_stock=1)
+    _strip_legacy_reservation_fields(product["id"])
+
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 9.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)  # simulates the fixed atomic reservation
+
+    fresh_product = _get_product(product["id"])
+    assert fresh_product["stock_reserved"] == 1  # field now created, exactly like the real fix would do
+
+    other_client = _make_client(admin_headers, uuid.uuid4().hex[:6])
+    try:
+        headers = _client_headers(other_client["id"], other_client["email"])
+        r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+            "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
+            "idempotency_key": str(uuid.uuid4()),
+        }, timeout=15)
+        assert r.status_code == 400, r.text
+        assert "stock" in r.text.lower()
+    finally:
+        requests.delete(f"{API}/clients/{other_client['id']}", headers=admin_headers, timeout=15)
+
+
+def test_f_new_product_initialized_with_reservation_fields(admin_headers):
+    """D. create_pos_product must initialize stock_reserved=0.0 and
+    shop_reservations=[] on every new product — never leave them absent."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=5.0,
+                                     track_inventory=True, starting_stock=3)
+    doc = _get_product(product["id"])
+    assert doc["stock_reserved"] == 0.0
+    assert doc["shop_reservations"] == []
+
+
+def test_f_retry_same_idempotency_key_recovers_same_shop_order(admin_headers, fresh_client):
+    """E. Retrying checkout for the SAME unchanged cart with the SAME
+    idempotency key (the corrected frontend behavior — no longer clearing
+    the key on a generic error) must resume the SAME shop_order, never
+    fork a second one. Note: once the first attempt's Stripe Checkout
+    Session creation itself fails, the existing (unchanged) code marks
+    that order 'payment_failed' and releases its reservation by design —
+    that order is then terminally dead, so a same-key retry correctly gets
+    a 409 ('start a new checkout') rather than a second 502. That is a
+    different, already-intentional failure mode from the bug this session
+    fixed (which raised its 409 from the reservation step BEFORE the order
+    was ever touched, leaving it recoverable). Either way, the key proof
+    for this fix is the one that matters here: the retry must resolve
+    against the SAME claim/order — it must never create a second one."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=7.0)
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    idem_key = str(uuid.uuid4())
+    cart = {"items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key}
+
+    r1 = requests.post(f"{API}/shop/checkout", headers=headers, json=cart, timeout=15)
+    assert r1.status_code == 502, r1.text  # Stripe unreachable in this test env
+
+    async def _find_order(db):
+        return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0, "id": 1})
+    order_id_1 = _mongo_run(_find_order)["id"]
+
+    r2 = requests.post(f"{API}/shop/checkout", headers=headers, json=cart, timeout=15)
+    assert r2.status_code in (502, 409), r2.text  # never a fresh 2xx/order — see docstring
+
+    async def _counts(db):
+        orders = await db.shop_orders.find({"client_id": fresh_client["id"]}, {"_id": 0, "id": 1}).to_list(10)
+        claims = await db.shop_checkout_claims.find({"idempotency_key": idem_key}, {"_id": 0}).to_list(10)
+        return orders, claims
+    orders, claims = _mongo_run(_counts)
+    assert len(orders) == 1  # never a second order for the same retried cart
+    assert orders[0]["id"] == order_id_1
+    assert len(claims) == 1
+    assert claims[0]["shop_order_id"] == order_id_1  # the single claim still points at that single order
+
+
+def test_f_same_idempotency_key_different_cart_rejected(admin_headers, fresh_client):
+    """F. Reusing the SAME idempotency key against a MATERIALLY DIFFERENT
+    cart must be rejected (409), never silently treated as a retry — this
+    is exactly why the frontend must mint a fresh key whenever the cart
+    changes (item added/removed/qty changed), rather than relying on this
+    guard alone."""
+    product_a = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=4.0)
+    product_b = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=6.0)
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    idem_key = str(uuid.uuid4())
+
+    r1 = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "product", "ref_id": product_a["id"], "quantity": 1}],
+        "idempotency_key": idem_key,
+    }, timeout=15)
+    assert r1.status_code == 502, r1.text
+
+    r2 = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "product", "ref_id": product_b["id"], "quantity": 1}],  # different cart, same key
+        "idempotency_key": idem_key,
+    }, timeout=15)
+    assert r2.status_code == 409, r2.text
+    assert "different request" in r2.text.lower()
+
+    async def _order_count(db):
+        return await db.shop_orders.count_documents({"client_id": fresh_client["id"]})
+    assert _mongo_run(_order_count) == 1  # the mismatched retry never created a second order
+
+
+# ===========================================================================
+# GROUP G — pickup_status workflow: monotonic initialization on successful
+# fulfillment, strict staff transition guards, never regressed by a
+# payment/webhook replay.
+# ===========================================================================
+
+def _pay_order_via_webhook(order_id, order, client_id, event_id=None):
+    """Drives a seeded pending order through a real signed webhook
+    checkout.session.completed call — the same pattern Groups B/C/H already
+    use — never a real Stripe API call."""
+    attempt_id, session_id = _seed_pending_shop_attempt(order_id, client_id, order["total"])
+    r = _post_stripe_webhook("checkout.session.completed", {
+        "id": session_id, "payment_status": "paid", "currency": "usd",
+        "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": client_id},
+    }, event_id=event_id)
+    return r, attempt_id, session_id
+
+
+def _fulfillment_action(admin_headers, order_id, action):
+    return requests.post(f"{API}/admin/shop-orders/{order_id}/fulfillment", headers=admin_headers,
+                          json={"action": action}, timeout=15)
+
+
+def test_g_paid_physical_order_initializes_pickup_preparing(admin_headers, fresh_client):
+    """A. A paid order containing a physical product line must initialize
+    pickup_status='preparing' as part of normal fulfillment."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    r, _, _ = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r.status_code == 200, r.text
+    assert _get_order(order_id)["pickup_status"] == "preparing"
+
+
+def test_g_paid_credit_pack_only_order_initializes_not_applicable(admin_headers, fresh_client):
+    """B. A paid order with no physical line (credit pack only) must
+    initialize pickup_status='not_applicable'."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=3, price=20.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("credit_pack", pack["id"], pack["name"], 20.0, 1),
+    ])
+    r, _, _ = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r.status_code == 200, r.text
+    assert _get_order(order_id)["pickup_status"] == "not_applicable"
+
+
+def test_g_paid_training_program_only_order_initializes_not_applicable(admin_headers, fresh_client):
+    """C. Same as B, for a training-program-only order."""
+    program = _make_online_program(admin_headers, uuid.uuid4().hex[:6], price=300.0, count=6)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("training_program", program["id"], program["name"], 300.0, 1),
+    ])
+    r, _, _ = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r.status_code == 200, r.text
+    assert _get_order(order_id)["pickup_status"] == "not_applicable"
+
+
+def test_g_webhook_replay_never_regresses_ready_for_pickup(admin_headers, fresh_client):
+    """D. Once staff has moved a physical order to ready_for_pickup, a
+    replayed payment webhook for the SAME attempt must never regress it
+    back to preparing."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    r1, attempt_id, session_id = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r1.status_code == 200, r1.text
+    assert _get_order(order_id)["pickup_status"] == "preparing"
+
+    assert _fulfillment_action(admin_headers, order_id, "mark_ready").status_code == 200
+    assert _get_order(order_id)["pickup_status"] == "ready_for_pickup"
+
+    replay_obj = {
+        "id": session_id, "payment_status": "paid", "currency": "usd",
+        "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    }
+    r2 = _post_stripe_webhook("checkout.session.completed", replay_obj, event_id=f"evt_{uuid.uuid4().hex}")
+    assert r2.status_code == 200, r2.text
+    assert _get_order(order_id)["pickup_status"] == "ready_for_pickup"  # never regressed to preparing
+
+
+def test_g_webhook_replay_never_regresses_picked_up(admin_headers, fresh_client):
+    """E. Same guarantee once the order has been fully picked up."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    r1, attempt_id, session_id = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r1.status_code == 200, r1.text
+
+    assert _fulfillment_action(admin_headers, order_id, "mark_ready").status_code == 200
+    assert _fulfillment_action(admin_headers, order_id, "mark_picked_up").status_code == 200
+    assert _get_order(order_id)["pickup_status"] == "picked_up"
+
+    replay_obj = {
+        "id": session_id, "payment_status": "paid", "currency": "usd",
+        "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    }
+    r2 = _post_stripe_webhook("checkout.session.completed", replay_obj, event_id=f"evt_{uuid.uuid4().hex}")
+    assert r2.status_code == 200, r2.text
+    assert _get_order(order_id)["pickup_status"] == "picked_up"  # never regressed
+
+
+def test_g_mark_ready_from_preparing_succeeds(admin_headers, fresh_client):
+    """F. preparing -> mark_ready succeeds; repeating the SAME action again
+    is a safe no-op that never regresses the state."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+
+    r = _fulfillment_action(admin_headers, order_id, "mark_ready")
+    assert r.status_code == 200, r.text
+    assert r.json()["pickup_status"] == "ready_for_pickup"
+
+    r_repeat = _fulfillment_action(admin_headers, order_id, "mark_ready")
+    assert r_repeat.status_code == 200, r_repeat.text  # idempotent no-op
+    assert r_repeat.json()["pickup_status"] == "ready_for_pickup"  # never regressed
+
+
+def test_g_mark_picked_up_from_preparing_rejected(admin_headers, fresh_client):
+    """G. preparing -> mark_picked_up must be rejected (skipping a step),
+    with zero state change."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    assert _get_order(order_id)["pickup_status"] == "preparing"
+
+    r = _fulfillment_action(admin_headers, order_id, "mark_picked_up")
+    assert r.status_code == 400, r.text
+    assert _get_order(order_id)["pickup_status"] == "preparing"  # unchanged
+
+
+def test_g_mark_picked_up_from_ready_succeeds(admin_headers, fresh_client):
+    """H. ready_for_pickup -> mark_picked_up succeeds."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0, track_inventory=True, starting_stock=3)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    _reserve_product_inventory(product["id"], order_id, item_id, 1)
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    assert _fulfillment_action(admin_headers, order_id, "mark_ready").status_code == 200
+
+    r = _fulfillment_action(admin_headers, order_id, "mark_picked_up")
+    assert r.status_code == 200, r.text
+    assert r.json()["pickup_status"] == "picked_up"
+
+
+def test_g_pickup_action_rejected_for_not_applicable_order(admin_headers, fresh_client):
+    """I. Neither pickup action is ever valid for an order with no physical
+    line — both must be rejected, with zero state change."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=3, price=20.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("credit_pack", pack["id"], pack["name"], 20.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    assert _get_order(order_id)["pickup_status"] == "not_applicable"
+
+    r1 = _fulfillment_action(admin_headers, order_id, "mark_ready")
+    assert r1.status_code == 400, r1.text
+    r2 = _fulfillment_action(admin_headers, order_id, "mark_picked_up")
+    assert r2.status_code == 400, r2.text
+
+
+# ===========================================================================
+# GROUP I — new-shop-order admin notification: durable-queue-first design.
+# Queuing directly into email_outbox (via
+# email_service.queue_admin_new_shop_order) IS the exactly-once mechanism —
+# notification_log is only a post-delivery skip-check, never a pre-send
+# gate. Run with ADMIN_NOTIFICATION_EMAIL configured (see the targeted-run
+# instructions) so queuing doesn't no-op; RESEND_API_KEY stays unset so any
+# actual delivery attempt fails offline with zero real network calls.
+# ===========================================================================
+
+def _outbox_doc(key):
+    async def _fetch(db):
+        return await db.email_outbox.find_one({"key": key}, {"_id": 0})
+    return _mongo_run(_fetch)
+
+
+def _outbox_count(key):
+    async def _fetch(db):
+        return await db.email_outbox.count_documents({"key": key})
+    return _mongo_run(_fetch)
+
+
+def test_i_paid_order_queues_exactly_one_durable_outbox_item(admin_headers, fresh_client):
+    """A. The first successful _apply_shop_payment run for a paid order
+    creates exactly one durable email_outbox row, status pending, zero
+    delivery attempts yet — proving queuing itself never touched the
+    network."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    key = f"shop:new-order:{order_id}"
+    assert _outbox_count(key) == 1
+    doc = _outbox_doc(key)
+    assert doc["status"] == "pending"
+    assert doc["attempts"] == 0
+    assert order_id[:8].upper() in doc["subject"]
+
+
+def test_i_webhook_replay_never_duplicates_outbox_row(admin_headers, fresh_client):
+    """B. Replaying the SAME paid-event webhook must never create a second
+    email_outbox row for the same order."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    r1, attempt_id, session_id = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r1.status_code == 200, r1.text
+    key = f"shop:new-order:{order_id}"
+    assert _outbox_count(key) == 1
+
+    replay_obj = {
+        "id": session_id, "payment_status": "paid", "currency": "usd",
+        "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    }
+    r2 = _post_stripe_webhook("checkout.session.completed", replay_obj, event_id=f"evt_{uuid.uuid4().hex}")
+    assert r2.status_code == 200, r2.text
+    assert _outbox_count(key) == 1  # still exactly one
+
+
+def test_i_retry_fulfillment_never_duplicates_outbox_row(admin_headers, fresh_client):
+    """C. The admin Retry Fulfillment action re-runs _apply_shop_payment for
+    an already-paid order — must not create a second outbox row either."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    key = f"shop:new-order:{order_id}"
+    assert _outbox_count(key) == 1
+
+    r = _fulfillment_action(admin_headers, order_id, "retry_fulfillment")
+    assert r.status_code == 200, r.text
+    assert _outbox_count(key) == 1  # still exactly one
+
+
+def test_i_two_different_orders_get_two_independent_outbox_rows(admin_headers, fresh_client):
+    """D. Sanity: distinct orders never collide on the same outbox key."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_1, o1 = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    order_2, o2 = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_1, o1, fresh_client["id"])[0].status_code == 200
+    assert _pay_order_via_webhook(order_2, o2, fresh_client["id"])[0].status_code == 200
+    assert _outbox_count(f"shop:new-order:{order_1}") == 1
+    assert _outbox_count(f"shop:new-order:{order_2}") == 1
+
+
+def test_i_simulated_send_failure_leaves_item_queued_and_retryable(admin_headers, fresh_client):
+    """E. Driving the REAL outbox worker (email_service.process_email_outbox)
+    with RESEND_API_KEY unset in this test environment — so the send attempt
+    fails offline, zero real network calls — must leave the row queued and
+    retryable: never deleted, never marked delivered, attempts incremented.
+
+    This is the one deliberate exception to this file's black-box-HTTP
+    convention: no admin HTTP endpoint drains the outbox (it's a
+    process/scheduler-driven worker), so proving the retry path for real
+    requires importing email_service directly rather than fabricating the
+    claim."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    key = f"shop:new-order:{order_id}"
+    before = _outbox_doc(key)
+    assert before["attempts"] == 0
+
+    async def _run_worker(db):
+        import email_service
+        # This local test DB has accumulated a large backlog of unrelated
+        # pending email_outbox rows from earlier test sessions — a high
+        # limit ensures our freshly-queued row (oldest-first ordering)
+        # isn't pushed out by that backlog.
+        return await email_service.process_email_outbox(db, limit=5000)
+    result = _mongo_run(_run_worker)
+    assert result["failed"] >= 1
+
+    after = _outbox_doc(key)
+    assert after is not None  # never deleted
+    assert after["status"] == "pending"  # never marked delivered
+    assert after["attempts"] == 1  # incremented — will be retried later
+
+
+def test_i_payment_and_fulfillment_succeed_even_if_notification_never_delivered(admin_headers, fresh_client):
+    """F. The order still ends up fully PAID and fulfilled even though the
+    admin email was only ever queued, never actually delivered (RESEND_API_KEY
+    unset) — proving payment/fulfillment success is fully decoupled from
+    notification delivery."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    fresh_order = _get_order(order_id)
+    assert fresh_order["status"] == "paid"
+    assert fresh_order["fulfillment_status"] == "fulfilled"
+    doc = _outbox_doc(f"shop:new-order:{order_id}")
+    assert doc["status"] == "pending"  # queued, never delivered — payment succeeded anyway
+
+
+def test_i_true_concurrent_queue_attempts_create_exactly_one_row(admin_headers, fresh_client):
+    """G. Two GENUINELY concurrent attempts (asyncio.gather, not sequential
+    calls) to queue the new-order notification for the SAME shop order must
+    collapse to exactly one email_outbox row. This is the deterministic-_id
+    guarantee doing its job: email_outbox.key alone is NOT uniquely indexed
+    (deliberately — no new constraint on this shared legacy collection), so
+    without the _id-based document_id, two truly concurrent upserts on a
+    non-indexed field could both succeed and create two rows. Same
+    deliberate exception to the black-box-HTTP convention as the outbox
+    worker test above: this exercises email_service.queue_admin_new_shop_order
+    directly, since there is no way to force two HTTP webhook deliveries to
+    race at this exact line from outside the process."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+
+    async def _race(db):
+        import email_service
+        email_service.set_db(db)  # queue_admin_new_shop_order has no db param — uses the module global
+        client_doc = await db.clients.find_one({"id": fresh_client["id"]}, {"_id": 0})
+        return await asyncio.gather(
+            email_service.queue_admin_new_shop_order(order, client_doc),
+            email_service.queue_admin_new_shop_order(order, client_doc),
+        )
+    results = _mongo_run(_race)
+    assert all(results)
+    assert _outbox_count(f"shop:new-order:{order_id}") == 1
+
+
+# ===========================================================================
+# GROUP J — Front Desk "new Shop order" badge (admin_unseen). Initialized
+# ONLY at order creation (create_shop_checkout, never inside the replayable
+# _apply_shop_payment), so a webhook replay or Retry Fulfillment can never
+# reset it back to true. The unseen-count query is an exact match on
+# admin_unseen == True — a historical order missing the field entirely
+# never counts, by construction.
+# ===========================================================================
+
+def _unseen_count(admin_headers):
+    r = requests.get(f"{API}/admin/shop-orders/unseen-count", headers=admin_headers, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json()["unseen"]
+
+
+def test_j_new_order_has_admin_unseen_true_but_does_not_count_until_paid(admin_headers, fresh_client):
+    """A. create_shop_checkout (the real endpoint) initializes admin_unseen
+    true on every new order — but the unseen-count query also requires
+    status=='paid', so an order that never reaches 'paid' (this test
+    environment's Stripe call always fails, landing the order in
+    'payment_failed' — see the earlier investigation in this session)
+    contributes 0 to the count."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    before = _unseen_count(admin_headers)
+    r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
+        "idempotency_key": str(uuid.uuid4()),
+    }, timeout=15)
+    assert r.status_code == 502, r.text  # Stripe unreachable in this test env — order still created first
+
+    async def _find_order(db):
+        return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
+    order = _mongo_run(_find_order)
+    assert order["status"] != "paid"
+    assert order["admin_unseen"] is True
+    after = _unseen_count(admin_headers)
+    assert after == before  # never-paid order never counts
+
+
+def test_j_paid_order_increments_unseen_count(admin_headers, fresh_client):
+    """B. An order with admin_unseen=true (as create_shop_checkout leaves
+    it) that becomes paid counts exactly once."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    # _seed_shop_order is a test-only fixture predating this field — set
+    # admin_unseen explicitly here to mirror what a real create_shop_checkout
+    # order looks like at creation.
+    async def _init_unseen(db):
+        await db.shop_orders.update_one({"id": order_id}, {"$set": {"admin_unseen": True}})
+    _mongo_run(_init_unseen)
+
+    before = _unseen_count(admin_headers)
+    assert _pay_order_via_webhook(order_id, order, fresh_client["id"])[0].status_code == 200
+    after = _unseen_count(admin_headers)
+    assert after == before + 1
+
+
+def _make_paid_unseen_order(admin_headers, fresh_client, product):
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ])
+    async def _init_unseen(db):
+        await db.shop_orders.update_one({"id": order_id}, {"$set": {"admin_unseen": True}})
+    _mongo_run(_init_unseen)
+    r1, attempt_id, session_id = _pay_order_via_webhook(order_id, order, fresh_client["id"])
+    assert r1.status_code == 200, r1.text
+    return order_id, order, attempt_id, session_id
+
+
+def test_j_mark_seen_changes_count_to_zero(admin_headers, fresh_client):
+    """C. Marking a specific paid+unseen order seen flips it to false and
+    drops it out of the count."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order, _, _ = _make_paid_unseen_order(admin_headers, fresh_client, product)
+    before = _unseen_count(admin_headers)
+    assert before >= 1
+
+    r = requests.post(f"{API}/admin/shop-orders/mark-seen", headers=admin_headers,
+                       json={"order_ids": [order_id]}, timeout=15)
+    assert r.status_code == 200, r.text
+    assert r.json()["marked"] == 1
+
+    assert _get_order(order_id)["admin_unseen"] is False
+    after = _unseen_count(admin_headers)
+    assert after == before - 1
+
+
+def test_j_webhook_replay_never_resets_admin_unseen_to_true(admin_headers, fresh_client):
+    """D. Once marked seen, replaying the paid-event webhook must never flip
+    admin_unseen back to true — it's initialized only at order creation,
+    never touched inside _apply_shop_payment."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order, attempt_id, session_id = _make_paid_unseen_order(admin_headers, fresh_client, product)
+    requests.post(f"{API}/admin/shop-orders/mark-seen", headers=admin_headers,
+                  json={"order_ids": [order_id]}, timeout=15)
+    assert _get_order(order_id)["admin_unseen"] is False
+
+    replay_obj = {
+        "id": session_id, "payment_status": "paid", "currency": "usd",
+        "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    }
+    r2 = _post_stripe_webhook("checkout.session.completed", replay_obj, event_id=f"evt_{uuid.uuid4().hex}")
+    assert r2.status_code == 200, r2.text
+    assert _get_order(order_id)["admin_unseen"] is False  # never reset to true
+
+
+def test_j_retry_fulfillment_never_resets_admin_unseen_to_true(admin_headers, fresh_client):
+    """E. Same guarantee for the admin Retry Fulfillment action."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order, _, _ = _make_paid_unseen_order(admin_headers, fresh_client, product)
+    requests.post(f"{API}/admin/shop-orders/mark-seen", headers=admin_headers,
+                  json={"order_ids": [order_id]}, timeout=15)
+    assert _get_order(order_id)["admin_unseen"] is False
+
+    r = _fulfillment_action(admin_headers, order_id, "retry_fulfillment")
+    assert r.status_code == 200, r.text
+    assert _get_order(order_id)["admin_unseen"] is False  # never reset to true
+
+
+def test_j_historical_paid_order_missing_admin_unseen_never_counts(admin_headers, fresh_client):
+    """F. A historical order (seeded exactly like _seed_shop_order always
+    has, with NO admin_unseen field at all) must never count as unseen —
+    the legacy-safety requirement."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    before = _unseen_count(admin_headers)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ], status="paid")
+    fresh_order = _get_order(order_id)
+    assert "admin_unseen" not in fresh_order
+    after = _unseen_count(admin_headers)
+    assert after == before  # missing field never counts as unseen
+
+
+def test_j_needs_attention_order_stays_needs_attention_after_marked_seen(admin_headers, fresh_client):
+    """G. Seen/unseen is not fulfillment status — marking an order seen must
+    never alter its fulfillment_status (or any other field). A
+    needs_attention order stays needs_attention, still eligible for Retry
+    Fulfillment, after being marked seen."""
+    product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("product", product["id"], product["name"], 10.0, 1),
+    ], status="paid")
+
+    async def _mark_needs_attention_and_unseen(db):
+        await db.shop_orders.update_one(
+            {"id": order_id},
+            {"$set": {"fulfillment_status": "needs_attention", "admin_unseen": True}},
+        )
+    _mongo_run(_mark_needs_attention_and_unseen)
+
+    r = requests.post(f"{API}/admin/shop-orders/mark-seen", headers=admin_headers,
+                       json={"order_ids": [order_id]}, timeout=15)
+    assert r.status_code == 200, r.text
+
+    fresh_order = _get_order(order_id)
+    assert fresh_order["admin_unseen"] is False
+    assert fresh_order["fulfillment_status"] == "needs_attention"  # untouched by mark-seen
+    assert fresh_order["status"] == "paid"  # untouched
+    assert fresh_order["pickup_status"] is None  # untouched

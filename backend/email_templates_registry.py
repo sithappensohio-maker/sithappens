@@ -200,6 +200,18 @@ EMAIL_TEMPLATES = [
         "variables": ["client_name", "dog_name", "service_label", "count", "kind", "dates_preview"],
     },
     {
+        "slug": "admin_new_shop_order",
+        "name": "Admin · New Shop Order",
+        "description": "Notifies the operator when a client Shop order is successfully paid.",
+        "category": "admin",
+        "audience": "admin",
+        "default_subject": "New Sit Happens Shop Order — Order #{{order_number}}",
+        "default_title": "🛍️ New Shop order — #{{order_number}}",
+        "default_intro_html": "<strong>{{client_name}}</strong> just paid for a Shop order totaling <strong>${{total}}</strong>.",
+        "default_cta_text": "Open Front Desk",
+        "variables": ["client_name", "order_number", "total", "items"],
+    },
+    {
         "slug": "admin_new_client",
         "name": "Admin · New Client Signup",
         "description": "Fires when a new client account is created.",

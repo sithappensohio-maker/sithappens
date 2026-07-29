@@ -345,8 +345,30 @@ export default function Pos() {
   const [onlineOrders, setOnlineOrders] = useState([]);
   const [onlineOrdersOpen, setOnlineOrdersOpen] = useState(false);
   const [orderActionBusyId, setOrderActionBusyId] = useState(null);
+  const [onlineOrdersUnseenCount, setOnlineOrdersUnseenCount] = useState(0);
+
+  const refreshUnseenCount = () => api.get("/admin/shop-orders/unseen-count")
+    .then(({ data }) => setOnlineOrdersUnseenCount(data.unseen || 0)).catch(() => {});
+  useEffect(() => { refreshUnseenCount(); }, []);
+
+  // Never clear the badge before the order list has actually loaded — the
+  // mark-seen call only fires inside this .then(), after a successful fetch,
+  // for exactly the paid orders that came back with admin_unseen === true.
   const loadOnlineOrders = () => api.get("/admin/shop-orders")
-    .then(({ data }) => setOnlineOrders(data.orders || [])).catch(() => {});
+    .then(({ data }) => {
+      const orders = data.orders || [];
+      setOnlineOrders(orders);
+      const newlyUnseenIds = orders.filter((o) => o.admin_unseen === true).map((o) => o.id);
+      if (newlyUnseenIds.length > 0) {
+        api.post("/admin/shop-orders/mark-seen", { order_ids: newlyUnseenIds })
+          .then(() => {
+            setOnlineOrders((prev) => prev.map((o) => (newlyUnseenIds.includes(o.id) ? { ...o, admin_unseen: false } : o)));
+            refreshUnseenCount();
+            window.dispatchEvent(new CustomEvent("sh:shop-orders-seen"));
+          })
+          .catch(() => {});
+      }
+    }).catch(() => {});
   useEffect(() => { if (onlineOrdersOpen) loadOnlineOrders(); }, [onlineOrdersOpen]);
 
   const runOrderAction = async (orderId, action) => {
@@ -571,6 +593,10 @@ export default function Pos() {
           <button onClick={() => setOnlineOrdersOpen((o) => !o)} data-testid="pos-online-orders-toggle"
                   className="bg-bgBase border border-bgHover hover:border-shGreen/50 rounded px-4 py-2 text-white text-[12px] font-black uppercase tracking-widest">
             Online Orders
+            {onlineOrdersUnseenCount > 0 && (
+              <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                    data-testid="pos-online-orders-unseen-badge">{onlineOrdersUnseenCount} NEW</span>
+            )}
           </button>
         </div>
       </div>
@@ -711,11 +737,18 @@ export default function Pos() {
             {onlineOrders.length === 0 && <p className="text-gray-500 text-sm">No paid Shop orders yet.</p>}
             {onlineOrders.map((o) => {
               const busy = orderActionBusyId === o.id;
+              const hasPhysical = (o.lines || []).some((l) => l.kind === "product");
               return (
                 <div key={o.id} className="border border-bgHover rounded-lg p-3" data-testid={`online-order-${o.id}`}>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <p className="text-white font-bold text-sm">Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}</p>
+                      <p className="text-white font-bold text-sm">
+                        Order #{o.id.slice(0, 8).toUpperCase()} · {o.client_name || "Unknown client"}
+                        {o.admin_unseen === true && (
+                          <span className="ml-2 inline-block bg-shOrange text-bgHeader text-[10px] font-black px-1.5 py-0.5 rounded-full align-middle"
+                                data-testid={`online-order-new-${o.id}`}>NEW</span>
+                        )}
+                      </p>
                       <p className="text-gray-500 text-[12px]">
                         {o.created_at ? new Date(o.created_at).toLocaleString() : "—"} · {money(o.total)}
                       </p>
@@ -724,16 +757,32 @@ export default function Pos() {
                       </p>
                     </div>
                     <div className="text-right">
-                      {o.fulfillment_status === "fulfilled" ? (
-                        <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
-                      ) : o.fulfillment_status === "needs_attention" ? (
+                      {/* For physical/mixed orders, pickup_status IS the customer-facing
+                          status — fulfillment_status is an internal detail, never the
+                          prominent label here. Non-physical orders have no pickup concept,
+                          so fulfillment_status stays primary for those. */}
+                      {o.fulfillment_status === "needs_attention" ? (
                         <span className="text-shOrange text-[11px] font-black uppercase tracking-widest">Needs Attention</span>
+                      ) : hasPhysical ? (
+                        o.pickup_status === "picked_up" ? (
+                          <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Completed</span>
+                        ) : o.pickup_status === "ready_for_pickup" ? (
+                          <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Ready for Pickup</span>
+                        ) : o.pickup_status === "preparing" ? (
+                          <span className="text-gray-300 text-[11px] font-black uppercase tracking-widest">Preparing</span>
+                        ) : (
+                          <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Processing</span>
+                        )
+                      ) : o.fulfillment_status === "fulfilled" ? (
+                        <span className="text-shGreen text-[11px] font-black uppercase tracking-widest">Fulfilled</span>
                       ) : (
                         <span className="text-gray-500 text-[11px] font-black uppercase tracking-widest">Processing</span>
                       )}
-                      <p className="text-[11px] text-gray-500 mt-1 uppercase tracking-widest">
-                        {o.pickup_status === "picked_up" ? "Picked Up" : o.pickup_status === "ready_for_pickup" ? "Ready for Pickup" : "Not Ready"}
-                      </p>
+                      {hasPhysical && (
+                        <p className="text-[10px] text-gray-600 mt-1">
+                          Payment: Paid · Fulfillment: {o.fulfillment_status === "fulfilled" ? "Complete" : o.fulfillment_status === "needs_attention" ? "Attention" : "Processing"}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -744,14 +793,14 @@ export default function Pos() {
                         {busy ? "Retrying…" : "Retry Fulfillment"}
                       </button>
                     )}
-                    {o.pickup_status !== "ready_for_pickup" && o.pickup_status !== "picked_up" && (
+                    {o.pickup_status === "preparing" && (
                       <button onClick={() => runOrderAction(o.id, "mark_ready")} disabled={busy}
                               data-testid={`online-order-mark-ready-${o.id}`}
                               className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">
                         Mark Ready
                       </button>
                     )}
-                    {o.pickup_status !== "picked_up" && (
+                    {o.pickup_status === "ready_for_pickup" && (
                       <button onClick={() => runOrderAction(o.id, "mark_picked_up")} disabled={busy}
                               data-testid={`online-order-mark-picked-up-${o.id}`}
                               className="bg-bgBase border border-bgHover hover:border-shGreen/50 text-white px-3 py-1.5 rounded text-[11px] font-black uppercase tracking-widest disabled:opacity-50">

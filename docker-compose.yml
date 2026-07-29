@@ -58,6 +58,33 @@ services:
       # Persistent host bind mount for in-app JSON backups and pre-restore snapshots.
       - ./backups:/app/backups
 
+  email-worker:
+    # Reuses the backend image/build — only the command differs. Runs ONLY
+    # the durable email_outbox processor (backend/email_worker.py), never
+    # maybe_run_daily/birthdays/vaccines/homework/trainer-digest/P&L jobs.
+    # Exactly ONE instance — do not scale this service.
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: sit-happens-email-worker
+    command: ["python", "email_worker.py"]
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "${DB_NAME:-sit_happens}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      SENDER_EMAIL: "${SENDER_EMAIL:-}"
+      ADMIN_NOTIFICATION_EMAIL: "${ADMIN_NOTIFICATION_EMAIL:-}"
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-}"
+      # Required only because email_service._is_in_quiet_hours() imports
+      # server.py for get_settings(), and server.py reads JWT_SECRET at
+      # module import time. Not otherwise used by this worker.
+      JWT_SECRET: "${JWT_SECRET:-}"
+    # No ports exposed — this service does not serve HTTP traffic.
+
   frontend:
     build:
       context: .

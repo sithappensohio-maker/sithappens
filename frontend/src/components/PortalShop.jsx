@@ -233,12 +233,16 @@ export default function PortalShop({ initialTab = "all", fullScreen = false }) {
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not start checkout");
       setCheckoutBusy(false);
-      idemKeyRef.current = null;
+      // Keep idemKeyRef.current — a retry of this SAME unchanged cart must
+      // reuse the same idempotency key so the server resumes the same
+      // claim/order/reservation instead of creating a second one. Only cart
+      // mutations (addToCart/changeQty/removeFromCart, above) or a
+      // completed purchase (below) mint a new key.
     }
   };
 
   // ── Returning from Stripe — poll our own order status, never trust the URL alone ──
-  const [returning, setReturning] = useState(null); // { orderId, status, fulfillmentStatus } | null
+  const [returning, setReturning] = useState(null); // { orderId, status, fulfillmentStatus, pickupStatus, hasPhysical } | null
   const pollRef = useRef(null);
   useEffect(() => {
     const { orderId, stripeState } = readReturnParams();
@@ -247,13 +251,18 @@ export default function PortalShop({ initialTab = "all", fullScreen = false }) {
       toast("Checkout canceled — nothing was charged.");
       return;
     }
-    setReturning({ orderId, status: "pending_payment", fulfillmentStatus: "pending" });
+    setReturning({ orderId, status: "pending_payment", fulfillmentStatus: "pending", pickupStatus: null, hasPhysical: false });
     const poll = () => {
       api.get(`/portal/shop-orders/${orderId}`)
         .then(({ data }) => {
-          setReturning({ orderId, status: data.status, fulfillmentStatus: data.fulfillment_status });
+          const hasPhysical = (data.lines || []).some((l) => l.kind === "product");
+          setReturning({
+            orderId, status: data.status, fulfillmentStatus: data.fulfillment_status,
+            pickupStatus: data.pickup_status, hasPhysical,
+          });
           if (data.status === "paid") {
             setCart([]);
+            idemKeyRef.current = null; // purchase completed — any future checkout is a new attempt
             if (data.fulfillment_status === "fulfilled") {
               clearInterval(pollRef.current);
             }
@@ -299,7 +308,15 @@ export default function PortalShop({ initialTab = "all", fullScreen = false }) {
           ) : returning.status === "paid" && returning.fulfillmentStatus !== "fulfilled" && returning.fulfillmentStatus !== "needs_attention" ? (
             <span className="text-gray-300"><i className="fas fa-circle-notch fa-spin mr-2" />Payment received — order processing…</span>
           ) : returning.status === "paid" && returning.fulfillmentStatus === "fulfilled" ? (
-            <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order received! Thank you.</span>
+            !returning.hasPhysical ? (
+              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order received! Your credits/sessions have been added.</span>
+            ) : returning.pickupStatus === "picked_up" ? (
+              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order completed. Thank you!</span>
+            ) : returning.pickupStatus === "ready_for_pickup" ? (
+              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Your order is ready for pickup at Sit Happens.</span>
+            ) : (
+              <span className="text-shGreen font-black"><i className="fas fa-circle-check mr-2" />Order received! We&apos;re preparing your items for pickup at Sit Happens.</span>
+            )
           ) : returning.status === "paid" && returning.fulfillmentStatus === "needs_attention" ? (
             <span className="text-shOrange"><i className="fas fa-triangle-exclamation mr-2" />Order received — our team is finishing up part of your order and will follow up shortly.</span>
           ) : (

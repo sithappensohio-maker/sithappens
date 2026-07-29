@@ -35,6 +35,7 @@ import stripe
 
 from email_service import (
     notify_admin_new_booking,
+    queue_admin_new_shop_order,
     notify_admin_bulk_booking,
     notify_admin_new_client,
     notify_admin_homework_section_log,
@@ -24751,6 +24752,12 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
 
 SHOP_PAYMENT_ATTEMPT_TERMINAL_STATUSES = ("applied", "failed", "expired", "canceled")
 
+# Once a shop_order's pickup_status reaches any of these, it is initialized —
+# a payment/webhook replay must never overwrite it back to "preparing"/None.
+# Missing field or None (never-initialized/legacy order) is deliberately NOT
+# in this set, so a $nin query against it naturally covers both.
+SHOP_PICKUP_INITIALIZED_STATES = ("preparing", "ready_for_pickup", "picked_up", "not_applicable")
+
 
 class ShopCartItemIn(BaseModel):
     kind: Literal["product", "credit_pack", "training_program"]
@@ -24943,8 +24950,21 @@ async def _reserve_shop_inventory_line(order: dict, line: dict) -> str:
         if qty > available + 0.0005:
             raise HTTPException(status_code=400, detail=f"Only {max(available, 0):g} in stock for {product.get('name')}.")
         ts = now_iso()
+        # Legacy products created before stock_reserved/shop_reservations
+        # existed have neither field at all. Mongo's plain equality match
+        # never matches a missing field against 0, so a reserved-value of 0
+        # read locally (whether genuinely 0 or defaulted from "missing") must
+        # accept EITHER condition on the atomic filter. Once any reservation
+        # has ever succeeded, stock_reserved is a real number > 0 and this
+        # OR clause stops applying — the exact-match CAS behavior below is
+        # unchanged for every non-zero case, so two concurrent reservations
+        # for the same last unit still can only ever let one writer win.
+        stock_reserved_match = (
+            {"$or": [{"stock_reserved": 0}, {"stock_reserved": {"$exists": False}}]}
+            if reserved == 0 else {"stock_reserved": reserved}
+        )
         result = await db.pos_products.find_one_and_update(
-            {"id": product_id, "stock_reserved": reserved, "shop_reservations.ref": {"$ne": ref}},
+            {"id": product_id, "shop_reservations.ref": {"$ne": ref}, **stock_reserved_match},
             {
                 "$inc": {"stock_reserved": qty},
                 "$push": {"shop_reservations": {
@@ -25206,6 +25226,32 @@ def _verify_shop_stripe_session_authoritative(session_obj: dict, attempt: dict, 
         raise HTTPException(status_code=409, detail="Stored payment attempt amount does not match the order total — reconciliation required.")
 
 
+async def _queue_new_shop_order_notification(order: dict) -> None:
+    """Admin notification that a Shop order was paid — durably QUEUED into
+    email_outbox (see email_service.queue_admin_new_shop_order), never sent
+    synchronously here. A crash immediately after this call returns still
+    results in eventual delivery: the row already exists in email_outbox,
+    independent of this process's lifetime, and process_email_outbox picks
+    it up later.
+
+    notification_log is read here ONLY as a "we already know this was fully
+    delivered" short-circuit (skip re-queuing once it's confirmed sent) —
+    never as a pre-send gate. Without this check, a webhook replay arriving
+    AFTER email_outbox has already delivered-and-deleted the row would
+    re-queue a fresh send; with it, once notification_log has the
+    post-delivery stamp, we correctly stop. Before that stamp exists,
+    _queue_email's own upsert-on-key is what prevents a second row from
+    ever being created (see its docstring) — so there is no window where a
+    crash between claim and send can permanently suppress the email, unlike
+    the notification_log-claim-first design this replaces."""
+    order_id = order["id"]
+    already_delivered = await db.notification_log.find_one({"key": f"shop_order_new:{order_id}"}, {"_id": 0, "key": 1})
+    if already_delivered is not None:
+        return
+    client = await db.clients.find_one({"id": order.get("client_id")}, {"_id": 0})
+    await queue_admin_new_shop_order(order, client)
+
+
 async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None) -> dict:
     """The ONE local-application sequence for a Stripe-confirmed Shop order
     payment. Safe to call any number of times for the SAME attempt — every
@@ -25305,6 +25351,17 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
         except DuplicateKeyError:
             pass  # already inserted by a concurrent/prior run
 
+    # ── Order is now confirmed PAID with its canonical Payment/retail_sales
+    # rows in place — durably queue the admin new-order notification,
+    # before per-line fulfillment continues below. Never coupled to
+    # fulfillment outcome: this fires whether or not individual lines below
+    # go on to succeed. Queuing is a fast Mongo upsert only — no synchronous
+    # Resend call happens on this path. ──
+    try:
+        await _queue_new_shop_order_notification(order)
+    except Exception:
+        pass
+
     # ── Step B3 — per-line independent fulfillment. ──
     for line in order.get("lines") or []:
         if line.get("fulfillment_status") == "fulfilled":
@@ -25333,6 +25390,21 @@ async def _apply_shop_payment(attempt: dict, session_obj: Optional[dict] = None)
     fresh_lines = fresh_order.get("lines") or []
     order_fulfillment = "fulfilled" if all(l.get("fulfillment_status") == "fulfilled" for l in fresh_lines) else "needs_attention"
     await db.shop_orders.update_one({"id": order_id}, {"$set": {"fulfillment_status": order_fulfillment, "updated_at": now_iso()}})
+
+    # ── Step B5 — initialize pickup_status exactly once. Physical orders
+    # start "preparing" (staff then walks it through ready_for_pickup ->
+    # picked_up); an order with no kind=="product" line needs no pickup at
+    # all. The filter's $nin excludes every already-initialized state AND
+    # (by Mongo's null-equivalence for a missing/None field) the
+    # never-initialized case — so a webhook/payment replay can never
+    # regress an order that staff has already progressed to
+    # ready_for_pickup/picked_up back to "preparing". ──
+    has_physical_product = any(l.get("kind") == "product" for l in fresh_lines)
+    initial_pickup_status = "preparing" if has_physical_product else "not_applicable"
+    await db.shop_orders.update_one(
+        {"id": order_id, "pickup_status": {"$nin": list(SHOP_PICKUP_INITIALIZED_STATES)}},
+        {"$set": {"pickup_status": initial_pickup_status, "updated_at": now_iso()}},
+    )
 
     # ── Every Step B write independently confirmed complete — mark applied,
     # THEN (only then) release the reservation. Never the reverse order. ──
@@ -25417,6 +25489,14 @@ async def create_shop_checkout(body: ShopCheckoutIn, user: dict = Depends(get_cu
             "tax_rate_pct": priced["tax_rate_pct"], "total": priced["total"], "currency": "USD",
             "stripe_active_attempt_id": None, "stripe_reserved_amount_cents": None,
             "shop_last_applied_attempt_id": None,
+            # Front Desk "new order" badge marker. Initialized ONCE here at
+            # creation (never inside _apply_shop_payment, which is
+            # replayable) so a webhook replay/Retry Fulfillment can never
+            # reset it back to true once staff has seen it. Historical
+            # orders predating this field simply lack it — the unseen-count
+            # query requires admin_unseen == True by exact match, so a
+            # missing field never counts (never treated as unseen).
+            "admin_unseen": True,
             "created_at": ts, "updated_at": ts,
         }
         try:
@@ -25591,8 +25671,44 @@ async def list_shop_orders(fulfillment_status: Optional[str] = None, user: dict 
     return {"orders": await cursor.to_list(500)}
 
 
+@api.get("/admin/shop-orders/unseen-count")
+async def shop_orders_unseen_count(user: dict = Depends(require_employee_or_admin)):
+    """Front Desk 'new order' badge. Exact match on admin_unseen == True —
+    a historical order missing the field entirely (predates this feature)
+    never counts, by construction (see create_shop_checkout's comment)."""
+    _require_take_payments(user)
+    n = await db.shop_orders.count_documents({"status": "paid", "admin_unseen": True})
+    return {"unseen": n}
+
+
+class ShopOrdersMarkSeenIn(BaseModel):
+    order_ids: List[str] = Field(min_length=1, max_length=500)
+
+
+@api.post("/admin/shop-orders/mark-seen")
+async def mark_shop_orders_seen(body: ShopOrdersMarkSeenIn, user: dict = Depends(require_employee_or_admin)):
+    """Bulk 'staff has now seen these orders' — the ONLY thing this touches
+    is admin_unseen, and only ever true -> false. Never alters payment,
+    fulfillment, pickup, inventory, or Stripe fields, and never sets the
+    flag back to true (so this can never itself cause a badge regression)."""
+    _require_take_payments(user)
+    result = await db.shop_orders.update_many(
+        {"id": {"$in": body.order_ids}, "admin_unseen": True},
+        {"$set": {"admin_unseen": False}},
+    )
+    return {"marked": result.modified_count}
+
+
 class ShopOrderFulfillmentActionIn(BaseModel):
     action: Literal["mark_ready", "mark_picked_up", "retry_fulfillment"]
+
+
+# Strict, one-directional pickup state machine: preparing -> ready_for_pickup
+# -> picked_up. "not_applicable" (no physical line) never transitions at all.
+SHOP_PICKUP_ACTION_TRANSITIONS = {
+    "mark_ready": {"from": "preparing", "to": "ready_for_pickup"},
+    "mark_picked_up": {"from": "ready_for_pickup", "to": "picked_up"},
+}
 
 
 @api.post("/admin/shop-orders/{order_id}/fulfillment")
@@ -25611,9 +25727,29 @@ async def update_shop_order_fulfillment(order_id: str, body: ShopOrderFulfillmen
         await _apply_shop_payment(attempt)
         return await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
 
-    new_pickup_status = {"mark_ready": "ready_for_pickup", "mark_picked_up": "picked_up"}[body.action]
-    await db.shop_orders.update_one({"id": order_id}, {"$set": {"pickup_status": new_pickup_status, "updated_at": now_iso()}})
-    return await db.shop_orders.find_one({"id": order_id}, {"_id": 0})
+    # ── Strict, atomic pickup transition — never allows skipping a step or
+    # moving backward. "not_applicable" (no physical line) is never
+    # actionable at all. Repeating the SAME action once already at its
+    # target state is a safe no-op (never regresses); any other mismatch is
+    # rejected outright rather than silently overwritten. ──
+    transition = SHOP_PICKUP_ACTION_TRANSITIONS[body.action]
+    current_pickup = order.get("pickup_status")
+    if current_pickup == "not_applicable":
+        raise HTTPException(status_code=400, detail="This order has no physical items requiring pickup.")
+    if current_pickup == transition["to"]:
+        return order  # identical action already applied — idempotent no-op
+    result = await db.shop_orders.find_one_and_update(
+        {"id": order_id, "pickup_status": transition["from"]},
+        {"$set": {"pickup_status": transition["to"], "updated_at": now_iso()}},
+        projection={"_id": 0},
+        return_document=ReturnDocument.AFTER,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This order's pickup status must be '{transition['from']}' before it can be marked '{transition['to']}'.",
+        )
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -25697,6 +25833,8 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "track_inventory": body.track_inventory,
         "active": body.active,
         "stock_on_hand": round(float(body.starting_stock or 0), 3),
+        "stock_reserved": 0.0,
+        "shop_reservations": [],
         "created_at": now_iso(),
         "show_online": body.show_online,
         "online_description": (body.online_description or "").strip() or None,
