@@ -544,99 +544,6 @@ function OnboardingBanner({ missingCount, onOpen }) {
 
 
 
-const SERVICE_INFO = {
-  daycare: {
-    label: "Daycare",
-    icon: "fa-sun",
-    color: "text-shBlue",
-    summary: "Drop your dog off for the day to play, socialise, and get supervised exercise.",
-    bullets: [
-      "Best for friendly dogs aged 6 months+",
-      "Drop-off & pick-up during business hours",
-      "Deducted from your Daycare credit pack on approval",
-      "Bordetella + DHPP vaccines required",
-    ],
-  },
-  boarding: {
-    label: "Boarding",
-    icon: "fa-moon",
-    color: "text-shGreen",
-    summary: "Overnight stays in our climate-controlled kennels with daily playtime.",
-    bullets: [
-      "Choose start + end dates (we count nights)",
-      "Pay-on-the-day — no credit pack needed",
-      "Bring your dog's regular food if possible",
-      "Pickup before noon to avoid an extra night",
-    ],
-  },
-  training: {
-    label: "Training",
-    icon: "fa-graduation-cap",
-    color: "text-purple-400",
-    summary: "1-on-1 sessions with your trainer working through your dog's training program.",
-    bullets: [
-      "Deducted from your Training credit pack on approval",
-      "Bring a hungry dog (skip the meal beforehand!)",
-      "We'll log progress + homework for you to practice",
-      "Sessions are usually 30-60 minutes",
-    ],
-  },
-  grooming: {
-    label: "Grooming",
-    icon: "fa-bath",
-    color: "text-pink-400",
-    summary: "Bath services and nail trims — keep your pup looking sharp.",
-    bullets: [
-      "Choose Bath or Nail Trim above",
-      "Pay-on-the-day at pickup",
-      "Drop off in the morning, pickup same day",
-      "Mention any sensitive spots when you arrive",
-    ],
-  },
-  photography: {
-    label: "Photography",
-    icon: "fa-camera-retro",
-    color: "text-shOrange",
-    summary: "Professional pet photography sessions. Capture your pup's personality with a custom shoot.",
-    bullets: [
-      "Pick a date that works for you",
-      "Pay-on-the-day at the session",
-      "Edited images delivered in your private gallery within 1–2 weeks",
-      "Order prints, canvases & gifts straight from your gallery",
-    ],
-  },
-};
-
-function ServiceInfoModal({ type, onClose, customDescriptions }) {
-  if (!type) return null;
-  const info = SERVICE_INFO[type];
-  if (!info) return null;
-  const summary = customDescriptions?.[type] || info.summary;
-  return (
-    <div className="fixed inset-0 bg-black/80 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose} data-testid="service-info-modal">
-      <div className="bg-bgPanel border border-bgHover rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md p-5 sm:p-7 shadow-2xl animate-slide-in max-h-[calc(var(--app-height)_-_2rem)] overflow-y-auto pb-safe" onClick={(e)=>e.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 mb-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className={`text-2xl ${info.color}`}><i className={`fas ${info.icon}`}/></span>
-            <h4 className="text-lg sm:text-xl font-black text-white uppercase italic tracking-tight">{info.label}</h4>
-          </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-white p-1 -m-1" data-testid="service-info-close"><i className="fas fa-times text-lg"/></button>
-        </div>
-        <p className="text-[14px] text-gray-300 mb-4 whitespace-pre-line">{summary}</p>
-        <ul className="space-y-2">
-          {info.bullets.map((b, i) => (
-            <li key={i} className="flex items-start gap-2 text-[15px] text-gray-300">
-              <i className={`fas fa-check ${info.color} mt-1 text-[13px] shrink-0`}/>
-              <span>{b}</span>
-            </li>
-          ))}
-        </ul>
-        <button onClick={onClose} className="mt-5 w-full bg-bgBase border border-bgHover text-gray-300 hover:text-white py-3 rounded font-black text-[15px] uppercase tracking-widest">Got it</button>
-      </div>
-    </div>
-  );
-}
-
 export default function Portal() {
   const confirm = useConfirm();
   const { user, logout, reloadUser } = useAuth();
@@ -670,7 +577,6 @@ export default function Portal() {
   const [success, setSuccess] = useState("");
   const [waiver, setWaiver] = useState(null); // {signed, current_version, signature, needs_resign}
   const [pubSettings, setPubSettings] = useState(null);
-  const [showServiceInfo, setShowServiceInfo] = useState(null); // service type key
   const [showWaiver, setShowWaiver] = useState(false);
   const [homework, setHomework] = useState([]);
   const [hwModal, setHwModal] = useState(null);
@@ -2345,7 +2251,6 @@ export default function Portal() {
         />
       )}
 
-      <ServiceInfoModal type={showServiceInfo} onClose={()=>setShowServiceInfo(null)} customDescriptions={pubSettings?.service_descriptions} />
       {showReferModal && referralCode && <ReferFriendModal code={referralCode} onClose={()=>setShowReferModal(false)} />}
       {showServicesModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur grid place-items-center p-3 sm:p-6 animate-fade-in" onClick={()=>setShowServicesModal(false)} data-testid="services-modal">

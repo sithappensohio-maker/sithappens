@@ -654,27 +654,3 @@ async def maybe_run_daily(db) -> dict | None:
         await db.system_runs.update_one({"id": "daily"}, {"$set": {"last_run": None, "error": str(e)}})
         raise
 
-async def automation_loop(db, interval_seconds: int = 300) -> None:
-    """Persistent lightweight scheduler for automated email jobs.
-
-    Runs once at server startup and then every five minutes. The daily gate
-    prevents duplicate daily scans; the durable outbox retries deferred or
-    failed sends independently of dashboard traffic.
-    """
-    while True:
-        try:
-            await maybe_run_daily(db)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("automated daily email run failed: %s", exc)
-        try:
-            result = await email_service.process_email_outbox(db)
-            if result.get("sent") or result.get("failed"):
-                logger.info("email outbox result: %s", result)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("email outbox processing failed: %s", exc)
-        await asyncio.sleep(max(60, interval_seconds))
-
