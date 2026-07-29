@@ -762,6 +762,12 @@ class BookingOut(BaseModel):
     actual_price: Optional[float] = None
     payment_status: Optional[Literal["unpaid", "paid", "paid_partial", "refunded", "comped"]] = None
     payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "credits", "check", "other"]] = None
+    # Mixed credits+cash checkout stores the real tender for the cash
+    # portion here (payment_method itself stays "credits") — already used
+    # internally for register/P&L tender resolution; exposed here so API
+    # consumers (tests, future UI) can see it too, without changing any
+    # pricing/money computation.
+    cash_payment_method: Optional[Literal["cash", "card", "transfer", "venmo", "paypal", "clover", "check", "other"]] = None
     paid_at: Optional[str] = None
     # Sprint 110di-51 — Partial-payment / tab support. When a booking is
     # checked out and the client only paid part of the bill, `amount_paid`
@@ -8402,6 +8408,39 @@ async def _check_out_locked(
                             "pickup_cutoff_time": cutoff_time,
                             "applied_at": ts,
                         }
+
+            # Repair legacy daycare estimates the same way: the booking's
+            # estimated_price is a full-day estimate taken at booking time
+            # (before check-in), before actual elapsed hours are known. If
+            # the dog has since checked in/out and the actual stay qualifies
+            # for the half-day rule, recompute from the real elapsed hours
+            # instead of blindly reusing the frozen full-day estimate.
+            if (
+                booking.get("service_type") == "daycare"
+                and booking.get("checked_in_at")
+                and snap_base > 0
+            ):
+                daycare_rules = settings.get("booking_rules") or {}
+                if bool(daycare_rules.get("stay_pricing_enabled", True)):
+                    try:
+                        ci_dt = datetime.fromisoformat(booking["checked_in_at"].replace("Z", "+00:00"))
+                        co_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        daycare_hours = max(0.0, (co_dt - ci_dt).total_seconds() / 3600.0)
+                    except Exception:
+                        daycare_hours = None
+                    if daycare_hours is not None:
+                        max_half_h = float(daycare_rules.get("daycare_half_day_max_hours", 5))
+                        if daycare_hours <= max_half_h:
+                            half_pct = float(daycare_rules.get("half_day_pct", 50)) / 100.0
+                            corrected_daycare_base = round(snap_base * half_pct, 2)
+                            if corrected_daycare_base != snap_base:
+                                snap_base = corrected_daycare_base
+                                update["daycare_pricing_correction"] = {
+                                    "rule": "elapsed_hours_half_day",
+                                    "total_hours": round(daycare_hours, 2),
+                                    "max_half_day_hours": max_half_h,
+                                    "applied_at": ts,
+                                }
 
             if snap_base > 0:
                 base_price = snap_base

@@ -1,8 +1,9 @@
 """Stripe Online Payments (Phase 3A) — targeted tests.
 
 Black-box HTTP against a live server, same convention as
-test_invoice_topup_payments.py. This environment has no real Stripe
-test-mode API keys, so the suite is honest about the split:
+test_invoice_topup_payments.py. This environment DOES have a working
+Stripe test-mode secret key (see backend/.env) — tests must never assume
+otherwise, since a developer's local key is a real, functional one:
 
   - Everything that is OUR OWN logic (reservation atomicity, webhook
     signature verification + processing, crash/retry idempotency of every
@@ -13,15 +14,14 @@ test-mode API keys, so the suite is honest about the split:
     Payment row) and then driving it through the real HTTP endpoints and a
     genuinely signature-valid webhook payload (Stripe's HMAC scheme needs
     only a shared secret, not a live API key, to verify correctly).
-  - Actual Stripe API calls (Session.create succeeding, Refund.create
-    succeeding) cannot be exercised without real Stripe test-mode
-    credentials, which this environment does not have. Those specific paths
-    are tested with a deliberately invalid key, which correctly exercises
-    the "Stripe call fails" failure path for real (a genuine network round
-    trip to Stripe, safely rejected before any charge exists) — but a
-    genuinely SUCCESSFUL session/refund creation is not exercised here; see
-    the final report for exactly what real test-mode credentials would
-    unlock.
+  - A handful of tests need Stripe's own Session.create/Refund.create call
+    to fail deterministically (to test the app's failure-handling path).
+    Rather than depending on the environment having (or lacking) a broken
+    API key, these tests force a genuine Stripe API error by referencing a
+    Stripe resource that cannot exist on this account — a fabricated
+    customer id (_force_stripe_customer_conflict) or payment_intent id
+    (_seed_stripe_collected_payment) — so the real network call to Stripe
+    still happens, and still fails, regardless of key validity.
 """
 import os
 import sys
@@ -69,6 +69,24 @@ def _mongo_run(async_fn):
         finally:
             mc.close()
     return asyncio.run(_wrapped())
+
+
+def _force_stripe_customer_conflict(client_id):
+    """Pre-seed a Stripe customer id that cannot exist on our Stripe account,
+    so the real stripe.checkout.Session.create call this endpoint makes
+    deterministically fails with a genuine Stripe API error — regardless of
+    whether the environment's STRIPE_SECRET_KEY happens to be a working
+    test-mode key. The endpoint only calls stripe.Customer.create when
+    client.stripe_customer_id is unset, so pre-seeding it here skips
+    straight to Session.create with a customer reference Stripe will
+    reject. Same technique test_stripe_refund_create_failure_no_mutation
+    already relies on via its fake payment_intent id."""
+    async def _seed(db):
+        await db.clients.update_one(
+            {"id": client_id},
+            {"$set": {"stripe_customer_id": f"cus_test_nonexistent_{uuid.uuid4().hex}"}},
+        )
+    _mongo_run(_seed)
 
 
 def _make_client_and_dog(admin_headers, tag):
@@ -336,11 +354,12 @@ def test_checkout_session_overpayment_rejected(admin_headers, fresh_client_and_d
 def test_checkout_session_creation_failure_releases_reservation(admin_headers, fresh_client_and_dog):
     client, dog = fresh_client_and_dog
     bid, invoice = _partial_paid_invoice(admin_headers, client, dog, total=200.0, paid=75.0)
+    _force_stripe_customer_conflict(client["id"])
     headers = _client_headers(client["id"], client["email"])
     key = uuid.uuid4().hex
     r = requests.post(f"{API}/portal/invoices/{invoice['id']}/stripe-checkout-session",
                        headers=headers, json={"idempotency_key": key}, timeout=20)
-    assert r.status_code == 502, r.text  # fake key -> real Stripe AuthenticationError
+    assert r.status_code == 502, r.text  # deliberately-nonexistent Stripe customer id -> real Stripe error
 
     fresh = _get_invoice_raw(invoice["id"])
     assert fresh.get("stripe_active_attempt_id") is None, "reservation must be released after a session-creation failure"

@@ -188,7 +188,11 @@ def test_credit_checkout_cash_addon_hits_cash_drawer(admin_headers):
         )
         assert booking_r.status_code == 200, booking_r.text
         booking_id = booking_r.json()["id"]
-        assert requests.post(f"{API}/bookings/{booking_id}/approve", headers=admin_headers, timeout=15).status_code == 200
+        # Booking was created with admin_headers, so server.py's
+        # `if is_admin: status_val = "approved"` already approved it at
+        # creation time — calling /approve again would just 400 ("Booking
+        # is approved"). Go straight to check-in, same as
+        # test_stripe_online_payments.py's _book_and_checkin convention.
         assert requests.post(f"{API}/bookings/{booking_id}/check-in", headers=admin_headers, timeout=15).status_code == 200
 
         before = _register(today, admin_headers)

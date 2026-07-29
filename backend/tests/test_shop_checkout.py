@@ -87,6 +87,25 @@ def fresh_client(admin_headers):
     requests.delete(f"{API}/clients/{client['id']}", headers=admin_headers, timeout=15)
 
 
+def _force_stripe_customer_conflict(client_id):
+    """Pre-seed a Stripe customer id that cannot exist on our Stripe account,
+    so the real stripe.checkout.Session.create call this endpoint makes
+    deterministically fails with a genuine Stripe API error — regardless of
+    whether the environment's STRIPE_SECRET_KEY happens to be a working
+    test-mode key. The endpoint only calls stripe.Customer.create when
+    client.stripe_customer_id is unset (server.py's shop-checkout-session
+    handler), so pre-seeding it here skips straight to Session.create with a
+    customer reference Stripe will reject. Same technique already relied on
+    by test_stripe_refund_create_failure_no_mutation's fake payment_intent
+    id in test_stripe_online_payments.py."""
+    async def _seed(db):
+        await db.clients.update_one(
+            {"id": client_id},
+            {"$set": {"stripe_customer_id": f"cus_test_nonexistent_{uuid.uuid4().hex}"}},
+        )
+    _mongo_run(_seed)
+
+
 def _client_headers(client_id, email):
     """Mints a valid client-role JWT directly — same convention as
     test_stripe_online_payments.py's _client_headers."""
@@ -326,10 +345,12 @@ def test_a_checkout_rejects_unavailable_product(admin_headers, fresh_client):
 
 
 def test_a_checkout_creates_order_snapshot_and_fails_stripe_call(admin_headers, fresh_client):
-    """No real Stripe key in this environment — the Session.create call
-    itself must fail (502), but our own order snapshot + tax + inventory
-    reservation logic runs for real before that point."""
+    """The Session.create call itself is forced to fail for real (502) via
+    a deliberately-nonexistent Stripe customer id, but our own order
+    snapshot + tax + inventory reservation logic runs for real before that
+    point."""
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=25.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     idem_key = str(uuid.uuid4())
     r = requests.post(f"{API}/shop/checkout", headers=headers, json={
@@ -352,6 +373,7 @@ def test_a_checkout_idempotent_retry_resumes_same_order(admin_headers, fresh_cli
     order_id staying identical even though the underlying Stripe call fails
     both times."""
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     idem_key = str(uuid.uuid4())
     body = {"items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key}
@@ -373,6 +395,7 @@ def test_a_checkout_idempotent_retry_resumes_same_order(admin_headers, fresh_cli
 
 def test_a_checkout_same_key_different_cart_is_409(admin_headers, fresh_client):
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     idem_key = str(uuid.uuid4())
     r1 = requests.post(f"{API}/shop/checkout", headers=headers, json={
@@ -412,7 +435,8 @@ def test_a_tax_allocated_only_to_physical_lines(admin_headers, fresh_client):
         # Compute what _price_shop_cart itself would produce by re-pricing
         # via the same tax rule this test just enabled, then verify by
         # driving the real checkout endpoint (order persists even though
-        # Stripe itself fails).
+        # Stripe itself is forced to fail).
+        _force_stripe_customer_conflict(fresh_client["id"])
         headers = _client_headers(fresh_client["id"], fresh_client["email"])
         r = requests.post(f"{API}/shop/checkout", headers=headers, json={
             "items": [
@@ -442,6 +466,7 @@ def test_a_tax_allocated_only_to_physical_lines(admin_headers, fresh_client):
 def test_a_no_tax_when_disabled(admin_headers, fresh_client):
     _disable_sales_tax(admin_headers)
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=15.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     r = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
@@ -1196,13 +1221,14 @@ def test_h_checkout_ignores_client_id_in_request_body(admin_headers, fresh_clien
     other_client = _make_client(admin_headers, uuid.uuid4().hex[:6])
     try:
         product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=12.0)
+        _force_stripe_customer_conflict(fresh_client["id"])
         headers = _client_headers(fresh_client["id"], fresh_client["email"])
         r = requests.post(f"{API}/shop/checkout", headers=headers, json={
             "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
             "idempotency_key": str(uuid.uuid4()),
             "client_id": other_client["id"],  # attempted spoof — not a real field on ShopCheckoutIn
         }, timeout=15)
-        assert r.status_code == 502, r.text  # still fails at Stripe (no real key), but the order itself...
+        assert r.status_code == 502, r.text  # still fails at Stripe (forced failure), but the order itself...
 
         async def _find_order(db):
             return await db.shop_orders.find_one({"total": 12.0}, {"_id": 0}, sort=[("created_at", -1)])
@@ -1260,12 +1286,12 @@ def test_f_legacy_product_first_reservation_succeeds_past_stripe(admin_headers, 
     """A. A legacy product with NO stock_reserved/shop_reservations fields
     at all must still be able to reserve its first unit. Proven the same
     way test_h_checkout_ignores_client_id_in_request_body proves order
-    creation: this environment has no real Stripe test keys, so a
-    successful reservation is observed as a 502 (Stripe unreachable) —
-    if the legacy-compatibility fix were missing, the request would instead
-    fail earlier with 409 ("Stock changed too many times concurrently"),
-    since the reservation's atomic filter would never match a document
-    missing the field."""
+    creation: Stripe Session.create is forced to fail deterministically (a
+    nonexistent customer id), so a successful reservation is observed as a
+    502 — if the legacy-compatibility fix were missing, the request would
+    instead fail earlier with 409 ("Stock changed too many times
+    concurrently"), since the reservation's atomic filter would never match
+    a document missing the field."""
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=2.0,
                                      track_inventory=True, starting_stock=2)
     _strip_legacy_reservation_fields(product["id"])
@@ -1273,6 +1299,7 @@ def test_f_legacy_product_first_reservation_succeeds_past_stripe(admin_headers, 
     assert "stock_reserved" not in legacy
     assert "shop_reservations" not in legacy
 
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     r = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
@@ -1293,6 +1320,7 @@ def test_f_legacy_first_reservation_creates_fields(admin_headers, fresh_client):
                                      track_inventory=True, starting_stock=2)
     _strip_legacy_reservation_fields(product["id"])
 
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     r = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
@@ -1367,12 +1395,13 @@ def test_f_retry_same_idempotency_key_recovers_same_shop_order(admin_headers, fr
     for this fix is the one that matters here: the retry must resolve
     against the SAME claim/order — it must never create a second one."""
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=7.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     idem_key = str(uuid.uuid4())
     cart = {"items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}], "idempotency_key": idem_key}
 
     r1 = requests.post(f"{API}/shop/checkout", headers=headers, json=cart, timeout=15)
-    assert r1.status_code == 502, r1.text  # Stripe unreachable in this test env
+    assert r1.status_code == 502, r1.text  # Stripe forced to fail deterministically
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0, "id": 1})
@@ -1400,6 +1429,7 @@ def test_f_same_idempotency_key_different_cart_rejected(admin_headers, fresh_cli
     guard alone."""
     product_a = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=4.0)
     product_b = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=6.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     idem_key = str(uuid.uuid4())
 
@@ -1753,7 +1783,7 @@ def test_i_payment_and_fulfillment_succeed_even_if_notification_never_delivered(
     assert doc["status"] == "pending"  # queued, never delivered — payment succeeded anyway
 
 
-def test_i_true_concurrent_queue_attempts_create_exactly_one_row(admin_headers, fresh_client):
+def test_i_true_concurrent_queue_attempts_create_exactly_one_row(admin_headers, fresh_client, monkeypatch):
     """G. Two GENUINELY concurrent attempts (asyncio.gather, not sequential
     calls) to queue the new-order notification for the SAME shop order must
     collapse to exactly one email_outbox row. This is the deterministic-_id
@@ -1764,14 +1794,24 @@ def test_i_true_concurrent_queue_attempts_create_exactly_one_row(admin_headers, 
     deliberate exception to the black-box-HTTP convention as the outbox
     worker test above: this exercises email_service.queue_admin_new_shop_order
     directly, since there is no way to force two HTTP webhook deliveries to
-    race at this exact line from outside the process."""
+    race at this exact line from outside the process.
+
+    This test imports email_service into the PYTEST process itself (unlike
+    every other test in this file, which only talks to the server over
+    HTTP), so — unlike those — it can and must monkeypatch
+    ADMIN_NOTIFICATION_EMAIL directly rather than depending on any
+    developer's real .env: without a destination address configured,
+    queue_admin_new_shop_order short-circuits to False for every caller by
+    design, which would fail this test for a reason that has nothing to do
+    with the concurrency guarantee it exists to prove."""
+    import email_service
+    monkeypatch.setattr(email_service, "ADMIN_NOTIFICATION_EMAIL", "qa-test-notifications@example.invalid")
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
     order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
         _make_line("product", product["id"], product["name"], 10.0, 1),
     ])
 
     async def _race(db):
-        import email_service
         email_service.set_db(db)  # queue_admin_new_shop_order has no db param — uses the module global
         client_doc = await db.clients.find_one({"id": fresh_client["id"]}, {"_id": 0})
         return await asyncio.gather(
@@ -1806,13 +1846,14 @@ def test_j_new_order_has_admin_unseen_true_but_does_not_count_until_paid(admin_h
     'payment_failed' — see the earlier investigation in this session)
     contributes 0 to the count."""
     product = _make_online_product(admin_headers, uuid.uuid4().hex[:6], price=10.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
     headers = _client_headers(fresh_client["id"], fresh_client["email"])
     before = _unseen_count(admin_headers)
     r = requests.post(f"{API}/shop/checkout", headers=headers, json={
         "items": [{"kind": "product", "ref_id": product["id"], "quantity": 1}],
         "idempotency_key": str(uuid.uuid4()),
     }, timeout=15)
-    assert r.status_code == 502, r.text  # Stripe unreachable in this test env — order still created first
+    assert r.status_code == 502, r.text  # Stripe forced to fail deterministically — order still created first
 
     async def _find_order(db):
         return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
