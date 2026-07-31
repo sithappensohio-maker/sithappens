@@ -132,6 +132,29 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     if (FEATURE_BY_SERVICE[s.service_type] === false) return false;
     return exactRuleMap?.[s.id]?.client_booking_enabled !== false;
   });
+  // Grouped by service_type (same daycare/boarding/training/grooming/
+  // photography categories SERVICE_OPTIONS already defines) so a catalog
+  // with many individual services reads as labeled sections instead of one
+  // long undifferentiated grid. A category can be enabled (feature flag on)
+  // without having any catalog row of that type at all — e.g. Photography
+  // sold as one flat-rate service rather than several named packages — so
+  // that category falls back to its single coarse VISIBLE_SERVICES tile
+  // instead of silently disappearing just because it has no catalog
+  // granularity to group.
+  const groupedCatalogServices = useMemo(() => {
+    const byType = {};
+    for (const s of bookableCatalogServices) {
+      const key = s.service_type || "other";
+      (byType[key] = byType[key] || []).push(s);
+    }
+    return SERVICE_OPTIONS
+      .map(opt => {
+        if (byType[opt.key]) return { opt, items: byType[opt.key] };
+        if (FEATURE_BY_SERVICE[opt.key] !== false) return { opt, items: [opt] };
+        return { opt, items: [] };
+      })
+      .filter(g => g.items.length > 0);
+  }, [bookableCatalogServices, FEATURE_BY_SERVICE]);
 
   // Load closed-dates list once so we can flag picks the business is closed.
   useEffect(() => {
@@ -438,8 +461,8 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
             )}
             <div>
               <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-                {(catalogServices.length > 0 ? bookableCatalogServices : VISIBLE_SERVICES).map(s => {
+              {(() => {
+                const renderServiceButton = (s) => {
                   const isCatalog = !!s.id;
                   const type = isCatalog ? s.service_type : s.key;
                   const fallback = SERVICE_OPTIONS.find(o => o.key === type);
@@ -447,7 +470,6 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                   const label = isCatalog ? s.name : s.label;
                   const desc = isCatalog ? (s.description || fallback?.desc || "") : s.desc;
                   const icon = isCatalog ? (s.icon || fallback?.icon || "fa-paw") : s.icon;
-                  const colorClass = fallback?.color || "bg-shBlue/15 text-shBlue border-shBlue/40";
                   const accentR = accentRgb("cyan");
                   return (
                     <button key={isCatalog ? s.id : s.key}
@@ -472,13 +494,37 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
                       {isCatalog && <p className="text-[12px] mt-2 text-shPrimary font-bold">${Number(s.base_price || 0).toFixed(2)}</p>}
                     </button>
                   );
-                })}
-                {catalogServices.length > 0 && bookableCatalogServices.length === 0 && (
-                  <div className="sm:col-span-2 bg-shAccent/10 border border-shAccent/30 rounded-lg p-4 text-shAccent text-[13px] font-bold uppercase tracking-widest text-center">
-                    No services are currently open for client booking.
+                };
+
+                if (catalogServices.length === 0) {
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                      {VISIBLE_SERVICES.map(renderServiceButton)}
+                    </div>
+                  );
+                }
+                if (groupedCatalogServices.length === 0) {
+                  return (
+                    <div className="mt-2 bg-shAccent/10 border border-shAccent/30 rounded-lg p-4 text-shAccent text-[13px] font-bold uppercase tracking-widest text-center">
+                      No services are currently open for client booking.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="mt-2 space-y-5">
+                    {groupedCatalogServices.map(({ opt, items }) => (
+                      <div key={opt.key}>
+                        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2">
+                          <i className={`fas ${opt.icon} mr-1.5`}/>{opt.label}
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {items.map(renderServiceButton)}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
-              </div>
+                );
+              })()}
             </div>
             <div className="flex justify-end gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={onClose}>Cancel</PremiumButton>

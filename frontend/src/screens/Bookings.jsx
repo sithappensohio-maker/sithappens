@@ -9,6 +9,7 @@ import PageHero from "../components/PageHero";
 import RescheduleRequestsInbox from "../components/RescheduleRequestsInbox";
 import { useLiveRefresh } from "../lib/useLiveRefresh";
 import { toast } from "sonner";
+import { BOOKING_STATUS } from "../lib/statusDefs";
 
 // Sprint 110di-38 — Multi-dog group badge. Module-scoped so it isn't
 // re-created on every render of the parent Bookings component.
@@ -202,7 +203,7 @@ export default function Bookings() {
                     </p>
                   </div>
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
-                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
                     {!b._archived && <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} className="text-[13px] font-black uppercase text-shSecondary hover:underline">Open</button>}
                   </div>
                 </div>
@@ -232,7 +233,7 @@ export default function Bookings() {
                     </p>
                   </div>
                   <div className="flex items-center flex-wrap gap-x-3 gap-y-1 sm:shrink-0">
-                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{b.status}</span>
+                    <span className={`text-[13px] font-black uppercase px-2 py-1 rounded ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
                     <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}-g`} className="text-[13px] font-black uppercase text-shSecondary hover:underline">Edit</button>
                     {b.status === "pending" && <>
                       <button onClick={(e)=>{ e.stopPropagation(); approve(b.id); }} data-testid={`approve-${b.id}-g`} className="text-[13px] font-black uppercase text-shPrimary hover:underline">Approve</button>
@@ -274,7 +275,7 @@ export default function Bookings() {
                   {b.date}{b.end_date && b.end_date !== b.date ? ` → ${b.end_date}` : ""}
                   {b.time && <span className="ml-2 text-shAccent font-black tracking-widest">@ {b.time}</span>}
                 </td>
-                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span></td>
+                <td className="px-6 py-4"><span className={`text-[14px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span></td>
                 <td className="px-6 py-4 text-right space-x-2">
                   <button onClick={(e)=>{ e.stopPropagation(); setEditing(b); }} data-testid={`edit-${b.id}`} className="text-[14px] font-black uppercase text-shSecondary hover:underline">Edit</button>
                   {b.status === "pending" && <>
@@ -310,7 +311,7 @@ export default function Bookings() {
                   <p className="text-sm font-black uppercase text-shText">{b.dog_name}<GroupBadge gid={b.group_id} counts={groupCounts}/></p>
                   <p className="text-[13px] text-shTextMuted truncate">{b.client_name}</p>
                 </div>
-                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{b.status}</span>
+                <span className={`shrink-0 text-[13px] font-black uppercase px-2 py-1 rounded border ${statusStyle(b.status)}`}>{BOOKING_STATUS[b.status]?.label || b.status}</span>
               </div>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[14px]">
                 <span className="font-black uppercase tracking-widest text-shTextMuted">{b.service_type}{b.service_type==="grooming" && b.grooming_type ? ` · ${b.grooming_type==="bath"?"Bath":"Nail Trim"}` : ""}</span>

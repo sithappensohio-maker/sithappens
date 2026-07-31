@@ -36,8 +36,18 @@ const TENDER_LABELS = { cash: "Cash", check: "Check", venmo: "Venmo", paypal: "P
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
 export default function Pos() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const { can } = useAuth();
+  // Permission-bug checkpoint: these used to gate on a blanket `role ===
+  // "admin"` check, which — since every account that can even open Front
+  // Desk has `role: "admin"` regardless of its restricted `staff_role` — showed
+  // every one of these trusted-only controls to front-desk/trainer/care
+  // staff too. Mapped onto the closest existing permission keys instead, so a
+  // restricted staff_role (front_desk, trainer, daycare_staff, boarding_staff,
+  // read_only — none of which carry these keys) no longer sees them, while
+  // manager/owner (which do) are unaffected.
+  const canDrawerAndRefunds = can("finance_reports");   // open drawer, Online Payments/refund panel
+  const canPricingActions = can("pricing");             // manage products, custom item, discount
+  const canVoid = can("delete_records");                // void a completed sale
 
   // ── Register + hardware status ──────────────────────────────────────────
   const [registerStatus, setRegisterStatus] = useState(null);
@@ -232,6 +242,8 @@ export default function Pos() {
   const [saleResult, setSaleResult] = useState(null);
   const [saleIdemKey, setSaleIdemKey] = useState(() => crypto.randomUUID());
   const [hwBusy, setHwBusy] = useState({});
+  const [emailBusy, setEmailBusy] = useState(false);
+  const [receiptViewOpen, setReceiptViewOpen] = useState(null); // receipt payload JSON, or null
 
   const total = priced?.total ?? 0;
   const tenderedSoFar = tenders.reduce((s, t) => s + t.amount, 0);
@@ -302,6 +314,27 @@ export default function Pos() {
       toast.error(e?.response?.data?.detail || "Could not retry");
     }
     setHwBusy((b) => ({ ...b, [action]: false }));
+  };
+
+  const emailReceipt = async (posSaleId) => {
+    setEmailBusy(true);
+    try {
+      const { data } = await api.post(`/receipts/pos_sale/${posSaleId}/email`, {});
+      if (data.ok) toast.success("Receipt emailed");
+      else toast.error(data.detail || "Could not email the receipt");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not email the receipt");
+    }
+    setEmailBusy(false);
+  };
+
+  const viewReceipt = async (posSaleId) => {
+    try {
+      const { data } = await api.get(`/receipts/pos_sale/${posSaleId}`);
+      setReceiptViewOpen(data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load the receipt");
+    }
   };
 
   const newSale = () => {
@@ -438,6 +471,20 @@ export default function Pos() {
               {hwBusy.print_receipt ? "Sending…" : "Reprint"}
             </button>
           </div>
+          <div className="flex items-center justify-between">
+            <span className="text-shTextMuted text-sm">View receipt</span>
+            <button onClick={() => viewReceipt(saleResult.pos_sale_id)} data-testid="pos-view-receipt"
+                    className="text-shSecondary text-sm font-black uppercase tracking-widest">
+              View
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-shTextMuted text-sm">Email receipt</span>
+            <button onClick={() => emailReceipt(saleResult.pos_sale_id)} disabled={emailBusy} data-testid="pos-email-receipt"
+                    className="text-shSecondary text-sm font-black uppercase tracking-widest disabled:opacity-50">
+              {emailBusy ? "Sending…" : "Email"}
+            </button>
+          </div>
           {s.cash_component > 0 && (
             <div className="flex items-center justify-between">
               <span className="text-shTextMuted text-sm">Cash drawer</span>
@@ -452,6 +499,25 @@ export default function Pos() {
                 className="w-full bg-shPrimary text-bgHeader rounded-2xl py-4 font-black uppercase tracking-widest text-lg">
           New Sale
         </button>
+        {receiptViewOpen && (
+          <div className="fixed inset-0 bg-black/70 z-50 grid place-items-center p-4" onClick={() => setReceiptViewOpen(null)}>
+            <div className="bg-white text-black rounded-lg p-5 max-w-sm w-full text-[13px]" onClick={(e) => e.stopPropagation()} data-testid="pos-receipt-view-modal">
+              {receiptViewOpen.test_receipt && (
+                <div className="bg-amber-200 text-amber-900 text-center font-black text-[10px] uppercase tracking-widest py-1 mb-2 rounded">{receiptViewOpen.test_label}</div>
+              )}
+              <p className="font-black text-base">{receiptViewOpen.business_name}</p>
+              <p className="text-gray-500 mt-1">Receipt #{receiptViewOpen.receipt_number}</p>
+              {receiptViewOpen.client_name && <p className="text-gray-500">Client: {receiptViewOpen.client_name}</p>}
+              <div className="border-t border-gray-200 my-2" />
+              {(receiptViewOpen.line_items || []).map((li, i) => (
+                <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{money(li.amount)}</span></div>
+              ))}
+              <div className="border-t border-gray-200 my-2" />
+              <div className="flex justify-between font-black text-base"><span>Total</span><span>{money(receiptViewOpen.total || receiptViewOpen.invoice_total || receiptViewOpen.payment_amount)}</span></div>
+              <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -564,7 +630,7 @@ export default function Pos() {
           </span>
         </div>
         <div className="flex items-center flex-wrap gap-2">
-          {isAdmin && (
+          {canDrawerAndRefunds && (
             <button onClick={() => setDrawerFormOpen((o) => !o)} data-testid="pos-open-drawer-toggle"
                     className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               <i className="fas fa-drawer-alt mr-1.5" />Open Drawer
@@ -574,7 +640,7 @@ export default function Pos() {
                   className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
             Recent Sales
           </button>
-          {isAdmin && (
+          {canPricingActions && (
             <button onClick={() => setManageProductsOpen(true)} data-testid="pos-manage-products-toggle"
                     className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               Manage Products
@@ -584,7 +650,7 @@ export default function Pos() {
                   className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
             Register Tools
           </button>
-          {isAdmin && (
+          {canDrawerAndRefunds && (
             <button onClick={() => setOnlinePaymentsOpen((o) => !o)} data-testid="pos-online-payments-toggle"
                     className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shSecondary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
               Online Payments
@@ -645,7 +711,7 @@ export default function Pos() {
                   <div className="flex items-center gap-3">
                     <span className={s.status === "voided" ? "text-shTextMuted line-through" : "text-shText font-bold"}>{money(s.total)}</span>
                     <button onClick={() => reprintSale(s)} className="text-shPrimary text-[11px] font-black uppercase tracking-widest">Reprint</button>
-                    {isAdmin && s.status !== "voided" && (
+                    {canVoid && s.status !== "voided" && (
                       <button onClick={() => { setVoidingSaleId(s.id); setVoidReason(""); }}
                               className="text-shAccent text-[11px] font-black uppercase tracking-widest">Void</button>
                     )}
@@ -929,7 +995,7 @@ export default function Pos() {
               })}
               {filteredProducts.length === 0 && <p className="text-shTextMuted text-sm col-span-full">No products found.</p>}
             </div>
-            {isAdmin && (
+            {canPricingActions && (
               <button onClick={() => setCustomOpen((o) => !o)}
                       className="mt-3 w-full bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted rounded-xl py-2 text-sm font-black uppercase tracking-widest">
                 + Custom Item
@@ -977,7 +1043,7 @@ export default function Pos() {
               ))}
             </div>
 
-            {isAdmin && cartLines.length > 0 && !discount && (
+            {canPricingActions && cartLines.length > 0 && !discount && (
               <button onClick={() => setDiscountOpen((o) => !o)}
                       className="mt-2 text-shPrimary text-[12px] font-black uppercase tracking-widest">
                 + Discount

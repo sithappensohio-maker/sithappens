@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, formatErr } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
 import { compressImage } from "../lib/imageCompress";
@@ -40,7 +40,7 @@ const emptyForm = {
   staff_involved: [], manager_reviewed: false, client_notified: false, internal_notes: "",
 };
 
-export default function Incidents() {
+export default function Incidents({ openCreateOnMount = false, onCreateConsumed = () => {}, presetDogId = null }) {
   const confirm = useConfirm();
   const [incidents, setIncidents] = useState([]);
   const [dogs, setDogs] = useState([]);
@@ -60,9 +60,20 @@ export default function Incidents() {
   const openNew = () => {
     if (dogs.length === 0) { alert("Add a dog first"); return; }
     setEditing(null);
-    setForm({ ...emptyForm, dog_id: dogs[0].id });
+    setForm({ ...emptyForm, dog_id: presetDogId && dogs.some(d => d.id === presetDogId) ? presetDogId : dogs[0].id });
     setOpen(true); setErr("");
   };
+  // Phase 4 — global "+ New" menu. Waits for `dogs` to load (openNew needs
+  // it) instead of firing on raw mount — reuses this exact same modal.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (openCreateOnMount && !autoOpenedRef.current && dogs.length > 0) {
+      autoOpenedRef.current = true;
+      openNew();
+      onCreateConsumed();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openCreateOnMount, dogs]);
   const openEdit = (inc) => { setEditing(inc); setForm({ ...emptyForm, ...inc }); setEditReason(""); setOpen(true); setErr(""); };
 
   const onFiles = async (e) => {

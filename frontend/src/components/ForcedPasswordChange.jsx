@@ -21,6 +21,11 @@ export default function ForcedPasswordChange() {
         new_password: form.next,
       });
       if (data?.token) localStorage.setItem("sh_token", data.token);
+      // Clear the guard api.js sets before its one-time forced reload, so a
+      // future must-change-password requirement (e.g. another admin reset)
+      // can trigger that same recovery again instead of being silently
+      // skipped as "already handled this session".
+      try { sessionStorage.removeItem("sh_password_reload_triggered"); } catch (e) { /* ignore */ }
       await reloadUser();
     } catch (err) {
       setError(formatErr(err.response?.data?.detail) || "Password change failed.");

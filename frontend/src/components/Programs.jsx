@@ -4,6 +4,7 @@ import { useConfirm } from "../lib/useConfirm";
 import CsvImportButton from "./CsvImportButton";
 import { parseProgramCsv, PROGRAM_CSV_SAMPLE } from "../lib/csvImport";
 import ShopImageUpload from "./ShopImageUpload";
+import ShopCategoryFields from "./ShopCategoryFields";
 
 /* ============================================================
  *  Admin: Settings → Programs tab. Manage the library of programs.
@@ -27,6 +28,20 @@ export function ProgramsPanel() {
     } catch (e) { setErr(e.response?.data?.detail || e.message); }
   };
   useEffect(() => { load(); }, []);
+  // Shop Organization category/subcategory names, for the list rows only.
+  const [shopCategories, setShopCategories] = useState([]);
+  useEffect(() => {
+    api.get("/shop/categories", { params: { include_inactive: true } })
+      .then(({ data }) => setShopCategories(data.categories || []))
+      .catch(() => setShopCategories([]));
+  }, []);
+  const shopCategoryLabel = (p) => {
+    if (!p.category_id) return "Uncategorized";
+    const cat = shopCategories.find((c) => c.id === p.category_id);
+    if (!cat) return "Uncategorized";
+    const sub = (cat.subcategories || []).find((s) => s.id === p.subcategory_id);
+    return sub ? `${cat.name} / ${sub.name}` : cat.name;
+  };
 
   const startNew = (type = "private_lessons") => {
     setOriginalImageId(null);
@@ -35,6 +50,7 @@ export function ProgramsPanel() {
       format: { count: 1, unit: "sessions" }, min_age_months: 0,
       prereq_slugs: [], modules: [], price: 0, active: true,
       available_online: false, online_description: "", image_id: null,
+      category_id: null, subcategory_id: null,
     });
   };
   const openEditProgram = (p) => { setOriginalImageId(p.image_id || null); setEdit({ ...p }); };
@@ -113,6 +129,7 @@ export function ProgramsPanel() {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-black text-white">{p.name} {p.is_default && <span className="text-[13px] text-gray-500 font-black tracking-widest ml-2">DEFAULT</span>}</p>
                   <p className="text-[15px] text-gray-400">{p.modules.length} modules · {p.modules.reduce((a,m)=>a+m.goals.length,0)} goals · {p.format?.count} {p.format?.unit}</p>
+                  <p className="text-[11px] text-gray-500 uppercase tracking-widest mt-0.5 truncate">{shopCategoryLabel(p)}</p>
                 </div>
                 <p className="text-shGreen font-black text-[16px] whitespace-nowrap">${Number(p.price || 0).toFixed(2)}</p>
                 <button onClick={()=>openEditProgram(p)} data-testid={`prog-edit-${p.id}`} className="text-shBlue hover:text-white text-sm px-2"><i className="fas fa-pen"/></button>
@@ -203,6 +220,15 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
                    className="w-full bg-bgBase border border-bgHover rounded p-2 text-white text-sm"/>
             <p className="text-[13px] text-gray-500 mt-1 normal-case font-normal tracking-normal">Shown on the client portal so prospects can see what each program costs.</p>
           </Field>
+
+          {/* Shop Organization — purely organizational, independent of online
+              visibility. A program can be categorized whether or not it's
+              available online. */}
+          <div className="border-t border-bgHover pt-3 space-y-3">
+            <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Shop Category</p>
+            <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id}
+                                onChange={(patch) => set(patch)} />
+          </div>
 
           {/* Client Shop Phase 1 — additive online-visibility controls. */}
           <div className="border-t border-bgHover pt-3 space-y-3">

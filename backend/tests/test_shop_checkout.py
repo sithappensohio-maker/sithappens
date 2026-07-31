@@ -1989,3 +1989,186 @@ def test_j_needs_attention_order_stays_needs_attention_after_marked_seen(admin_h
     assert fresh_order["fulfillment_status"] == "needs_attention"  # untouched by mark-seen
     assert fresh_order["status"] == "paid"  # untouched
     assert fresh_order["pickup_status"] is None  # untouched
+
+
+# ===========================================================================
+# GROUP K — Client-specific (grandfathered) credit-pack pricing in the Shop.
+# _price_shop_cart() must resolve the SAME price_overrides row front-desk
+# sell-pack and GET /shop/catalog already trust (see
+# test_price_overrides.py / test_client_shop_catalog.py), never the raw
+# catalog price, and freeze the result onto the order line so a later
+# public-price or override change can never alter an already-placed order.
+# ===========================================================================
+
+def _create_price_override(admin_headers, client_id, target_kind, target_code, override_price, expires_on=None):
+    r = requests.post(f"{API}/clients/{client_id}/price-overrides", headers=admin_headers, json={
+        "target_kind": target_kind, "target_code": target_code,
+        "override_price": override_price, "expires_on": expires_on,
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _delete_price_override(admin_headers, override_id):
+    requests.delete(f"{API}/price-overrides/{override_id}", headers=admin_headers, timeout=15)
+
+
+def test_k_checkout_charges_override_price_not_catalog_price(admin_headers, fresh_client):
+    """The order created by the REAL checkout endpoint must freeze the
+    client's override price as unit_price/line_subtotal/line_total/total —
+    never the pack's current $400 public price — and record the full
+    pricing snapshot on the line."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=400.0, service_type="daycare")
+    override = _create_price_override(admin_headers, fresh_client["id"], "credit_pack", pack["id"], 300.0)
+    _force_stripe_customer_conflict(fresh_client["id"])
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    try:
+        r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+            "items": [{"kind": "credit_pack", "ref_id": pack["id"], "quantity": 1}],
+            "idempotency_key": str(uuid.uuid4()),
+        }, timeout=15)
+        assert r.status_code == 502, r.text  # Stripe forced to fail — order already frozen first
+
+        async def _find_order(db):
+            return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
+        order = _mongo_run(_find_order)
+        line = order["lines"][0]
+        assert line["unit_price"] == 300.0
+        assert line["list_unit_price"] == 400.0
+        assert line["pricing_source"] == "client_override"
+        assert line["price_override_id"] == override["id"]
+        assert line["has_price_override"] is True
+        assert order["subtotal"] == 300.0
+        assert order["total"] == 300.0  # never the $400 public price
+    finally:
+        _delete_price_override(admin_headers, override["id"])
+
+
+def test_k_checkout_ignores_browser_submitted_price(admin_headers, fresh_client):
+    """A client_id-manipulated / price-manipulated request body must never
+    influence the amount actually charged — ShopCartItemIn doesn't even
+    declare a price field, so an extra one is silently dropped by
+    validation, but assert on the OUTCOME (order total) rather than the
+    request schema alone."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=200.0, service_type="daycare")
+    _force_stripe_customer_conflict(fresh_client["id"])
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "credit_pack", "ref_id": pack["id"], "quantity": 1,
+                   "unit_price": 1.0, "price": 1.0}],  # attempted price tampering
+        "idempotency_key": str(uuid.uuid4()),
+    }, timeout=15)
+    assert r.status_code == 502, r.text
+
+    async def _find_order(db):
+        return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
+    order = _mongo_run(_find_order)
+    assert order["lines"][0]["unit_price"] == 200.0  # server-resolved catalog price, tampering ignored
+    assert order["total"] == 200.0
+
+
+def test_k_checkout_no_override_uses_standard_catalog_price(admin_headers, fresh_client):
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=150.0, service_type="daycare")
+    _force_stripe_customer_conflict(fresh_client["id"])
+    headers = _client_headers(fresh_client["id"], fresh_client["email"])
+    r = requests.post(f"{API}/shop/checkout", headers=headers, json={
+        "items": [{"kind": "credit_pack", "ref_id": pack["id"], "quantity": 1}],
+        "idempotency_key": str(uuid.uuid4()),
+    }, timeout=15)
+    assert r.status_code == 502, r.text
+
+    async def _find_order(db):
+        return await db.shop_orders.find_one({"client_id": fresh_client["id"]}, {"_id": 0})
+    order = _mongo_run(_find_order)
+    line = order["lines"][0]
+    assert line["unit_price"] == 150.0
+    assert line["list_unit_price"] == 150.0
+    assert line["pricing_source"] == "standard"
+    assert line["price_override_id"] is None
+    assert line["has_price_override"] is False
+
+
+def test_k_fulfillment_uses_frozen_line_price_even_if_pack_price_later_changes(admin_headers, fresh_client):
+    """The credit lot must reflect what THIS order actually charged, not
+    whatever the pack's public price happens to be at fulfillment time —
+    proven by changing the pack's live price AFTER seeding the order."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=400.0, service_type="daycare")
+    line = _make_line("credit_pack", pack["id"], pack["name"], 300.0, 1)
+    line.update({
+        "list_unit_price": 400.0, "pricing_source": "client_override",
+        "price_override_id": "test-override-id-123", "has_price_override": True,
+    })
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [line])
+
+    # Public price changes AFTER the order was placed — must not affect this order.
+    requests.put(f"{API}/credit-packs/{pack['id']}", headers=admin_headers, json={
+        "name": pack["name"], "qty": pack["qty"], "price": 999.0,
+        "service_type": pack["service_type"], "active": True,
+    }, timeout=15)
+
+    attempt_id, session_id = _seed_pending_shop_attempt(order_id, fresh_client["id"], order["total"])
+    r = _post_stripe_webhook("checkout.session.completed", {
+        "id": session_id, "payment_status": "paid", "currency": "usd", "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    })
+    assert r.status_code == 200, r.text
+
+    async def _find_lot(db):
+        return await db.credit_lots.find_one({"fulfillment_ref": f"shop_order:{order_id}:item:{line['item_id']}:unit:0"}, {"_id": 0})
+    lot = _mongo_run(_find_lot)
+    assert lot["price_paid"] == 300.0
+    assert lot["list_price"] == 400.0  # frozen at order time, never the new $999 public price
+    assert lot["price_override_id"] == "test-override-id-123"
+
+
+def test_k_fulfillment_falls_back_safely_for_legacy_order_without_frozen_fields(admin_headers, fresh_client):
+    """An order seeded the OLD way (no list_unit_price/price_override_id on
+    the line at all) must still fulfill correctly, falling back to the
+    pack's current price rather than crashing — exact pre-existing
+    behavior for orders that predate this pricing-snapshot work."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=120.0, service_type="daycare")
+    order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [
+        _make_line("credit_pack", pack["id"], pack["name"], 120.0, 1),
+    ])
+    item_id = order["lines"][0]["item_id"]
+    attempt_id, session_id = _seed_pending_shop_attempt(order_id, fresh_client["id"], order["total"])
+    r = _post_stripe_webhook("checkout.session.completed", {
+        "id": session_id, "payment_status": "paid", "currency": "usd", "amount_total": int(round(order["total"] * 100)),
+        "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                     "sithappens_client_id": fresh_client["id"]},
+    })
+    assert r.status_code == 200, r.text
+
+    async def _find_lot(db):
+        return await db.credit_lots.find_one({"fulfillment_ref": f"shop_order:{order_id}:item:{item_id}:unit:0"}, {"_id": 0})
+    lot = _mongo_run(_find_lot)
+    assert lot["price_paid"] == 120.0
+    assert lot["list_price"] == 120.0
+    assert lot.get("price_override_id") is None
+
+
+def test_k_credit_quantity_unaffected_by_override(admin_headers, fresh_client):
+    """Changing a client's override or the pack's public price must never
+    change how many credits a pack grants — 10-credit pack still grants
+    exactly 10, and quantity 2 still grants exactly 20, override or not."""
+    pack = _make_online_pack(admin_headers, uuid.uuid4().hex[:6], qty=10, price=400.0, service_type="daycare")
+    override = _create_price_override(admin_headers, fresh_client["id"], "credit_pack", pack["id"], 300.0)
+    try:
+        line = _make_line("credit_pack", pack["id"], pack["name"], 300.0, 2)
+        line.update({
+            "list_unit_price": 400.0, "pricing_source": "client_override",
+            "price_override_id": override["id"], "has_price_override": True,
+        })
+        order_id, order = _seed_shop_order(fresh_client["id"], fresh_client["name"], [line])
+        attempt_id, session_id = _seed_pending_shop_attempt(order_id, fresh_client["id"], order["total"])
+        r = _post_stripe_webhook("checkout.session.completed", {
+            "id": session_id, "payment_status": "paid", "currency": "usd", "amount_total": int(round(order["total"] * 100)),
+            "metadata": {"sithappens_attempt_id": attempt_id, "sithappens_shop_order_id": order_id,
+                         "sithappens_client_id": fresh_client["id"]},
+        })
+        assert r.status_code == 200, r.text
+        client_after = _get_client(fresh_client["id"])
+        assert client_after["credits"] == 20  # 2 units x 10 credits each, unaffected by pricing
+    finally:
+        _delete_price_override(admin_headers, override["id"])

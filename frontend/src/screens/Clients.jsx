@@ -21,6 +21,8 @@ import TakePaymentModal from "../components/TakePaymentModal";
 import ReviewRequestButton from "../components/ReviewRequestButton";
 import LazyMount from "../components/LazyMount";
 import SendClientEmailModal from "../components/SendClientEmailModal";
+import { addRecent } from "../lib/recentlyOpened";
+import ClientHub from "../components/ClientHub";
 
 const empty = { name:"", address:"", phone:"", email:"", emerg:"", credits:0, photo:"", photo_gallery_url:"", photo_gallery_pin:"", photo_gallery_has_new:false };
 const fmtCredits = (n) => {
@@ -29,7 +31,7 @@ const fmtCredits = (n) => {
 };
 const emptyDog = { name:"", breed:"", age_y:0, age_m:0, birthday:"", sex:"Male", fixed:"No", rabies:"", bordetella:"", dhpp:"", notes:"", rabies_photo:"", bordetella_photo:"", dhpp_photo:"" };
 
-export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {} }) {
+export default function Clients({ focusId = null, focusMode = "scroll", onConsumed = () => {}, onJumpToDog = () => {}, openCreateOnMount = false, onCreateConsumed = () => {}, userId = null, hubTarget = null, can = () => false, onAddDog = () => {}, onBookForClient = () => {} }) {
   const confirm = useConfirm();
   const [clients, setClients] = useState([]);
   const [open, setOpen] = useState(false);
@@ -96,9 +98,37 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const openNewClient = () => {
     setEditing(null); setForm(empty); setDog(emptyDog); setAddDog(true); setOpen(true); setErr("");
   };
+  // Phase 4 — global "+ New" menu. Reuses this exact same modal (no second
+  // form) — the menu just navigates here and asks it to open once.
+  useEffect(() => {
+    if (openCreateOnMount) { openNewClient(); onCreateConsumed(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const openEditClient = (c) => {
     setEditing(c); setForm({...empty, ...c}); setAddDog(false); setOpen(true); setErr("");
+    addRecent(userId, { kind: "client", id: c.id, title: c.name, subtitle: c.email || c.phone || "" });
   };
+
+  // Section 3 — Client Record Hub. A tabbed reorganization of this exact
+  // card's data, opened via the client's name or a search/recent-item hit.
+  const [hubOpen, setHubOpen] = useState(null); // client object
+  const [hubInitialTab, setHubInitialTab] = useState("overview");
+  const [hubFocusId, setHubFocusId] = useState(null);
+  const openHub = (c, initialTab = "overview", focusRecordId = null) => {
+    setHubOpen(c); setHubInitialTab(initialTab); setHubFocusId(focusRecordId);
+    addRecent(userId, { kind: "client", id: c.id, title: c.name, subtitle: c.email || c.phone || "" });
+  };
+
+  // Search results for bookings/invoices route here with a richer target
+  // (kind + the owning client's id) so the Hub opens on the right tab.
+  useEffect(() => {
+    if (!hubTarget || clients.length === 0) return;
+    const c = clients.find(x => x.id === hubTarget.clientId);
+    const tabForKind = hubTarget.kind === "invoice" ? "money" : hubTarget.kind === "messages" ? "messages" : "bookings";
+    if (c) openHub(c, tabForKind, hubTarget.id);
+    onConsumed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubTarget, clients]);
 
   useEffect(() => {
     if (!focusId || clients.length === 0) return;
@@ -281,7 +311,10 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             <div className="flex items-center gap-3 pr-16">
               <Avatar src={c.photo} icon="fa-user" size="md" ring="border-shSecondary/40" alt={c.name} testid={`client-avatar-${c.id}`}/>
               <div className="min-w-0 flex-1">
-                <h4 className="text-lg font-black text-shText uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+                <button onClick={()=>openHub(c)} data-testid={`open-client-hub-${c.id}`}
+                        className="text-left hover:text-shPrimary transition">
+                  <h4 className="text-lg font-black text-shText uppercase tracking-tight min-w-0 truncate">{c.name}</h4>
+                </button>
                 <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                   {c.client_status && c.client_status !== "active" && (
                     <ClientStatusPill status={c.client_status} clientId={c.id} onChange={load}/>
@@ -661,6 +694,26 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
       {legacyOpen && <LegacyPricingModal client={legacyOpen} onClose={()=>setLegacyOpen(null)} />}
       {lotsOpen && <PackLotsModal client={lotsOpen} onClose={()=>setLotsOpen(null)} />}
       {previewId && <ClientPortalPreview clientId={previewId} onClose={()=>setPreviewId(null)} />}
+
+      {hubOpen && (
+        <ClientHub
+          client={hubOpen}
+          onClose={()=>setHubOpen(null)}
+          can={can}
+          initialTab={hubInitialTab}
+          focusRecordId={hubFocusId}
+          onJumpToDog={onJumpToDog}
+          onAddDog={()=>{ setHubOpen(null); onAddDog(); }}
+          onBook={()=>{ setHubOpen(null); onBookForClient(hubOpen.id); }}
+          onSellPack={()=>{ setHubOpen(null); setSellOpen(hubOpen); }}
+          onSellProgram={()=>{ setHubOpen(null); setSellProgramOpen(hubOpen); }}
+          onTakePayment={()=>{ setHubOpen(null); setTakePaymentOpen(hubOpen); }}
+          onOpenFiles={()=>{ setHubOpen(null); setFilesOpen(hubOpen); }}
+          onOpenPackLots={()=>{ setHubOpen(null); setLotsOpen(hubOpen); }}
+          onEditClient={()=>{ setHubOpen(null); openEditClient(hubOpen); }}
+          onOpenSpecialPricing={()=>{ setLegacyOpen(hubOpen); setHubOpen(null); }}
+        />
+      )}
       {adjustOpen && <AdjustCreditsModal client={adjustOpen} onClose={()=>setAdjustOpen(null)} onSaved={()=>{ setAdjustOpen(null); load(); }} />}
     </div>
   );
@@ -1757,7 +1810,7 @@ function ClientActionsMenu({
       onClick: onReceipts, testId: `menu-receipts-${clientId}` },
     { label: "Files & Homework", icon: "fa-folder-open", color: "text-shSecondary",
       onClick: onFiles, testId: `menu-files-${clientId}` },
-    { label: "Legacy Pricing", icon: "fa-lock", color: "text-amber-400",
+    { label: "Client-Specific Pricing", icon: "fa-tag", color: "text-amber-400",
       onClick: onLegacy, testId: `menu-legacy-${clientId}` },
     { label: "View Pack Lots", icon: "fa-layer-group", color: "text-shSecondary",
       onClick: onPackLots, testId: `menu-pack-lots-${clientId}` },

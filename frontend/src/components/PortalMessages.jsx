@@ -40,21 +40,33 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
   // reply
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
+  // Focused Client Usability phase — a toast alone is easy to miss; keep a
+  // persistent confirmation visible in the thread until the client
+  // dismisses it, without changing the send/reply logic itself.
+  const [justSent, setJustSent] = useState(null); // { subject, dogName } | null
 
   const load = async () => {
-    const { data } = await api.get("/me/messages");
-    setThreads(data || []);
-    const unread = (data || []).filter(t => t.unread_client).length;
-    onUnreadChange(unread);
-    if (data?.length && !activeId) setActiveId(data[0].id);
+    try {
+      const { data } = await api.get("/me/messages");
+      setThreads(data || []);
+      const unread = (data || []).filter(t => t.unread_client).length;
+      onUnreadChange(unread);
+      if (data?.length && !activeId) setActiveId(data[0].id);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load your messages");
+    }
   };
 
   const loadActive = async (id) => {
     if (!id) { setActive(null); return; }
-    const { data } = await api.get(`/me/messages/${id}`);
-    setActive(data);
-    if (data?.unread_client) {
-      try { await api.post(`/me/messages/${id}/read`); load(); } catch {}
+    try {
+      const { data } = await api.get(`/me/messages/${id}`);
+      setActive(data);
+      if (data?.unread_client) {
+        try { await api.post(`/me/messages/${id}/read`); load(); } catch {}
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load this conversation");
     }
   };
 
@@ -69,6 +81,8 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
         category, subject, body: bodyTxt, dog_id: dogId || null,
       });
       toast.success("Message sent — we'll get back to you soon!");
+      const sentDogName = dogs.find(d => d.id === dogId)?.name;
+      setJustSent({ subject: subject || CATEGORIES.find(c => c.id === category)?.label || "Message", dogName: sentDogName });
       setComposing(false);
       setSubject(""); setBodyTxt(""); setDogId(""); setCategory("other");
       await load();
@@ -164,7 +178,7 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
                 <p className="text-[12px] text-shTextMuted p-5 text-center">No messages yet — say hi 👋</p>
               )}
               {threads.map(t => (
-                <button key={t.id} onClick={() => setActiveId(t.id)}
+                <button key={t.id} onClick={() => { setActiveId(t.id); setJustSent(null); }}
                         data-testid={`portal-messages-thread-${t.id}`}
                         className={`w-full text-left px-4 py-3 border-b border-shBorder transition ${
                           activeId === t.id ? "bg-shSecondary/10 border-l-2 border-l-shSecondary" : "hover:bg-shSurfaceRaised"
@@ -188,6 +202,20 @@ export default function PortalMessages({ dogs = [], open = false, onClose = () =
               )}
               {active && (
                 <>
+                  {justSent && (
+                    <div className="m-3 rounded-xl border border-shGreen/40 bg-shGreen/10 p-3 flex items-start gap-2.5" data-testid="portal-message-sent-confirmation">
+                      <i className="fas fa-circle-check text-shGreen mt-0.5"/>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[14px] font-bold text-shText">Your message was sent successfully</p>
+                        <p className="text-[13px] text-shTextMuted mt-0.5">
+                          {justSent.subject}{justSent.dogName ? ` · ${justSent.dogName}` : ""} — Sit Happens will reply here soon.
+                        </p>
+                      </div>
+                      <button onClick={() => setJustSent(null)} className="text-shTextMuted hover:text-shText" data-testid="portal-message-sent-dismiss">
+                        <i className="fas fa-xmark"/>
+                      </button>
+                    </div>
+                  )}
                   <div className="px-4 py-3 border-b border-shBorder">
                     <p className="text-sm font-bold text-shText truncate">{active.subject}</p>
                     <p className="text-[11px] text-shTextMuted mt-0.5">

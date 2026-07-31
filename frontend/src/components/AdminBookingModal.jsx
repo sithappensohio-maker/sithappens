@@ -56,14 +56,14 @@ const calcDiscountAmount = (rawAdditionalDogBase, cfg, additionalDogs) => {
   return raw * (Math.min(100, Math.max(0, value)) / 100);
 };
 
-export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, onClose, onCreated }) {
+export default function AdminBookingModal({ defaultCheckIn = false, defaultDate = null, existing = null, presetClientId = null, presetDogId = null, onClose, onCreated }) {
   useEditLock(true);
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [kennels, setKennels] = useState([]);
   const [closedDates, setClosedDates] = useState([]);
-  const [clientId, setClientId] = useState(existing?.client_id || "");
-  const [dogId, setDogId] = useState(existing?.dog_id || "");
+  const [clientId, setClientId] = useState(existing?.client_id || presetClientId || "");
+  const [dogId, setDogId] = useState(existing?.dog_id || presetDogId || "");
   // Quick Check-in mode: dog-first selection (the common drop-off flow).
   // Normal booking creation stays client-first.
   const isQuickCheckin = defaultCheckIn && !existing;

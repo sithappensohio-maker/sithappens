@@ -42,6 +42,9 @@ import VaccineQuickUploadModal from "../components/VaccineQuickUploadModal";
 import PortalAnnouncementsCard from "../components/PortalAnnouncementsCard";
 import PortalTrainingTipCard from "../components/PortalTrainingTipCard";
 import PortalEngagementHub from "../components/PortalEngagementHub";
+import PortalNeedsAttentionCard from "../components/PortalNeedsAttentionCard";
+import PortalSuccessPanel from "../components/PortalSuccessPanel";
+import { CLIENT_LABELS, bookingStatusLabel } from "../lib/clientLabels";
 import ServicesByCategory from "../components/ServicesByCategory";
 import { DogFactCard } from "../components/DogFactCard";
 import { DailyTriviaCard } from "../components/DailyTriviaCard";
@@ -589,6 +592,7 @@ export default function Portal() {
   const [waiver, setWaiver] = useState(null); // {signed, current_version, signature, needs_resign}
   const [pubSettings, setPubSettings] = useState(null);
   const [showWaiver, setShowWaiver] = useState(false);
+  const [waiverSuccess, setWaiverSuccess] = useState(null); // { signedAt } | null
   const [homework, setHomework] = useState([]);
   const [hwModal, setHwModal] = useState(null);
   const [hwNote, setHwNote] = useState("");
@@ -602,6 +606,14 @@ export default function Portal() {
   // Photography Phase 1 — dedicated full-screen Photography page, same
   // navigation-swap pattern as the full-screen Shop view below.
   const [photographyOpen, setPhotographyOpen] = useState(false);
+  // Focused Client Usability phase — secondary/optional portal features
+  // (Shop, Credits/Prepaid Visits, Rewards, Referrals, Training history,
+  // Homework, Files, Trivia) are collapsed by default under one "More"
+  // disclosure so Home stays focused on what needs a client's attention
+  // today. Nothing is removed — every existing section/behavior is exactly
+  // the same markup, just hidden until expanded (same pattern already used
+  // for the full setup checklist below).
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Sprint 110di-17 — Feature Visibility gates. Each useFeature read is
   // cheap (just a context lookup) and defaults to TRUE so first paint
@@ -1000,10 +1012,104 @@ export default function Portal() {
   const goMessages = () => setMessagesOpen(true);
   const goMyDogs = () => setDogModal({ open: true, dog: dogs[0] || null });
   const goPayments = () => document.getElementById("portal-payments-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const goCredits = () => document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const goRewards = () => document.querySelector('[data-testid="portal-trophies-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goCredits = () => {
+    setMoreOpen(true);
+    setTimeout(() => document.querySelector('[data-testid="credits-card"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+  const goRewards = () => {
+    setMoreOpen(true);
+    setTimeout(() => document.querySelector('[data-testid="portal-trophies-section"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+  const goTraining = () => {
+    setMoreOpen(true);
+    setTimeout(() => document.getElementById("portal-training-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+  const goHomeworkHistory = () => {
+    setMoreOpen(true);
+    setTimeout(() => document.getElementById("portal-homework-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
+  const goFiles = () => {
+    setMoreOpen(true);
+    setTimeout(() => document.getElementById("portal-files-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+  };
   const goRefer = () => setShowReferModal(true);
   const goHelp = () => setTutorialsOpen(true);
+
+  // Shared "open the right thing for this setup step" dispatch — used by
+  // both PortalSetupChecklist's own onAction AND the new "What You Need to
+  // Do" card, so there's exactly one place that knows how to act on each
+  // setup target rather than two copies of the same logic.
+  const handlePortalSetupAction = (target) => {
+    if (target === "waiver") {
+      setShowWaiver(true);
+      return true;
+    }
+    if (target === "vaccines") {
+      // Collect every (dog, required-vaccine) pair that's missing or
+      // expired, then fire the multi-step wizard. If there's only one,
+      // the wizard still works (1-of-1).
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const required = ["rabies", "bordetella", "dhpp"];
+      const queue = [];
+      dogs.forEach(d => {
+        required.forEach(v => {
+          const exp = d?.vaccines?.[v];
+          if (!exp || String(exp).slice(0, 10) < todayIso) {
+            queue.push({ dog: d, vaccine: v });
+          }
+        });
+      });
+      if (queue.length > 0) { setVaccineWizard(queue); return true; }
+      if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
+      // No dogs yet — open the add-dog modal so they start there.
+      setDogModal({ open: true, dog: null });
+      return true;
+    }
+    if (target === "dogs") {
+      // Always open the Add Dog modal from the setup checklist —
+      // covers both "add first dog" and "add another dog".
+      setDogModal({ open: true, dog: null });
+      return true;
+    }
+    if (target === "profile") {
+      setProfileOpen(true);
+      return true;
+    }
+    return false;  // let the checklist fall through to its default scroll
+  };
+
+  // "What You Need to Do" card's primary action — covers the shared setup
+  // targets above PLUS the targets unique to items 6-10 of the priority
+  // list (payment/booking review/messages/next-appointment/book).
+  const handleNeedsAttentionAction = (target, payload) => {
+    if (["waiver", "vaccines", "dogs", "profile"].includes(target)) {
+      handlePortalSetupAction(target);
+      return;
+    }
+    if (target === "intake") {
+      setSetupExpanded(true);
+      setTimeout(() => document.querySelector('[data-testid="portal-setup-checklist"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+      return;
+    }
+    if (target === "payment") {
+      goPayments();
+      return;
+    }
+    if (target === "booking") {
+      const b = bookings.find(x => x.id === payload?.bookingId);
+      setBookingsTab(b && ["rejected", "completed", "cancelled"].includes(b.status) ? "past" : "upcoming");
+      setTimeout(() => document.getElementById("portal-bookings-anchor")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+      return;
+    }
+    if (target === "messages") {
+      setMessagesOpen(true);
+      return;
+    }
+    if (target === "book") {
+      goBook();
+      return;
+    }
+  };
 
   return (
     <div className="app-shell h-full min-h-0 flex bg-bgBase" data-testid="client-portal">
@@ -1054,23 +1160,21 @@ export default function Portal() {
         </header>
 
       <div className="app-scroll-root flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-8 max-w-6xl mx-auto w-full pb-24 md:pb-8" data-scroll-root>
-        {/* Above-the-fold quick actions — first thing on Home, before the
-            announcement banner or any dashboard content, so Book/Shop/
-            Photography are visible without scrolling. Each card just opens
-            an existing destination (booking wizard, full-screen Shop, or the
-            existing Photography service-info card) — no new booking/shop
-            logic lives here. */}
+        {/* Above-the-fold quick actions — all 3 cards stay on Home per the
+            user's own correction; Book is kept the strongest (emphasized)
+            so it doesn't visually compete with Shop, rather than removing
+            Shop/Photography from view (Focused Client Usability phase). */}
         <div className={`grid grid-cols-1 ${feat.photography ? "sm:grid-cols-3" : "sm:grid-cols-2"} gap-3 mb-4 sm:mb-6`}
              data-testid="portal-top-quick-actions">
           <PortalHomeActionCard
             testId="portal-quickaction-book"
-            icon="fa-calendar-plus" accent="primary"
-            title="Book Now" description="Schedule training, classes or private sessions."
+            icon="fa-calendar-plus" accent="primary" emphasized
+            title="Book Now" description="Schedule daycare, boarding, training, grooming and more."
             ctaLabel="Book an Appointment" onClick={goBook}
           />
           <PortalHomeActionCard
             testId="portal-quickaction-shop"
-            icon="fa-bag-shopping" accent="shop" emphasized badge="Popular"
+            icon="fa-bag-shopping" accent="shop"
             title="Shop" description="Browse premium training gear, tools & exclusive products."
             ctaLabel="Shop Now" cartCount={shopCartCount} onClick={goShop}
           />
@@ -1084,37 +1188,56 @@ export default function Portal() {
           )}
         </div>
 
-        {/* Compact "Action Needed" summary — the full step-by-step checklist
-            (unchanged, same component/props/logic) only mounts once the
-            client taps "Continue Setup", so Home isn't dominated by it. */}
-        {bookingLocked && !setupExpanded && (
-          <div className="relative overflow-hidden mb-4 sm:mb-6 rounded-xl border border-shAccent/25 shadow-sh flex items-center gap-3 px-4 py-3"
-               style={{ background: "var(--sh-card-base)" }}
-               data-testid="portal-action-needed-compact">
-            <span aria-hidden="true" className="pointer-events-none absolute inset-0"
-                  style={{ background: "radial-gradient(120% 160% at 0% 50%, rgba(242,101,34,0.12), transparent 60%)" }}/>
-            <span className="relative z-10 w-9 h-9 shrink-0 rounded-full bg-shAccent/15 border border-shAccent/35 text-shAccent grid place-items-center"
-                  style={{ boxShadow: "0 0 16px -4px rgba(242,101,34,0.5)" }}>
-              <i className="fas fa-triangle-exclamation"/>
-            </span>
-            <div className="relative z-10 flex-1 min-w-0">
-              <p className="text-[11px] sm:text-[13px] font-bold text-shAccent uppercase tracking-wide sm:tracking-wide whitespace-nowrap">Action Needed</p>
-              <p className="text-[13px] text-shTextMuted truncate">Finish your setup to get the most out of your portal.</p>
-            </div>
-            <button
-              onClick={() => {
-                setSetupExpanded(true);
-                setTimeout(() => document.querySelector('[data-testid="portal-setup-checklist"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-              }}
-              data-testid="portal-action-needed-continue"
-              className="relative z-10 shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-shAccent text-white text-[12px] font-black uppercase tracking-widest hover:brightness-110 transition"
-            >
-              <span className="sm:hidden">Setup</span>
-              <span className="hidden sm:inline">Continue Setup</span>
-              <i className="fas fa-arrow-right text-[10px]"/>
-            </button>
+        {/* Persistent waiver-signature confirmation — replaces the old
+            silent modal close (Focused Client Usability phase). Only ever
+            shown after the server has actually confirmed the signature. */}
+        {waiverSuccess && (
+          <div className="mb-4 sm:mb-6">
+            <PortalSuccessPanel
+              testId="portal-waiver-success"
+              title="Your waiver was signed successfully"
+              subtitle={dogs.length ? `Covers ${dogs.map(d => d.name).join(", ")}` : undefined}
+              date={waiverSuccess.signedAt}
+              status="Signed"
+              statusTone="green"
+              nextSteps="You're all set — this waiver is on file and you're ready to book services."
+              onDone={() => setWaiverSuccess(null)}
+            />
           </div>
         )}
+
+        {/* "What You Need to Do" — one prominent card showing only the
+            single highest-priority relevant action (Focused Client
+            Usability phase). Replaces the old generic "Action Needed"
+            compact banner, which only ever covered the setup checklist. */}
+        <PortalNeedsAttentionCard
+          setupStatus={setupStatus} client={client} dogs={dogs} bookings={bookings}
+          messagesUnread={messagesUnread} onAction={handleNeedsAttentionAction}
+        />
+
+        {/* "More" — Shop, Prepaid Visits, Rewards, Referrals, Training
+            history, Homework history, Photography, Files, Trivia, and other
+            optional tools. Collapsed by default so Home stays focused;
+            nothing here is removed, just tucked behind one clearly-labeled
+            disclosure. Opening it reveals the SAME sections (unchanged
+            markup/logic) further down the page. */}
+        <button type="button" onClick={() => setMoreOpen((v) => !v)} data-testid="portal-more-toggle"
+                className="w-full mb-4 sm:mb-6 flex items-center justify-between gap-3 px-4 py-3.5 rounded-xl border border-shBorder bg-[var(--sh-card-base)] hover:border-shPrimary/40 transition">
+          <span className="flex items-center gap-2 text-[15px] font-bold text-shText">
+            <i className="fas fa-ellipsis text-shTextMuted"/>More
+            <span className="text-[13px] text-shTextMuted font-normal">Prepaid visits, rewards, referrals, training history & more</span>
+          </span>
+          <i className={`fas fa-chevron-down text-shTextMuted transition-transform ${moreOpen ? "rotate-180" : ""}`}/>
+        </button>
+
+        {/* The old compact "Action Needed" banner (setup-only, generic
+            copy) is superseded by PortalNeedsAttentionCard above, which
+            covers this same setup-incomplete case with specific per-step
+            guidance plus 9 other priority cases. setSetupExpanded(true) is
+            still triggered via the card's "setup"/"intake" action targets
+            (see handleNeedsAttentionAction), so "Continue Setup" behavior
+            is fully preserved — just reached through one card instead of
+            two overlapping ones. */}
 
         {/* Sprint 110di-18 — Admin-set announcement banner. Renders at the
             very top whenever enabled + within the date window. */}
@@ -1177,53 +1300,23 @@ export default function Portal() {
           refreshKey={setupRefresh}
           onStatusChange={setSetupStatus}
           onHelp={sectionOn("messages") ? (() => setMessagesOpen(true)) : null}
-          onAction={(target) => {
-            // Return true to prevent the default scroll/click fallback.
-            if (target === "waiver") {
-              setShowWaiver(true);
-              return true;
-            }
-            if (target === "vaccines") {
-              // Collect every (dog, required-vaccine) pair that's missing or
-              // expired, then fire the multi-step wizard. If there's only one,
-              // the wizard still works (1-of-1).
-              const todayIso = new Date().toISOString().slice(0, 10);
-              const required = ["rabies", "bordetella", "dhpp"];
-              const queue = [];
-              dogs.forEach(d => {
-                required.forEach(v => {
-                  const exp = d?.vaccines?.[v];
-                  if (!exp || String(exp).slice(0, 10) < todayIso) {
-                    queue.push({ dog: d, vaccine: v });
-                  }
-                });
-              });
-              if (queue.length > 0) { setVaccineWizard(queue); return true; }
-              if (dogs.length > 0)  { setVaccineModal({ dog: dogs[0], vaccine: "rabies" }); return true; }
-              // No dogs yet — open the add-dog modal so they start there.
-              setDogModal({ open: true, dog: null });
-              return true;
-            }
-            if (target === "dogs") {
-              // Always open the Add Dog modal from the setup checklist —
-              // covers both "add first dog" and "add another dog".
-              setDogModal({ open: true, dog: null });
-              return true;
-            }
-            if (target === "profile") {
-              setProfileOpen(true);
-              return true;
-            }
-            return false;  // let the checklist fall through to its default scroll
-          }}
+          onAction={handlePortalSetupAction}
         />
         </div>
 
         {/* Phase 10A — One organized client overview replaces the old stack of
             tiny landing callouts and the redundant welcome-only card. Existing
-            booking, setup, homework, trophy, dog, and credit data is reused. */}
+            booking, setup, homework, trophy, dog, and credit data is reused.
+            Focused Client Usability phase — this whole hub duplicates the new
+            "What You Need to Do" card's priority messaging (hidden via
+            hidePriorityCard) and its own My Dogs mini-overview duplicates the
+            full My Dogs section that stays prominent below, so the rest of
+            the hub (Quick Actions/Recent Activity) moves behind "More" too —
+            nothing removed, still one click away. */}
         <PortalAnnouncementsCard defaultCollapsed />
+        <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-engagement-hub">
         <PortalEngagementHub
+          hidePriorityCard
           dogs={dogs}
           bookings={bookings}
           homework={homework}
@@ -1270,6 +1363,7 @@ export default function Portal() {
           onHelp={sectionOn("help_button") ? (() => setTutorialsOpen(true)) : null}
           onDogOpen={(dog) => setDogModal({ open: true, dog })}
         />
+        </div>
 
         {/* Sprint 110di-51 — Account balance / tab banner. Shown only when the
             client has an outstanding balance OR a pre-paid credit on file so
@@ -1282,7 +1376,7 @@ export default function Portal() {
               <div className="flex items-center gap-4">
                 <i className="fas fa-file-invoice-dollar text-shOrange text-3xl"/>
                 <div className="flex-1">
-                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">Balance on your account</p>
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shOrange">{CLIENT_LABELS.balanceDue}</p>
                   <p className="text-3xl font-black text-white" data-testid="portal-balance-amount">
                     ${Number(client.account_balance).toFixed(2)}
                   </p>
@@ -1309,7 +1403,7 @@ export default function Portal() {
               <div className="flex items-center gap-4">
                 <i className="fas fa-piggy-bank text-shGreen text-3xl"/>
                 <div className="flex-1">
-                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">Pre-paid credit on file</p>
+                  <p className="text-[11px] font-black uppercase tracking-[0.3em] text-shGreen">{CLIENT_LABELS.accountCredit}</p>
                   <p className="text-3xl font-black text-white" data-testid="portal-balance-amount">
                     ${Math.abs(Number(client.account_balance)).toFixed(2)}
                   </p>
@@ -1372,6 +1466,11 @@ export default function Portal() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
         <div className="col-span-1 space-y-6">
+          {/* Focused Client Usability phase — Credits/Prepaid-visits and the
+              Waiver reference card are secondary on Home; tucked behind the
+              "More" disclosure below (unchanged markup/logic, just hidden
+              until the client opens it). */}
+          <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-credits-waiver">
           {/* Sprint 110x — credits card upgraded with brand-color glow halos
               behind each metric, slightly bigger numbers, gradient bg. Same
               data, much more visually engaging.
@@ -1382,8 +1481,19 @@ export default function Portal() {
                  style={{ background: "radial-gradient(circle at 50% 0%, rgba(140,198,63,0.35) 0%, transparent 55%)" }}/>
             <div className="relative">
               <p className="text-[12px] font-black uppercase tracking-[0.3em] text-shGreen text-center mb-4">
-                <i className="fas fa-wallet mr-1"/>{label("credits", "Your Credits")}
+                <i className="fas fa-wallet mr-1"/>{label("credits", CLIENT_LABELS.creditPack)}
               </p>
+              {/* Focused Client Usability phase — a client who has never
+                  purchased prepaid visits and has no visit history at all
+                  sees a simple purchase action instead of an empty 0/0/0
+                  metrics dashboard. */}
+              {(credits || 0) === 0 && (client?.training_credits || 0) === 0 && (client?.boarding_credits || 0) === 0
+                && Object.values(visitCounts || {}).every((v) => !v) ? (
+                <div className="text-center" data-testid="portal-credits-empty-state">
+                  <p className="text-[14px] text-gray-300">You haven't purchased any {CLIENT_LABELS.creditPack.toLowerCase()} yet — buy some below to get started.</p>
+                </div>
+              ) : (
+              <>
               {/* Sprint 110di-17 — credit tiles gated by service feature
                   toggles. Use a dynamic grid count so layout stays centered
                   when 1-3 services are enabled. */}
@@ -1441,6 +1551,8 @@ export default function Portal() {
                   </div>
                 );
               })()}
+              </>
+              )}
               <PremiumButton variant="secondary" onClick={()=>setProfileOpen(true)} data-testid="open-profile" className="mt-4 w-full justify-center py-2.5">
                 <i className="fas fa-user-pen"/>My Profile
               </PremiumButton>
@@ -1449,7 +1561,7 @@ export default function Portal() {
                          setShopOpen(true);
                        }}
                       data-testid="buy-more-credits" className="mt-2 w-full justify-center py-2.5">
-                <i className="fas fa-cart-plus"/>Buy More Credits
+                <i className="fas fa-cart-plus"/>Buy {CLIENT_LABELS.creditPack}
               </PremiumButton>
               <PremiumButton variant="secondary" onClick={()=>{
                          const el = document.getElementById("portal-bookings-anchor");
@@ -1491,6 +1603,7 @@ export default function Portal() {
             )}
           </div>
           )}
+          </div>
 
           {/* Sprint 110x — Book Service promoted ABOVE quick links and turned
               into a vivid gradient hero CTA (brand-color glow, oversized icon,
@@ -1551,6 +1664,9 @@ export default function Portal() {
             </div>
           </div>
 
+          {/* Focused Client Usability phase — Quick Links / Payment Options /
+              Help are secondary browsing tools; tucked behind "More" too. */}
+          <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-quicklinks-help">
           {sectionOn("profile_quick_links") && (pubSettings?.client_portal_links?.website_url || client?.photo_gallery_url || pubSettings?.client_portal_links?.photo_gallery_url || referralCode || publicServices.length > 0 || publicPrograms.length > 0) && (
             <div className="relative overflow-hidden bg-bgPanel p-5 rounded-2xl border border-bgHover shadow-2xl" data-testid="portal-quick-links">
               {/* Sprint 110y — Quick Links overhauled. Brand-glow halo on the
@@ -1663,10 +1779,17 @@ export default function Portal() {
           {/* Sprint 110di-33 — Need Help? feedback card. Gated by the
               client_portal_controls.sections.help_button toggle. */}
           {sectionOn("help_button") && <NeedHelpCard />}
+          </div>
 
         </div>
 
         <div className="col-span-2 space-y-6">
+          {/* Focused Client Usability phase — Homework streak + Payment
+              plans are secondary; tucked behind "More". Required intake
+              forms stay OUTSIDE this wrapper (below) since they can block
+              booking and must never be hidden from a client who needs to
+              complete one. */}
+          <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-homeworkstreak-plans">
           {/* Sprint 110by — Homework completion streak tile (renders only when
               the client has logged at least one completion). Sits above the
               homework list as a quick dopamine nudge. */}
@@ -1675,6 +1798,7 @@ export default function Portal() {
           {/* Sprint 110ch — Payment plans (renders only when there's at least
               one plan tied to this client). Includes sign-agreement flow. */}
           <PortalPaymentPlans />
+          </div>
 
           {/* Sprint 110er — Phase 1.5: pending intake forms assigned by admin.
               Renders only when the client has at least one sent submission.
@@ -1685,6 +1809,11 @@ export default function Portal() {
             <IntakePortalSection />
           </div>
 
+          {/* Focused Client Usability phase — Homework history and Rewards
+              are secondary ("Training history/Homework history"/"Rewards"
+              per spec); tucked behind "More". My Dogs (below, outside this
+              wrapper) stays prominent. */}
+          <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-homework-rewards">
           {/* Sprint 110n — Homework is the #1 client priority; promoted to the
               top of the portal main column, followed by Achievements. The old
               referral feed has been removed (client uses a separate system). */}
@@ -1819,6 +1948,7 @@ export default function Portal() {
           )}
 
           {feat.homework && <HomeworkIncentivesPanel />}
+          </div>
 
           <div id="portal-dogs-anchor">
             {/* Sprint 110y — My Dogs section header gets the eyebrow + italic
@@ -1970,8 +2100,12 @@ export default function Portal() {
             </div>
           </div>
 
+          {/* Focused Client Usability phase — Training history and Files are
+              secondary; tucked behind "More". My Bookings (below, outside
+              this wrapper) stays prominent. */}
+          <div className={moreOpen ? "" : "hidden"} data-testid="portal-more-training-files">
           {dogs.length > 0 && (
-            <div data-testid="portal-training-section">
+            <div id="portal-training-anchor" data-testid="portal-training-section">
               <h2 className="text-xl font-black text-white uppercase italic tracking-tight mb-4"><i className="fas fa-medal text-shGreen mr-2"/>Training Progress</h2>
               <div className="space-y-4">
                 {dogs.map(d => <PortalTrainingCard key={d.id} dog={d} />)}
@@ -1979,7 +2113,10 @@ export default function Portal() {
             </div>
           )}
 
-          <PortalFilesSection dogs={dogs} />
+          <div id="portal-files-anchor">
+            <PortalFilesSection dogs={dogs} />
+          </div>
+          </div>
 
           <div id="portal-bookings-anchor">
             {/* Sprint 110di-18 — booking history list gated. Empty-state copy
@@ -2154,7 +2291,7 @@ export default function Portal() {
                       <p className="text-[12px] text-gray-400 font-black uppercase tracking-widest mt-1">{b.service_type} · {b.date}{b.end_date && b.end_date!==b.date?` → ${b.end_date}`:""}</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
-                      <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{b.status}</span>
+                      <span className={`text-[11px] font-black uppercase tracking-widest px-2 py-1 rounded border ${b.status==="approved"?"bg-shGreen/15 text-shGreen border-shGreen/40":b.status==="pending"?"bg-shOrange/15 text-shOrange border-shOrange/40":b.status==="rejected"?"bg-red-500/15 text-red-400 border-red-500/40":b.status==="completed"?"bg-shBlue/15 text-shBlue border-shBlue/40":"bg-gray-500/15 text-gray-400 border-bgHover"}`}>{bookingStatusLabel(b.status)}</span>
                       {(b.status==="pending"||b.status==="approved") && <button onClick={()=>cancel(b.id)} className="text-[12px] font-black uppercase text-red-400 hover:text-red-300 tracking-widest px-2 py-1 rounded border border-red-500/30 hover:border-red-500/60 transition">Cancel</button>}
                       {/* Sprint 110cf — prepaid program sessions get a Reschedule Request button */}
                       {b.status==="approved" && b.is_prepaid_program_session && !isPast(b) && (
@@ -2244,7 +2381,12 @@ export default function Portal() {
           waiverText={pubSettings.waiver_text}
           version={pubSettings.waiver_version || 1}
           dogNames={dogs.map(d=>d.name).join(", ")}
-          onSigned={async ()=>{ setShowWaiver(false); await loadAll(); bumpSetupRefresh(); }}
+          onSigned={async ()=>{
+            setShowWaiver(false);
+            await loadAll();
+            bumpSetupRefresh();
+            setWaiverSuccess({ signedAt: new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }) });
+          }}
           onClose={()=>setShowWaiver(false)}
           allowClose={waiver?.signed && !waiver?.needs_resign}
         />

@@ -12,7 +12,7 @@ export default function PremiumButton({ variant = "primary", as, className = "",
     return (
       <Tag
         style={{ background: "var(--sh-card-base)" }}
-        className={`inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md text-[13px] font-bold border border-shBorder text-shText hover:border-shPrimary/40 transition ${className}`}
+        className={`inline-flex items-center gap-1.5 px-4 py-3 rounded-md text-[14px] font-bold border border-shBorder text-shText hover:border-shPrimary/40 transition min-h-[44px] ${className}`}
         {...rest}
       >
         {children}
@@ -22,7 +22,7 @@ export default function PremiumButton({ variant = "primary", as, className = "",
   if (variant === "ghost") {
     return (
       <Tag
-        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-[13px] font-bold text-shTextMuted hover:text-shText hover:bg-shSurfaceRaised transition ${className}`}
+        className={`inline-flex items-center gap-1.5 px-3 py-3 rounded-md text-[14px] font-bold text-shTextMuted hover:text-shText hover:bg-shSurfaceRaised transition min-h-[44px] ${className}`}
         {...rest}
       >
         {children}
@@ -33,7 +33,7 @@ export default function PremiumButton({ variant = "primary", as, className = "",
   const textClass = variant === "danger" || variant === "orange" || variant === "cyan" ? "text-white" : "text-bgHeader";
   return (
     <Tag
-      className={`relative inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md text-[13px] font-black overflow-hidden transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100 ${textClass} ${className}`}
+      className={`relative inline-flex items-center gap-1.5 px-5 py-3 rounded-md text-[14px] font-black overflow-hidden transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:brightness-100 min-h-[44px] ${textClass} ${className}`}
       style={{ background: `rgb(${rgb})`, boxShadow: `0 8px 20px -8px rgba(${rgb},0.6)` }}
       {...rest}
     >

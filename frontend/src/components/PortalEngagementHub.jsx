@@ -328,7 +328,7 @@ export default function PortalEngagementHub({
   dogs = [], bookings = [], homework = [], trophies = { client_trophies: [], dog_trophies: [] },
   setupStatus, messagesUnread = 0, credits = 0, trainingCredits = 0, boardingCredits = 0,
   showMessages = true, showHomework = true, showCredits = true, showRewards = true, showUpload = true,
-  showReferral = false,
+  showReferral = false, hidePriorityCard = false,
   onSetup, onMessages, onBookings, onReportCards, onHomework, onCredits, onRewards, onBook,
   onUpload, onHelp, onDogOpen, onRefer,
 }) {
@@ -347,6 +347,7 @@ export default function PortalEngagementHub({
 
   return (
     <section className="mb-6 space-y-4" data-testid="portal-engagement-hub" aria-label="Your portal overview">
+      {!hidePriorityCard && (
       <NeonEdge accentRgb={accentRgb(TONE_ACCENT[priority.tone] || "lime")} intensity="hero"
                 className="p-5 sm:p-6" data-testid="portal-priority-card">
         <div className="relative z-10 flex flex-col sm:flex-row sm:items-center gap-4">
@@ -363,6 +364,7 @@ export default function PortalEngagementHub({
           </button>
         </div>
       </NeonEdge>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <NeonEdge accentRgb={accentRgb("lime")} intensity="standard" className="relative lg:col-span-3 p-4 sm:p-5" data-testid="portal-dog-overview">

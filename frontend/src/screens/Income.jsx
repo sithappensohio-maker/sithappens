@@ -24,7 +24,7 @@ const PAYMENT_STATUSES = [
 
 const PAYMENT_METHODS = ["cash", "card", "transfer", "credits", "other"];
 
-export default function Income() {
+export default function Income({ openCreateExpenseOnMount = false, onCreateConsumed = () => {} }) {
   const confirm = useConfirm();
   // Sprint 110di-51 — Top-level tabs. "transactions" is the existing
   // ledger/range/expenses view. "ar" is the new Accounts Receivable
@@ -57,6 +57,11 @@ export default function Income() {
   const [expCategories, setExpCategories] = useState([]);
   const [expOpen, setExpOpen] = useState(false);
   const [expEditing, setExpEditing] = useState(null);
+  // Phase 4 — global "+ New" menu reuses this exact same modal.
+  useEffect(() => {
+    if (openCreateExpenseOnMount) { setExpEditing(null); setExpOpen(true); onCreateConsumed(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Retail sales (external POS — flows into the same NET total above)
   const [retailSales, setRetailSales] = useState([]);

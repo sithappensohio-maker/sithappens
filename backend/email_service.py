@@ -720,6 +720,7 @@ async def queue_admin_new_shop_order(order: dict, client: dict | None = None) ->
     it's safe to skip queuing again (never a pre-send gate — see server.py's
     _queue_new_shop_order_notification)."""
     if not ADMIN_NOTIFICATION_EMAIL:
+        logger.warning("ADMIN_NOTIFICATION_EMAIL not set — skipping new-shop-order admin notification for order %s", order.get("id"))
         return False
     order_id = order.get("id") or ""
     order_number = order_id[:8].upper()
@@ -766,6 +767,68 @@ async def queue_admin_new_shop_order(order: dict, client: dict | None = None) ->
         # SAME order can never both create a row, with no new index needed
         # on this shared legacy collection.
         document_id=outbox_key,
+    )
+
+
+async def queue_receipt_email(payload: dict, to_email: str, attempt_key: str) -> bool:
+    """Generic receipt email — works for any of the canonical receipt
+    payload shapes (invoice/pos_sale/tab_payment) built in server.py, since
+    they all share the same client_name/line_items/payment_amount/
+    payment_method/business_* fields. Durably QUEUED (never a synchronous
+    send) via the same _queue_email upsert-on-key mechanism every other
+    automated email uses — a resend of the SAME attempt_key just re-affirms
+    the same row rather than creating a second send, and a failed delivery
+    never touches any financial record; it's purely an email side effect."""
+    if not to_email:
+        return False
+    business_name = payload.get("business_name") or "Sit Happens Dog Training"
+    is_test = bool(payload.get("test_receipt"))
+    rows_html = "".join(
+        f'<tr><td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
+        f'{li.get("description") or "Item"}{f" × {li['qty']}" if li.get("qty") and li.get("qty") != 1 else ""}</td>'
+        f'<td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${float(li.get("amount") or 0):.2f}</td></tr>'
+        for li in (payload.get("line_items") or [])
+    )
+    total = payload.get("invoice_total") or payload.get("total") or payload.get("payment_amount") or 0
+    test_banner = (
+        '<tr><td colspan="2" style="padding:10px 12px;background:#fef3c7;color:#92400e;font-size:12px;'
+        'font-weight:900;text-transform:uppercase;letter-spacing:0.1em;text-align:center;">'
+        'TEST RECEIPT — NOT A TRANSACTION</td></tr>'
+        if is_test else ""
+    )
+    thank_you = payload.get("thank_you_message") or ""
+    policy_footer = payload.get("policy_footer_message") or ""
+    address_line = " · ".join(x for x in [payload.get("business_address"), payload.get("business_phone"), payload.get("business_email")] if x)
+    body_html = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:32px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+        <tr><td style="background:{BRAND_DARK};padding:24px 32px;">
+          <p style="margin:0;color:{BRAND_GREEN};font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.25em;">{business_name} · Receipt</p>
+          <h1 style="margin:6px 0 0 0;color:#fff;font-size:20px;font-weight:900;">Receipt #{payload.get("receipt_number") or ""}</h1>
+        </td></tr>
+        {test_banner}
+        <tr><td style="padding:24px 32px;">
+          <table cellpadding="0" cellspacing="0" style="width:100%;">{rows_html}</table>
+          <table cellpadding="0" cellspacing="0" style="width:100%;margin-top:14px;border-top:2px solid #0f172a;">
+            <tr><td style="padding:12px 12px 4px 12px;color:#0f172a;font-size:18px;font-weight:900;">Total</td>
+                <td style="padding:12px 12px 4px 12px;color:{BRAND_GREEN};font-size:22px;font-weight:900;text-align:right;">${float(total or 0):.2f}</td></tr>
+          </table>
+          {f'<p style="margin:18px 0 0 0;color:#64748b;font-size:13px;">{thank_you}</p>' if thank_you else ""}
+        </td></tr>
+        <tr><td style="padding:20px 32px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+          <p style="margin:0;color:#94a3b8;font-size:12px;line-height:1.5;">{business_name}{f" · {address_line}" if address_line else ""}</p>
+          {f'<p style="margin:8px 0 0 0;color:#94a3b8;font-size:11px;">{policy_footer}</p>' if policy_footer else ""}
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+    subject = f"{'TEST — ' if is_test else ''}Your {business_name} Receipt #{payload.get('receipt_number') or ''}"
+    return await _queue_email(
+        to_email=to_email, subject=subject, html=body_html, outbox_key=attempt_key,
+        on_success=None, attachments=None, error="receipt_resend", document_id=attempt_key,
     )
 
 

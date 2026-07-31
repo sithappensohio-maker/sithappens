@@ -1,12 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useConfirm } from "../lib/useConfirm";
-
-const META = {
-  urgent: { label: "Urgent", border: "border-red-500/40", bg: "bg-red-500/10", text: "text-red-300", icon: "fa-triangle-exclamation" },
-  warn:   { label: "Needs Attention", border: "border-shAccent/40", bg: "bg-shAccent/10", text: "text-shAccent", icon: "fa-circle-exclamation" },
-  info:   { label: "FYI / Follow-up", border: "border-shPrimary/40", bg: "bg-shPrimary/10", text: "text-shPrimary", icon: "fa-lightbulb" },
-};
+import ActionRow, { ACTION_PRIORITY_META as META } from "../components/admin/ActionRow";
+import { runTodayBrainCTA } from "../lib/todayBrain";
 
 export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () => {}, onJumpToClient = () => {} }) {
   const confirm = useConfirm();
@@ -45,17 +41,7 @@ export default function ActionCenter({ onNavigate = () => {}, onJumpToDog = () =
     finally { setBusy(false); }
   };
 
-  const runCTA = (item) => {
-    const cta = item?.cta || {};
-    if (cta.type === "open_dog" && cta.id) onJumpToDog(cta.id);
-    else if (cta.type === "open_client" && cta.id) onJumpToClient(cta.id);
-    else if (cta.type === "open_screen" && cta.screen) onNavigate(cta.screen);
-    else if (cta.type === "send_monday_digest") {
-      api.post("/admin/homework/send-monday-digest")
-        .then(() => alert("Monday digest fired — check your admin email."))
-        .catch((e) => alert("Failed to send: " + (e.response?.data?.detail || e.message)));
-    }
-  };
+  const runCTA = (item) => runTodayBrainCTA(item, { onJumpToDog, onJumpToClient, onNavigate });
 
   return (
     <div className="space-y-5 animate-slide-in" data-testid="action-center-screen">
@@ -108,27 +94,5 @@ function CountTile({ label, value, icon, tone = "info", active, onClick }) {
       <p className="text-3xl font-black text-shText mt-2">{value || 0}</p>
       <p className="text-[11px] font-black uppercase tracking-widest text-shTextMuted mt-1">{label}</p>
     </button>
-  );
-}
-
-function ActionRow({ item, onOpen, onDismiss, busy }) {
-  const meta = META[item.priority] || META.info;
-  return (
-    <div className={`relative rounded-2xl border ${meta.border} ${meta.bg} p-4 shadow-lg`} data-testid={`action-center-row-${item.id}`}>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <button onClick={onOpen} className="flex items-start gap-3 text-left min-w-0 flex-1" data-testid={`action-center-open-${item.id}`}>
-          <span className={`w-11 h-11 rounded-xl grid place-items-center bg-[var(--sh-card-base)] border border-shBorder shrink-0 ${meta.text}`}><i className={`fas ${item.icon || meta.icon}`}/></span>
-          <span className="min-w-0">
-            <span className="block text-[11px] font-black uppercase tracking-widest text-shTextMuted mb-1">{meta.label} · {item.kind || "task"}</span>
-            <span className="block text-[16px] font-black text-shText uppercase italic tracking-tight">{item.title}</span>
-            {item.subtitle && <span className="block text-[13px] text-shTextMuted mt-1">{item.subtitle}</span>}
-          </span>
-        </button>
-        <div className="flex items-center gap-2 shrink-0">
-          <button onClick={onOpen} className="bg-shSecondary/15 border border-shSecondary/30 text-shSecondary hover:bg-shSecondary/25 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition"><i className="fas fa-arrow-right mr-1"/>Open</button>
-          <button onClick={onDismiss} disabled={busy} className="bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted hover:text-red-300 hover:border-red-400/40 rounded-lg px-3 py-2 text-[11px] font-black uppercase tracking-widest transition disabled:opacity-50"><i className="fas fa-times mr-1"/>Hide</button>
-        </div>
-      </div>
-    </div>
   );
 }
