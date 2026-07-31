@@ -785,7 +785,7 @@ async def queue_receipt_email(payload: dict, to_email: str, attempt_key: str) ->
     is_test = bool(payload.get("test_receipt"))
     rows_html = "".join(
         f'<tr><td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:700;border-bottom:1px solid #e2e8f0;">'
-        f'{li.get("description") or "Item"}{f" × {li['qty']}" if li.get("qty") and li.get("qty") != 1 else ""}</td>'
+        f'{li.get("description") or "Item"}{" × " + str(li.get("qty")) if li.get("qty") and li.get("qty") != 1 else ""}</td>'
         f'<td style="padding:8px 12px;color:#0f172a;font-size:14px;font-weight:800;text-align:right;border-bottom:1px solid #e2e8f0;">${float(li.get("amount") or 0):.2f}</td></tr>'
         for li in (payload.get("line_items") or [])
     )
