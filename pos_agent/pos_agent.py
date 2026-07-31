@@ -81,11 +81,31 @@ def _center(text, width=RECEIPT_WIDTH):
 
 
 def _receipt_header_footer(payload: dict):
-    """Shared header (business name/date/receipt#/client) and footer
-    (thank-you + cut) — identical across both receipt kinds."""
-    out = [INIT, ALIGN_CENTER]
+    """Shared header (test banner, business identity, date/receipt#,
+    client/dog/staff) and footer (thank-you + cut) — identical across all
+    receipt kinds. Every field here is read from the server-authoritative
+    payload (which already applied Settings -> Receipt Settings branding
+    and show/hide toggles via _apply_receipt_settings_branding/_visibility)
+    — nothing is hardcoded, so a business's actual name/address/contact
+    info and toggle choices reach the physical printer, not just the
+    in-app preview. ASCII-only throughout: thermal printers use a single-
+    byte codepage and mangle "-"/"." style Unicode punctuation."""
+    out = [INIT]
+    if payload.get("test_receipt"):
+        out.append(ALIGN_CENTER)
+        out.append(("-" * RECEIPT_WIDTH + "\n").encode())
+        out.append(BOLD_ON + _center(payload.get("test_label") or "TEST RECEIPT - NOT A TRANSACTION").encode() + BOLD_OFF)
+        out.append(("-" * RECEIPT_WIDTH + "\n").encode())
+        out.append(b"\n")
+    out.append(ALIGN_CENTER)
     out.append(BOLD_ON + _center(payload.get("business_name") or "Sit Happens").encode() + BOLD_OFF)
-    out.append(_center("DOG TRAINING").encode())
+    if payload.get("business_address"):
+        out.append(_center(payload["business_address"]).encode())
+    contact_bits = [b for b in (payload.get("business_phone"), payload.get("business_email")) if b]
+    if contact_bits:
+        out.append(_center(" - ".join(contact_bits)).encode())
+    if payload.get("business_website"):
+        out.append(_center(payload["business_website"]).encode())
     out.append(b"\n")
 
     when = payload.get("date_time") or ""
@@ -106,13 +126,44 @@ def _receipt_header_footer(payload: dict):
     dogs = payload.get("dogs") or []
     if dogs:
         out.append(f"Dog(s): {', '.join(dogs)}\n".encode())
+    if payload.get("staff_name"):
+        out.append(f"Staff: {payload['staff_name']}\n".encode())
+    if payload.get("booking_reference"):
+        out.append(f"Booking Ref: {payload['booking_reference']}\n".encode())
+    for sd in (payload.get("service_dates") or []):
+        date_part = sd.get("date") or ""
+        if sd.get("end_date") and sd.get("end_date") != date_part:
+            date_part = f"{date_part} to {sd['end_date']}"
+        dog_label = f"{sd.get('dog_name')}: " if sd.get("dog_name") else ""
+        out.append(f"Service date: {dog_label}{date_part}\n".encode())
     out.append(b"\n")
     return out
 
 
-def _receipt_footer():
+def _extras_lines(payload: dict):
+    """Client-pricing-transparency and loyalty-balance lines — shared by
+    the invoice and tab-payment receipts (a POS retail sale carries
+    neither concept, matching format_pos_sale_receipt's existing
+    Subtotal/Discount/Tax layout). Each is independently gated server-side
+    by its own show/hide Receipt Settings toggle (the field is null when
+    hidden), so this only ever prints what Settings actually allows."""
+    out = []
+    note = payload.get("public_price_note") or {}
+    if note.get("list_price") is not None and note.get("effective_price") is not None:
+        out.append(f"Public price: {_money(note['list_price'])}  Your price: {_money(note['effective_price'])}\n".encode())
+    visits = payload.get("remaining_prepaid_visits") or {}
+    if visits:
+        parts = [f"{k.capitalize()}: {v}" for k, v in visits.items()]
+        out.append(("Visits remaining - " + ", ".join(parts) + "\n").encode())
+    return out
+
+
+def _receipt_footer(payload: dict):
     out = [("-" * RECEIPT_WIDTH + "\n").encode(), ALIGN_CENTER]
-    out.append(BOLD_ON + _center("THANK YOU").encode() + BOLD_OFF)
+    thank_you = payload.get("thank_you_message") or "THANK YOU"
+    out.append(BOLD_ON + _center(thank_you).encode() + BOLD_OFF)
+    if payload.get("policy_footer_message"):
+        out.append(_center(payload["policy_footer_message"]).encode())
     out.append(("-" * RECEIPT_WIDTH + "\n").encode())
     out.append(b"\n" * 3)
     out.append(CUT)
@@ -155,7 +206,9 @@ def format_tab_payment_receipt(payload: dict) -> bytes:
         out.append(_line("Cash Received", _money(payload.get("tendered_amount"))).encode())
         out.append(_line("Change", _money(payload.get("change_given"))).encode())
 
-    out.extend(_receipt_footer())
+    out.append(b"\n")
+    out.extend(_extras_lines(payload))
+    out.extend(_receipt_footer(payload))
     return b"".join(out)
 
 
@@ -188,7 +241,9 @@ def format_invoice_receipt(payload: dict) -> bytes:
         out.append(_line("Cash Received", _money(payload.get("tendered_amount"))).encode())
         out.append(_line("Change", _money(payload.get("change_given"))).encode())
 
-    out.extend(_receipt_footer())
+    out.append(b"\n")
+    out.extend(_extras_lines(payload))
+    out.extend(_receipt_footer(payload))
     return b"".join(out)
 
 
@@ -221,7 +276,7 @@ def format_pos_sale_receipt(payload: dict) -> bytes:
         out.append(_line("Cash Received", _money(payload.get("tendered_amount"))).encode())
         out.append(_line("Change", _money(payload.get("change_given"))).encode())
 
-    out.extend(_receipt_footer())
+    out.extend(_receipt_footer(payload))
     return b"".join(out)
 
 
