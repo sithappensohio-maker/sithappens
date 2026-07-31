@@ -7,6 +7,7 @@ import BookingPriceEstimate from "./BookingPriceEstimate";
 import PaymentOptionsCard from "./PaymentOptionsCard";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
+import { categorizeService, groupServicesByCategory, summarizeDescription } from "../lib/serviceCategories";
 
 /**
  * Client-portal Book Service wizard.
@@ -35,6 +36,54 @@ const SERVICE_OPTIONS = [
 ];
 
 const TIME_SLOTTED = new Set(["training", "grooming", "photography"]);
+
+// Simplified Step-1 service card, used inside a category's service list.
+// Shows only a one-line summary by default; the full description (which for
+// training services especially can run long) is opt-in via "View details" so
+// it never turns the list into a wall of text.
+function ServiceCard({ testId, selected, icon, label, summary, fullDesc, price, onSelect, accentR }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMore = fullDesc && fullDesc !== summary;
+  return (
+    <div data-testid={testId} onClick={onSelect} role="button" tabIndex={0}
+         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(); } }}
+         className="text-left p-4 rounded-lg border transition min-w-0 cursor-pointer"
+         style={{
+           background: "var(--sh-card-base)",
+           borderColor: selected ? `rgba(${accentR},0.8)` : "var(--sh-border)",
+           boxShadow: selected ? `0 0 2px rgba(${accentR},0.7), 0 0 16px -6px rgba(${accentR},0.5)` : undefined,
+         }}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="font-bold text-[15px] break-words text-shText min-w-0">
+          <i className={`fas ${icon} mr-2`} style={{ color: `rgb(${accentR})` }}/>{label}
+        </p>
+        {price != null && <span className="text-[13px] font-black text-shPrimary whitespace-nowrap shrink-0">${price.toFixed(2)}</span>}
+      </div>
+      {summary && <p className="text-[13px] mt-1.5 break-words text-shTextMuted">{summary}</p>}
+      <div className="flex items-center justify-between mt-3 gap-2">
+        {hasMore ? (
+          <button type="button" data-testid={`${testId}-toggle`}
+                  onClick={(e) => { e.stopPropagation(); setExpanded(v => !v); }}
+                  className="text-[12px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80">
+            {expanded ? "Hide details" : "View details"}
+          </button>
+        ) : <span/>}
+        <button type="button" data-testid={`${testId}-select`}
+                onClick={(e) => { e.stopPropagation(); onSelect(); }}
+                className="px-3 py-1.5 rounded text-[12px] font-black uppercase tracking-widest transition"
+                style={{
+                  background: selected ? `rgba(${accentR},0.2)` : "var(--sh-border)",
+                  color: selected ? `rgb(${accentR})` : "var(--sh-text-muted)",
+                }}>
+          {selected ? <><i className="fas fa-check mr-1"/>Selected</> : "Select"}
+        </button>
+      </div>
+      {expanded && hasMore && (
+        <p className="text-[13px] mt-2 pt-2 border-t break-words text-shTextMuted" style={{ borderColor: "var(--sh-border)" }}>{fullDesc}</p>
+      )}
+    </div>
+  );
+}
 
 export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
   useEditLock(true);
@@ -132,29 +181,39 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
     if (FEATURE_BY_SERVICE[s.service_type] === false) return false;
     return exactRuleMap?.[s.id]?.client_booking_enabled !== false;
   });
-  // Grouped by service_type (same daycare/boarding/training/grooming/
-  // photography categories SERVICE_OPTIONS already defines) so a catalog
-  // with many individual services reads as labeled sections instead of one
-  // long undifferentiated grid. A category can be enabled (feature flag on)
-  // without having any catalog row of that type at all — e.g. Photography
-  // sold as one flat-rate service rather than several named packages — so
-  // that category falls back to its single coarse VISIBLE_SERVICES tile
-  // instead of silently disappearing just because it has no catalog
-  // granularity to group.
-  const groupedCatalogServices = useMemo(() => {
-    const byType = {};
-    for (const s of bookableCatalogServices) {
-      const key = s.service_type || "other";
-      (byType[key] = byType[key] || []).push(s);
-    }
-    return SERVICE_OPTIONS
-      .map(opt => {
-        if (byType[opt.key]) return { opt, items: byType[opt.key] };
-        if (FEATURE_BY_SERVICE[opt.key] !== false) return { opt, items: [opt] };
-        return { opt, items: [] };
-      })
-      .filter(g => g.items.length > 0);
-  }, [bookableCatalogServices, FEATURE_BY_SERVICE]);
+  // Category-first Step 1 redesign — bucket the bookable catalog into
+  // Daycare / Boarding / Group Classes / Private Training / Evaluations /
+  // Board & Train / Grooming & Add-ons / Photography / Other Services
+  // (see lib/serviceCategories.js for the pure categorization logic). A
+  // category can be enabled (feature flag on) without having any catalog
+  // row at all — e.g. Photography sold as one flat-rate service rather than
+  // several named packages — so it falls back to its single coarse
+  // VISIBLE_SERVICES tile instead of silently disappearing, same as before.
+  const groupedByCategory = useMemo(() => (
+    groupServicesByCategory(bookableCatalogServices, {
+      featureByType: FEATURE_BY_SERVICE,
+      fallbackTiles: catalogServices.length === 0 ? VISIBLE_SERVICES : [],
+    })
+  ), [bookableCatalogServices, FEATURE_BY_SERVICE, catalogServices.length]);
+
+  // Category-grid navigation. null = show the category cards; a key = show
+  // only that category's services (with a back-to-categories control).
+  const [activeCategoryKey, setActiveCategoryKey] = useState(null);
+  const activeCategory = groupedByCategory.find(g => g.key === activeCategoryKey) || null;
+
+  // If the wizard was opened pre-seeded with a service (a deep link from
+  // elsewhere in the app), jump straight to that service's category once the
+  // catalog has loaded, so the pre-selected service is visible instead of
+  // landing on the blank category grid. Deliberately keyed on
+  // `catalogServices` (not `activeCategoryKey`) so it only fires the one
+  // time the catalog transitions from empty to loaded — manually going
+  // "back" to the category grid afterward is never overridden by this.
+  useEffect(() => {
+    if (activeCategoryKey || !serviceType) return;
+    const svc = serviceId ? catalogServices.find(s => s.id === serviceId) : null;
+    setActiveCategoryKey(categorizeService(svc || { service_type: serviceType }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogServices]);
 
   // Load closed-dates list once so we can flag picks the business is closed.
   useEffect(() => {
@@ -460,71 +519,74 @@ export default function PortalBookWizard({ dogs, seed, onClose, onBooked }) {
               </div>
             )}
             <div>
-              <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a service</label>
-              {(() => {
-                const renderServiceButton = (s) => {
-                  const isCatalog = !!s.id;
-                  const type = isCatalog ? s.service_type : s.key;
-                  const fallback = SERVICE_OPTIONS.find(o => o.key === type);
-                  const selected = isCatalog ? serviceId === s.id : (!serviceId && serviceType === type);
-                  const label = isCatalog ? s.name : s.label;
-                  const desc = isCatalog ? (s.description || fallback?.desc || "") : s.desc;
-                  const icon = isCatalog ? (s.icon || fallback?.icon || "fa-paw") : s.icon;
-                  const accentR = accentRgb("cyan");
-                  return (
-                    <button key={isCatalog ? s.id : s.key}
-                            onClick={() => {
-                              setServiceId(isCatalog ? s.id : "");
-                              setServiceType(type);
-                              if (isCatalog && type === "grooming") {
-                                const marker = `${s.slug || ""} ${s.name || ""}`.toLowerCase();
-                                setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
-                              }
-                            }}
-                            data-testid={`wiz-svc-${isCatalog ? s.id : s.key}`}
-                            className="text-left p-4 rounded-lg border transition min-w-0"
-                            style={{
-                              background: "var(--sh-card-base)",
-                              borderColor: selected ? `rgba(${accentR},0.8)` : "var(--sh-border)",
-                              boxShadow: selected ? `0 0 2px rgba(${accentR},0.7), 0 0 16px -6px rgba(${accentR},0.5)` : undefined,
-                              color: selected ? `rgb(${accentR})` : "var(--sh-text-muted)",
-                            }}>
-                      <p className="font-bold text-[15px] break-words text-shText"><i className={`fas ${icon} mr-2`} style={{ color: `rgb(${accentR})` }}/>{label}</p>
-                      {desc && <p className="text-[13px] mt-1 break-words text-shTextMuted">{desc}</p>}
-                      {isCatalog && <p className="text-[12px] mt-2 text-shPrimary font-bold">${Number(s.base_price || 0).toFixed(2)}</p>}
-                    </button>
-                  );
-                };
-
-                if (catalogServices.length === 0) {
-                  return (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
-                      {VISIBLE_SERVICES.map(renderServiceButton)}
-                    </div>
-                  );
-                }
-                if (groupedCatalogServices.length === 0) {
-                  return (
+              {!activeCategory ? (
+                <>
+                  <label className="text-[13px] uppercase tracking-widest text-gray-500 font-black">Choose a category</label>
+                  {groupedByCategory.length === 0 ? (
                     <div className="mt-2 bg-shAccent/10 border border-shAccent/30 rounded-lg p-4 text-shAccent text-[13px] font-bold uppercase tracking-widest text-center">
                       No services are currently open for client booking.
                     </div>
-                  );
-                }
-                return (
-                  <div className="mt-2 space-y-5">
-                    {groupedCatalogServices.map(({ opt, items }) => (
-                      <div key={opt.key}>
-                        <p className="text-[12px] font-black uppercase tracking-widest text-shTextMuted mb-2">
-                          <i className={`fas ${opt.icon} mr-1.5`}/>{opt.label}
-                        </p>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {items.map(renderServiceButton)}
-                        </div>
-                      </div>
-                    ))}
+                  ) : (
+                    <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="wiz-category-grid">
+                      {groupedByCategory.map(g => (
+                        <button key={g.key} type="button" onClick={() => setActiveCategoryKey(g.key)}
+                                data-testid={`wiz-cat-${g.key}`}
+                                className="text-left p-4 rounded-lg border transition flex items-center gap-3 hover:border-shSecondary/60 min-w-0"
+                                style={{ background: "var(--sh-card-base)", borderColor: "var(--sh-border)" }}>
+                          <div className={`w-11 h-11 rounded-lg grid place-items-center shrink-0 border ${g.meta.color}`}>
+                            <i className={`fas ${g.meta.icon} text-lg`}/>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-[15px] text-shText leading-snug">{g.meta.label}</p>
+                            <p className="text-[12px] text-shTextMuted">{g.items.length} option{g.items.length === 1 ? "" : "s"}</p>
+                          </div>
+                          <i className="fas fa-chevron-right text-shTextMuted shrink-0"/>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div data-testid="wiz-category-services">
+                  <div className="flex items-center justify-between mb-2">
+                    <button type="button" onClick={() => setActiveCategoryKey(null)} data-testid="wiz-back-to-categories"
+                            className="text-[13px] font-black uppercase tracking-widest text-shSecondary hover:opacity-80">
+                      <i className="fas fa-arrow-left mr-1.5"/>All Categories
+                    </button>
+                    <span className="text-[13px] font-black uppercase tracking-widest text-shTextMuted">
+                      <i className={`fas ${activeCategory.meta.icon} mr-1.5`}/>{activeCategory.meta.label}
+                    </span>
                   </div>
-                );
-              })()}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {activeCategory.items.map(s => {
+                      const isCatalog = !!s.id;
+                      const type = isCatalog ? s.service_type : s.key;
+                      const fallback = SERVICE_OPTIONS.find(o => o.key === type);
+                      const selected = isCatalog ? serviceId === s.id : (!serviceId && serviceType === type);
+                      const label = isCatalog ? s.name : s.label;
+                      const fullDesc = isCatalog ? (s.description || fallback?.desc || "") : (s.desc || "");
+                      const summary = summarizeDescription(fullDesc);
+                      const icon = isCatalog ? (s.icon || fallback?.icon || "fa-paw") : s.icon;
+                      const accentR = accentRgb("cyan");
+                      const testId = `wiz-svc-${isCatalog ? s.id : s.key}`;
+                      const pick = () => {
+                        setServiceId(isCatalog ? s.id : "");
+                        setServiceType(type);
+                        if (isCatalog && type === "grooming") {
+                          const marker = `${s.slug || ""} ${s.name || ""}`.toLowerCase();
+                          setGroomingType(marker.includes("nail") ? "nail_trim" : "bath");
+                        }
+                      };
+                      return (
+                        <ServiceCard key={isCatalog ? s.id : s.key} testId={testId} selected={selected}
+                                     icon={icon} label={label} summary={summary} fullDesc={fullDesc}
+                                     price={isCatalog ? Number(s.base_price || 0) : null} onSelect={pick}
+                                     accentR={accentR} />
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex justify-end gap-2 pt-3">
               <PremiumButton variant="secondary" onClick={onClose}>Cancel</PremiumButton>
