@@ -235,8 +235,8 @@ export default function Dashboard({ onNavigate = () => {}, onJumpToDog = () => {
         <div className="absolute inset-0 pointer-events-none opacity-40"
              style={{ background: "radial-gradient(circle at 15% 20%, rgba(0,169,224,0.45) 0%, transparent 40%), radial-gradient(circle at 85% 80%, rgba(140,198,63,0.4) 0%, transparent 45%), radial-gradient(circle at 70% 10%, rgba(242,101,34,0.25) 0%, transparent 35%)" }}/>
         <div className="relative flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-[11px] font-black uppercase tracking-[0.35em] text-shPrimary mb-2">
+          <div className="min-w-0 sm:min-w-[260px] flex-1">
+            <p className="text-[11px] font-black uppercase tracking-widest text-shPrimary mb-2 whitespace-nowrap">
               <i className="fas fa-paw mr-2"/>Today at Sit Happens
             </p>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-black uppercase italic tracking-tight text-shText leading-tight">

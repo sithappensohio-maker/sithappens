@@ -14,6 +14,14 @@ import ClientFilesModal from "../components/ClientFilesModal";
 import LegacyPricingModal from "../components/LegacyPricingModal";
 import PackLotsModal from "../components/PackLotsModal";
 import AdminClientPaymentPlans from "../components/AdminClientPaymentPlans";
+// Stable reference (never a fresh [] each render) — clients with zero plans
+// must still pass a DEFINED value here so AdminClientPaymentPlans treats
+// them as "parent bulk-loaded, nothing to fetch" rather than "no plans prop
+// given, fetch it yourself" (see AdminClientPaymentPlans's own !== undefined
+// guard). Passing `plansByClient[c.id] || []` here would recreate a new
+// array identity every render (the exact re-render loop Sprint 110di-52
+// fixed); this constant keeps one stable identity instead.
+const EMPTY_PLANS = [];
 import PageHero from "../components/PageHero";
 import IntakeFormsSection from "../components/IntakeFormsSection";
 import CommunicationLog from "../components/CommunicationLog";
@@ -465,7 +473,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
             />
             {/* Sprint 110ch — Payment plans for big-ticket items */}
             <div className="mt-3 pt-3 border-t border-shBorder">
-              <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id]} />
+              <AdminClientPaymentPlans clientId={c.id} plans={plansByClient[c.id] || EMPTY_PLANS} />
             </div>
             <div className="mt-3 pt-3 border-t border-shBorder" data-testid={`client-trophy-section-${c.id}`}>
               <div className="flex items-center justify-between mb-2">
@@ -1760,10 +1768,15 @@ function ClientActionsMenu({
       const menuMaxH = 460;
       const spaceBelow = window.innerHeight - r.bottom;
       const openUp = spaceBelow < 320 && r.top > spaceBelow;
+      // Menu labels ("Manually set portal password", etc.) don't fit in the
+      // trigger button's own width — give the menu a sensible minimum width
+      // instead of matching the (narrow) trigger, clamped to the viewport so
+      // it never overflows off-screen on mobile.
+      const menuWidth = Math.min(Math.max(r.width, 340), window.innerWidth - 16);
       setPos({
-        left: r.left,
+        left: Math.min(r.left, window.innerWidth - menuWidth - 8),
         top: openUp ? Math.max(8, r.top - menuMaxH - 8) : r.bottom + 6,
-        width: r.width,
+        width: menuWidth,
         openUp,
       });
     };

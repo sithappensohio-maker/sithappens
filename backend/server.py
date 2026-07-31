@@ -481,13 +481,23 @@ async def require_employee_or_admin(user: dict = Depends(get_current_user)) -> d
 
 def require_admin_and_permission(key: str):
     """Security checkpoint — backend permission enforcement (following the
-    frontend can() fix). `require_admin` alone only proves the account's
-    broad `role` is "admin" — it says nothing about `staff_role`, so a
-    restricted front_desk/trainer/etc. account passed it exactly the same as
-    the owner. This composes require_admin (still the broad account-type
-    gate — keeps `role: employee` Staff Portal accounts out entirely) with a
-    specific permission check from the same matrix `/me/permissions` already
-    exposes, so the two can never drift apart.
+    frontend can() fix). This composes require_employee_or_admin (the broad
+    account-type gate — keeps clients out entirely, but lets BOTH `role:
+    admin` and `role: employee` staff accounts through) with a specific
+    permission check from the same matrix `/me/permissions` already exposes,
+    so the two can never drift apart.
+
+    Permission-matrix product-defect fix: this used to compose require_admin
+    instead, which meant every `role: employee` Staff Portal account was
+    rejected here regardless of its configured staff_role/permissions — the
+    entire permission matrix was unreachable for the accounts it exists to
+    govern. `_perms_for()` is what actually decides what an account can do,
+    and it already resolves employees correctly by their staff_role; it only
+    ever returns full/unrestricted permissions for a true owner (role=="admin"
+    with no staff_role, or staff_role=="owner") — a `role: employee` account
+    can never satisfy that, so widening the gate here cannot grant an
+    employee unrestricted admin access, only the specific keys their staff_role
+    (or an admin-edited override) actually grants.
 
     Defined here (near the top of the file, before PERMISSION_KEYS/_perms_for
     exist) because `Depends(require_admin_and_permission("key"))` calls this
@@ -495,7 +505,7 @@ def require_admin_and_permission(key: str):
     so the key-validity check has to live inside `_dep` (deferred to actual
     request time, by which point the whole module has finished loading)
     rather than in this outer function body."""
-    async def _dep(user: dict = Depends(require_admin)) -> dict:
+    async def _dep(user: dict = Depends(require_employee_or_admin)) -> dict:
         if key not in PERMISSION_KEYS:
             raise RuntimeError(f"Unknown permission key '{key}'")
         perms = _perms_for(user)
@@ -1423,7 +1433,7 @@ async def me(user: dict = Depends(get_current_user)):
 
 # -------- Clients --------
 @api.get("/clients", response_model=List[ClientOut])
-async def list_clients(_: dict = Depends(require_admin), include_deleted: bool = False):
+async def list_clients(_: dict = Depends(require_admin_and_permission("clients_view")), include_deleted: bool = False):
     # Soft-deleted clients stay in Mongo for history/tax/credits recovery, but
     # normal admin lists hide them so the UI behaves like “delete” without data loss.
     q = {} if include_deleted else {"deleted_at": {"$exists": False}}
@@ -2939,6 +2949,7 @@ async def _quote_base_service_price(
     pickup_cutoff_time: Optional[str] = DEFAULT_BOARDING_FULL_DAY_PICKUP_CUTOFF,
     service_id: Optional[str] = None,
     legacy_boarding_minimum: int = 0,
+    grooming_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Single backend source for base booking estimates.
 
@@ -2952,6 +2963,32 @@ async def _quote_base_service_price(
     else:
         q = {"service_type": service_type, "is_default": True, "active": True}
     svc = await db.services.find_one(q, {"_id": 0})
+    # Bug fix (found live during a boarding-pricing acceptance pass, 2026-07-31):
+    # when service_type=="grooming" and no exact service_id is given, both
+    # "Bath" and "Nail Trim" can independently carry is_default=True (they're
+    # defaults for their own grooming_type, not competitors), so the query
+    # above can match more than one row and silently return whichever Mongo
+    # happens to return first — historically always "Bath" regardless of
+    # what the client actually booked. Disambiguate using the same
+    # slug/name "nail" heuristic AdminBookingModal.jsx already uses when it
+    # reverse-maps an exact service back to a grooming_type (line ~634).
+    if service_type == "grooming" and not service_id and grooming_type:
+        candidates = await db.services.find(
+            {"service_type": "grooming", "active": True, "$or": [{"is_addon": {"$ne": True}}, {"is_addon": {"$exists": False}}]},
+            {"_id": 0},
+        ).to_list(50)
+        wants_nail = grooming_type == "nail_trim"
+        matches = [
+            c for c in candidates
+            if ("nail" in f"{c.get('slug','')} {c.get('name','')}".lower()) == wants_nail
+        ]
+        defaults = [c for c in matches if c.get("is_default")]
+        if len(defaults) == 1:
+            svc = defaults[0]
+        elif len(matches) == 1:
+            svc = matches[0]
+        # If still ambiguous (0 or 2+ matches), fall through to the existing
+        # svc/fallback logic below rather than guessing further.
     if not svc and not service_id:
         # Fallback: first active service of this type if no explicit default exists.
         svc = await db.services.find_one(
@@ -3034,6 +3071,7 @@ class PricingQuoteIn(BaseModel):
     dog_id: Optional[str] = None
     client_id: Optional[str] = None
     service_id: Optional[str] = None
+    grooming_type: Optional[str] = None
     addon_service_ids: List[str] = []
     # Read-only estimate helper for grouped bookings. First dog bills at the
     # standard rate; additional dogs can receive the configured sibling discount.
@@ -3075,6 +3113,7 @@ async def pricing_quote(body: PricingQuoteIn, user: dict = Depends(get_current_u
         pickup_time=effective_pickup_time,
         pickup_cutoff_time=pickup_cutoff_time,
         service_id=body.service_id,
+        grooming_type=body.grooming_type if body.service_type == "grooming" else None,
     )
     add_ons: List[Dict[str, Any]] = []
     add_on_total = 0.0
@@ -3858,6 +3897,7 @@ async def create_booking(body: BookingIn, user: dict = Depends(get_current_user)
         pickup_time=effective_pickup_time,
         pickup_cutoff_time=pickup_cutoff_time,
         service_id=body.service_id,
+        grooming_type=body.grooming_type if body.service_type == "grooming" else None,
     )
     estimated_price = float(quote.get("estimated_price") or 0)
 
@@ -10960,7 +11000,7 @@ class IncidentOut(IncidentIn):
     edit_history: List[IncidentEditHistoryEntry] = []
 
 @api.get("/incidents", response_model=List[IncidentOut])
-async def list_incidents(_: dict = Depends(require_admin), dog_id: Optional[str] = None, include_archived: bool = False):
+async def list_incidents(_: dict = Depends(require_admin_and_permission("incidents")), dog_id: Optional[str] = None, include_archived: bool = False):
     q: Dict[str, Any] = {"dog_id": dog_id} if dog_id else {}
     if not include_archived:
         q["archived"] = {"$ne": True}
@@ -11016,7 +11056,7 @@ async def update_incident(incident_id: str, body: IncidentUpdateIn, user: dict =
     return existing
 
 @api.delete("/incidents/{incident_id}")
-async def delete_incident(incident_id: str, user: dict = Depends(require_admin)):
+async def delete_incident(incident_id: str, user: dict = Depends(require_admin_and_permission("delete_records"))):
     # Sprint 110ff — incidents are a legal/liability record (bite reports,
     # injuries). Deleting one used to be a hard, unrecoverable delete_one
     # with no backup; the audit log could only show THAT something was
@@ -19601,7 +19641,7 @@ async def admin_impersonation_token(client_id: str, _: dict = Depends(require_ad
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
     # Find the linked user record (created during signup/account claim).
-    user = await db.users.find_one({"client_id": client_id, "role": "client"}, {"_id": 0, "id": 1, "email": 1, "role": 1})
+    user = await db.users.find_one({"client_id": client_id, "role": "client"}, {"_id": 0, "id": 1, "email": 1, "role": 1, "token_version": 1})
     if not user:
         raise HTTPException(
             status_code=400,
@@ -19611,6 +19651,7 @@ async def admin_impersonation_token(client_id: str, _: dict = Depends(require_ad
         "sub": user["id"],
         "email": user["email"],
         "role": "client",
+        "ver": _token_version(user),  # must match get_current_user's version check or every impersonation token 401s
         "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
         "type": "access",
         "imp": True,  # short-lived impersonation flag (informational; not enforced)
@@ -26489,6 +26530,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "track_inventory": bool(doc.get("track_inventory")),
             "stock_on_hand": round(float(doc.get("stock_on_hand") or 0), 2) if doc.get("track_inventory") else None,
             "low_stock_threshold": doc.get("low_stock_threshold"),
+            "missing_description": not (doc.get("online_description") or doc.get("description") or "").strip(),
         })
     elif kind == "credit_pack":
         base.update({
@@ -26499,6 +26541,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "qty": doc.get("qty"),
             "service_type": doc.get("service_type"),
             "is_default": bool(doc.get("is_default")),
+            "missing_description": not (doc.get("online_description") or "").strip(),
         })
     else:  # training_program
         fmt = doc.get("format") or {}
@@ -26511,6 +26554,7 @@ def _shop_manager_item_view(doc: dict, kind: str) -> dict:
             "format_count": fmt.get("count"),
             "format_unit": fmt.get("unit"),
             "is_default": bool(doc.get("is_default")),
+            "missing_description": not (doc.get("online_description") or doc.get("description") or "").strip(),
         })
     return base
 
@@ -26680,6 +26724,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "track_inventory": track,
             "in_stock": (not track) or (stock > 0.0005),
             "stock_on_hand": round(stock, 2) if track else None,
+            "low_stock_threshold": p.get("low_stock_threshold") if track else None,
             # Backward-compatible aliases for existing consumers — new code
             # should read the clearer fields above instead.
             "price": effective_price,
@@ -26742,6 +26787,7 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
             "program_type": prog.get("type"),
             "format_count": fmt.get("count"),
             "format_unit": fmt.get("unit"),
+            "min_age_months": prog.get("min_age_months") or 0,
             "price": round(float(prog.get("price") or 0), 2),
             "image_id": prog.get("image_id"),
             "featured": bool(prog.get("featured")),
@@ -26761,6 +26807,45 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
     if user.get("role") != "client":
         raise HTTPException(status_code=403, detail="Client account required")
     return await _build_shop_catalog(user.get("client_id"))
+
+
+# Client Shop Item Detail page — kind here matches the catalog's own
+# discriminator ("product"/"credit_pack"/"training_program"), the same
+# strings used by the cart/checkout (ShopCartItemIn.kind), not the admin
+# Shop Manager's "physical_product" spelling.
+_SHOP_ITEM_DETAIL_SECTION = {"product": "merch", "credit_pack": "prepaid_visits", "training_program": "training"}
+
+
+@api.get("/shop/item/{kind}/{item_id}")
+async def get_shop_item_detail(kind: str, item_id: str, user: dict = Depends(get_current_user)):
+    """Single-item detail view for the client Shop's item detail page.
+    Reuses _build_shop_catalog so price, description, and visibility are
+    byte-for-byte identical to the catalog grid, cart, and checkout — this
+    is never a second pricing/visibility implementation. Returns 404 (never
+    403/a distinguishable "hidden" response) for anything nonexistent,
+    inactive, or not shown in the client Shop, so a guessed or stale URL
+    can't be used to confirm an item's existence or peek at admin-only
+    state."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    if kind not in _SHOP_ITEM_DETAIL_SECTION:
+        raise HTTPException(status_code=404, detail="This item is unavailable.")
+    catalog = await _build_shop_catalog(user.get("client_id"))
+    item = next((dict(i) for i in catalog["items"] if i["kind"] == kind and i["id"] == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="This item is unavailable.")
+    section = _SHOP_ITEM_DETAIL_SECTION[kind]
+    item["section"] = section
+    item["section_label"] = SHOP_SECTION_LABELS[section]
+    if kind == "training_program":
+        prog = await db.programs.find_one({"id": item_id}, {"_id": 0, "prereq_slugs": 1})
+        prereq_slugs = (prog or {}).get("prereq_slugs") or []
+        if prereq_slugs:
+            prereq_docs = await db.programs.find({"slug": {"$in": prereq_slugs}}, {"_id": 0, "name": 1}).to_list(20)
+            item["prerequisite_names"] = [p["name"] for p in prereq_docs]
+        else:
+            item["prerequisite_names"] = []
+    return item
 
 
 @api.get("/shop-manager/catalog-preview")
@@ -31138,7 +31223,12 @@ class EmployeeIncidentIn(BaseModel):
 @api.post("/employee/incidents")
 async def employee_create_incident(body: EmployeeIncidentIn, user: dict = Depends(require_employee_or_admin)):
     """Staff-facing incident logger. Auto-stamps time, employee, and on-site
-    state so we have a defensible record without the operator typing it later."""
+    state so we have a defensible record without the operator typing it later.
+    Permission-matrix fix: this used to be reachable by every employee
+    regardless of staff_role — now gated by the same "incidents" key the
+    admin Incidents screen enforces, via the same _perms_for() resolver."""
+    if not _perms_for(user).get("incidents"):
+        raise HTTPException(status_code=403, detail="Missing permission: incidents")
     dog = await db.dogs.find_one({"id": body.dog_id}, {"_id": 0})
     if not dog:
         raise HTTPException(status_code=404, detail="Dog not found")

@@ -565,7 +565,12 @@ export default function Portal() {
   const [shopOpen, setShopOpen] = useState(() => {
     if (typeof window === "undefined") return false;
     const params = new URLSearchParams(window.location.search);
-    return params.has("shop_order");
+    if (params.has("shop_order")) return true;
+    // Client Shop Item Detail — a real /shop/item/:kind/:id route, so a
+    // refresh or direct link on that path also needs to land back in the
+    // full-screen Shop view (PortalShop itself reads the same path to
+    // decide which item to show).
+    return /^\/shop\/item\/[^/]+\/[^/]+/.test(window.location.pathname);
   });
   // Lifted out of PortalShop so the cart survives leaving/returning to the
   // Shop view (Portal itself never unmounts) and so the nav badge below can
@@ -958,7 +963,12 @@ export default function Portal() {
     return (
       <div className="app-shell h-full min-h-0 flex flex-col" style={{ background: "var(--sh-card-base)" }} data-testid="client-portal-shop-page">
         <header className="shrink-0 border-b border-shBorder flex items-center justify-between gap-2 px-3 sm:px-8 py-3" style={{ background: "var(--sh-card-base)" }}>
-          <PremiumButton variant="secondary" onClick={() => setShopOpen(false)} data-testid="portal-shop-back-button">
+          <PremiumButton variant="secondary" onClick={() => {
+            // Leaving the Shop entirely — clear any /shop/item/:kind/:id path
+            // so a later refresh lands on the portal, not back in that item.
+            if (/^\/shop\/item\//.test(window.location.pathname)) window.history.pushState({}, "", "/");
+            setShopOpen(false);
+          }} data-testid="portal-shop-back-button">
             <i className="fas fa-arrow-left"/>
             <span>Back to Portal</span>
           </PremiumButton>

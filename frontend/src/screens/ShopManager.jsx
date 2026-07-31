@@ -279,6 +279,11 @@ function ItemsTab({ onEditItem, onAddShopItem }) {
                     <span>
                       {it.name}
                       {it.featured && <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary/10 text-shPrimary align-middle">Featured</span>}
+                      {it.active && it.show_online && it.missing_description && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shOrange/10 text-shOrange align-middle" title="This item is visible in the client Shop but has no client-facing description">
+                          Missing description
+                        </span>
+                      )}
                     </span>
                   </div>
                 </td>

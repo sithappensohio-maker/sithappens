@@ -2,12 +2,30 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
 /**
- * The ONE shared item-image thumbnail. Physical products, credit packs, and
- * training programs all store only an `image_id` — this is the single
- * place that fetches GET /shop/media/{id} and renders it (or a consistent
- * placeholder), reused by the POS register grid, Shop Manager's Items
- * table, Shop Manager's Categories & Layout item lists, and the client
- * Shop, so there is never a second copy of this fetch-by-id logic.
+ * The ONE shared image-resolution hook. Physical products, credit packs,
+ * and training programs all store only an `image_id` — this is the single
+ * place that fetches GET /shop/media/{id}, reused by ItemThumbnail below
+ * and by the client Shop's item-detail hero image/lightbox, so there is
+ * never a second copy of this fetch-by-id logic.
+ */
+export function useShopMediaSrc(imageId) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    if (!imageId) { setSrc(null); return; }
+    let cancelled = false;
+    api.get(`/shop/media/${imageId}`)
+      .then(({ data }) => { if (!cancelled) setSrc(data.data); })
+      .catch(() => { if (!cancelled) setSrc(null); });
+    return () => { cancelled = true; };
+  }, [imageId]);
+  return src;
+}
+
+/**
+ * The ONE shared item-image thumbnail. Reused by the POS register grid,
+ * Shop Manager's Items table, Shop Manager's Categories & Layout item
+ * lists, and the client Shop, so there is never a second copy of this
+ * fetch-by-id + render logic.
  *
  * `variant="square"` (default) — a small fixed square, sized via `size`
  * (px, default 44 — the "beside the name" thumbnail used in lists/tables).
@@ -18,17 +36,7 @@ import { api } from "../lib/api";
  * missing entirely.
  */
 export default function ItemThumbnail({ imageId, alt, size = 44, variant = "square", className = "" }) {
-  const [src, setSrc] = useState(null);
-
-  useEffect(() => {
-    if (!imageId) { setSrc(null); return; }
-    let cancelled = false;
-    api.get(`/shop/media/${imageId}`)
-      .then(({ data }) => { if (!cancelled) setSrc(data.data); })
-      .catch(() => { if (!cancelled) setSrc(null); });
-    return () => { cancelled = true; };
-  }, [imageId]);
-
+  const src = useShopMediaSrc(imageId);
   const isBanner = variant === "banner";
   const boxStyle = isBanner
     ? { height: size, width: "100%" }

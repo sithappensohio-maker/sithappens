@@ -47,7 +47,7 @@ export default function ClientHub({
   const [trophies, setTrophies] = useState(null);
 
   useEffect(() => {
-    if (tab === "bookings" && bookings === null) {
+    if ((tab === "bookings" || tab === "overview") && bookings === null) {
       api.get("/bookings", { params: { client_id: client.id, include_all: true } })
         .then(({ data }) => setBookings(data || []))
         .catch(() => setBookings([]));

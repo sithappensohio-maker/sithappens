@@ -32,7 +32,7 @@ export default function PageHero({
       <div className="relative flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
         <div className="min-w-0 flex-1">
           {eyebrow && (
-            <p className={`text-[11px] font-bold uppercase tracking-[0.3em] mb-2 ${eyebrowColor} ${compact ? "hidden sm:block" : ""}`}>
+            <p className={`text-[11px] font-bold uppercase tracking-[0.3em] mb-2 whitespace-nowrap overflow-hidden text-ellipsis ${eyebrowColor} ${compact ? "hidden sm:block" : ""}`}>
               {eyebrow.icon && <i className={`fas ${eyebrow.icon} mr-2`}/>}{eyebrow.text}
             </p>
           )}

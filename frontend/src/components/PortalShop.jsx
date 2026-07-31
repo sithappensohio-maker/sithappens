@@ -7,6 +7,7 @@ import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import { CLIENT_LABELS } from "../lib/clientLabels";
 import ItemThumbnail from "./ItemThumbnail";
+import ShopItemDetail from "./ShopItemDetail";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
  * real cart + checkout: physical products, credit packs, and training
@@ -28,6 +29,17 @@ const TABS = [
   { key: "credit_pack", label: CLIENT_LABELS.creditPack },
   { key: "training_program", label: "Training" },
 ];
+
+// Client Shop Item Detail — a real route (/shop/item/:kind/:id) so the
+// browser back button, refresh, and direct links all behave normally. `kind`
+// here matches the catalog's own discriminator ("product"/"credit_pack"/
+// "training_program"), the same strings the cart/checkout already use.
+function parseDetailRoute() {
+  if (typeof window === "undefined") return null;
+  const m = window.location.pathname.match(/^\/shop\/item\/([^/]+)\/([^/]+)/);
+  if (!m) return null;
+  return { kind: decodeURIComponent(m[1]), id: decodeURIComponent(m[2]) };
+}
 
 function readReturnParams() {
   const params = new URLSearchParams(window.location.search);
@@ -60,11 +72,15 @@ function openShopifyListing(item) {
   }
 }
 
-function ItemCard({ item, cartQty, onAdd }) {
+const PURCHASE_LABELS = { credit_pack: "Purchase Pack", training_program: "Purchase Program" };
+const purchaseLabel = (kind) => PURCHASE_LABELS[kind] || "Add to Cart";
+
+function ItemCard({ item, cartQty, onAdd, onOpenDetail }) {
   const isShopifyMerch = item.kind === "product" && item.sales_destination === "shopify_external";
   const outOfStock = item.kind === "product" && !isShopifyMerch && item.track_inventory && !item.in_stock;
   return (
-    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200" data-testid={`shop-card-${item.kind}-${item.id}`}>
+    <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" onClick={() => onOpenDetail(item)}
+              className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200 text-left cursor-pointer" data-testid={`shop-card-${item.kind}-${item.id}`}>
       <div className="relative">
         <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" />
         {item.featured && (
@@ -122,18 +138,18 @@ function ItemCard({ item, cartQty, onAdd }) {
           <p className="text-shPrimary font-black text-[18px]">{money(item.price)}</p>
         )}
         {isShopifyMerch ? (
-          <PremiumButton variant="primary" onClick={() => openShopifyListing(item)} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
+          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); openShopifyListing(item); }} data-testid={`shop-view-options-${item.id}`} className="w-full justify-center">
             View Options <i className="fas fa-arrow-up-right-from-square ml-1 text-[11px]" />
           </PremiumButton>
         ) : outOfStock ? (
-          <button disabled data-testid={`shop-buy-${item.kind}-${item.id}`}
+          <button disabled onClick={(e) => e.stopPropagation()} data-testid={`shop-buy-${item.kind}-${item.id}`}
                   className="w-full px-3 py-2 rounded-md text-[11px] font-black uppercase tracking-widest border border-shBorder text-shTextMuted cursor-not-allowed"
-                  style={{ background: "var(--sh-card-base)" }}>
+                  style={{ background: "var(--sh-card-base)" }} title="This item is currently out of stock">
             Out of Stock
           </button>
         ) : (
-          <PremiumButton variant="primary" onClick={() => onAdd(item)} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
-            {cartQty > 0 ? `In Cart (${cartQty})` : "Add to Cart"}
+          <PremiumButton variant="primary" onClick={(e) => { e.stopPropagation(); onAdd(item); }} data-testid={`shop-buy-${item.kind}-${item.id}`} className="w-full justify-center">
+            {cartQty > 0 ? `In Cart (${cartQty})` : purchaseLabel(item.kind)}
           </PremiumButton>
         )}
       </div>
@@ -143,13 +159,21 @@ function ItemCard({ item, cartQty, onAdd }) {
 
 const cartKey = (kind, refId) => `${kind}:${refId}`;
 
-function CartPanel({ cart, items, onQtyChange, onRemove, onCheckout, busy, onClose }) {
-  const lines = cart.map((c) => {
-    const item = items.find((i) => i.kind === c.kind && i.id === c.ref_id);
-    return { ...c, item };
-  }).filter((l) => l.item);
-  const subtotal = lines.reduce((sum, l) => sum + (l.item.price || 0) * l.quantity, 0);
+// Shared by CartPanel, the header Cart button, and CheckoutTray so every
+// surface that shows a total is reading the exact same numbers — never a
+// second, independently-recomputed total that could drift out of agreement.
+function useCartLines(cart, items) {
+  return useMemo(() => {
+    const lines = cart.map((c) => {
+      const item = items.find((i) => i.kind === c.kind && i.id === c.ref_id);
+      return { ...c, item };
+    }).filter((l) => l.item);
+    const subtotal = lines.reduce((sum, l) => sum + (l.item.price || 0) * l.quantity, 0);
+    return { lines, subtotal };
+  }, [cart, items]);
+}
 
+function CartPanel({ lines, subtotal, onQtyChange, onRemove, onCheckout, busy, onClose }) {
   // Portaled to document.body — this panel must NEVER be a direct child of
   // a .bg-bgPanel.rounded-2xl/.rounded-xl container (index.css's `> *`
   // dialog-content rule forces position:relative on direct children of
@@ -206,6 +230,75 @@ function CartPanel({ cart, items, onQtyChange, onRemove, onCheckout, busy, onClo
   );
 }
 
+// Persistent checkout CTA — floats above the shop content whenever the cart
+// has at least one item, so "buy now" never depends on the client noticing
+// the small header Cart button. Reads the exact same `cartCount`/`subtotal`
+// as the header button and CartPanel (see useCartLines above) — never a
+// second total. Portaled to document.body for the same z-index/positioning
+// reasons as CartPanel (see its comment).
+function CheckoutTray({ cartCount, subtotal, onViewCart, onCheckout, busy, justAdded }) {
+  const [mobileNavH, setMobileNavH] = useState(0);
+  useEffect(() => {
+    const measure = () => {
+      const nav = document.querySelector('[data-testid="client-mobile-nav"]');
+      setMobileNavH(nav ? nav.getBoundingClientRect().height : 0);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  if (cartCount === 0) return null;
+
+  const glow = justAdded ? "0 0 0 3px rgba(140,198,63,0.55), 0 0 32px -4px rgba(140,198,63,0.7)" : "0 8px 28px -8px rgba(0,0,0,0.5)";
+
+  return createPortal(
+    <>
+      {/* Desktop — floats above content, left-inset to clear the persistent
+          client sidebar (w-52 = 13rem) so it never overlaps nav chrome and
+          stays aligned with the actual shop content column. */}
+      <div className="hidden md:flex fixed bottom-6 z-40 justify-center pointer-events-none" style={{ left: "13rem", right: 0 }}>
+        <div
+          data-testid="shop-checkout-tray"
+          className="pointer-events-auto flex items-center gap-4 pl-5 pr-3 py-3 rounded-2xl border border-shPrimary/40 w-full max-w-xl mx-6 transition-shadow duration-300"
+          style={{ background: "var(--sh-card-base)", boxShadow: glow }}
+        >
+          <i className="fas fa-cart-shopping text-shPrimary text-lg" aria-hidden="true" />
+          <div className="flex-1 min-w-0">
+            <p className="text-shText font-bold text-sm leading-tight">{cartCount} item{cartCount !== 1 ? "s" : ""}</p>
+            <p className="text-shPrimary font-black text-sm leading-tight">{money(subtotal)}</p>
+          </div>
+          <PremiumButton variant="secondary" onClick={onViewCart} data-testid="shop-tray-view-cart" className="py-2.5 px-4">
+            View Cart
+          </PremiumButton>
+          <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-tray-checkout" className="py-2.5 px-6">
+            {busy ? "Redirecting…" : "Checkout"}
+          </PremiumButton>
+        </div>
+      </div>
+
+      {/* Mobile — fixed bottom bar, offset above the bottom nav (measured,
+          not guessed) and respecting the phone's safe-area inset. */}
+      <div className="md:hidden fixed inset-x-0 z-40" style={{ bottom: mobileNavH }} data-testid="shop-checkout-tray-mobile">
+        <div
+          className="flex items-center gap-3 px-4 pt-3 border-t border-shPrimary/40 transition-shadow duration-300"
+          style={{ background: "var(--sh-card-base)", paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))", boxShadow: glow }}
+        >
+          <button onClick={onViewCart} aria-label={`View cart, ${cartCount} item${cartCount !== 1 ? "s" : ""}, ${money(subtotal)}`}
+                  data-testid="shop-tray-view-cart-mobile" className="flex items-center gap-2 flex-1 min-w-0 text-left">
+            <i className="fas fa-cart-shopping text-shPrimary text-lg shrink-0" aria-hidden="true" />
+            <span className="text-shText font-bold text-sm truncate">{cartCount} · {money(subtotal)}</span>
+          </button>
+          <PremiumButton variant="primary" onClick={onCheckout} disabled={busy} data-testid="shop-tray-checkout-mobile" className="py-2.5 px-5 shrink-0">
+            {busy ? "…" : "Checkout"}
+          </PremiumButton>
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
 function ApparelSection({ storeUrl }) {
   if (!storeUrl) return null;
   return (
@@ -255,6 +348,45 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const idemKeyRef = useRef(null);
 
+  // Item Detail page — a real route (/shop/item/:kind/:id), not a modal, so
+  // back button / refresh / direct links all behave like a normal store.
+  // The grid's own state (tab/search/category filters) lives on THIS same
+  // component and is never reset by opening/closing the detail view — only
+  // which JSX renders below changes. `detailScrollRef` remembers where the
+  // grid was scrolled to (the actual scroll container is Portal.jsx's
+  // [data-scroll-root], not a container inside this component) so returning
+  // from a detail page restores the client's place in the grid.
+  const [detail, setDetail] = useState(() => parseDetailRoute());
+  const detailScrollRef = useRef(0);
+
+  useEffect(() => {
+    const onPop = () => setDetail(parseDetailRoute());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const openDetail = (item) => {
+    const scrollRoot = document.querySelector("[data-scroll-root]");
+    if (scrollRoot) detailScrollRef.current = scrollRoot.scrollTop;
+    const path = `/shop/item/${encodeURIComponent(item.kind)}/${encodeURIComponent(item.id)}`;
+    window.history.pushState({ shDetail: true }, "", path);
+    setDetail({ kind: item.kind, id: item.id });
+  };
+
+  const closeDetail = () => {
+    if (window.history.state?.shDetail) {
+      window.history.back();
+    } else {
+      // Reached directly (refresh/shared link) — no history entry of ours
+      // to pop back to, so just drop the item segment from the URL.
+      window.history.pushState({}, "", "/");
+      setDetail(null);
+    }
+    setTimeout(() => {
+      document.querySelector("[data-scroll-root]")?.scrollTo({ top: detailScrollRef.current });
+    }, 0);
+  };
+
   useEffect(() => { setTab(initialTab); }, [initialTab]);
 
   const load = () => {
@@ -291,16 +423,29 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
   }, [items, tab, categoryFilter, subcategoryFilter, search]);
 
   const cartCount = cart.reduce((n, c) => n + c.quantity, 0);
+  const { lines: cartLines, subtotal: cartSubtotal } = useCartLines(cart, items);
 
-  const addToCart = (item) => {
+  // Brief highlight on the persistent tray right after an add, so the client
+  // notices it appeared/updated — auto-clears itself, never blocks anything.
+  const [justAdded, setJustAdded] = useState(false);
+  const justAddedTimerRef = useRef(null);
+  const pulseTray = () => {
+    setJustAdded(true);
+    clearTimeout(justAddedTimerRef.current);
+    justAddedTimerRef.current = setTimeout(() => setJustAdded(false), 900);
+  };
+  useEffect(() => () => clearTimeout(justAddedTimerRef.current), []);
+
+  const addToCart = (item, qty = 1) => {
     setCart((prev) => {
       const existing = prev.find((c) => c.kind === item.kind && c.ref_id === item.id);
       if (existing) {
-        return prev.map((c) => (c === existing ? { ...c, quantity: c.quantity + 1 } : c));
+        return prev.map((c) => (c === existing ? { ...c, quantity: c.quantity + qty } : c));
       }
-      return [...prev, { kind: item.kind, ref_id: item.id, quantity: 1 }];
+      return [...prev, { kind: item.kind, ref_id: item.id, quantity: qty }];
     });
     idemKeyRef.current = null; // cart changed — a fresh checkout attempt needs a fresh key
+    pulseTray();
   };
 
   const changeQty = (kind, refId, qty) => {
@@ -380,6 +525,12 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Hidden once the cart is empty, while the full cart panel is already open
+  // (it has its own Checkout button — showing both would be redundant), and
+  // during the post-Stripe return/processing banner (the closest thing this
+  // single-page shop has to a separate "payment screen").
+  const trayVisible = cartCount > 0 && !cartOpen && !returning;
+
   return (
     <div id="portal-shop-anchor" data-testid="portal-shop"
          className={fullScreen ? "w-full max-w-6xl mx-auto" : "p-6 rounded-2xl border border-shBorder shadow-sh"}
@@ -389,9 +540,10 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           <i className="fas fa-bag-shopping mr-1" />Shop
         </p>
         <button onClick={() => setCartOpen(true)} data-testid="shop-cart-open"
+                aria-label={cartCount > 0 ? `Open cart, ${cartCount} item${cartCount !== 1 ? "s" : ""}, ${money(cartSubtotal)}` : "Open cart"}
                 className="relative border border-shBorder text-shTextMuted hover:text-shText px-3 py-2 rounded-md text-[11px] font-bold uppercase tracking-widest hover:border-shPrimary/50 transition"
                 style={{ background: "var(--sh-card-base)" }}>
-          <i className="fas fa-cart-shopping mr-1" />Cart
+          <i className="fas fa-cart-shopping mr-1" />Cart{cartCount > 0 && <span className="hidden sm:inline"> ({cartCount}) · {money(cartSubtotal)}</span>}
           {cartCount > 0 && (
             <span style={{ position: "absolute" }} className="-top-2 -right-2 bg-shAccent text-white rounded-full w-5 h-5 text-[10px] grid place-items-center font-black" data-testid="shop-cart-count">
               {cartCount}
@@ -400,6 +552,18 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
         </button>
       </div>
 
+      {detail ? (
+        <ShopItemDetail
+          kind={detail.kind}
+          itemId={detail.id}
+          cart={cart}
+          onAddToCart={addToCart}
+          onBack={closeDetail}
+          allItems={items}
+          onOpenItem={openDetail}
+        />
+      ) : (
+      <>
       <ApparelSection storeUrl={shopifyStoreUrl} />
 
       {returning && (
@@ -482,21 +646,39 @@ export default function PortalShop({ initialTab = "all", fullScreen = false, sho
           {filtered.map((item) => {
             const inCart = cart.find((c) => c.kind === item.kind && c.ref_id === item.id);
             return (
-              <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} />
+              <ItemCard key={`${item.kind}-${item.id}`} item={item} cartQty={inCart ? inCart.quantity : 0} onAdd={addToCart} onOpenDetail={openDetail} />
             );
           })}
         </div>
       )}
+      </>
+      )}
+
+      {/* Reserves room below the last card so the persistent checkout tray
+          (fixed, below) never covers it — matches the tray's own height at
+          each breakpoint rather than a guess. */}
+      {trayVisible && <div className="h-24 md:h-20" aria-hidden="true" />}
 
       {cartOpen && (
         <CartPanel
-          cart={cart}
-          items={items}
+          lines={cartLines}
+          subtotal={cartSubtotal}
           onQtyChange={changeQty}
           onRemove={removeFromCart}
           onCheckout={submitCheckout}
           busy={checkoutBusy}
           onClose={() => setCartOpen(false)}
+        />
+      )}
+
+      {trayVisible && (
+        <CheckoutTray
+          cartCount={cartCount}
+          subtotal={cartSubtotal}
+          onViewCart={() => setCartOpen(true)}
+          onCheckout={submitCheckout}
+          busy={checkoutBusy}
+          justAdded={justAdded}
         />
       )}
     </div>

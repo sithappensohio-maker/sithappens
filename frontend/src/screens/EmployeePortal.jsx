@@ -16,6 +16,16 @@ import ReportCardModal from "../components/ReportCardModal";
 import { CheckoutModal, CancelBookingModal } from "../components/CheckoutModal";
 import { todayISO } from "../lib/date";
 import { useConfirm } from "../lib/useConfirm";
+// Permission-matrix product-defect fix — Staff Portal used to be a single
+// flat experience identical for every staff_role, so the configured
+// permission matrix (Staff → role editor) had no reachable effect on what
+// an employee could actually do here. These two reuse the EXACT same
+// screens AdminShell mounts for admins (no duplicate forms/logic) and are
+// shown/hidden per-tab based on the employee's own resolved permissions
+// from `/me/permissions` (via `can()`), so Front Desk and Trainer accounts
+// genuinely see different tabs when their staff_role grants different keys.
+import Clients from "./Clients";
+import Incidents from "./Incidents";
 
 function fmtTime(iso) {
   if (!iso) return "—";
@@ -48,9 +58,26 @@ function getGeo() {
 }
 
 export default function EmployeePortal() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const [tab, setTab] = useState("clock");
   const [incidentOpen, setIncidentOpen] = useState(false);
+
+  // Permission-matrix fix — additional tabs, gated per-employee by their
+  // resolved permissions (`can()` reads from /me/permissions the same way
+  // AdminShell's own sidebar does; see lib/auth.js). Always-available
+  // personal-utility tabs above are untouched — every staff member needs
+  // their own clock/timecard/schedule/time-off regardless of staff_role.
+  const canClients = can("clients_view");
+  const canIncidents = can("incidents");
+
+  // Same render-level guard AdminShell uses: if a live permissions refresh
+  // (polled every 60s in lib/auth.js) downgrades this account while it's
+  // sitting on a now-restricted tab, bounce back to Clock rather than
+  // leaving a screen the employee should no longer see mounted.
+  useEffect(() => {
+    if (tab === "clients" && !canClients) setTab("clock");
+    if (tab === "incidents" && !canIncidents) setTab("clock");
+  }, [tab, canClients, canIncidents]);
 
   return (
     <div className="min-h-screen bg-bgBase flex flex-col pb-safe" data-scroll-root data-testid="employee-portal">
@@ -72,6 +99,8 @@ export default function EmployeePortal() {
         {[
           ["clock", "Clock", "fa-clock"],
           ["roster", "Roster", "fa-paw"],
+          ...(canClients ? [["clients", "Clients", "fa-users"]] : []),
+          ...(canIncidents ? [["incidents", "Incidents", "fa-triangle-exclamation"]] : []),
           ["tasks", "My Tasks", "fa-list-check"],
           ["schedule", "Schedule", "fa-calendar-week"],
           ["timecard", "Timecard", "fa-receipt"],
@@ -86,9 +115,11 @@ export default function EmployeePortal() {
         ))}
       </nav>
 
-      <main className="flex-1 p-3 sm:p-5 pb-28 sm:pb-8 max-w-3xl w-full mx-auto">
+      <main className={`flex-1 p-3 sm:p-5 pb-28 sm:pb-8 w-full mx-auto ${(tab === "clients" || tab === "incidents") ? "max-w-6xl" : "max-w-3xl"}`}>
         {tab === "clock" && <ClockTab />}
         {tab === "roster" && <RosterTab />}
+        {tab === "clients" && canClients && <Clients />}
+        {tab === "incidents" && canIncidents && <Incidents />}
         {tab === "tasks" && <MyTasksTab />}
         {tab === "schedule" && <MyScheduleTab />}
         {tab === "timecard" && <TimecardTab />}
@@ -97,20 +128,28 @@ export default function EmployeePortal() {
         {tab === "profile" && <ProfileTab user={user} />}
       </main>
 
-      {/* Sprint 110cn — Always-visible "Log Incident" FAB. Critical for the
-          floor: bite, escape attempt, injury, etc. — staff can fire one off
-          in 10 seconds from any tab. Tab order intentionally puts it after
-          the main content so screen readers reach it last. */}
-      <button
-        type="button"
-        onClick={() => setIncidentOpen(true)}
-        data-testid="emp-incident-fab"
-        className="employee-incident-fab fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-2xl shadow-red-900/40 px-5 py-4 font-black uppercase tracking-widest text-[13px] flex items-center gap-2 transition-transform active:scale-95"
-        title="Log an incident — bite, injury, escape, etc."
-      >
-        <i className="fas fa-triangle-exclamation"/>
-        <span className="hidden sm:inline">Log Incident</span>
-      </button>
+      {/* Sprint 110cn — "Log Incident" FAB. Critical for the floor: bite,
+          escape attempt, injury, etc. — staff can fire one off in 10 seconds
+          from any tab. Permission-matrix fix: this now only renders for staff
+          whose configured permissions actually grant "incidents" — it used
+          to be shown unconditionally to every employee regardless of
+          staff_role, which the backend now also rejects (POST
+          /employee/incidents 403s without this permission), so hiding it
+          here is a UX courtesy on top of real enforcement, not the only
+          gate. Tab order intentionally puts it after the main content so
+          screen readers reach it last. */}
+      {canIncidents && (
+        <button
+          type="button"
+          onClick={() => setIncidentOpen(true)}
+          data-testid="emp-incident-fab"
+          className="employee-incident-fab fixed bottom-5 right-5 z-40 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-2xl shadow-red-900/40 px-5 py-4 font-black uppercase tracking-widest text-[13px] flex items-center gap-2 transition-transform active:scale-95"
+          title="Log an incident — bite, injury, escape, etc."
+        >
+          <i className="fas fa-triangle-exclamation"/>
+          <span className="hidden sm:inline">Log Incident</span>
+        </button>
+      )}
       {incidentOpen && <IncidentLogModal onClose={() => setIncidentOpen(false)} />}
 
       <BrandFooter />
