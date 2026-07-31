@@ -103,43 +103,113 @@ export default function Pos({ onOpenShopManager } = {}) {
   const registerOpen = registerStatus?.status === "OPEN";
 
   // ── Product catalog ──────────────────────────────────────────────────────
+  // Front Desk product/register-integration fix — this used to call
+  // /pos/products (physical retail products only, and its own dead
+  // free-text /pos/products/categories distinct-value list) which is why
+  // items configured only as credit packs/training programs, or under the
+  // real category taxonomy, never appeared here ("No products found" even
+  // though items existed and were marked Show on Register). Now loads the
+  // SAME canonical catalog Shop Manager/the client Shop already use
+  // (products + credit packs + training programs, one `kind`-tagged list),
+  // just filtered on show_at_register instead of show_online/
+  // available_online — not a second product system.
   const [products, setProducts] = useState([]);
-  const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState("");
   const [productSearch, setProductSearch] = useState("");
-  const loadProducts = () => {
-    api.get("/pos/products", { params: { register_only: true } }).then(({ data }) => setProducts(data || [])).catch(() => {});
-    api.get("/pos/products/categories").then(({ data }) => setCategories(data?.categories || [])).catch(() => {});
+  const loadProducts = (clientId) => {
+    return api.get("/pos/catalog", { params: clientId ? { client_id: clientId } : {} })
+      .then(({ data }) => { const items = data?.items || []; setProducts(items); return items; })
+      .catch(() => { setProducts([]); return []; });
   };
   useEffect(() => { loadProducts(); }, []);
-  const filteredProducts = useMemo(() => products.filter((p) => {
-    if (activeCategory && p.category !== activeCategory) return false;
-    if (productSearch && !p.name.toLowerCase().includes(productSearch.toLowerCase())) return false;
-    return true;
-  }), [products, activeCategory, productSearch]);
+
+  // Cart lines snapshot their price at add-time, but switching which client
+  // is selected (or clearing back to Walk-in) re-resolves grandfathered
+  // pricing — without this, a line already in the cart would keep showing
+  // its old price/badge even though the actual charge at checkout has moved
+  // on, which is exactly the kind of mismatch a cashier must never see.
+  const CATALOG_ID_FIELD = { retail: "product_id", credit_pack: "pack_id", training_program: "program_id" };
+  const CATALOG_KIND_FOR_CART = { retail: "product", credit_pack: "credit_pack", training_program: "training_program" };
+  const resyncCartPricing = (items) => {
+    setCartLines((lines) => lines.map((l) => {
+      const idField = CATALOG_ID_FIELD[l.kind];
+      if (!idField) return l; // custom lines have no catalog counterpart
+      const match = items.find((it) => it.kind === CATALOG_KIND_FOR_CART[l.kind] && it.id === l[idField]);
+      if (!match) return l;
+      return { ...l, unit_price: match.effective_price, list_price: match.list_price, has_price_override: match.has_price_override };
+    }));
+  };
+
+  // Categories are generated from whatever's actually in the loaded
+  // catalog's real taxonomy (category_id/category_name) — never hardcoded,
+  // and never the old dead free-text `category` field new items don't set.
+  const categoryPills = useMemo(() => {
+    const map = new Map();
+    for (const p of products) {
+      if (!p.category_id) continue;
+      if (!map.has(p.category_id)) map.set(p.category_id, { id: p.category_id, label: p.category_name || "Category", count: 0 });
+      map.get(p.category_id).count += 1;
+    }
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    return products.filter((p) => {
+      if (activeCategory && p.category_id !== activeCategory) return false;
+      if (!q) return true;
+      const haystack = [p.name, p.description, p.sku, p.category_name, p.category, p.service_type, p.program_type]
+        .filter(Boolean).join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [products, activeCategory, productSearch]);
+
+  // Declared here (ahead of the Client panel section below) because the
+  // cart/pricing logic that follows needs to read it — addItem's
+  // client-required guard and the live pricing-preview effect both key off
+  // which client (if any) is selected.
+  const [selectedClient, setSelectedClient] = useState(null);
 
   // ── Cart ─────────────────────────────────────────────────────────────────
   const [cartLines, setCartLines] = useState([]);
   const [discount, setDiscount] = useState(null);
   const [priced, setPriced] = useState(null);
 
-  const addProduct = (p) => {
-    if (!registerOpen && false) return; // retail non-cash sales don't need the register open; gate happens at tender time
-    if (p.track_inventory) {
-      const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === p.id)?.qty || 0;
-      if (inCart + 1 > Number(p.stock_on_hand || 0) + 0.0005) {
-        toast.error(`Only ${p.stock_on_hand} in stock for ${p.name}.`);
+  // Maps a catalog item's `kind` ("product"|"credit_pack"|"training_program")
+  // to the cart line "kind" + the id field that line stores it under. Retail
+  // keeps its historical "retail"/"product_id" naming (unchanged wire shape
+  // for /pos/sales); packs/programs are new cart line kinds.
+  const CART_KIND = { product: "retail", credit_pack: "credit_pack", training_program: "training_program" };
+  const CART_ID_FIELD = { retail: "product_id", credit_pack: "pack_id", training_program: "program_id" };
+
+  const addItem = (item) => {
+    const cartKind = CART_KIND[item.kind];
+    if (cartKind !== "retail" && !selectedClient) {
+      toast.error(item.kind === "credit_pack"
+        ? "Select a client first — credit packs are tied to a client's account."
+        : "Select a client first — training programs are tied to a client's account.");
+      return;
+    }
+    if (item.kind === "product" && item.track_inventory) {
+      const inCart = cartLines.find((l) => l.kind === "retail" && l.product_id === item.id)?.qty || 0;
+      if (inCart + 1 > Number(item.stock_on_hand || 0) + 0.0005) {
+        toast.error(`Only ${item.stock_on_hand} in stock for ${item.name}.`);
         return;
       }
     }
+    const idField = CART_ID_FIELD[cartKind];
     setCartLines((lines) => {
-      const idx = lines.findIndex((l) => l.kind === "retail" && l.product_id === p.id);
+      const idx = lines.findIndex((l) => l.kind === cartKind && l[idField] === item.id);
       if (idx >= 0) {
         const copy = [...lines];
         copy[idx] = { ...copy[idx], qty: copy[idx].qty + 1 };
         return copy;
       }
-      return [...lines, { kind: "retail", product_id: p.id, name: p.name, unit_price: p.price, qty: 1 }];
+      return [...lines, {
+        kind: cartKind, [idField]: item.id, name: item.name,
+        unit_price: item.effective_price, list_price: item.list_price,
+        has_price_override: item.has_price_override, qty: 1,
+      }];
     });
   };
   const updateQty = (i, delta) => setCartLines((lines) => {
@@ -181,21 +251,28 @@ export default function Pos({ onOpenShopManager } = {}) {
     setDiscountOpen(false);
   };
 
-  const linesPayload = () => cartLines.map((l) => (l.kind === "custom"
-    ? { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason }
-    : { kind: "retail", product_id: l.product_id, qty: l.qty }
-  ));
+  // One unified checkout — every cart line kind (retail, custom, credit
+  // pack, training program) is priced and eventually submitted together in
+  // ONE request to POST /pos/checkout, so a mixed cart is always exactly
+  // one financial transaction (one sale, one receipt, one register event)
+  // instead of several unrelated ones.
+  const cartLinesPayload = () => cartLines.map((l) => {
+    if (l.kind === "custom") return { kind: "custom", description: l.description, custom_amount: l.custom_amount, custom_reason: l.custom_reason };
+    if (l.kind === "credit_pack") return { kind: "credit_pack", pack_id: l.pack_id, qty: l.qty };
+    if (l.kind === "training_program") return { kind: "training_program", program_id: l.program_id, qty: l.qty };
+    return { kind: "retail", product_id: l.product_id, qty: l.qty };
+  });
 
   useEffect(() => {
     if (cartLines.length === 0) { setPriced(null); return; }
     const t = setTimeout(() => {
-      api.post("/pos/sales/preview", { lines: linesPayload(), discount })
+      api.post("/pos/checkout/preview", { lines: cartLinesPayload(), discount, client_id: selectedClient?.id || null })
         .then(({ data }) => setPriced(data))
         .catch((e) => { toast.error(e?.response?.data?.detail || "Could not price the cart"); setPriced(null); });
     }, 200);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(cartLines), JSON.stringify(discount)]);
+  }, [JSON.stringify(cartLines), JSON.stringify(discount), selectedClient?.id]);
 
   // ── Client panel ─────────────────────────────────────────────────────────
   const [allClients, setAllClients] = useState([]);
@@ -206,12 +283,14 @@ export default function Pos({ onOpenShopManager } = {}) {
     const q = clientQuery.toLowerCase();
     return allClients.filter((c) => (c.name || "").toLowerCase().includes(q) || (c.email || "").toLowerCase().includes(q)).slice(0, 8);
   }, [clientQuery, allClients]);
-  const [selectedClient, setSelectedClient] = useState(null);
   const [clientBookings, setClientBookings] = useState([]);
   const [clientInvoice, setClientInvoice] = useState(null);
 
   const pickClient = async (c) => {
     setSelectedClient(c); setClientQuery("");
+    // Re-resolve grandfathered/client-specific pricing for this client, and
+    // re-price any lines already in the cart to match (see resyncCartPricing).
+    loadProducts(c.id).then(resyncCartPricing);
     try {
       const today = new Date().toISOString().slice(0, 10);
       const [bk, inv] = await Promise.all([
@@ -223,7 +302,18 @@ export default function Pos({ onOpenShopManager } = {}) {
       setClientInvoice(invoices.find((i) => i.balance > 0.005) || null);
     } catch { /* non-fatal — client panel just shows less */ }
   };
-  const clearClient = () => { setSelectedClient(null); setClientBookings([]); setClientInvoice(null); };
+  const clearClient = () => {
+    setSelectedClient(null); setClientBookings([]); setClientInvoice(null);
+    // Credit packs/training programs are always tied to a client account —
+    // dropping to Walk-in means any such lines can no longer be sold.
+    setCartLines((lines) => {
+      const dropped = lines.filter((l) => l.kind === "credit_pack" || l.kind === "training_program");
+      if (dropped.length > 0) toast.error("Removed credit packs/training programs from the cart — they require a client.");
+      return lines.filter((l) => l.kind !== "credit_pack" && l.kind !== "training_program");
+    });
+    // Revert catalog + any remaining (retail) cart lines to standard walk-in pricing.
+    loadProducts().then(resyncCartPricing);
+  };
 
   const [checkoutBooking, setCheckoutBooking] = useState(null);
   const [services, setServices] = useState([]);
@@ -276,9 +366,16 @@ export default function Pos({ onOpenShopManager } = {}) {
     if (remaining > 0.005) { toast.error("Tenders must add up to the full total before completing the sale"); return; }
     setSaleBusy(true);
     try {
-      const { data } = await api.post("/pos/sales", {
+      // One request, one financial transaction — POST /pos/checkout prices,
+      // validates tenders, creates the sale record, mints every credit-pack/
+      // training-program entitlement, adjusts inventory, and returns one
+      // receipt result, all as a single atomic, idempotent commit. See
+      // create_pos_sale's docstring (backend/server.py) for the full
+      // rollback discipline — a failure partway through can never leave a
+      // half-completed sale, a double charge, or orphaned credits.
+      const { data } = await api.post("/pos/checkout", {
         client_id: selectedClient?.id || null,
-        lines: linesPayload(),
+        lines: cartLinesPayload(),
         discount,
         tenders,
         idempotency_key: saleIdemKey,
@@ -511,6 +608,16 @@ export default function Pos({ onOpenShopManager } = {}) {
               {(receiptViewOpen.line_items || []).map((li, i) => (
                 <div key={i} className="flex justify-between gap-2"><span>{li.description}{li.qty > 1 ? ` × ${li.qty}` : ""}</span><span className="font-bold">{money(li.amount)}</span></div>
               ))}
+              <div className="border-t border-gray-200 my-2" />
+              {receiptViewOpen.subtotal != null && (
+                <div className="flex justify-between text-gray-600"><span>Subtotal</span><span>{money(receiptViewOpen.subtotal)}</span></div>
+              )}
+              {Number(receiptViewOpen.discount_amount || 0) > 0.005 && (
+                <div className="flex justify-between text-gray-600"><span>Discount</span><span>-{money(receiptViewOpen.discount_amount)}</span></div>
+              )}
+              {receiptViewOpen.tax_amount != null && (
+                <div className="flex justify-between text-gray-600"><span>Tax{receiptViewOpen.tax_rate_pct > 0 ? ` (${receiptViewOpen.tax_rate_pct}%)` : ""}</span><span>{money(receiptViewOpen.tax_amount)}</span></div>
+              )}
               <div className="border-t border-gray-200 my-2" />
               <div className="flex justify-between font-black text-base"><span>Total</span><span>{money(receiptViewOpen.total || receiptViewOpen.invoice_total || receiptViewOpen.payment_amount)}</span></div>
               <button onClick={() => setReceiptViewOpen(null)} className="mt-4 w-full bg-gray-100 text-gray-700 rounded py-2 font-black uppercase text-[12px] tracking-widest">Close</button>
@@ -958,42 +1065,69 @@ export default function Pos({ onOpenShopManager } = {}) {
           {/* Product panel */}
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4">
             <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Products</p>
-            <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Search products"
+            <input value={productSearch} onChange={(e) => setProductSearch(e.target.value)} placeholder="Search by name, SKU, category…"
+                   data-testid="pos-product-search"
                    className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText mb-2" />
-            {categories.length > 0 && (
-              <div className="flex flex-wrap gap-2 mb-3">
-                <button onClick={() => setActiveCategory("")}
+            {categoryPills.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3" data-testid="pos-category-pills">
+                <button onClick={() => setActiveCategory("")} data-testid="pos-category-all"
                         className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${!activeCategory ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
-                  All
+                  All ({products.length})
                 </button>
-                {categories.map((c) => (
-                  <button key={c} onClick={() => setActiveCategory(c)}
-                          className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${activeCategory === c ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
-                    {c}
+                {categoryPills.map((c) => (
+                  <button key={c.id} onClick={() => setActiveCategory(c.id)} data-testid={`pos-category-${c.id}`}
+                          className={`px-3 py-1 rounded text-[11px] font-black uppercase tracking-widest ${activeCategory === c.id ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] text-shTextMuted"}`}>
+                    {c.label} ({c.count})
                   </button>
                 ))}
               </div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {filteredProducts.map((p) => {
-                const outOfStock = p.track_inventory && Number(p.stock_on_hand || 0) <= 0.0005;
-                const lowStock = p.track_inventory && !outOfStock && p.low_stock_threshold != null &&
-                  Number(p.stock_on_hand || 0) <= Number(p.low_stock_threshold) + 0.0005;
+            <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 gap-2">
+              {filteredProducts.map((item) => {
+                const outOfStock = item.kind === "product" && item.track_inventory && Number(item.stock_on_hand || 0) <= 0.0005;
+                const lowStock = item.kind === "product" && item.track_inventory && !outOfStock && item.low_stock_threshold != null &&
+                  Number(item.stock_on_hand || 0) <= Number(item.low_stock_threshold) + 0.0005;
                 return (
-                  <button key={p.id} onClick={() => addProduct(p)} disabled={outOfStock} data-testid={`pos-product-${p.id}`}
+                  <button key={`${item.kind}-${item.id}`} onClick={() => addItem(item)} disabled={outOfStock}
+                          data-testid={`pos-product-${item.id}`}
                           className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-shBorder">
-                    <ItemThumbnail imageId={p.image_id} alt={p.name} variant="banner" size={64} className="mb-1.5" />
-                    <p className="text-shText font-bold text-sm truncate">{p.name}</p>
-                    <p className="text-shPrimary font-black">{money(p.price)}</p>
-                    {p.track_inventory && (
+                    <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={64} className="mb-1.5" />
+                    <p className="text-shText font-bold text-sm truncate">{item.name}</p>
+                    {item.category_name && (
+                      <p className="text-shTextMuted text-[10px] font-black uppercase tracking-widest truncate">{item.category_name}</p>
+                    )}
+                    {item.has_price_override ? (
+                      <div>
+                        <p className="text-shPrimary font-black">{money(item.effective_price)} <span className="text-shTextMuted text-[10px] font-black uppercase tracking-widest">Your Price</span></p>
+                        <p className="text-shTextMuted text-[11px] line-through">{money(item.list_price)}</p>
+                      </div>
+                    ) : (
+                      <p className="text-shPrimary font-black">{money(item.effective_price)}</p>
+                    )}
+                    {item.kind === "product" && item.track_inventory && (
                       <p className={`text-[11px] font-black uppercase tracking-widest mt-0.5 ${outOfStock ? "text-shDanger" : lowStock ? "text-shAccent" : "text-shTextMuted"}`}>
-                        {outOfStock ? "Out of Stock" : lowStock ? `${p.stock_on_hand} left • Low Stock` : `${p.stock_on_hand} in stock`}
+                        {outOfStock ? "Out of Stock" : lowStock ? `${item.stock_on_hand} left • Low Stock` : `${item.stock_on_hand} in stock`}
                       </p>
                     )}
+                    {item.kind === "credit_pack" && (
+                      <p className="text-shTextMuted text-[11px] font-black uppercase tracking-widest mt-0.5">
+                        {item.qty} {item.service_type || "visit"} credits
+                      </p>
+                    )}
+                    {item.kind === "training_program" && (
+                      <p className="text-shTextMuted text-[11px] font-black uppercase tracking-widest mt-0.5">
+                        {item.format_count ? `${item.format_count} ${item.format_unit || "sessions"}` : "Training program"}
+                      </p>
+                    )}
+                    <span className="mt-1.5 inline-block text-shSecondary text-[11px] font-black uppercase tracking-widest">
+                      <i className="fas fa-cart-plus mr-1" />Add to Cart
+                    </span>
                   </button>
                 );
               })}
-              {filteredProducts.length === 0 && <p className="text-shTextMuted text-sm col-span-full">No products found.</p>}
+              {filteredProducts.length === 0 && (
+                <p className="text-shTextMuted text-sm col-span-full" data-testid="pos-no-products">No products found.</p>
+              )}
             </div>
             {canPricingActions && (
               <button onClick={() => setCustomOpen((o) => !o)}
@@ -1020,14 +1154,25 @@ export default function Pos({ onOpenShopManager } = {}) {
         {/* Right: cart */}
         <div className="lg:col-span-2">
           <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-2xl p-4 sticky top-4">
-            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black mb-2">Cart</p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">Cart</p>
+              {cartLines.length > 0 && (
+                <button onClick={resetCart} data-testid="pos-clear-cart"
+                        className="text-shTextMuted hover:text-shDanger text-[11px] font-black uppercase tracking-widest">
+                  Clear Cart
+                </button>
+              )}
+            </div>
             <div className="space-y-2 max-h-80 overflow-y-auto">
               {cartLines.length === 0 && <p className="text-shTextMuted text-sm">Cart is empty.</p>}
               {cartLines.map((l, i) => (
-                <div key={i} className="flex items-center justify-between text-sm border-b border-shBorder pb-2">
+                <div key={i} className="flex items-center justify-between text-sm border-b border-shBorder pb-2" data-testid="pos-cart-line">
                   <div className="flex-1 min-w-0">
                     <p className="text-shText truncate">{l.kind === "custom" ? l.description : l.name}</p>
-                    {l.kind === "retail" && (
+                    {l.kind === "credit_pack" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Credit Pack</p>}
+                    {l.kind === "training_program" && <p className="text-shTextMuted text-[10px] uppercase tracking-widest">Training Program</p>}
+                    {l.has_price_override && <p className="text-shPrimary text-[10px] font-black uppercase tracking-widest">Client price applied</p>}
+                    {l.kind !== "custom" && (
                       <div className="flex items-center gap-2 mt-1">
                         <button onClick={() => updateQty(i, -1)} className="w-6 h-6 bg-[var(--sh-card-base)] rounded text-shText">-</button>
                         <span className="text-shTextMuted w-6 text-center">{l.qty}</span>
@@ -1073,7 +1218,7 @@ export default function Pos({ onOpenShopManager } = {}) {
               <div className="flex justify-between text-shTextMuted"><span>Subtotal</span><span>{money(priced?.subtotal)}</span></div>
               {priced?.discount_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Discount</span><span>-{money(priced.discount_amount)}</span></div>}
               {priced?.tax_amount > 0 && <div className="flex justify-between text-shTextMuted"><span>Tax</span><span>{money(priced.tax_amount)}</span></div>}
-              <div className="flex justify-between text-shText font-black text-lg"><span>Total</span><span>{money(priced?.total)}</span></div>
+              <div className="flex justify-between text-shText font-black text-lg"><span>Total</span><span>{money(total)}</span></div>
             </div>
 
             <button onClick={openTender} disabled={cartLines.length === 0 || !priced} data-testid="pos-checkout-button"

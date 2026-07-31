@@ -14133,6 +14133,12 @@ class ProgramIn(BaseModel):
     # so every existing program keeps appearing in the sell-program picker.
     show_at_register: bool = True
     featured: bool = False
+    # Front Desk checkout integrity audit — per-item taxable configuration.
+    # Defaults False (training is a service, not a taxed retail good in most
+    # jurisdictions) but is now a real per-program override rather than a
+    # hardcoded "training programs are never taxable" rule.
+    taxable: bool = False
+    tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -26797,6 +26803,168 @@ async def _build_shop_catalog(client_id: Optional[str]) -> dict:
     return {"items": items}
 
 
+async def _build_register_catalog(client_id: Optional[str]) -> dict:
+    """Front Desk / walk-up register catalog — the register-facing sibling
+    of _build_shop_catalog(). Same three canonical collections, same `kind`
+    discriminator, same resolve_client_price() so a grandfathered client is
+    charged identically whether staff ring them up at the register or they
+    self-checkout in the Shop — but gated on `show_at_register` instead of
+    `show_online`/`available_online`, since those are deliberately
+    independent visibility switches (Shop Manager ItemsTab shows both as
+    separate toggles). This does NOT create a second product system: it is
+    a second FILTER over the exact same pos_products/credit_packs/programs
+    documents, reusing the same Shop Organization category visibility and
+    the same pricing resolver as every other purchase surface.
+
+    A Shopify-linked product is excluded entirely (not just shown
+    read-only) — Shopify owns fulfillment for that listing, and a walk-up
+    register sale has no way to honor that, unlike the Shop's catalog
+    where it's a legitimate external-link tile."""
+    active_cats = {c["id"]: c for c in await db.shop_categories.find({"active": True}, {"_id": 0}).to_list(500)}
+    active_subs = {s["id"]: s for s in await db.shop_subcategories.find({"active": True}, {"_id": 0}).to_list(2000)}
+
+    def _shop_org_visible(cat_id, sub_id):
+        if not cat_id:
+            return True
+        if cat_id not in active_cats:
+            return False
+        if sub_id and sub_id not in active_subs:
+            return False
+        return True
+
+    def _shop_org_fields(cat_id, sub_id):
+        cat = active_cats.get(cat_id) if cat_id else None
+        sub = active_subs.get(sub_id) if sub_id else None
+        return {
+            "category_id": cat["id"] if cat else None,
+            "category_name": cat["name"] if cat else None,
+            "subcategory_id": sub["id"] if sub else None,
+            "subcategory_name": sub["name"] if sub else None,
+        }
+
+    items = []
+
+    products = await db.pos_products.find(
+        {"active": True, "archived": {"$ne": True}, "show_at_register": {"$ne": False}}, {"_id": 0},
+    ).sort([("category", 1), ("name", 1)]).to_list(500)
+    for p in products:
+        if p.get("sales_destination") == "shopify_external":
+            continue
+        if not _shop_org_visible(p.get("category_id"), p.get("subcategory_id")):
+            continue
+        track = bool(p.get("track_inventory"))
+        stock = float(p.get("stock_on_hand") or 0)
+        list_price = round(float(p.get("price") or 0), 2)
+        pricing = await resolve_client_price(client_id, "pos_product", p["id"], list_price)
+        effective_price = round(float(pricing["effective_price"]), 2)
+        has_override = pricing["pricing_source"] != "standard"
+        items.append({
+            "kind": "product",
+            "id": p["id"],
+            "name": p.get("name"),
+            "description": p.get("description") or "",
+            "sku": p.get("sku") or "",
+            "category": p.get("category") or "",
+            "featured": bool(p.get("featured")),
+            "list_price": list_price,
+            "effective_price": effective_price,
+            "pricing_source": pricing["pricing_source"],
+            "price_override_id": pricing["override_id"],
+            "has_price_override": has_override,
+            "image_id": p.get("image_id"),
+            "track_inventory": track,
+            "in_stock": (not track) or (stock > 0.0005),
+            "stock_on_hand": round(stock, 2) if track else None,
+            "low_stock_threshold": p.get("low_stock_threshold") if track else None,
+            "taxable": bool(p.get("taxable", True)),
+            "tax_exempt_reason": p.get("tax_exempt_reason"),
+            **_shop_org_fields(p.get("category_id"), p.get("subcategory_id")),
+        })
+
+    packs = await db.credit_packs.find(
+        {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
+    ).to_list(500)
+    for pk in packs:
+        if not _shop_org_visible(pk.get("category_id"), pk.get("subcategory_id")):
+            continue
+        qty = int(pk.get("qty") or 0)
+        list_price = round(float(pk.get("price") or 0), 2)
+        pricing = await resolve_client_price(client_id, "credit_pack", pk["id"], list_price)
+        effective_price = round(float(pricing["effective_price"]), 2)
+        has_override = bool(pricing["override_id"])
+        items.append({
+            "kind": "credit_pack",
+            "id": pk["id"],
+            "name": pk.get("name"),
+            "description": pk.get("description") or pk.get("online_description") or "",
+            "sku": "",
+            "category": "",
+            "service_type": pk.get("service_type"),
+            "qty": qty,
+            "featured": bool(pk.get("featured")),
+            "list_price": list_price,
+            "effective_price": effective_price,
+            "pricing_source": "client_override" if has_override else "standard",
+            "price_override_id": pricing["override_id"],
+            "has_price_override": has_override,
+            "value_each": round(effective_price / max(qty, 1), 2),
+            "image_id": pk.get("image_id"),
+            "taxable": bool(pk.get("taxable", False)),
+            "tax_exempt_reason": pk.get("tax_exempt_reason") or ("Prepaid visit credits are a service, not a taxed retail good" if not pk.get("taxable", False) else None),
+            **_shop_org_fields(pk.get("category_id"), pk.get("subcategory_id")),
+        })
+
+    programs = await db.programs.find(
+        {"active": True, "show_at_register": {"$ne": False}}, {"_id": 0},
+    ).to_list(500)
+    for prog in programs:
+        if not _shop_org_visible(prog.get("category_id"), prog.get("subcategory_id")):
+            continue
+        fmt = prog.get("format") or {}
+        # Programs have no grandfathered-pricing resolver today (matches
+        # sell-program's own behavior — see PosSaleLineIn/sell_training_program),
+        # so effective_price always equals list_price here; the field is
+        # still emitted so the Front Desk card can use one consistent
+        # "effective_price" read across all three kinds.
+        list_price = round(float(prog.get("price") or 0), 2)
+        items.append({
+            "kind": "training_program",
+            "id": prog["id"],
+            "name": prog.get("name"),
+            "description": prog.get("description") or prog.get("online_description") or "",
+            "sku": "",
+            "category": "",
+            "focus": prog.get("focus") or "",
+            "program_type": prog.get("type"),
+            "format_count": fmt.get("count"),
+            "format_unit": fmt.get("unit"),
+            "min_age_months": prog.get("min_age_months") or 0,
+            "featured": bool(prog.get("featured")),
+            "list_price": list_price,
+            "effective_price": list_price,
+            "pricing_source": "standard",
+            "price_override_id": None,
+            "has_price_override": False,
+            "image_id": prog.get("image_id"),
+            "taxable": bool(prog.get("taxable", False)),
+            "tax_exempt_reason": prog.get("tax_exempt_reason") or ("Training is a service, not a taxed retail good" if not prog.get("taxable", False) else None),
+            **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
+        })
+
+    return {"items": items}
+
+
+@api.get("/pos/catalog")
+async def get_register_catalog(client_id: Optional[str] = None, user: dict = Depends(require_employee_or_admin)):
+    """Front Desk's real product/pack/program catalog — the register-visible
+    counterpart to GET /shop/catalog. `client_id`, when given, resolves that
+    client's grandfathered/tier pricing on every eligible line (products,
+    credit packs); walk-in sales (no client_id) always see the standard
+    price, exactly like an unauthenticated Shop visitor would."""
+    _require_take_payments(user)
+    return await _build_register_catalog(client_id)
+
+
 @api.get("/shop/catalog")
 async def get_shop_catalog(user: dict = Depends(get_current_user)):
     """Client Shop Phase 1 — thin auth wrapper around _build_shop_catalog().
@@ -28067,6 +28235,12 @@ class PosProductIn(BaseModel):
     shopify_product_url: Optional[str] = Field(default=None, max_length=2000)
     shopify_display_price: Optional[float] = Field(default=None, ge=0)
     shopify_from_price: bool = False
+    # Front Desk checkout integrity audit — per-item taxable configuration,
+    # replacing the old hardcoded "kind == product" tax rule. Defaults True
+    # (physical retail goods) so every existing product keeps its current
+    # tax treatment unless an admin opts it out.
+    taxable: bool = True
+    tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
 
 
 class PosProductCreateIn(PosProductIn):
@@ -28478,19 +28652,22 @@ async def list_inventory_movements(product_id: str, limit: int = 100, user: dict
 # ─────────────────────────────────────────────────────────────────────────────
 # Front Desk POS — retail cart / sale (pos_sales)
 # ─────────────────────────────────────────────────────────────────────────────
-# The canonical container for one register transaction: a cart of retail
-# product lines (and optional admin-only custom lines), an optional
-# order-level discount, and one or more tenders. This does NOT replace or
-# duplicate booking/service pricing, invoices, or Payment rows — those keep
-# flowing through the existing checkout/top-up endpoints untouched. A
-# completed pos_sales document writes exactly ONE retail_sales row (via the
-# same tax-calculation path create_retail_sale already uses), so retail
-# revenue still has exactly one recognition path.
+# The canonical container for one register transaction — the Front Desk
+# checkout integrity audit unified this to cover EVERY sellable item kind
+# (retail products, admin-only custom lines, credit packs, training
+# programs) in one cart, one price, one set of tenders, one pos_sales
+# document, one receipt. Previously credit packs/programs were sold through
+# separate sell-pack/sell-program calls, which meant a mixed cart produced
+# several unrelated "sales" instead of one coherent transaction — see
+# create_pos_sale's docstring for the atomicity/idempotency discipline that
+# now ties all of this together as a single all-or-nothing commit.
 
 class PosSaleLineIn(BaseModel):
-    kind: Literal["retail", "custom"] = "retail"
+    kind: Literal["retail", "custom", "credit_pack", "training_program"] = "retail"
     product_id: Optional[str] = None  # required when kind == "retail"
-    description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail
+    pack_id: Optional[str] = None  # required when kind == "credit_pack"
+    program_id: Optional[str] = None  # required when kind == "training_program"
+    description: Optional[str] = Field(default=None, max_length=200)  # required when kind == "custom"; optional display override for retail/pack/program
     qty: float = Field(default=1, gt=0, le=999)
     # Required when kind == "custom" — the line's total amount (custom lines
     # are always qty-of-one conceptually, e.g. "Replacement leash $12.00").
@@ -28519,27 +28696,53 @@ class PosSaleTenderIn(BaseModel):
 class PosSalePreviewIn(BaseModel):
     lines: List[PosSaleLineIn] = Field(min_length=1)
     discount: Optional[PosSaleDiscountIn] = None
+    # Front Desk product/register-integration fix — when a client is
+    # selected, retail lines must resolve THEIR grandfathered/tier price,
+    # not the raw catalog price. Present on the preview body too (not just
+    # the commit body) so the live cart total the cashier sees already
+    # reflects it before checkout.
+    client_id: Optional[str] = None
 
 
 class PosSaleIn(PosSalePreviewIn):
-    client_id: Optional[str] = None
     tenders: List[PosSaleTenderIn] = Field(min_length=1)
     workstation_id: Optional[str] = Field(default=None, max_length=100)
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
-async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, can_price: bool) -> tuple:
-    """Prices a POS cart. Retail line prices are ALWAYS resolved server-side
-    from the live product catalog (never trusted from the client) — only a
-    custom line's amount is caller-supplied, and only staff holding the
-    "pricing" permission may include one or apply a discount.
+async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSaleDiscountIn], *, can_price: bool, client_id: Optional[str] = None) -> tuple:
+    """Prices a WHOLE Front Desk cart — retail products, admin-only custom
+    lines, credit packs, and training programs — as ONE priced transaction.
+    Retail/credit-pack prices are ALWAYS resolved server-side from the live
+    catalog via resolve_client_price() (never trusted from the client);
+    training-program prices are list-price only (matches sell-program's own
+    behavior — no grandfathered-pricing resolver exists for programs
+    anywhere in the app); only a custom line's amount is caller-supplied,
+    and only staff holding the "pricing" permission may include one or
+    apply a discount.
 
-    Security checkpoint fix — this used to gate on `is_admin` (a blanket
-    `role == "admin"` check), so any restricted staff_role account (which
-    still has `role: "admin"`) could add custom-priced lines or discounts
-    regardless of the "pricing" permission the frontend already enforces.
-    `can_price` is the caller's actual `_perms_for(user).get("pricing")`.
-    Raises HTTPException on any invalid input; never partially prices.
+    Front Desk checkout integrity audit — this used to be retail/custom
+    only, with credit packs and training programs sold through entirely
+    separate sell-pack/sell-program calls. A mixed cart therefore produced
+    several unrelated "sales" instead of one coherent transaction. Pricing
+    every kind here, in one place, is what lets create_pos_sale commit the
+    whole cart as a single atomic, idempotent, one-receipt transaction.
+
+    Security checkpoint fix (kept from the retail-only version) — this used
+    to gate on `is_admin` (a blanket `role == "admin"` check), so any
+    restricted staff_role account (which still has `role: "admin"`) could
+    add custom-priced lines or discounts regardless of the "pricing"
+    permission the frontend already enforces. `can_price` is the caller's
+    actual `_perms_for(user).get("pricing")`. Raises HTTPException on any
+    invalid input; never partially prices.
+
+    Tax handling — each catalog item (pos_products/credit_packs/programs)
+    now carries its own `taxable`/`tax_exempt_reason` fields (see those
+    models) instead of tax being hardcoded by line `kind`. Tax is allocated
+    PER LINE, proportional to each taxable line's post-discount amount
+    (mirrors _price_shop_cart's existing per-line allocation), so every
+    line_item carries its own taxable/tax_rate_pct/allocated_tax/
+    tax_exempt_reason — never a single cart-wide lump.
 
     Also enforces stock availability for track_inventory products, summed
     across every line referencing the same product (so two cart lines for
@@ -28550,12 +28753,18 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
     never oversell even if this check briefly passed. Frontend stock
     numbers are for display only; this is the real enforcement point.
 
-    Returns (priced_dict, product_cache) — product_cache maps product_id to
-    its full catalog doc as read at pricing time, reused by the caller so a
-    sale commit never has to re-query products it already fetched here."""
+    Returns (priced_dict, catalog_caches) — catalog_caches is
+    {"products": {...}, "packs": {...}, "programs": {...}}, each mapping id
+    to the full catalog doc as read at pricing time, reused by the caller
+    so a sale commit never has to re-query anything it already fetched
+    here."""
     line_items = []
     product_cache: Dict[str, dict] = {}
+    pack_cache: Dict[str, dict] = {}
+    program_cache: Dict[str, dict] = {}
     qty_by_product: Dict[str, float] = {}
+    has_entitlement_line = False
+
     for line in lines:
         if line.kind == "custom":
             if not can_price:
@@ -28570,8 +28779,9 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
                 "description": (line.description or "Custom item").strip(),
                 "qty": 1, "unit_price": amount, "amount": amount,
                 "reason": line.custom_reason.strip(),
+                "taxable": True, "tax_exempt_reason": None,
             })
-        else:
+        elif line.kind == "retail":
             if not line.product_id:
                 raise HTTPException(status_code=400, detail="Retail line is missing a product.")
             product = product_cache.get(line.product_id)
@@ -28581,14 +28791,85 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
                     raise HTTPException(status_code=400, detail="One of the products in this cart is no longer available.")
                 product_cache[line.product_id] = product
             qty = round(float(line.qty or 1), 3)
-            unit_price = round(float(product["price"]), 2)
+            list_price = round(float(product["price"]), 2)
+            pricing = await resolve_client_price(client_id, "pos_product", product["id"], list_price)
+            unit_price = round(float(pricing["effective_price"]), 2)
+            has_override = pricing["pricing_source"] != "standard"
             amount = round(qty * unit_price, 2)
+            taxable = bool(product.get("taxable", True))
             line_items.append({
                 "kind": "retail", "product_id": product["id"],
                 "description": (line.description or product["name"]).strip(),
                 "qty": qty, "unit_price": unit_price, "amount": amount,
+                "list_price": list_price,
+                "has_price_override": has_override,
+                "price_override_id": pricing["override_id"],
+                "taxable": taxable, "tax_exempt_reason": None if taxable else product.get("tax_exempt_reason"),
             })
             qty_by_product[product["id"]] = qty_by_product.get(product["id"], 0) + qty
+        elif line.kind == "credit_pack":
+            has_entitlement_line = True
+            if not line.pack_id:
+                raise HTTPException(status_code=400, detail="Credit pack line is missing a pack.")
+            pack = pack_cache.get(line.pack_id)
+            if pack is None:
+                pack = await db.credit_packs.find_one({"id": line.pack_id}, {"_id": 0})
+                if not pack or not pack.get("active", True):
+                    raise HTTPException(status_code=400, detail="One of the credit packs in this cart is no longer available.")
+                pack_cache[line.pack_id] = pack
+            qty = int(line.qty or 1)  # whole packs purchased, not visit count
+            list_price = round(float(pack["price"]), 2)
+            pricing = await resolve_client_price(client_id, "credit_pack", pack["id"], list_price)
+            unit_price = round(float(pricing["effective_price"]), 2)
+            has_override = pricing["pricing_source"] != "standard"
+            amount = round(qty * unit_price, 2)
+            taxable = bool(pack.get("taxable", False))
+            line_items.append({
+                "kind": "credit_pack", "pack_id": pack["id"],
+                "description": (line.description or pack["name"]).strip(),
+                "qty": qty, "unit_price": unit_price, "amount": amount,
+                "list_price": list_price,
+                "has_price_override": has_override,
+                "price_override_id": pricing["override_id"],
+                "taxable": taxable,
+                "tax_exempt_reason": None if taxable else (pack.get("tax_exempt_reason") or "Prepaid visit credits are a service, not a taxed retail good"),
+            })
+        elif line.kind == "training_program":
+            has_entitlement_line = True
+            if not line.program_id:
+                raise HTTPException(status_code=400, detail="Training program line is missing a program.")
+            program = program_cache.get(line.program_id)
+            if program is None:
+                program = await db.programs.find_one({"id": line.program_id}, {"_id": 0})
+                if not program or not program.get("active", True):
+                    raise HTTPException(status_code=400, detail="One of the training programs in this cart is no longer available.")
+                fmt = program.get("format") or {}
+                if int(fmt.get("count") or 0) <= 0:
+                    raise HTTPException(status_code=400, detail=f"{program.get('name', 'This program')} isn't set up for sale (format.count must be > 0).")
+                program_cache[line.program_id] = program
+            qty = int(line.qty or 1)  # whole program enrollments purchased
+            list_price = round(float(program.get("price") or 0), 2)
+            # No grandfathered-pricing resolver exists for programs anywhere
+            # in the app (matches sell_training_program's own behavior) —
+            # effective_price always equals list_price.
+            unit_price = list_price
+            amount = round(qty * unit_price, 2)
+            taxable = bool(program.get("taxable", False))
+            line_items.append({
+                "kind": "training_program", "program_id": program["id"],
+                "description": (line.description or program["name"]).strip(),
+                "qty": qty, "unit_price": unit_price, "amount": amount,
+                "list_price": list_price,
+                "has_price_override": False,
+                "price_override_id": None,
+                "taxable": taxable,
+                "tax_exempt_reason": None if taxable else (program.get("tax_exempt_reason") or "Training is a service, not a taxed retail good"),
+            })
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown cart line kind: {line.kind}")
+
+    if has_entitlement_line and not client_id:
+        raise HTTPException(status_code=400, detail="Credit packs and training programs require a client — walk-in sales can't purchase them.")
 
     for product_id, total_qty in qty_by_product.items():
         product = product_cache[product_id]
@@ -28617,13 +28898,20 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
         discount_kind = discount.kind
         discount_reason = discount.reason.strip()
 
-    taxable_base = round(max(0.0, subtotal - discount_amount), 2)
+    # Tax is allocated PER LINE (not as one cart-wide lump) — only lines
+    # whose catalog item is actually configured `taxable` contribute, and
+    # each gets its own discount-proportional share of the total tax so the
+    # receipt/invoice can show taxable status + rate + amount per line.
+    discount_ratio = (discount_amount / subtotal) if subtotal > 0 else 0.0
+    taxable_indices = [i for i, li in enumerate(line_items) if li["taxable"]]
+    taxable_subtotal = round(sum(line_items[i]["amount"] for i in taxable_indices), 2)
+    taxable_base = round(taxable_subtotal * (1 - discount_ratio), 2)
     tax_amount = 0.0
     tax_rate_pct = 0.0
     try:
         settings_tx = await get_settings()
         tx_cfg = (settings_tx or {}).get("sales_tax") or {}
-        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0:
+        if tx_cfg.get("enabled") and float(tx_cfg.get("rate_pct") or 0) > 0 and taxable_base > 0:
             applies = (tx_cfg.get("applies_to") or {})
             if applies.get("retail", True):
                 tax_rate_pct = float(tx_cfg["rate_pct"])
@@ -28631,38 +28919,102 @@ async def _price_pos_cart(lines: List[PosSaleLineIn], discount: Optional[PosSale
     except Exception as exc:
         logger.warning("POS cart tax calc failed: %s", exc)
 
-    total = round(taxable_base + tax_amount, 2)
+    allocated_so_far = 0.0
+    for pos, i in enumerate(taxable_indices):
+        li = line_items[i]
+        li["tax_rate_pct"] = tax_rate_pct
+        if tax_amount <= 0:
+            li["allocated_tax"] = 0.0
+            continue
+        if pos == len(taxable_indices) - 1:
+            li["allocated_tax"] = round(tax_amount - allocated_so_far, 2)
+        else:
+            line_share = round(tax_amount * (li["amount"] / taxable_subtotal), 2) if taxable_subtotal > 0 else 0.0
+            li["allocated_tax"] = line_share
+            allocated_so_far = round(allocated_so_far + line_share, 2)
+    for i, li in enumerate(line_items):
+        if i not in taxable_indices:
+            li["tax_rate_pct"] = 0.0
+            li["allocated_tax"] = 0.0
+
+    # Discount is a single cart-wide amount (fixed $ or %), but every line
+    # still needs its own post-discount "net_amount" — this is what each
+    # kind's own revenue-recognition row (retail_sales for retail/custom,
+    # one row per credit-pack/program lot) actually records, so a mixed
+    # cart's total revenue always adds up across every kind exactly once.
+    # Allocated proportionally by each line's pre-discount amount, with a
+    # running-remainder correction on the last line (same rounding-safe
+    # pattern as the tax allocation above).
+    discount_allocated_so_far = 0.0
+    for idx, li in enumerate(line_items):
+        if subtotal <= 0:
+            line_discount = 0.0
+        elif idx == len(line_items) - 1:
+            line_discount = round(discount_amount - discount_allocated_so_far, 2)
+        else:
+            line_discount = round(discount_amount * (li["amount"] / subtotal), 2)
+            discount_allocated_so_far = round(discount_allocated_so_far + line_discount, 2)
+        li["allocated_discount"] = line_discount
+        li["net_amount"] = round(li["amount"] - line_discount, 2)
+        li["line_total"] = round(li["net_amount"] + li["allocated_tax"], 2)
+
+    total = round((subtotal - discount_amount) + tax_amount, 2)
 
     priced = {
         "line_items": line_items, "subtotal": subtotal,
         "discount_amount": discount_amount, "discount_kind": discount_kind, "discount_reason": discount_reason,
         "tax_amount": tax_amount, "tax_rate_pct": tax_rate_pct, "total": total,
     }
-    return priced, product_cache
+    catalog_caches = {"products": product_cache, "packs": pack_cache, "programs": program_cache}
+    return priced, catalog_caches
 
 
-@api.post("/pos/sales/preview")
+@api.post("/pos/checkout/preview")
+@api.post("/pos/sales/preview")  # legacy alias — kept so no other caller breaks
 async def preview_pos_sale(body: PosSalePreviewIn, user: dict = Depends(require_employee_or_admin)):
     """Prices a cart without creating anything — pure read, safe to call on
-    every cart edit for live cart totals."""
+    every cart edit for live cart totals. Covers every sellable kind
+    (retail, custom, credit_pack, training_program) as one unified total."""
     _require_take_payments(user)
-    priced, _product_cache = await _price_pos_cart(body.lines, body.discount, can_price=bool(_perms_for(user).get("pricing")))
+    priced, _caches = await _price_pos_cart(body.lines, body.discount, can_price=bool(_perms_for(user).get("pricing")), client_id=body.client_id)
     return priced
 
 
-@api.post("/pos/sales")
+@api.post("/pos/checkout")
+@api.post("/pos/sales")  # legacy alias — kept so no other caller breaks
 async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee_or_admin)):
-    """Completes one Front Desk POS retail transaction: prices the cart
-    server-side, validates tenders sum EXACTLY to the total (a real register
-    only closes out a sale once it's fully settled — no retail-on-tab path
-    here), commits atomically with a compensating rollback on any failure,
-    writes exactly one retail_sales row for revenue recognition, then
-    (post-commit, best-effort) issues hardware tokens — a drawer token only
-    when real cash was actually part of the tender mix."""
+    """Completes ONE Front Desk checkout — retail products, custom lines,
+    credit packs, AND training programs, in any combination — as a single
+    financial transaction. Front Desk checkout integrity audit: this used
+    to be retail/custom only, with a mixed cart requiring THREE separate
+    calls (this endpoint + /clients/{id}/sell-packs + /sell-program), each
+    its own "sale," each separately tendered. That meant a mixed cart never
+    behaved like one transaction — a failure partway through could charge
+    the customer once but grant no credits, or grant credits with no
+    matching sale record. Now the whole cart — pricing, tender validation,
+    the sale record, every credit-pack/program entitlement, and inventory —
+    commits or rolls back together, exactly like the pre-existing
+    retail-only version already did for stock/retail_sales.
+
+    Validates tenders sum EXACTLY to the unified total (a real register only
+    closes out a sale once it's fully settled — no retail-on-tab path here).
+    Idempotent on `idempotency_key`: retrying the exact same request after a
+    network hiccup replays the already-completed result instead of creating
+    a second sale, a second set of credits, or a second charge. Commits with
+    a compensating rollback on ANY failure — see the `except` block below,
+    which reverses every side effect in strict reverse order (client credit
+    balances → credit_lots → per-kind retail_sales rows → inventory →
+    the sale document → the claim) before re-raising, so a failure never
+    leaves a partially-completed checkout behind.
+
+    Post-commit, best-effort only: hardware tokens (drawer/printer) and the
+    auto-email receipt — a failure there can never un-do or hide the sale
+    that already fully committed."""
     _require_take_payments(user)
     can_price = bool(_perms_for(user).get("pricing"))
 
-    priced, product_cache = await _price_pos_cart(body.lines, body.discount, can_price=can_price)
+    priced, catalog_caches = await _price_pos_cart(body.lines, body.discount, can_price=can_price, client_id=body.client_id)
+    product_cache = catalog_caches["products"]
     total = priced["total"]
 
     client_name = ""
@@ -28709,9 +29061,12 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
 
     # Idempotency — same discipline as create_invoice_payment: claim first,
     # replay only on an exact resource+payload match, 409 on any mismatch.
+    # The fingerprint now covers every line kind (not just retail/custom) so
+    # retrying the SAME mixed cart with the SAME idempotency_key can never
+    # duplicate a sale, credits, or a charge.
     fingerprint = _request_fingerprint(
         body.client_id,
-        [(li["kind"], li.get("product_id"), li["qty"], li["amount"]) for li in priced["line_items"]],
+        [(li["kind"], li.get("product_id") or li.get("pack_id") or li.get("program_id"), li["qty"], li["amount"]) for li in priced["line_items"]],
         priced["discount_amount"], total,
         [(td["method"], td["amount"], td["tendered_amount"]) for td in tender_docs],
     )
@@ -28734,7 +29089,11 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
         raise HTTPException(status_code=409, detail="This sale is already being processed. Wait a moment and try again.")
 
     sale_id = str(uuid.uuid4())
-    retail_sales_id: Optional[str] = None
+    retail_sales_id: Optional[str] = None  # the ONE row for the retail/custom slice, if any
+    entitlement_retail_sales_ids: List[str] = []  # one row per credit-pack/program lot minted
+    created_lot_ids: List[str] = []
+    client_balance_deltas: Dict[str, int] = {}  # balance_field -> total $inc applied — reversed on failure
+    client_balance_applied = False
     applied_stock_movements: List[tuple] = []  # (product_id, qty) already deducted — reversed on failure below
     try:
         item_count = len(priced["line_items"])
@@ -28755,21 +29114,107 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
 
         methods = sorted({td["method"] for td in tender_docs})
         payment_method_label = methods[0] if len(methods) == 1 else "split"
-        retail_row = await _build_retail_sale_doc(
-            date=business_date,
-            description=f"POS Sale #{sale_doc['receipt_number']} ({item_count} item{'s' if item_count != 1 else ''})",
-            amount=total, quantity=round(sum(li["qty"] for li in priced["line_items"]), 3) or 1,
-            category="POS", payment_method=payment_method_label,
-            client_id=body.client_id, client_name=client_name, created_by=user.get("id"),
-            precomputed_tax={
-                "tax_amount": priced["tax_amount"], "tax_rate_pct": priced["tax_rate_pct"],
-                "pre_tax_amount": round(total - priced["tax_amount"], 2),
-            },
-        )
-        retail_row["pos_sale_id"] = sale_id
-        await db.retail_sales.insert_one(retail_row.copy())
-        retail_sales_id = retail_row["id"]
-        await db.pos_sales.update_one({"id": sale_id}, {"$set": {"retail_sales_id": retail_sales_id}})
+
+        # ── Retail/custom lines → exactly one retail_sales row, as before ──
+        retail_custom_lines = [li for li in priced["line_items"] if li["kind"] in ("retail", "custom")]
+        if retail_custom_lines:
+            retail_custom_amount = round(sum(li["line_total"] for li in retail_custom_lines), 2)
+            retail_custom_tax = round(sum(li["allocated_tax"] for li in retail_custom_lines), 2)
+            retail_row = await _build_retail_sale_doc(
+                date=business_date,
+                description=f"POS Sale #{sale_doc['receipt_number']} ({len(retail_custom_lines)} item{'s' if len(retail_custom_lines) != 1 else ''})",
+                amount=retail_custom_amount, quantity=round(sum(li["qty"] for li in retail_custom_lines), 3) or 1,
+                category="POS", payment_method=payment_method_label,
+                client_id=body.client_id, client_name=client_name, created_by=user.get("id"),
+                precomputed_tax={
+                    "tax_amount": retail_custom_tax, "tax_rate_pct": priced["tax_rate_pct"],
+                    "pre_tax_amount": round(retail_custom_amount - retail_custom_tax, 2),
+                },
+            )
+            retail_row["pos_sale_id"] = sale_id
+            await db.retail_sales.insert_one(retail_row.copy())
+            retail_sales_id = retail_row["id"]
+            await db.pos_sales.update_one({"id": sale_id}, {"$set": {"retail_sales_id": retail_sales_id}})
+
+        # ── Credit-pack / training-program lines → mint entitlements ───────
+        # Mirrors sell-pack/sell-program's own lot shape exactly (one lot per
+        # unit purchased, one retail_sales row per lot, recognized at sale
+        # time) so existing credit-redemption, Income/P&L, and audit code
+        # needs no changes — the only difference is these now commit/roll
+        # back as part of THIS transaction instead of a separate call.
+        for li in priced["line_items"]:
+            if li["kind"] == "credit_pack":
+                pack = catalog_caches["packs"][li["pack_id"]]
+                pack_qty = int(pack["qty"])
+                svc_type = pack.get("service_type") or "daycare"
+                balance_field = _credit_balance_field(svc_type) or "credits"
+                unit_price_net = round(li["unit_price"] * (1 - (li["allocated_discount"] / li["amount"] if li["amount"] else 0)), 2)
+                for _ in range(int(li["qty"])):
+                    lot = {
+                        "id": str(uuid.uuid4()), "client_id": body.client_id,
+                        "pack_id": pack["id"], "pack_name": pack["name"], "service_type": svc_type,
+                        "qty_total": pack_qty, "qty_remaining": pack_qty,
+                        "price_paid": unit_price_net, "list_price": li["list_price"],
+                        "price_override_id": li.get("price_override_id"),
+                        "value_each": round(unit_price_net / max(pack_qty, 1), 2),
+                        "payment_method": payment_method_label,
+                        "note": f"Front Desk register sale #{sale_doc['receipt_number']}",
+                        "sold_by": user.get("name", "Admin"), "purchased_at": ts,
+                        "recognize_at_sale": True, "pos_sale_id": sale_id,
+                    }
+                    await db.credit_lots.insert_one(lot.copy())
+                    created_lot_ids.append(lot["id"])
+                    client_balance_deltas[balance_field] = client_balance_deltas.get(balance_field, 0) + pack_qty
+                    lot_share = round((li["line_total"]) / int(li["qty"]), 2)
+                    entitlement_row = {
+                        "id": str(uuid.uuid4()), "client_id": body.client_id, "client_name": client_name,
+                        "amount": lot_share, "date": business_date,
+                        "payment_method": payment_method_label, "source_kind": "credit_pack_sale",
+                        "lot_id": lot["id"], "pack_id": pack["id"], "pack_name": pack["name"],
+                        "note": f"Front Desk register sale #{sale_doc['receipt_number']}",
+                        "logged_by": user.get("name", "Admin"), "created_at": ts,
+                        "pos_sale_id": sale_id,
+                    }
+                    await db.retail_sales.insert_one(entitlement_row.copy())
+                    entitlement_retail_sales_ids.append(entitlement_row["id"])
+            elif li["kind"] == "training_program":
+                program = catalog_caches["programs"][li["program_id"]]
+                fmt = program.get("format") or {}
+                credits_count = int(fmt.get("count") or 0)
+                unit = fmt.get("unit") or "sessions"
+                for _ in range(int(li["qty"])):
+                    value_each = round(li["unit_price"] / max(credits_count, 1), 2)
+                    lot = {
+                        "id": str(uuid.uuid4()), "client_id": body.client_id,
+                        "pack_kind": "training_program", "pack_id": program["id"], "pack_name": program["name"],
+                        "program_id": program["id"], "program_name": program["name"], "service_type": "training",
+                        "qty_total": credits_count, "qty_remaining": credits_count, "unit": unit,
+                        "price_paid": li["unit_price"], "list_price": li["list_price"], "value_each": value_each,
+                        "payment_method": payment_method_label,
+                        "note": f"Front Desk register sale #{sale_doc['receipt_number']}",
+                        "sold_by": user.get("name", "Admin"), "purchased_at": ts, "pos_sale_id": sale_id,
+                    }
+                    await db.credit_lots.insert_one(lot.copy())
+                    created_lot_ids.append(lot["id"])
+                    client_balance_deltas["training_credits"] = client_balance_deltas.get("training_credits", 0) + credits_count
+                    lot_share = round((li["line_total"]) / int(li["qty"]), 2)
+                    entitlement_row = {
+                        "id": str(uuid.uuid4()), "date": business_date,
+                        "description": f"Training Program · {program['name']}",
+                        "amount": lot_share, "category": "Training Program",
+                        "notes": "", "payment_method": payment_method_label,
+                        "client_id": body.client_id, "client_name": client_name,
+                        "created_at": ts, "created_by": user.get("id"),
+                        "source_kind": "training_program_sale", "source_id": lot["id"],
+                        "program_id": program["id"], "pos_sale_id": sale_id,
+                    }
+                    await db.retail_sales.insert_one(entitlement_row.copy())
+                    entitlement_retail_sales_ids.append(entitlement_row["id"])
+                    await db.credit_lots.update_one({"id": lot["id"]}, {"$set": {"income_event_id": entitlement_row["id"]}})
+
+        if client_balance_deltas:
+            await db.clients.update_one({"id": body.client_id}, {"$inc": client_balance_deltas})
+            client_balance_applied = True
 
         # Inventory deduction — only for retail lines whose product has
         # track_inventory=True (custom lines and untracked products never
@@ -28802,6 +29247,15 @@ async def create_pos_sale(body: PosSaleIn, user: dict = Depends(require_employee
                 )
             except Exception as exc:
                 logger.error("Failed to reverse stock deduction for product %s during sale rollback: %s", product_id, exc)
+        if client_balance_applied and client_balance_deltas:
+            try:
+                await db.clients.update_one({"id": body.client_id}, {"$inc": {k: -v for k, v in client_balance_deltas.items()}})
+            except Exception as exc:
+                logger.error("Failed to reverse client balance deltas during sale rollback for pos_sale %s: %s", sale_id, exc)
+        if entitlement_retail_sales_ids:
+            await db.retail_sales.delete_many({"id": {"$in": entitlement_retail_sales_ids}})
+        if created_lot_ids:
+            await db.credit_lots.delete_many({"id": {"$in": created_lot_ids}})
         if retail_sales_id:
             await db.retail_sales.delete_one({"id": retail_sales_id})
         await db.pos_sales.delete_one({"id": sale_id})
@@ -28927,14 +29381,25 @@ class PosSaleVoidIn(BaseModel):
 
 @api.post("/pos/sales/{sale_id}/void")
 async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(require_admin_and_permission("delete_records"))):
-    """Reverses a completed retail POS sale — exactly once, and only while
-    its business day is still open. Mirrors void_payment's exact discipline:
-    structural one-void-per-sale invariant (pos_sale_id is UNIQUE in
-    pos_sale_void_claims), atomic status transition, an offsetting negative
-    retail_sales row (never deleting the original), and a drawer-open token
-    when the voided sale had a real cash component (giving cash back is a
-    physical drawer action too). After closeout, this refuses — use the
-    existing manual financial-correction workflow instead."""
+    """Reverses a completed Front Desk checkout — exactly once, and only
+    while its business day is still open. Mirrors void_payment's exact
+    discipline: structural one-void-per-sale invariant (pos_sale_id is
+    UNIQUE in pos_sale_void_claims), atomic status transition, an
+    offsetting negative retail_sales row per original revenue row (never
+    deleting the originals), and a drawer-open token when the voided sale
+    had a real cash component (giving cash back is a physical drawer
+    action too). After closeout, this refuses — use the existing manual
+    financial-correction workflow instead.
+
+    Front Desk checkout integrity audit — voiding a mixed cart must reverse
+    EVERY line kind, not just retail: any credit-pack/training-program
+    entitlement this sale granted is clawed back (client balance
+    decremented, each credit_lot marked voided) and its own revenue row
+    gets its own offsetting entry — never just the single retail_sales_id
+    the old retail-only version tracked. Clawback is capped at each lot's
+    CURRENT qty_remaining — if some credits were already redeemed (e.g. a
+    dog checked in using one) before the void, only the unused remainder
+    can be reversed; already-rendered service can't be undone by a void."""
     original = await db.pos_sales.find_one({"id": sale_id}, {"_id": 0})
     if not original:
         raise HTTPException(status_code=404, detail="POS sale not found")
@@ -28967,6 +29432,10 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
 
     status_transitioned = False
     retail_reversed = False
+    reversed_entitlement_ids: List[str] = []
+    voided_lot_ids: List[str] = []
+    balance_clawback: Dict[str, int] = {}
+    balance_clawback_applied = False
     try:
         flipped = await db.pos_sales.find_one_and_update(
             {"id": sale_id, "status": "completed"},
@@ -28976,8 +29445,14 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             raise HTTPException(status_code=409, detail="This sale has already been voided or is no longer eligible.")
         status_transitioned = True
 
-        amount = float(original.get("total") or 0)
         if original.get("retail_sales_id"):
+            # Reverse the ACTUAL amount of the retail/custom slice's own
+            # retail_sales row — NOT original["total"], which (since a
+            # mixed cart's credit-pack/program lines each write their own
+            # separate retail_sales row) can be larger than what this one
+            # row ever recorded.
+            retail_row_original = await db.retail_sales.find_one({"id": original["retail_sales_id"]}, {"_id": 0, "amount": 1})
+            amount = float((retail_row_original or {}).get("amount") or 0)
             offset_row = {
                 "id": str(uuid.uuid4()), "date": business_date, "amount": -amount,
                 "payment_method": "void", "client_id": original.get("client_id"),
@@ -28990,7 +29465,62 @@ async def void_pos_sale(sale_id: str, body: PosSaleVoidIn, user: dict = Depends(
             }
             await db.retail_sales.insert_one(offset_row.copy())
             retail_reversed = True
+
+        # Claw back every credit-pack/training-program entitlement this sale
+        # granted. Each gets its own offsetting retail_sales row (never
+        # deleting the original, same discipline as the retail slice above).
+        entitlement_rows = await db.retail_sales.find(
+            {"pos_sale_id": sale_id, "source_kind": {"$in": ["credit_pack_sale", "training_program_sale"]}},
+            {"_id": 0},
+        ).to_list(500)
+        for row in entitlement_rows:
+            offset_row = {
+                "id": str(uuid.uuid4()), "date": business_date, "amount": -float(row.get("amount") or 0),
+                "payment_method": "void", "client_id": original.get("client_id"),
+                "client_name": original.get("client_name"), "pos_sale_id": sale_id,
+                "reversed_retail_sales_id": row["id"],
+                "source_kind": "pos_sale_void",
+                "description": f"Void of POS Sale #{original.get('receipt_number')} · {body.reason.strip()}",
+                "created_at": ts, "created_by": user.get("id"),
+                "logged_by": user.get("name") or user.get("email") or "admin",
+            }
+            await db.retail_sales.insert_one(offset_row.copy())
+            reversed_entitlement_ids.append(row["id"])
+
+        lots = await db.credit_lots.find({"pos_sale_id": sale_id}, {"_id": 0}).to_list(500)
+        for lot in lots:
+            remaining = float(lot.get("qty_remaining") or 0)
+            if remaining <= 0:
+                continue  # fully redeemed already — nothing left to claw back
+            svc_type = lot.get("service_type") or "daycare"
+            balance_field = "training_credits" if lot.get("pack_kind") == "training_program" else (_credit_balance_field(svc_type) or "credits")
+            balance_clawback[balance_field] = balance_clawback.get(balance_field, 0) - int(remaining)
+            await db.credit_lots.update_one(
+                {"id": lot["id"]},
+                {"$set": {"qty_remaining": 0, "voided_at": ts, "void_reason": body.reason.strip(), "voided_by": user.get("name") or user.get("email")}},
+            )
+            voided_lot_ids.append(lot["id"])
+        if balance_clawback:
+            await db.clients.update_one({"id": original.get("client_id")}, {"$inc": balance_clawback})
+            balance_clawback_applied = True
     except Exception:
+        if balance_clawback_applied and balance_clawback:
+            try:
+                await db.clients.update_one({"id": original.get("client_id")}, {"$inc": {k: -v for k, v in balance_clawback.items()}})
+            except Exception as exc:
+                logger.error("Failed to reverse balance clawback during void rollback for pos_sale %s: %s", sale_id, exc)
+        for lot_id in voided_lot_ids:
+            try:
+                orig_lot = next((l for l in lots if l["id"] == lot_id), None)
+                await db.credit_lots.update_one(
+                    {"id": lot_id},
+                    {"$set": {"qty_remaining": orig_lot.get("qty_remaining") if orig_lot else 0},
+                     "$unset": {"voided_at": "", "void_reason": "", "voided_by": ""}},
+                )
+            except Exception as exc:
+                logger.error("Failed to restore credit_lot %s during void rollback: %s", lot_id, exc)
+        if reversed_entitlement_ids:
+            await db.retail_sales.delete_many({"reversed_retail_sales_id": {"$in": reversed_entitlement_ids}, "pos_sale_id": sale_id})
         if retail_reversed:
             await db.retail_sales.delete_one({"reversed_retail_sales_id": original.get("retail_sales_id"), "pos_sale_id": sale_id})
         if status_transitioned:
@@ -32458,6 +32988,12 @@ class CreditPackIn(BaseModel):
     # so every existing pack keeps appearing in the sell-pack picker.
     show_at_register: bool = True
     featured: bool = False
+    # Front Desk checkout integrity audit — per-item taxable configuration.
+    # Defaults False (prepaid visit credits are a service, not a taxed
+    # retail good in most jurisdictions) but is now a real per-pack
+    # override rather than a hardcoded "credit packs are never taxable" rule.
+    taxable: bool = False
+    tax_exempt_reason: Optional[str] = Field(default=None, max_length=300)
 
 
 class SellCreditPackIn(BaseModel):
