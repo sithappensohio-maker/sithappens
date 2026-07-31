@@ -13,11 +13,166 @@ import ShopCategoryFields from "./ShopCategoryFields";
 const empty = {
   name: "", qty: 10, price: 300, service_type: "daycare", icon: "fa-tag", color: "", active: true, welcome_email_template_slug: null,
   available_online: false, online_description: "", image_id: null,
-  category_id: null, subcategory_id: null,
+  category_id: null, subcategory_id: null, show_at_register: true, featured: false,
 };
 
 const DEFAULT_ICON_BY_POOL = { daycare: "fa-sun", training: "fa-graduation-cap", boarding: "fa-moon" };
 const DEFAULT_COLOR_BY_POOL = { daycare: "#8cc63f", training: "#a855f7", boarding: "#f26522" };
+
+// Shared pack add/edit form — used by this panel AND the unified Shop
+// Manager Items tab. Parent owns `form`/`setForm`/`originalImageId`/`err`
+// state and the actual save call (mirrors ProgramEditor's pattern in
+// Programs.jsx); this component is purely presentational/input-bound so
+// there is exactly ONE pack form implementation, never a second copy.
+export function PackEditor({ form, setForm, editing, originalImageId, emailTemplates, err, onSave, onClose }) {
+  return (
+    <div className="p-5">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="md:col-span-2">
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pack name</label>
+          <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} placeholder="e.g., 50-Day Daycare Pack"
+                 data-testid="pack-name-input"
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pool</label>
+          <select value={form.service_type} onChange={(e)=>{
+                     const t = e.target.value;
+                     const pooledDefaults = Object.values(DEFAULT_ICON_BY_POOL);
+                     const nextIcon = (!form.icon || pooledDefaults.includes(form.icon)) ? (DEFAULT_ICON_BY_POOL[t] || form.icon) : form.icon;
+                     setForm({...form, service_type: t, icon: nextIcon});
+                   }}
+                  data-testid="pack-pool-select"
+                  className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+            <option value="daycare">Daycare credits</option>
+            <option value="training">Training credits</option>
+            <option value="boarding">Boarding nights</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Credits per pack</label>
+          <input type="number" min="1" value={form.qty} onChange={(e)=>setForm({...form, qty: parseInt(e.target.value) || 1})}
+                 data-testid="pack-qty-input"
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+        </div>
+        <div>
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Price (USD)</label>
+          <input type="number" step="0.01" min="0" value={form.price} onChange={(e)=>setForm({...form, price: parseFloat(e.target.value) || 0})}
+                 data-testid="pack-price-input"
+                 className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Icon</label>
+          <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Color</label>
+          <div className="mt-2">
+            <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="pack-color-row" />
+            <p className="text-[13px] text-shTextMuted mt-1.5">Leave blank to use the pool default ({form.service_type === "training" ? "purple" : form.service_type === "boarding" ? "orange" : "green"}).</p>
+          </div>
+        </div>
+      </div>
+      <p className="text-[14px] text-shTextMuted mt-2">Per-credit value: <span className="text-shPrimary font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
+
+      <div className="mt-4 flex flex-wrap gap-4">
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.active} onChange={(e)=>setForm({...form, active: e.target.checked})} data-testid="pack-active" />
+          <span className="text-shText text-sm">Active</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.featured} onChange={(e)=>setForm({...form, featured: e.target.checked})} data-testid="pack-featured" />
+          <span className="text-shText text-sm">Featured in Shop</span>
+        </label>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.show_at_register} onChange={(e)=>setForm({...form, show_at_register: e.target.checked})} data-testid="pack-show-at-register" />
+          <span className="text-shText text-sm">Show at Register (sell-pack picker)</span>
+        </label>
+      </div>
+
+      {/* Sprint 110di-62 — Welcome email: custom template that fires when the pack is sold */}
+      <div className="mt-4">
+        <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Welcome email (auto-sent when pack is sold)</label>
+        <select value={form.welcome_email_template_slug||""}
+                onChange={(e)=>setForm({...form, welcome_email_template_slug: e.target.value || null})}
+                data-testid="pack-welcome-email"
+                className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
+          <option value="">— None (use default sale email) —</option>
+          {(emailTemplates || []).map(t => (
+            <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>
+          ))}
+        </select>
+        <p className="text-[13px] text-shTextMuted mt-1">
+          <i className="fas fa-paper-plane mr-1 text-shSecondary"/>Sends this template the moment a client buys this pack. Create new templates from Settings → Email Designer.
+        </p>
+      </div>
+      {/* Shop Organization — purely organizational, independent of
+          online visibility. A pack can be categorized whether or
+          not it's available online. */}
+      <div className="mt-4 border-t border-shBorder pt-4">
+        <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Shop Category</p>
+        <ShopCategoryFields categoryId={form.category_id} subcategoryId={form.subcategory_id} section="prepaid_visits"
+                            onChange={(patch) => setForm({ ...form, ...patch })} />
+      </div>
+
+      {/* Client Shop Phase 1 — additive online-visibility controls. */}
+      <div className="mt-4 border-t border-shBorder pt-4">
+        <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Client Shop</p>
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={form.available_online}
+                 onChange={(e)=>setForm({...form, available_online: e.target.checked})}
+                 data-testid="pack-available-online" />
+          <span className="text-shText text-sm">Available Online (client Shop)</span>
+        </label>
+        {form.available_online && (
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Online Description (optional)</label>
+              <input value={form.online_description || ""} onChange={(e)=>setForm({...form, online_description: e.target.value})}
+                     data-testid="pack-online-description"
+                     className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
+            </div>
+            <div>
+              <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">Pack Photo</label>
+              <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                               onChange={(id)=>setForm({...form, image_id: id})} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Live preview — exactly how this pack will render in the catalog list. */}
+      <div className="mt-4">
+        <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-1.5">Preview</p>
+        {(() => {
+          const accent = form.color || DEFAULT_COLOR_BY_POOL[form.service_type] || "#94a3b8";
+          const unit = form.service_type === "training" ? "sessions" : form.service_type === "boarding" ? "nights" : "credits";
+          return (
+            <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-center gap-3" data-testid="pack-preview">
+              <div className="w-10 h-10 rounded grid place-items-center shrink-0"
+                   style={{ backgroundColor: `${accent}26` }}>
+                <i className={`fas ${form.icon || DEFAULT_ICON_BY_POOL[form.service_type] || "fa-tag"}`} style={{ color: accent }}/>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-shText font-black text-[14px] tracking-tight truncate">{form.name || "Untitled pack"}</p>
+                <p className="text-[13px] font-black uppercase tracking-widest" style={{ color: accent }}>{form.service_type} · {form.qty} {unit}</p>
+              </div>
+              <p className="text-shPrimary font-black text-[18px] whitespace-nowrap">${(form.price || 0).toFixed(2)}</p>
+            </div>
+          );
+        })()}
+      </div>
+      {err && <p className="text-red-400 text-[15px] mt-3">{err}</p>}
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="text-shTextMuted text-[14px] uppercase font-black tracking-widest px-3 py-2 hover:text-shText">Cancel</button>
+        <button onClick={onSave} data-testid="save-pack-btn"
+                className="bg-shPrimary text-black px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shPrimary/80">
+          {editing ? "Save Changes" : "Add Pack"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function CreditPacksSettings() {
   const confirm = useConfirm();
@@ -188,136 +343,8 @@ export default function CreditPacksSettings() {
                 <i className="fas fa-xmark text-xl"/>
               </button>
             </div>
-            <div className="p-5">
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pack name</label>
-                  <input value={form.name} onChange={(e)=>setForm({...form, name: e.target.value})} placeholder="e.g., 50-Day Daycare Pack"
-                         data-testid="pack-name-input"
-                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Pool</label>
-                  <select value={form.service_type} onChange={(e)=>{
-                             const t = e.target.value;
-                             const pooledDefaults = Object.values(DEFAULT_ICON_BY_POOL);
-                             const nextIcon = (!form.icon || pooledDefaults.includes(form.icon)) ? (DEFAULT_ICON_BY_POOL[t] || form.icon) : form.icon;
-                             setForm({...form, service_type: t, icon: nextIcon});
-                           }}
-                          data-testid="pack-pool-select"
-                          className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                    <option value="daycare">Daycare credits</option>
-                    <option value="training">Training credits</option>
-                    <option value="boarding">Boarding nights</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Credits per pack</label>
-                  <input type="number" min="1" value={form.qty} onChange={(e)=>setForm({...form, qty: parseInt(e.target.value) || 1})}
-                         data-testid="pack-qty-input"
-                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                </div>
-                <div>
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Price (USD)</label>
-                  <input type="number" step="0.01" min="0" value={form.price} onChange={(e)=>setForm({...form, price: parseFloat(e.target.value) || 0})}
-                         data-testid="pack-price-input"
-                         className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Icon</label>
-                  <IconPicker value={form.icon} onChange={(v)=>setForm({...form, icon: v})} testid="pack-icon-picker" />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Color</label>
-                  <div className="mt-2">
-                    <ColorSwatchRow value={form.color} onChange={(hex)=>setForm({...form, color: hex})} testid="pack-color-row" />
-                    <p className="text-[13px] text-shTextMuted mt-1.5">Leave blank to use the pool default ({form.service_type === "training" ? "purple" : form.service_type === "boarding" ? "orange" : "green"}).</p>
-                  </div>
-                </div>
-              </div>
-              <p className="text-[14px] text-shTextMuted mt-2">Per-credit value: <span className="text-shPrimary font-black">${(form.price / Math.max(form.qty, 1)).toFixed(2)}</span></p>
-
-              {/* Sprint 110di-62 — Welcome email: custom template that fires when the pack is sold */}
-              <div className="mt-4">
-                <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Welcome email (auto-sent when pack is sold)</label>
-                <select value={form.welcome_email_template_slug||""}
-                        onChange={(e)=>setForm({...form, welcome_email_template_slug: e.target.value || null})}
-                        data-testid="pack-welcome-email"
-                        className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm">
-                  <option value="">— None (use default sale email) —</option>
-                  {emailTemplates.map(t => (
-                    <option key={t.slug} value={t.slug}>{t.name}{t.kind === "custom" ? " · Custom" : ""}</option>
-                  ))}
-                </select>
-                <p className="text-[13px] text-shTextMuted mt-1">
-                  <i className="fas fa-paper-plane mr-1 text-shSecondary"/>Sends this template the moment a client buys this pack. Create new templates from Settings → Email Designer.
-                </p>
-              </div>
-              {/* Shop Organization — purely organizational, independent of
-                  online visibility. A pack can be categorized whether or
-                  not it's available online. */}
-              <div className="mt-4 border-t border-shBorder pt-4">
-                <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Shop Category</p>
-                <ShopCategoryFields categoryId={form.category_id} subcategoryId={form.subcategory_id}
-                                    onChange={(patch) => setForm({ ...form, ...patch })} />
-              </div>
-
-              {/* Client Shop Phase 1 — additive online-visibility controls. */}
-              <div className="mt-4 border-t border-shBorder pt-4">
-                <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-2">Client Shop</p>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={form.available_online}
-                         onChange={(e)=>setForm({...form, available_online: e.target.checked})}
-                         data-testid="pack-available-online" />
-                  <span className="text-shText text-sm">Available Online (client Shop)</span>
-                </label>
-                {form.available_online && (
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest">Online Description (optional)</label>
-                      <input value={form.online_description || ""} onChange={(e)=>setForm({...form, online_description: e.target.value})}
-                             data-testid="pack-online-description"
-                             className="w-full mt-1 bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-[14px] font-black text-shTextMuted uppercase tracking-widest mb-1 block">Pack Photo</label>
-                      <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
-                                       onChange={(id)=>setForm({...form, image_id: id})} />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Live preview — exactly how this pack will render in the catalog list. */}
-              <div className="mt-4">
-                <p className="text-[13px] font-black text-shTextMuted uppercase tracking-widest mb-1.5">Preview</p>
-                {(() => {
-                  const accent = form.color || DEFAULT_COLOR_BY_POOL[form.service_type] || "#94a3b8";
-                  const unit = form.service_type === "training" ? "sessions" : form.service_type === "boarding" ? "nights" : "credits";
-                  return (
-                    <div className="bg-[var(--sh-card-base)] border border-shBorder rounded-lg p-3 flex items-center gap-3" data-testid="pack-preview">
-                      <div className="w-10 h-10 rounded grid place-items-center shrink-0"
-                           style={{ backgroundColor: `${accent}26` }}>
-                        <i className={`fas ${form.icon || DEFAULT_ICON_BY_POOL[form.service_type] || "fa-tag"}`} style={{ color: accent }}/>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-shText font-black text-[14px] tracking-tight truncate">{form.name || "Untitled pack"}</p>
-                        <p className="text-[13px] font-black uppercase tracking-widest" style={{ color: accent }}>{form.service_type} · {form.qty} {unit}</p>
-                      </div>
-                      <p className="text-shPrimary font-black text-[18px] whitespace-nowrap">${(form.price || 0).toFixed(2)}</p>
-                    </div>
-                  );
-                })()}
-              </div>
-              {err && <p className="text-red-400 text-[15px] mt-3">{err}</p>}
-              <div className="flex justify-end gap-2 mt-4">
-                <button onClick={closeModal} className="text-shTextMuted text-[14px] uppercase font-black tracking-widest px-3 py-2 hover:text-shText">Cancel</button>
-                <button onClick={save} data-testid="save-pack-btn"
-                        className="bg-shPrimary text-black px-5 py-2 rounded font-black text-[15px] uppercase tracking-widest hover:bg-shPrimary/80">
-                  {editing ? "Save Changes" : "Add Pack"}
-                </button>
-              </div>
-            </div>
+            <PackEditor form={form} setForm={setForm} editing={editing} originalImageId={originalImageId}
+                        emailTemplates={emailTemplates} err={err} onSave={save} onClose={closeModal} />
           </div>
         </div>
       )}

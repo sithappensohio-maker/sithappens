@@ -75,7 +75,7 @@ export default function Clients({ focusId = null, focusMode = "scroll", onConsum
   const load = async () => {
     const [c, p, pp] = await Promise.all([
       api.get("/clients"),
-      api.get("/credit-packs").catch(()=>({data:[]})),
+      api.get("/credit-packs", { params: { register_only: true } }).catch(()=>({data:[]})),
       api.get("/admin/payment-plans").catch(()=>({data:[]})),
     ]);
     setClients(c.data);
@@ -1040,7 +1040,7 @@ function SellProgramModal({ client, onClose, onSold }) {
   useEffect(() => {
     (async () => {
       const [p, d, b] = await Promise.all([
-        api.get("/programs?include_custom=true").catch(()=>({data:[]})),
+        api.get("/programs?include_custom=true&register_only=true").catch(()=>({data:[]})),
         // Sprint 110ca — `/clients/{id}/dogs` doesn't exist; the `/dogs` endpoint
         // returns all dogs for an admin caller, so we filter to this client.
         api.get("/dogs").catch(()=>({data:[]})),

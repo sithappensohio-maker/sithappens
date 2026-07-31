@@ -14088,6 +14088,11 @@ class ProgramIn(BaseModel):
     # program pricing/format.
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
+    # Shop Manager unification — independent from `active`; see the
+    # identical field on PosProductIn for the full rationale. Defaults True
+    # so every existing program keeps appearing in the sell-program picker.
+    show_at_register: bool = True
+    featured: bool = False
 
 
 def _stamp_ids(modules: List[dict]) -> List[dict]:
@@ -14126,9 +14131,16 @@ async def programs_meta(user: dict = Depends(get_current_user)):
 
 
 @api.get("/programs")
-async def list_programs(user: dict = Depends(get_current_user), include_custom: bool = True):
+async def list_programs(
+    user: dict = Depends(get_current_user),
+    include_custom: bool = True,
+    include_inactive: bool = False,
+    register_only: bool = False,
+):
     await _seed_programs_if_empty()
-    query = {"active": True}
+    query: Dict[str, Any] = {} if include_inactive else {"active": True}
+    if register_only:
+        query["show_at_register"] = {"$ne": False}
     progs = await db.programs.find(query, {"_id": 0}).to_list(500)
     if not include_custom:
         progs = [p for p in progs if p.get("type") != "custom"]
@@ -14155,7 +14167,7 @@ async def list_programs(user: dict = Depends(get_current_user), include_custom: 
 
 @api.post("/programs")
 async def create_program(body: ProgramIn, _: dict = Depends(require_admin_and_permission("manage_training_content"))):
-    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="training")
     doc = body.model_dump()
     doc["id"] = _gid()
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
@@ -14192,6 +14204,7 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
     await _validate_category_subcategory_pair(
         body.category_id, body.subcategory_id,
         existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+        expected_section="training",
     )
     update = body.model_dump()
     update["modules"] = _stamp_ids(update.get("modules") or [])
@@ -14229,6 +14242,41 @@ async def update_program(program_id: str, body: ProgramIn, cascade: bool = False
 
     existing["_cascaded_enrollments"] = cascaded
     return existing
+
+
+@api.post("/programs/{program_id}/duplicate")
+async def duplicate_program(program_id: str, user: dict = Depends(require_admin_and_permission("manage_training_content"))):
+    """Copies a program's definition (name, type, format, modules/goals,
+    completion rule, etc.) into a brand-new row with its own id. Never
+    touches existing enrollments — a duplicate starts with zero enrolled
+    dogs and hidden from the client Shop so an admin can review it first."""
+    existing = await db.programs.find_one({"id": program_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Program not found")
+    doc = {
+        **existing,
+        "id": _gid(),
+        "name": f"{existing.get('name') or 'Program'} (Copy)",
+        "slug": None,
+        "is_default": False,
+        "owner_dog_id": None,
+        "available_online": False,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    doc["slug"] = _shop_org_slugify(doc["name"])[:40]
+    # Fresh module/goal ids for the copy — _stamp_ids keeps an id if one is
+    # already present, and dog_programs.goal_progress is keyed by goal id,
+    # so a duplicate must never share ids with the program it was copied
+    # from even though it starts with zero enrollments.
+    stripped_modules = [
+        {**m, "id": None, "goals": [{**g, "id": None} for g in (m.get("goals") or [])]}
+        for m in (existing.get("modules") or [])
+    ]
+    doc["modules"] = _stamp_ids(stripped_modules)
+    await db.programs.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
 
 
 @api.delete("/programs/{program_id}")
@@ -20717,6 +20765,70 @@ async def startup():
         await _load_role_overrides_from_settings()
     except Exception as exc:
         logger.warning("Role override preload failed: %s", exc)
+    # Shop Manager unification — idempotent backfill (see
+    # _migrate_shop_manager_fields_if_needed). Runs every boot; a no-op
+    # after the first time it finds nothing left to backfill.
+    try:
+        await _migrate_shop_manager_fields_if_needed()
+    except Exception as exc:
+        logger.warning("Shop Manager field migration failed: %s", exc)
+
+
+async def _migrate_shop_manager_fields_if_needed() -> None:
+    """One-time, idempotent backfill for the Shop Manager unification:
+
+    1. `shop_categories.section` — every pre-existing category gets a
+       permanent top-level section inferred from whichever kind of item is
+       actually assigned to it (majority kind, ties broken by whichever is
+       found first); a category with no items assigned at all defaults to
+       "merch" (arbitrary but harmless — an admin can move its items to a
+       differently-sectioned category later, which is a normal Categories &
+       Layout action, not a data-loss risk). Only ever SETS the field when
+       it's missing — never touches a category that already has one, so
+       rerunning/restarting can never flip an admin's later choice back.
+    2. `show_at_register` — every pre-existing product/pack/program that
+       doesn't have this field yet gets `True`, preserving exactly the
+       current register/sell-pack/sell-program visibility (nothing was
+       hidden from those surfaces before this field existed).
+
+    Both steps use `$exists: False` guards so a rerun (every server restart)
+    only ever touches documents this exact migration hasn't reached yet —
+    never re-applies, never duplicates, never overwrites an admin's
+    subsequent edit."""
+    # Step 1 — category section backfill.
+    uncategorized_cats = await db.shop_categories.find(
+        {"section": {"$exists": False}}, {"_id": 0, "id": 1},
+    ).to_list(1000)
+    if uncategorized_cats:
+        for cat in uncategorized_cats:
+            section = None
+            for kind, coll_name in SHOP_ITEM_KIND_COLLECTIONS.items():
+                coll = getattr(db, coll_name)
+                sample = await coll.find_one({"category_id": cat["id"]}, {"_id": 0, "id": 1})
+                if sample:
+                    section = SHOP_SECTION_FOR_KIND[kind]
+                    break
+            await db.shop_categories.update_one(
+                {"id": cat["id"], "section": {"$exists": False}},
+                {"$set": {"section": section or "merch"}},
+            )
+        logger.info("Shop Manager migration: backfilled `section` on %d categor%s", len(uncategorized_cats), "y" if len(uncategorized_cats) == 1 else "ies")
+
+    # Step 2 — show_at_register backfill (defaults preserve current behavior).
+    for coll_name in ("pos_products", "credit_packs", "programs"):
+        coll = getattr(db, coll_name)
+        res = await coll.update_many(
+            {"show_at_register": {"$exists": False}},
+            {"$set": {"show_at_register": True}},
+        )
+        if res.modified_count:
+            logger.info("Shop Manager migration: set show_at_register=True on %d existing %s", res.modified_count, coll_name)
+        res2 = await coll.update_many(
+            {"featured": {"$exists": False}},
+            {"$set": {"featured": False}},
+        )
+        if res2.modified_count:
+            logger.info("Shop Manager migration: set featured=False on %d existing %s", res2.modified_count, coll_name)
 
 
 @app.on_event("shutdown")
@@ -25814,6 +25926,20 @@ SHOP_ITEM_KIND_COLLECTIONS = {
     "training_program": "programs",
 }
 
+# Shop Manager unification — the client shop's three PERMANENT top-level
+# sections. Which section an item lives under is a pure function of its
+# kind, never an admin-editable field: an admin can't turn a leash into a
+# training item by picking a different section. A category "lives inside"
+# exactly one section (see ShopCategoryIn.section below), so a Merch
+# category can never be offered to a training program and vice versa.
+SHOP_SECTION_FOR_KIND = {
+    "physical_product": "merch",
+    "credit_pack": "prepaid_visits",
+    "training_program": "training",
+}
+SHOP_SECTIONS = ("merch", "prepaid_visits", "training")
+SHOP_SECTION_LABELS = {"merch": "Merch & Gear", "prepaid_visits": "Prepaid Visits", "training": "Training"}
+
 
 def _shop_org_perm_ok(user: dict, perm_key: str) -> bool:
     # Security checkpoint fix — `role == "admin"` used to short-circuit this
@@ -25853,6 +25979,12 @@ class ShopCategoryIn(BaseModel):
     image_id: Optional[str] = None
     active: bool = True
     sort_order: Optional[int] = None
+    # Shop Manager unification — which permanent top-level section this
+    # category lives inside. Immutable after creation (not in
+    # ShopCategoryPatch) — a category's section is structural, and letting
+    # it move later would orphan every item already assigned under a
+    # mismatched kind.
+    section: Literal["merch", "prepaid_visits", "training"]
 
 
 class ShopCategoryPatch(BaseModel):
@@ -25928,6 +26060,7 @@ async def _validate_category_subcategory_pair(
     *,
     existing_category_id: Optional[str] = None,
     existing_subcategory_id: Optional[str] = None,
+    expected_section: Optional[str] = None,
 ) -> None:
     """A subcategory from one category can never be selected under another —
     enforced here, the one place every write path (single-item edit, bulk
@@ -25939,6 +26072,14 @@ async def _validate_category_subcategory_pair(
     update path), so simply re-saving an item never fails just because its
     category was deactivated after the fact. Create paths and bulk-assign
     have no "existing" value, so any inactive id is always rejected there.
+
+    `expected_section` (Shop Manager unification) — when given, the target
+    category must belong to that permanent top-level section (derived from
+    the item's own kind, never admin-chosen — see SHOP_SECTION_FOR_KIND).
+    This is what stops a Merch category from ever being offered to a
+    training program or a physical product from landing in a Prepaid
+    Visits category. A missing/legacy category with no `section` field yet
+    (pre-migration) is treated as a mismatch rather than silently allowed.
     """
     if subcategory_id:
         sub = await db.shop_subcategories.find_one({"id": subcategory_id}, {"_id": 0})
@@ -25952,20 +26093,28 @@ async def _validate_category_subcategory_pair(
         if not sub.get("active", True) and subcategory_id != existing_subcategory_id:
             raise HTTPException(status_code=400, detail="That subcategory is inactive and cannot be newly assigned.")
     if category_id:
-        cat = await db.shop_categories.find_one({"id": category_id}, {"_id": 0, "id": 1, "active": 1})
+        cat = await db.shop_categories.find_one({"id": category_id}, {"_id": 0, "id": 1, "active": 1, "section": 1, "name": 1})
         if not cat:
             raise HTTPException(status_code=400, detail="Unknown category.")
         if not cat.get("active", True) and category_id != existing_category_id:
             raise HTTPException(status_code=400, detail="That category is inactive and cannot be newly assigned.")
+        if expected_section is not None and category_id != existing_category_id and cat.get("section") != expected_section:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'"{cat.get("name")}" is a {SHOP_SECTION_LABELS.get(cat.get("section"), "different")} category — '
+                    f"it can't be used for a {SHOP_SECTION_LABELS.get(expected_section, expected_section)} item."
+                ),
+            )
 
 
 async def _shop_item_counts_by_category() -> Dict[str, Any]:
     """One pass across all three Shop item kinds — counts per category_id
     and per subcategory_id, plus the raw item list (used by uncategorized/
     impact-summary endpoints so they never re-derive this differently)."""
-    products = await db.pos_products.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1, "sales_destination": 1}).to_list(5000)
-    packs = await db.credit_packs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1}).to_list(2000)
-    programs = await db.programs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1}).to_list(2000)
+    products = await db.pos_products.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1, "sales_destination": 1, "image_id": 1}).to_list(5000)
+    packs = await db.credit_packs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1, "image_id": 1}).to_list(2000)
+    programs = await db.programs.find({}, {"_id": 0, "id": 1, "name": 1, "active": 1, "category_id": 1, "subcategory_id": 1, "image_id": 1}).to_list(2000)
     items = (
         [{"kind": "physical_product", **p} for p in products]
         + [{"kind": "credit_pack", **p} for p in packs]
@@ -25984,9 +26133,15 @@ async def _shop_item_counts_by_category() -> Dict[str, Any]:
 
 
 @api.get("/shop/categories")
-async def list_shop_categories(include_inactive: bool = True, user: dict = Depends(require_employee_or_admin)):
+async def list_shop_categories(
+    include_inactive: bool = True,
+    section: Optional[str] = None,
+    user: dict = Depends(require_employee_or_admin),
+):
     _require_shop_org_perm(user, "view_shop_categories")
     cat_q: Dict[str, Any] = {} if include_inactive else {"active": True}
+    if section:
+        cat_q["section"] = section
     cats = await db.shop_categories.find(cat_q, {"_id": 0}).sort("sort_order", 1).to_list(500)
     subs = await db.shop_subcategories.find(cat_q, {"_id": 0}).sort("sort_order", 1).to_list(2000)
     subs_by_cat: Dict[str, List[dict]] = {}
@@ -26004,10 +26159,12 @@ async def list_shop_categories(include_inactive: bool = True, user: dict = Depen
 
 
 @api.get("/shop/uncategorized-items")
-async def list_shop_uncategorized_items(user: dict = Depends(require_employee_or_admin)):
+async def list_shop_uncategorized_items(section: Optional[str] = None, user: dict = Depends(require_employee_or_admin)):
     _require_shop_org_perm(user, "view_shop_categories")
     counts = await _shop_item_counts_by_category()
     uncategorized = [it for it in counts["items"] if not it.get("category_id") and it.get("active", True)]
+    if section:
+        uncategorized = [it for it in uncategorized if SHOP_SECTION_FOR_KIND.get(it["kind"]) == section]
     uncategorized.sort(key=lambda it: (it["kind"], it.get("name") or ""))
     return {"items": uncategorized}
 
@@ -26019,11 +26176,11 @@ async def create_shop_category(body: ShopCategoryIn, user: dict = Depends(requir
     if not name:
         raise HTTPException(status_code=400, detail="Category name is required.")
     slug = _shop_org_slugify(name)
-    if await db.shop_categories.find_one({"slug": slug, "active": True}, {"_id": 0, "id": 1}):
-        raise HTTPException(status_code=409, detail=f'An active category named "{name}" already exists.')
+    if await db.shop_categories.find_one({"slug": slug, "section": body.section, "active": True}, {"_id": 0, "id": 1}):
+        raise HTTPException(status_code=409, detail=f'An active category named "{name}" already exists in {SHOP_SECTION_LABELS.get(body.section, body.section)}.')
     ts = now_iso()
     doc = {
-        "id": str(uuid.uuid4()), "name": name, "slug": slug,
+        "id": str(uuid.uuid4()), "name": name, "slug": slug, "section": body.section,
         "description": (body.description or "").strip() or None,
         "icon": body.icon, "image_id": body.image_id, "active": body.active,
         "sort_order": body.sort_order if body.sort_order is not None else await _next_shop_category_sort_order(),
@@ -26049,7 +26206,7 @@ async def update_shop_category(category_id: str, body: ShopCategoryPatch, user: 
         new_slug = _shop_org_slugify(name)
         if new_slug != existing.get("slug"):
             dupe = await db.shop_categories.find_one(
-                {"slug": new_slug, "active": True, "id": {"$ne": category_id}}, {"_id": 0, "id": 1},
+                {"slug": new_slug, "section": existing.get("section"), "active": True, "id": {"$ne": category_id}}, {"_id": 0, "id": 1},
             )
             if dupe:
                 raise HTTPException(status_code=409, detail=f'An active category named "{name}" already exists.')
@@ -26256,11 +26413,27 @@ async def remove_shop_subcategory(subcategory_id: str, body: ShopSubcategoryRemo
 
 @api.post("/shop/items/bulk-assign")
 async def bulk_assign_shop_items(body: ShopBulkAssignIn, user: dict = Depends(require_employee_or_admin)):
+    """A single bulk-assign call can mix item kinds (e.g. selecting a product
+    and a credit pack together in the Shop Manager Items list), so the
+    category/subcategory's section is checked once up front here, and any
+    entry whose OWN kind doesn't belong to that section is skipped with an
+    error rather than silently reassigned — never a partial, wrong-section
+    write, and every other valid entry in the batch still goes through."""
     _require_shop_org_perm(user, "manage_shop_categories")
     await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    target_section = None
+    if body.category_id:
+        target_cat = await db.shop_categories.find_one({"id": body.category_id}, {"_id": 0, "section": 1})
+        target_section = (target_cat or {}).get("section")
     updated = 0
     errors: List[Dict[str, str]] = []
     for entry in body.items:
+        if target_section and SHOP_SECTION_FOR_KIND.get(entry.kind) != target_section:
+            errors.append({
+                "kind": entry.kind, "id": entry.id,
+                "detail": f"This item belongs to {SHOP_SECTION_LABELS.get(SHOP_SECTION_FOR_KIND.get(entry.kind), 'a different section')}, not {SHOP_SECTION_LABELS.get(target_section, target_section)}.",
+            })
+            continue
         coll_name = SHOP_ITEM_KIND_COLLECTIONS.get(entry.kind)
         coll = getattr(db, coll_name)
         res = await coll.update_one(
@@ -26274,20 +26447,148 @@ async def bulk_assign_shop_items(body: ShopBulkAssignIn, user: dict = Depends(re
     return {"updated": updated, "errors": errors}
 
 
-@api.get("/shop/catalog")
-async def get_shop_catalog(user: dict = Depends(get_current_user)):
-    """Client Shop Phase 1 — read-only catalog aggregation. Does NOT create a
-    new catalog collection; queries the three existing authoritative sources
-    (pos_products, credit_packs, programs) directly and tags each result with
-    a `kind` discriminator. Excludes anything inactive or not explicitly
-    marked online-visible. Returns only safe, client-facing fields — no
-    cost, no inventory_movements history, no Stripe/idempotency internals,
-    no admin notes. image_id only (never embedded image bytes) — the
-    frontend fetches GET /shop/media/{id} separately per image."""
-    if user.get("role") != "client":
-        raise HTTPException(status_code=403, detail="Client account required")
-    client_id = user.get("client_id")
+# ─────────────────────────────────────────────────────────────────────────────
+# Shop Manager unification — one admin-facing aggregation across the three
+# specialized item kinds. This is a READ projection only: it never creates a
+# generic item model, never touches pos_products/credit_packs/programs'
+# specialized fields, and every write (create/edit/archive/duplicate/etc.)
+# still goes through each kind's own existing endpoint. Unifies the admin
+# LISTING/FILTERING experience only, per the architecture rule.
+# ─────────────────────────────────────────────────────────────────────────────
 
+def _shop_manager_item_view(doc: dict, kind: str) -> dict:
+    """Normalizes one pos_products/credit_packs/programs document into the
+    common shape the Shop Manager Items table renders — never mutates or
+    re-derives anything the specialized collections themselves own."""
+    section = SHOP_SECTION_FOR_KIND[kind]
+    base = {
+        "id": doc["id"],
+        "kind": kind,
+        "section": section,
+        "section_label": SHOP_SECTION_LABELS[section],
+        "name": doc.get("name"),
+        "image_id": doc.get("image_id"),
+        "category_id": doc.get("category_id"),
+        "subcategory_id": doc.get("subcategory_id"),
+        "active": bool(doc.get("active", True)),
+        "featured": bool(doc.get("featured", False)),
+        "show_at_register": doc.get("show_at_register", True) is not False,
+        "created_at": doc.get("created_at"),
+    }
+    if kind == "physical_product":
+        is_shopify = doc.get("sales_destination") == "shopify_external"
+        base.update({
+            "show_online": bool(doc.get("show_online")),
+            "archived": bool(doc.get("archived")),
+            "list_price": None if is_shopify else round(float(doc.get("price") or 0), 2),
+            "pricing_variable": not is_shopify,  # Shopify-linked items are never overridden — Shopify owns that price.
+            "sales_destination": doc.get("sales_destination") or "internal",
+            "shopify_product_url": doc.get("shopify_product_url"),
+            "shopify_display_price": doc.get("shopify_display_price"),
+            "shopify_from_price": bool(doc.get("shopify_from_price")),
+            "track_inventory": bool(doc.get("track_inventory")),
+            "stock_on_hand": round(float(doc.get("stock_on_hand") or 0), 2) if doc.get("track_inventory") else None,
+            "low_stock_threshold": doc.get("low_stock_threshold"),
+        })
+    elif kind == "credit_pack":
+        base.update({
+            "show_online": bool(doc.get("available_online")),
+            "archived": False,
+            "list_price": round(float(doc.get("price") or 0), 2),
+            "pricing_variable": True,
+            "qty": doc.get("qty"),
+            "service_type": doc.get("service_type"),
+            "is_default": bool(doc.get("is_default")),
+        })
+    else:  # training_program
+        fmt = doc.get("format") or {}
+        base.update({
+            "show_online": bool(doc.get("available_online")),
+            "archived": False,
+            "list_price": round(float(doc.get("price") or 0), 2),
+            "pricing_variable": False,  # no client-specific/tier override resolver is wired up for programs today
+            "program_type": doc.get("type"),
+            "format_count": fmt.get("count"),
+            "format_unit": fmt.get("unit"),
+            "is_default": bool(doc.get("is_default")),
+        })
+    return base
+
+
+@api.get("/shop-manager/items")
+async def shop_manager_list_items(
+    section: Optional[str] = None,
+    category_id: Optional[str] = None,
+    uncategorized_only: bool = False,
+    hidden_only: bool = False,
+    include_archived: bool = False,
+    search: Optional[str] = None,
+    user: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """The single data source behind the Shop Manager's Items tab. Queries
+    the three specialized collections directly (never a merged/generic
+    collection) and tags each with its permanent section (derived purely
+    from kind — see SHOP_SECTION_FOR_KIND).
+
+    `hidden_only` means "not visible anywhere a client or the register would
+    see it" — inactive, or active-but-hidden from both channels. `category_id`
+    accepts the literal string "uncategorized" as a shorthand for
+    `uncategorized_only=true` so the frontend can treat it as one more
+    category option instead of a separate toggle."""
+    if category_id == "uncategorized":
+        uncategorized_only = True
+        category_id = None
+
+    products = await db.pos_products.find({}, {"_id": 0}).to_list(5000)
+    packs = await db.credit_packs.find({}, {"_id": 0}).to_list(2000)
+    programs = await db.programs.find({}, {"_id": 0}).to_list(2000)
+
+    items = (
+        [_shop_manager_item_view(p, "physical_product") for p in products if include_archived or not p.get("archived")]
+        + [_shop_manager_item_view(p, "credit_pack") for p in packs]
+        + [_shop_manager_item_view(p, "training_program") for p in programs]
+    )
+
+    if section:
+        items = [it for it in items if it["section"] == section]
+    if uncategorized_only:
+        items = [it for it in items if not it.get("category_id")]
+    elif category_id:
+        items = [it for it in items if it.get("category_id") == category_id]
+    if hidden_only:
+        items = [it for it in items if not it["active"] or (not it["show_online"] and not it["show_at_register"])]
+    if search:
+        q = search.strip().lower()
+        if q:
+            items = [it for it in items if q in (it.get("name") or "").lower()]
+
+    # Category/subcategory names — one pass, not per-item queries.
+    cat_ids = {it["category_id"] for it in items if it.get("category_id")}
+    sub_ids = {it["subcategory_id"] for it in items if it.get("subcategory_id")}
+    cats = {c["id"]: c for c in await db.shop_categories.find({"id": {"$in": list(cat_ids)}}, {"_id": 0}).to_list(500)} if cat_ids else {}
+    subs = {s["id"]: s for s in await db.shop_subcategories.find({"id": {"$in": list(sub_ids)}}, {"_id": 0}).to_list(2000)} if sub_ids else {}
+    for it in items:
+        cat = cats.get(it.get("category_id"))
+        sub = subs.get(it.get("subcategory_id"))
+        it["category_name"] = cat["name"] if cat else None
+        it["subcategory_name"] = sub["name"] if sub else None
+
+    items.sort(key=lambda it: (it["section"], (it.get("category_name") or "￿"), it.get("name") or ""))
+    return {"items": items}
+
+
+async def _build_shop_catalog(client_id: Optional[str]) -> dict:
+    """The one real catalog-building routine — read-only aggregation across
+    the three specialized collections, tagging each result with a `kind`
+    discriminator, applying the SAME resolve_client_price() every purchase
+    path trusts, and the same Shop Organization visibility rules. Shared by
+    the authenticated client Shop endpoint AND the admin Shop Manager Client
+    Preview tab, so the preview is never a fake approximation — it is
+    calling this exact function. `client_id=None` (used by the admin
+    preview when previewing as "no specific client") resolves every item to
+    its standard/public price, since resolve_client_price() already
+    short-circuits to standard pricing when there's no client to look up.
+    """
     # Shop Organization (Phase 1) — only ACTIVE categories/subcategories are
     # ever attached to a client-facing item. An item assigned to a category
     # or subcategory that's since gone inactive is hidden from the Shop
@@ -26416,6 +26717,7 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
             "has_price_override": has_override,
             "value_each": round(effective_price / max(qty, 1), 2),
             "image_id": pk.get("image_id"),
+            "featured": bool(pk.get("featured")),
             # Backward-compatible aliases for existing consumers — new code
             # should read the clearer fields above instead.
             "price": effective_price,
@@ -26442,10 +26744,42 @@ async def get_shop_catalog(user: dict = Depends(get_current_user)):
             "format_unit": fmt.get("unit"),
             "price": round(float(prog.get("price") or 0), 2),
             "image_id": prog.get("image_id"),
+            "featured": bool(prog.get("featured")),
             **_shop_org_fields(prog.get("category_id"), prog.get("subcategory_id")),
         })
 
     return {"items": items}
+
+
+@api.get("/shop/catalog")
+async def get_shop_catalog(user: dict = Depends(get_current_user)):
+    """Client Shop Phase 1 — thin auth wrapper around _build_shop_catalog().
+    Returns only safe, client-facing fields — no cost, no
+    inventory_movements history, no Stripe/idempotency internals, no admin
+    notes. image_id only (never embedded image bytes) — the frontend
+    fetches GET /shop/media/{id} separately per image."""
+    if user.get("role") != "client":
+        raise HTTPException(status_code=403, detail="Client account required")
+    return await _build_shop_catalog(user.get("client_id"))
+
+
+@api.get("/shop-manager/catalog-preview")
+async def shop_manager_catalog_preview(
+    preview_client_id: Optional[str] = None,
+    _: dict = Depends(require_admin_and_permission("pricing")),
+):
+    """Shop Manager Client Preview tab — calls the EXACT same catalog
+    builder the real client Shop uses, so this is never a fake
+    approximation. With no `preview_client_id`, every item resolves to its
+    standard/public price (what an unauthenticated or override-free client
+    would see). Passing a real client id previews their actual grandfathered/
+    tier/individual-override price, using the same resolver the real
+    checkout charges from."""
+    if preview_client_id:
+        client = await db.clients.find_one({"id": preview_client_id}, {"_id": 0, "id": 1})
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not found")
+    return await _build_shop_catalog(preview_client_id)
 
 
 @api.get("/shop/catalog/taxonomy")
@@ -27633,6 +27967,13 @@ class PosProductIn(BaseModel):
     # Highlights this item in the client Shop. Purely organizational — never
     # affects pricing, sort order, or availability.
     featured: bool = False
+    # Shop Manager unification — independent from `active`. `active=False`
+    # fully retires an item everywhere; `show_at_register=False` (with
+    # active still True) only hides it from the walk-up register while it
+    # stays purchasable through the client Shop. Defaults True so every
+    # existing active product keeps showing at the register exactly as
+    # before this field existed.
+    show_at_register: bool = True
     # Shopify-linked merchandise (lightweight catalog link, not a second
     # commerce system) — see _resolve_pos_product_destination_fields for how
     # this reshapes the doc on create/update. "internal" is the default so
@@ -27668,6 +28009,7 @@ def _require_take_payments(user: dict):
 async def list_pos_products(
     include_inactive: bool = False,
     include_archived: bool = False,
+    register_only: bool = False,
     user: dict = Depends(require_employee_or_admin),
 ):
     """Product tiles for the register screen. Front desk only ever sees
@@ -27680,7 +28022,13 @@ async def list_pos_products(
     too" toggle should surface. `include_archived=true` is a dedicated view
     showing ONLY archived products (the Manage Products "Archived" filter),
     so an admin never has to hunt for a retired item mixed in with ordinary
-    inactive ones."""
+    inactive ones.
+
+    `register_only=true` (Shop Manager unification — walk-up register call,
+    e.g. Pos.jsx) additionally hides anything with show_at_register=False,
+    independent of `active`. Never combined with include_inactive/
+    include_archived (those are the admin management views, which must
+    keep seeing register-hidden items so staff can toggle them back on)."""
     _require_take_payments(user)
     if include_archived:
         q: Dict[str, Any] = {"archived": True}
@@ -27688,6 +28036,8 @@ async def list_pos_products(
         q = {"archived": {"$ne": True}}
         if not include_inactive:
             q["active"] = True
+        if register_only:
+            q["show_at_register"] = {"$ne": False}
     cursor = db.pos_products.find(q, {"_id": 0}).sort([("category", 1), ("name", 1)])
     return await cursor.to_list(5000)
 
@@ -27744,7 +28094,7 @@ def _resolve_pos_product_destination_fields(body: "PosProductIn") -> Dict[str, A
 
 @api.post("/pos/products")
 async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(require_admin_and_permission("pricing"))):
-    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="merch")
     destination_fields = _resolve_pos_product_destination_fields(body)
     is_shopify = destination_fields["sales_destination"] == "shopify_external"
     doc = {
@@ -27762,6 +28112,7 @@ async def create_pos_product(body: PosProductCreateIn, user: dict = Depends(requ
         "shop_reservations": [],
         "created_at": now_iso(),
         "show_online": body.show_online,
+        "show_at_register": body.show_at_register,
         "online_description": (body.online_description or "").strip() or None,
         "image_id": body.image_id,
         "online_sort_order": body.online_sort_order,
@@ -27785,6 +28136,7 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
     await _validate_category_subcategory_pair(
         body.category_id, body.subcategory_id,
         existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+        expected_section="merch",
     )
     patch = {
         "name": body.name.strip(),
@@ -27794,6 +28146,7 @@ async def update_pos_product(product_id: str, body: PosProductIn, user: dict = D
         "active": body.active,
         "updated_at": now_iso(),
         "show_online": body.show_online,
+        "show_at_register": body.show_at_register,
         "online_description": (body.online_description or "").strip() or None,
         "image_id": body.image_id,
         "online_sort_order": body.online_sort_order,
@@ -32010,6 +32363,11 @@ class CreditPackIn(BaseModel):
     # pricing, credit quantity, or the pack's own resolver-driven price.
     category_id: Optional[str] = None
     subcategory_id: Optional[str] = None
+    # Shop Manager unification — independent from `active`; see the
+    # identical field on PosProductIn for the full rationale. Defaults True
+    # so every existing pack keeps appearing in the sell-pack picker.
+    show_at_register: bool = True
+    featured: bool = False
 
 
 class SellCreditPackIn(BaseModel):
@@ -32035,8 +32393,10 @@ class SellCreditPacksBulkIn(BaseModel):
 
 
 @api.get("/credit-packs")
-async def list_credit_packs(user: dict = Depends(get_current_user), include_inactive: bool = False):
+async def list_credit_packs(user: dict = Depends(get_current_user), include_inactive: bool = False, register_only: bool = False):
     q: Dict = {} if include_inactive else {"active": True}
+    if register_only:
+        q["show_at_register"] = {"$ne": False}
     packs = await db.credit_packs.find(q, {"_id": 0}).sort("qty", 1).to_list(200)
     # Sprint 110bv — rewrite to client's legacy price when applicable
     if user.get("role") == "client" and user.get("client_id"):
@@ -32049,7 +32409,7 @@ async def list_credit_packs(user: dict = Depends(get_current_user), include_inac
 
 @api.post("/credit-packs")
 async def create_credit_pack(body: CreditPackIn, _: dict = Depends(require_admin_and_permission("pricing"))):
-    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id)
+    await _validate_category_subcategory_pair(body.category_id, body.subcategory_id, expected_section="prepaid_visits")
     doc = body.model_dump()
     doc["id"] = str(uuid.uuid4())
     doc["slug"] = doc.get("slug") or doc["name"].lower().replace(" ", "_")[:40]
@@ -32069,6 +32429,7 @@ async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends
     await _validate_category_subcategory_pair(
         body.category_id, body.subcategory_id,
         existing_category_id=existing.get("category_id"), existing_subcategory_id=existing.get("subcategory_id"),
+        expected_section="prepaid_visits",
     )
     update = body.model_dump()
     update.pop("slug", None)
@@ -32077,6 +32438,32 @@ async def update_credit_pack(pack_id: str, body: CreditPackIn, _: dict = Depends
     merged = {**existing, **update}
     merged["value_each"] = round(float(merged.get("price") or 0) / max(int(merged.get("qty") or 1), 1), 2)
     return merged
+
+
+@api.post("/credit-packs/{pack_id}/duplicate")
+async def duplicate_credit_pack(pack_id: str, user: dict = Depends(require_admin_and_permission("pricing"))):
+    """Copies a pack definition into a brand-new row with its own id and no
+    sale history — mirrors duplicate_pos_product's pattern. Never touches
+    already-issued credit lots; a duplicate starts hidden from the client
+    Shop so an admin can review it before publishing."""
+    existing = await db.credit_packs.find_one({"id": pack_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Pack not found")
+    doc = {
+        **existing,
+        "id": str(uuid.uuid4()),
+        "name": f"{existing.get('name') or 'Pack'} (Copy)",
+        "slug": None,
+        "is_default": False,
+        "available_online": False,
+        "active": True,
+        "created_at": now_iso(),
+    }
+    doc["slug"] = _shop_org_slugify(doc["name"])[:40]
+    await db.credit_packs.insert_one(doc)
+    doc.pop("_id", None)
+    doc["value_each"] = round(float(doc.get("price") or 0) / max(int(doc.get("qty") or 1), 1), 2)
+    return doc
 
 
 @api.delete("/credit-packs/{pack_id}")

@@ -25,7 +25,7 @@ import DuplicateCheck from "./screens/DuplicateCheck";
 import Staff from "./screens/Staff";
 import Pos from "./screens/Pos";
 import CreditReconciliation from "./screens/CreditReconciliation";
-import ShopOrganization from "./screens/ShopOrganization";
+import ShopManager from "./screens/ShopManager";
 import RecurringTemplates from "./screens/RecurringTemplates";
 import Tutorials from "./screens/Tutorials";
 import IntakeForms from "./screens/IntakeForms";
@@ -41,7 +41,6 @@ import ShareCertificate from "./screens/ShareCertificate";
 import GlobalSearch from "./components/GlobalSearch";
 import AdminBookingModal from "./components/AdminBookingModal";
 import TakePaymentModal from "./components/TakePaymentModal";
-import ManageProductsPanel from "./components/ManageProductsPanel";
 import ActionMenu from "./components/admin/ActionMenu";
 import ErrorBoundary from "./components/ErrorBoundary";
 import InstallPrompt from "./components/InstallPrompt";
@@ -202,7 +201,7 @@ function AdminShell() {
     { id: "trophies", label: "Trophies", icon: "fa-trophy", feature: "rewards" },
     { id: "income", label: "Finance", icon: "fa-dollar-sign", perm: "finance_reports" },
     { id: "credit_reconciliation", label: "Credit Audit", icon: "fa-scale-balanced", perm: "finance_reports" },
-    { id: "shop_organization", label: "Shop Organization", icon: "fa-sitemap", perm: "view_shop_categories" },
+    { id: "shop_manager", label: "Shop Manager", icon: "fa-bag-shopping", perm: "view_shop_categories" },
     { id: "staff", label: "Staff", icon: "fa-users-gear", perm: "payroll", feature: "staff_portal" },
     { id: "incidents", label: "Incidents", icon: "fa-triangle-exclamation", perm: "incidents" },
     { id: "intake", label: "Intake Forms", icon: "fa-clipboard-list", perm: "clients_edit" },
@@ -238,7 +237,7 @@ function AdminShell() {
     { label: "Care", ids: ["runsheet", "care", "kennel", "incidents"] },
     { label: "Bookings", ids: ["bookings", "waitlist", "recurring"] },
     { label: "Training", ids: ["pipeline", "homework", "rewards_center", "trophies"] },
-    { label: "Shop", ids: ["shop_organization"] },
+    { label: "Shop", ids: ["shop_manager"] },
     { label: "Money", ids: ["income", "credit_reconciliation"] },
     { label: "Communication", ids: ["announcements", "bulkemail", "intake"] },
     { label: "Administration", ids: ["staff", "duplicate_check", "audit", "settings", "tutorials"] },
@@ -327,10 +326,8 @@ function AdminShell() {
     {
       label: "Shop",
       actions: [
-        { id: "add_shop_product", label: "Add Shop Product", icon: "fa-box", perm: "pricing", targetTab: null,
-          onSelect: () => setGlobalModal("manage_products") },
-        { id: "add_shop_category", label: "Add Shop Category", icon: "fa-sitemap", perm: "manage_shop_categories", targetTab: "shop_organization",
-          onSelect: () => goCreate("shop_organization") },
+        { id: "add_shop_item", label: "Add Shop Item", icon: "fa-bag-shopping", perm: "view_shop_categories", targetTab: "shop_manager",
+          onSelect: () => goCreate("shop_manager") },
       ],
     },
   ];
@@ -757,10 +754,12 @@ function AdminShell() {
               all of that functionality. Redirect any stale nav call
               (bookmarked sidebar state, old localStorage flag, etc.) that
               still targets "register" here instead of rendering nothing. */}
-          {(tab === "pos" || tab === "register") && navAllowed("pos") && <Pos />}
+          {(tab === "pos" || tab === "register") && navAllowed("pos") && <Pos onOpenShopManager={() => setTab("shop_manager")} />}
           {tab === "income" && navAllowed("income") && <Income openCreateExpenseOnMount={pendingCreateTab === "income"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
           {tab === "credit_reconciliation" && navAllowed("credit_reconciliation") && <CreditReconciliation />}
-          {tab === "shop_organization" && navAllowed("shop_organization") && <ShopOrganization openCreateOnMount={pendingCreateTab === "shop_organization"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
+          {tab === "shop_manager" && navAllowed("shop_manager") && <ShopManager openCreateOnMount={pendingCreateTab === "shop_manager"} onCreateConsumed={()=>setPendingCreateTab(null)} />}
+          {/* Old "shop_organization" tab id redirects here rather than showing a broken/blank screen. */}
+          {tab === "shop_organization" && navAllowed("shop_manager") && <ShopManager openCreateOnMount={false} onCreateConsumed={()=>{}} />}
           {tab === "staff" && navAllowed("staff") && <Staff />}
           {tab === "incidents" && navAllowed("incidents") && <Incidents openCreateOnMount={pendingCreateTab === "incidents"} onCreateConsumed={()=>{ setPendingCreateTab(null); setPendingIncidentPresetDogId(null); }} presetDogId={pendingIncidentPresetDogId} />}
           {tab === "intake" && navAllowed("intake") && <IntakeForms />}
@@ -789,9 +788,6 @@ function AdminShell() {
         <TakePaymentModal onClose={()=>{ setGlobalModal(null); setPendingPaymentPresetClientId(null); }}
                            presetClientId={pendingPaymentPresetClientId}
                            onSuccess={()=>{ setGlobalModal(null); setPendingPaymentPresetClientId(null); }} />
-      )}
-      {globalModal === "manage_products" && (
-        <ManageProductsPanel onClose={()=>setGlobalModal(null)} onChanged={()=>{}} />
       )}
     </div>
   );

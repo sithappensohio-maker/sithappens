@@ -23,8 +23,8 @@ import { toast } from "sonner";
 import PageHero from "../components/PageHero";
 import { CheckoutModal } from "../components/CheckoutModal";
 import TakePaymentModal from "../components/TakePaymentModal";
-import ManageProductsPanel from "../components/ManageProductsPanel";
 import StripeRefundModal from "../components/StripeRefundModal";
+import ItemThumbnail from "../components/ItemThumbnail";
 import { RegisterTab } from "./Staff";
 import {
   checkPosHealth,
@@ -35,7 +35,7 @@ import {
 const TENDER_LABELS = { cash: "Cash", check: "Check", venmo: "Venmo", paypal: "PayPal", other: "Other" };
 const money = (n) => `$${Number(n || 0).toFixed(2)}`;
 
-export default function Pos() {
+export default function Pos({ onOpenShopManager } = {}) {
   const { can } = useAuth();
   // Permission-bug checkpoint: these used to gate on a blanket `role ===
   // "admin"` check, which — since every account that can even open Front
@@ -107,9 +107,8 @@ export default function Pos() {
   const [categories, setCategories] = useState([]);
   const [activeCategory, setActiveCategory] = useState("");
   const [productSearch, setProductSearch] = useState("");
-  const [manageProductsOpen, setManageProductsOpen] = useState(false);
   const loadProducts = () => {
-    api.get("/pos/products").then(({ data }) => setProducts(data || [])).catch(() => {});
+    api.get("/pos/products", { params: { register_only: true } }).then(({ data }) => setProducts(data || [])).catch(() => {});
     api.get("/pos/products/categories").then(({ data }) => setCategories(data?.categories || [])).catch(() => {});
   };
   useEffect(() => { loadProducts(); }, []);
@@ -641,9 +640,9 @@ export default function Pos() {
             Recent Sales
           </button>
           {canPricingActions && (
-            <button onClick={() => setManageProductsOpen(true)} data-testid="pos-manage-products-toggle"
+            <button onClick={() => onOpenShopManager?.()} data-testid="pos-manage-products-toggle"
                     className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded px-4 py-2 text-shText text-[12px] font-black uppercase tracking-widest">
-              Manage Products
+              Shop Manager
             </button>
           )}
           <button onClick={() => setRegisterToolsOpen((o) => !o)} data-testid="pos-register-tools-toggle"
@@ -983,6 +982,7 @@ export default function Pos() {
                 return (
                   <button key={p.id} onClick={() => addProduct(p)} disabled={outOfStock} data-testid={`pos-product-${p.id}`}
                           className="bg-[var(--sh-card-base)] border border-shBorder hover:border-shPrimary/50 rounded-xl p-3 text-left disabled:opacity-40 disabled:hover:border-shBorder">
+                    <ItemThumbnail imageId={p.image_id} alt={p.name} variant="banner" size={64} className="mb-1.5" />
                     <p className="text-shText font-bold text-sm truncate">{p.name}</p>
                     <p className="text-shPrimary font-black">{money(p.price)}</p>
                     {p.track_inventory && (
@@ -1098,13 +1098,6 @@ export default function Pos() {
           onSuccess={() => { setShowTakePayment(false); clearClient(); }}
         />
       )}
-      {manageProductsOpen && (
-        <ManageProductsPanel
-          onClose={() => setManageProductsOpen(false)}
-          onChanged={loadProducts}
-        />
-      )}
-
       {refundingPayment && (
         <StripeRefundModal
           payment={refundingPayment}

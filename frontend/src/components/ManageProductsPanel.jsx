@@ -20,9 +20,192 @@ const BLANK_FORM = {
   name: "", category: "", description: "", price: "", cost: "",
   starting_stock: "0", low_stock_threshold: "", track_inventory: false, active: true,
   show_online: false, online_description: "", image_id: null, online_sort_order: "",
-  category_id: null, subcategory_id: null, featured: false,
+  category_id: null, subcategory_id: null, featured: false, show_at_register: true,
   sales_destination: "internal", shopify_product_url: "", shopify_display_price: "", shopify_from_price: false,
 };
+
+// Shared product add/edit form — used by this panel AND the unified Shop
+// Manager Items tab. Parent owns `form`/`setForm`/`originalImageId` state
+// and the actual save call (mirrors ProgramEditor's pattern in Programs.jsx);
+// this component is purely presentational/input-bound so there is exactly
+// ONE product form implementation, never a second copy to keep in sync.
+export function ProductEditor({ form, setForm, editingId, originalImageId, saving, onSave, onClose }) {
+  return (
+    <div className="space-y-3">
+      <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2">
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Product Name *</label>
+          <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+        </div>
+
+        <div className="col-span-2">
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sales Destination</label>
+          <div className="flex gap-2 mt-1">
+            <button type="button" data-testid="destination-internal"
+                    onClick={() => setForm((f) => ({ ...f, sales_destination: "internal" }))}
+                    className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "internal" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+              Internal Sit Happens Checkout
+            </button>
+            <button type="button" data-testid="destination-shopify"
+                    onClick={() => setForm((f) => ({ ...f, sales_destination: "shopify_external" }))}
+                    className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "shopify_external" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
+              External Shopify Product
+            </button>
+          </div>
+          <p className="text-[11px] text-shTextMuted mt-1">
+            Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout.
+          </p>
+        </div>
+
+        {form.sales_destination === "internal" && (
+          <>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Register Group (optional)</label>
+              <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+              <p className="text-[11px] text-shTextMuted mt-0.5">Groups products into tabs on the in-person register only. Use Shop Category below for the client Shop.</p>
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Selling Price *</label>
+              <input type="number" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cost (optional)</label>
+              <input type="number" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
+                {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
+              </label>
+              <input type="number" disabled={!!editingId} value={form.starting_stock}
+                     onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
+            </div>
+          </>
+        )}
+
+        <div className="col-span-2">
+          <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Description (optional)</label>
+          <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                 className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+        </div>
+
+        {form.sales_destination === "shopify_external" && (
+          <>
+            <div className="col-span-2">
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Shopify Product URL *</label>
+              <input value={form.shopify_product_url} onChange={(e) => setForm((f) => ({ ...f, shopify_product_url: e.target.value }))}
+                     placeholder="https://yourstore.myshopify.com/products/..."
+                     data-testid="product-shopify-url"
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+              <p className="text-[11px] text-shTextMuted mt-0.5">Must be a secure https:// link. Clients are sent here to view options and check out on Shopify.</p>
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Displayed Price (optional)</label>
+              <input type="number" value={form.shopify_display_price}
+                     onChange={(e) => setForm((f) => ({ ...f, shopify_display_price: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            </div>
+            <div className="flex items-center gap-2 self-end pb-2">
+              <input type="checkbox" id="from-price" checked={form.shopify_from_price}
+                     onChange={(e) => setForm((f) => ({ ...f, shopify_from_price: e.target.checked }))} />
+              <label htmlFor="from-price" className="text-shText text-sm">Show as "From" price</label>
+            </div>
+            <p className="col-span-2 text-[11px] text-shTextMuted">
+              Admin note: this price is informational only — the final Shopify price may vary by size, color, promotion, or variant. Client-specific and grandfathered pricing never applies here; Shopify controls this price.
+            </p>
+          </>
+        )}
+
+        {form.sales_destination === "internal" && (
+          <div className="flex items-center gap-2">
+            <input type="checkbox" id="track-inv" checked={form.track_inventory}
+                   onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
+            <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
+          </div>
+        )}
+        {form.sales_destination === "internal" && form.track_inventory && (
+          <div>
+            <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
+            <input type="number" value={form.low_stock_threshold}
+                   onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
+                   className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="active" checked={form.active}
+                 onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} />
+          <label htmlFor="active" className="text-shText text-sm">Active</label>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="featured" checked={form.featured}
+                 onChange={(e) => setForm((f) => ({ ...f, featured: e.target.checked }))} />
+          <label htmlFor="featured" className="text-shText text-sm">Featured in Shop</label>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="show-at-register" checked={form.show_at_register}
+                 onChange={(e) => setForm((f) => ({ ...f, show_at_register: e.target.checked }))}
+                 data-testid="product-show-at-register" />
+          <label htmlFor="show-at-register" className="text-shText text-sm">Show at Register</label>
+        </div>
+      </div>
+
+      {/* Shop Organization — purely organizational, independent of online
+          visibility. An item can be categorized whether or not it's
+          shown in the client Shop. */}
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Shop Category</p>
+        <ShopCategoryFields categoryId={form.category_id} subcategoryId={form.subcategory_id} section="merch"
+                            onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} />
+      </div>
+
+      {/* Client Shop Phase 1 — additive online-visibility controls. */}
+      <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
+        <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Client Shop</p>
+        <div className="flex items-center gap-2">
+          <input type="checkbox" id="show-online" checked={form.show_online}
+                 onChange={(e) => setForm((f) => ({ ...f, show_online: e.target.checked }))}
+                 data-testid="product-show-online" />
+          <label htmlFor="show-online" className="text-shText text-sm">Show Online (client Shop)</label>
+        </div>
+        {form.show_online && (
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2">
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
+              <input value={form.online_description} onChange={(e) => setForm((f) => ({ ...f, online_description: e.target.value }))}
+                     data-testid="product-online-description"
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            </div>
+            <div>
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sort Order (optional)</label>
+              <input type="number" value={form.online_sort_order}
+                     onChange={(e) => setForm((f) => ({ ...f, online_sort_order: e.target.value }))}
+                     className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
+            </div>
+            <div className="col-span-2">
+              <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo</label>
+              <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
+                               onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="flex gap-3 pt-2">
+        <button onClick={onClose} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
+          Cancel
+        </button>
+        <button onClick={onSave} disabled={saving}
+                className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function stockStatus(p) {
   if (!p.active) return { label: "INACTIVE", cls: "text-shTextMuted bg-shSurfaceRaised" };
@@ -117,7 +300,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       image_id: p.image_id || null,
       online_sort_order: p.online_sort_order != null ? String(p.online_sort_order) : "",
       category_id: p.category_id || null, subcategory_id: p.subcategory_id || null,
-      featured: !!p.featured,
+      featured: !!p.featured, show_at_register: p.show_at_register !== false,
       sales_destination: p.sales_destination === "shopify_external" ? "shopify_external" : "internal",
       shopify_product_url: p.shopify_product_url || "",
       shopify_display_price: p.shopify_display_price != null ? String(p.shopify_display_price) : "",
@@ -163,7 +346,7 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
       image_id: form.image_id || null,
       online_sort_order: form.online_sort_order !== "" ? parseInt(form.online_sort_order, 10) : null,
       category_id: form.category_id || null, subcategory_id: form.subcategory_id || null,
-      featured: form.featured,
+      featured: form.featured, show_at_register: form.show_at_register,
       sales_destination: form.sales_destination,
       shopify_product_url: isShopify ? form.shopify_product_url.trim() : null,
       shopify_display_price: (isShopify && form.shopify_display_price !== "") ? Number(form.shopify_display_price) : null,
@@ -313,173 +496,8 @@ export default function ManageProductsPanel({ onClose, onChanged }) {
         </div>
 
         {formOpen ? (
-          <div className="space-y-3">
-            <p className="text-shTextMuted text-[13px] uppercase tracking-widest font-black">{editingId ? "Edit Product" : "Add Product"}</p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
-                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Product Name *</label>
-                <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-              </div>
-
-              <div className="col-span-2">
-                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sales Destination</label>
-                <div className="flex gap-2 mt-1">
-                  <button type="button" data-testid="destination-internal"
-                          onClick={() => setForm((f) => ({ ...f, sales_destination: "internal" }))}
-                          className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "internal" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
-                    Internal Sit Happens Checkout
-                  </button>
-                  <button type="button" data-testid="destination-shopify"
-                          onClick={() => setForm((f) => ({ ...f, sales_destination: "shopify_external" }))}
-                          className={`flex-1 rounded px-3 py-2 text-[12px] font-black uppercase tracking-widest ${form.sales_destination === "shopify_external" ? "bg-shPrimary text-bgHeader" : "bg-[var(--sh-card-base)] border border-shBorder text-shTextMuted"}`}>
-                    External Shopify Product
-                  </button>
-                </div>
-                <p className="text-[11px] text-shTextMuted mt-1">
-                  Shopify products are display-only links in the Shop — Shopify alone handles pricing, variants, inventory, tax, and checkout.
-                </p>
-              </div>
-
-              {form.sales_destination === "internal" && (
-                <>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Register Group (optional)</label>
-                    <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                    <p className="text-[11px] text-shTextMuted mt-0.5">Groups products into tabs on the in-person register only. Use Shop Category below for the client Shop.</p>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Selling Price *</label>
-                    <input type="number" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Cost (optional)</label>
-                    <input type="number" value={form.cost} onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">
-                      {editingId ? "Stock On Hand (use Receive/Adjust to change)" : "Starting Stock"}
-                    </label>
-                    <input type="number" disabled={!!editingId} value={form.starting_stock}
-                           onChange={(e) => setForm((f) => ({ ...f, starting_stock: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText disabled:opacity-50" />
-                  </div>
-                </>
-              )}
-
-              <div className="col-span-2">
-                <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Description (optional)</label>
-                <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-                       className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-              </div>
-
-              {form.sales_destination === "shopify_external" && (
-                <>
-                  <div className="col-span-2">
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Shopify Product URL *</label>
-                    <input value={form.shopify_product_url} onChange={(e) => setForm((f) => ({ ...f, shopify_product_url: e.target.value }))}
-                           placeholder="https://yourstore.myshopify.com/products/..."
-                           data-testid="product-shopify-url"
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                    <p className="text-[11px] text-shTextMuted mt-0.5">Must be a secure https:// link. Clients are sent here to view options and check out on Shopify.</p>
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Displayed Price (optional)</label>
-                    <input type="number" value={form.shopify_display_price}
-                           onChange={(e) => setForm((f) => ({ ...f, shopify_display_price: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                  </div>
-                  <div className="flex items-center gap-2 self-end pb-2">
-                    <input type="checkbox" id="from-price" checked={form.shopify_from_price}
-                           onChange={(e) => setForm((f) => ({ ...f, shopify_from_price: e.target.checked }))} />
-                    <label htmlFor="from-price" className="text-shText text-sm">Show as "From" price</label>
-                  </div>
-                  <p className="col-span-2 text-[11px] text-shTextMuted">
-                    Admin note: this price is informational only — the final Shopify price may vary by size, color, promotion, or variant. Client-specific and grandfathered pricing never applies here; Shopify controls this price.
-                  </p>
-                </>
-              )}
-
-              {form.sales_destination === "internal" && (
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="track-inv" checked={form.track_inventory}
-                         onChange={(e) => setForm((f) => ({ ...f, track_inventory: e.target.checked }))} />
-                  <label htmlFor="track-inv" className="text-shText text-sm">Track Inventory</label>
-                </div>
-              )}
-              {form.sales_destination === "internal" && form.track_inventory && (
-                <div>
-                  <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Low Stock Warning</label>
-                  <input type="number" value={form.low_stock_threshold}
-                         onChange={(e) => setForm((f) => ({ ...f, low_stock_threshold: e.target.value }))}
-                         className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="active" checked={form.active}
-                       onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} />
-                <label htmlFor="active" className="text-shText text-sm">Active</label>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="featured" checked={form.featured}
-                       onChange={(e) => setForm((f) => ({ ...f, featured: e.target.checked }))} />
-                <label htmlFor="featured" className="text-shText text-sm">Featured in Shop</label>
-              </div>
-            </div>
-
-            {/* Shop Organization — purely organizational, independent of online
-                visibility. An item can be categorized whether or not it's
-                shown in the client Shop. */}
-            <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
-              <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Shop Category</p>
-              <ShopCategoryFields categoryId={form.category_id} subcategoryId={form.subcategory_id}
-                                  onChange={(patch) => setForm((f) => ({ ...f, ...patch }))} />
-            </div>
-
-            {/* Client Shop Phase 1 — additive online-visibility controls. */}
-            <div className="border-t border-shBorder pt-3 mt-1 space-y-3">
-              <p className="text-[11px] text-shTextMuted uppercase tracking-widest font-black">Client Shop</p>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="show-online" checked={form.show_online}
-                       onChange={(e) => setForm((f) => ({ ...f, show_online: e.target.checked }))}
-                       data-testid="product-show-online" />
-                <label htmlFor="show-online" className="text-shText text-sm">Show Online (client Shop)</label>
-              </div>
-              {form.show_online && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="col-span-2">
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Online Description (optional — falls back to Description)</label>
-                    <input value={form.online_description} onChange={(e) => setForm((f) => ({ ...f, online_description: e.target.value }))}
-                           data-testid="product-online-description"
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                  </div>
-                  <div>
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest">Sort Order (optional)</label>
-                    <input type="number" value={form.online_sort_order}
-                           onChange={(e) => setForm((f) => ({ ...f, online_sort_order: e.target.value }))}
-                           className="w-full bg-[var(--sh-card-base)] border border-shBorder rounded p-2 text-shText" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="text-[11px] text-shTextMuted uppercase tracking-widest mb-1 block">Product Photo</label>
-                    <ShopImageUpload imageId={form.image_id} originalImageId={originalImageId}
-                                     onChange={(id) => setForm((f) => ({ ...f, image_id: id }))} />
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex gap-3 pt-2">
-              <button onClick={closeFormWithoutSaving} className="flex-1 text-shTextMuted font-black uppercase text-sm tracking-widest py-3">
-                Cancel
-              </button>
-              <button onClick={saveForm} disabled={saving}
-                      className="flex-1 bg-shPrimary text-bgHeader rounded-xl py-3 font-black uppercase tracking-widest disabled:opacity-40">
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
+          <ProductEditor form={form} setForm={setForm} editingId={editingId} originalImageId={originalImageId}
+                         saving={saving} onSave={saveForm} onClose={closeFormWithoutSaving} />
         ) : historyProduct ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between">

@@ -226,7 +226,7 @@ export function ProgramEditor({ program, setProgram, meta, allPrograms = [], onS
               available online. */}
           <div className="border-t border-bgHover pt-3 space-y-3">
             <p className="text-[11px] text-gray-500 uppercase tracking-widest font-black">Shop Category</p>
-            <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id}
+            <ShopCategoryFields categoryId={program.category_id} subcategoryId={program.subcategory_id} section="training"
                                 onChange={(patch) => set(patch)} />
           </div>
 

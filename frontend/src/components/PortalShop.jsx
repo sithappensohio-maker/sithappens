@@ -6,6 +6,7 @@ import NeonEdge from "./premium/NeonEdge";
 import PremiumButton from "./premium/PremiumButton";
 import { accentRgb } from "./premium/tokens";
 import { CLIENT_LABELS } from "../lib/clientLabels";
+import ItemThumbnail from "./ItemThumbnail";
 
 /* Client Shop — Phase 1 gave read-only catalog browsing. Phase 2 adds a
  * real cart + checkout: physical products, credit packs, and training
@@ -41,25 +42,6 @@ function readReturnParams() {
   return { orderId, stripeState };
 }
 
-function ShopImage({ imageId, alt }) {
-  const [src, setSrc] = useState(null);
-  useEffect(() => {
-    if (!imageId) { setSrc(null); return; }
-    let cancelled = false;
-    api.get(`/shop/media/${imageId}`)
-      .then(({ data }) => { if (!cancelled) setSrc(data.data); })
-      .catch(() => { if (!cancelled) setSrc(null); });
-    return () => { cancelled = true; };
-  }, [imageId]);
-
-  if (src) return <img src={src} alt={alt || ""} className="w-full h-32 object-cover rounded-lg" />;
-  return (
-    <div className="w-full h-32 rounded-lg border border-shBorder grid place-items-center text-shTextMuted" style={{ background: "var(--sh-card-base)" }}>
-      <i className="fas fa-image text-2xl" />
-    </div>
-  );
-}
-
 // Shopify-linked merchandise is a display-only catalog link — Sit Happens
 // never processes its checkout, so "adding" it just sends the client to the
 // configured Shopify page. New tab on desktop (client stays in the Shop);
@@ -84,7 +66,7 @@ function ItemCard({ item, cartQty, onAdd }) {
   return (
     <NeonEdge accentRgb={accentRgb("lime")} intensity="subtle" className="p-3 flex flex-col hover:-translate-y-0.5 transition duration-200" data-testid={`shop-card-${item.kind}-${item.id}`}>
       <div className="relative">
-        <ShopImage imageId={item.image_id} alt={item.name} />
+        <ItemThumbnail imageId={item.image_id} alt={item.name} variant="banner" size={128} className="rounded-lg" />
         {item.featured && (
           <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-shPrimary text-bgHeader">
             Featured

@@ -19,12 +19,12 @@ import DataExportPanel from "../components/DataExportPanel";
 
 // Section 6 — Common Settings shortcuts. Each entry just points at an
 // existing subsection id (or, for Shop Categories, the external
-// Shop Organization tab) — no new settings panels are created here.
+// Shop Manager tab) — no new settings panels are created here.
 const COMMON_SETTINGS_SHORTCUTS = [
   { key: "hours", label: "Business Hours", icon: "fa-clock", id: "hours" },
   { key: "services", label: "Services & Prices", icon: "fa-dollar-sign", id: "services" },
   { key: "credit_packs", label: "Prepaid Packs", icon: "fa-coins", id: "credit_packs" },
-  { key: "shop_categories", label: "Shop Categories", icon: "fa-store", externalTab: "shop_organization" },
+  { key: "shop_categories", label: "Shop Manager", icon: "fa-bag-shopping", externalTab: "shop_manager" },
   { key: "capacity", label: "Capacity", icon: "fa-warehouse", id: "capacity" },
   { key: "vaccines", label: "Vaccine Requirements", icon: "fa-shield-virus", id: "vaccines" },
   { key: "booking_flow", label: "Booking Rules & Approval", icon: "fa-calendar-check", id: "booking_flow_controls" },
